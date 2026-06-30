@@ -1,0 +1,13 @@
+node_modules/
+out/
+dist/
+.turbo/
+*.tsbuildinfo
+.ts-dist/
+node_modules/.ts-dist/
+.DS_Store
+*.log
+.env
+.env.*
+packages/desktop/resources/icons/
+packages/desktop/resources/*.metainfo.xml

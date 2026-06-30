@@ -1,0 +1,22 @@
+{
+  "name": "@yoma-desktop/util",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./encode": "./src/encode.ts",
+    "./path": "./src/path.ts",
+    "./binary": "./src/binary.ts",
+    "./array": "./src/array.ts",
+    "./retry": "./src/retry.ts"
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit"
+  },
+  "devDependencies": {
+    "@tsconfig/bun": "catalog:",
+    "@types/bun": "catalog:",
+    "@typescript/native-preview": "catalog:",
+    "typescript": "catalog:"
+  }
+}
