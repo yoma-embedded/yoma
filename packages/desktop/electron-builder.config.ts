@@ -32,10 +32,10 @@ const channel = (() => {
   return "dev"
 })()
 
-// Repo that the packaged app checks for auto-updates. Override via env at release
-// time, e.g. YOMA_GH_OWNER=yourname. Until set, a placeholder is used so a stray
-// build never silently pulls updates from upstream.
-const GH_OWNER = process.env.YOMA_GH_OWNER ?? "YOUR_GITHUB_USERNAME"
+// Owner of the GitHub repos the packaged app checks for auto-updates
+// (yoma-embedded/yoma-desktop, and yoma-embedded/yoma-desktop-beta for the beta channel).
+// Override the owner via env at release time if needed, e.g. YOMA_GH_OWNER=other-org.
+const GH_OWNER = process.env.YOMA_GH_OWNER ?? "yoma-embedded"
 
 const APP_IDS = {
   dev: "com.yoma.desktop.dev",
@@ -130,7 +130,7 @@ function getConfig() {
         appId,
         productName: "Yoma Beta",
         protocols: { name: "Yoma Beta", schemes: ["yoma"] },
-        publish: { provider: "github", owner: GH_OWNER, repo: "yoma-beta", channel: "latest" },
+        publish: { provider: "github", owner: GH_OWNER, repo: "yoma-desktop-beta", channel: "latest" },
         rpm: { packageName: "yoma-beta" },
       }
     }
@@ -140,7 +140,7 @@ function getConfig() {
         appId,
         productName: "Yoma",
         protocols: { name: "Yoma", schemes: ["yoma"] },
-        publish: { provider: "github", owner: GH_OWNER, repo: "yoma", channel: "latest" },
+        publish: { provider: "github", owner: GH_OWNER, repo: "yoma-desktop", channel: "latest" },
         deb: { fpm: [legacyDesktopEntryFpm] },
         rpm: { packageName: "yoma", fpm: [legacyDesktopEntryFpm] },
       }

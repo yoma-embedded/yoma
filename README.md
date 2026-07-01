@@ -178,9 +178,9 @@ bun dev:desktop                # 启动桌面应用（带界面热更新）
 - **产品名**：Yoma
 - **深链协议**：`yoma://`
 - **图标**：`packages/desktop/icons/{dev,beta,prod}/`（当前是占位「Y」图标，可替换）
-- **自动更新源**：GitHub Releases，仓库由环境变量 **`YOMA_GH_OWNER`** 决定（未设置时为占位符 `YOUR_GITHUB_USERNAME`）
+- **自动更新源**：GitHub Releases，已配置为 `yoma-embedded/yoma-desktop`（beta 渠道用 `yoma-embedded/yoma-desktop-beta`）。owner 可用环境变量 `YOMA_GH_OWNER` 覆盖
 
-> ⚠️ 发布正式版前，务必把 `YOMA_GH_OWNER` 设成你们的 GitHub owner（或改 `electron-builder.config.ts` 里的占位符），否则打出来的包不会从你们的仓库拉更新。
+> ⚠️ 自动更新要能工作，发布用的仓库需**存在且能被应用读取**：electron-updater 的 GitHub provider 默认读**公开** Release。所以若 `yoma-embedded/yoma-desktop` 是私有仓库，自动更新会拿不到（需改用公开的发布仓库、或自建更新服务器）。用 beta 渠道前，先建好 `yoma-desktop-beta` 仓库。
 
 打包：`bun package:win`（或 `:mac` / `:linux`）。渠道用环境变量 `OPENCODE_CHANNEL`（`dev` / `beta` / `prod`）控制。
 

@@ -31,7 +31,7 @@ const xml = `<?xml version="1.0" encoding="UTF-8"?>
 
   <content_rating type="oars-1.1" />
 
-  <url type="homepage">https://github.com/YOUR_GITHUB_USERNAME/yoma</url>
+  <url type="homepage">https://github.com/yoma-embedded/yoma-desktop</url>
 </component>
 `
 

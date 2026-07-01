@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "license": "MIT",
-  "homepage": "https://github.com/YOUR_GITHUB_USERNAME/yoma",
+  "homepage": "https://github.com/yoma-embedded/yoma-desktop",
   "author": {
     "name": "Yoma"
   },
