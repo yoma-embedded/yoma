@@ -81,6 +81,11 @@ const HOME_PROJECT_NAV_LABEL = "min-w-0 flex-1 overflow-hidden text-ellipsis whi
 const HOME_PROJECT_NAV_ROW = `${HOME_ROW_LAYOUT} h-7 gap-2 px-1.5 [font-weight:440] text-v2-text-text-muted hover:bg-v2-background-bg-layer-01 hover:text-v2-text-text-base hover:[box-shadow:inset_0_0_0_0.5px_var(--v2-border-border-muted)] data-[selected]:bg-v2-background-bg-layer-03 data-[selected]:text-v2-text-text-base data-[selected]:[box-shadow:inset_0_0_0_0.5px_var(--v2-border-border-muted)] data-[selected]:hover:bg-v2-background-bg-layer-03 focus-visible:bg-v2-background-bg-layer-01 focus-visible:text-v2-text-text-base focus-visible:[box-shadow:inset_0_0_0_0.5px_var(--v2-border-border-muted)]`
 const HOME_SECTION_LABEL = "text-v2-text-text-muted [font-weight:440]"
 
+// The Codex-style persistent sidebar (see pages/layout/codex-sidebar.tsx) now owns
+// project navigation, so the home screen hides its own project column to avoid a
+// duplicate list. Flip to true to restore the legacy two-column home.
+const SHOW_HOME_PROJECT_COLUMN: boolean = false
+
 type HomeSessionRecord = {
   session: Session
   project: LocalProject
@@ -515,30 +520,38 @@ export function NewHome() {
 
   return (
     <div class="rounded-[10px] shadow-[var(--v2-elevation-raised)] m-2 min-h-0 lg:overflow-hidden bg-v2-background-bg-base self-stretch flex-1">
-      <div class="mx-auto grid h-full w-full max-w-[1080px] grid-rows-[auto_minmax(0,1fr)_auto] gap-4 px-3 lg:grid-cols-[280px_minmax(0,720px)] lg:grid-rows-1 lg:gap-8 lg:px-6">
-        <HomeProjectColumn
-          projects={projects()}
-          selected={selection()}
-          focusServer={focusServer}
-          selectProject={selectProject}
-          openNewSession={openProjectNewSession}
-          chooseProject={(conn) => void chooseProject(conn)}
-          editProject={editProject}
-          closeProject={(conn, directory) => {
-            const next = closeHomeProject(
-              selection(),
-              ServerConnection.key(conn),
-              global.ensureServerCtx(conn).projects,
-              directory,
-            )
-            if (next) setSelection(next)
-          }}
-          clearNotifications={clearNotifications}
-          unseenCount={unseenCount}
-          openSettings={openSettings}
-          openHelp={() => platform.openLink("https://opencode.ai/desktop-feedback")}
-          language={language}
-        />
+      <div
+        class={`mx-auto grid h-full w-full max-w-[1080px] grid-rows-[auto_minmax(0,1fr)_auto] gap-4 px-3 lg:grid-rows-1 lg:gap-8 lg:px-6 ${
+          SHOW_HOME_PROJECT_COLUMN
+            ? "lg:grid-cols-[280px_minmax(0,720px)]"
+            : "lg:grid-cols-[minmax(0,760px)] lg:justify-center"
+        }`}
+      >
+        <Show when={SHOW_HOME_PROJECT_COLUMN}>
+          <HomeProjectColumn
+            projects={projects()}
+            selected={selection()}
+            focusServer={focusServer}
+            selectProject={selectProject}
+            openNewSession={openProjectNewSession}
+            chooseProject={(conn) => void chooseProject(conn)}
+            editProject={editProject}
+            closeProject={(conn, directory) => {
+              const next = closeHomeProject(
+                selection(),
+                ServerConnection.key(conn),
+                global.ensureServerCtx(conn).projects,
+                directory,
+              )
+              if (next) setSelection(next)
+            }}
+            clearNotifications={clearNotifications}
+            unseenCount={unseenCount}
+            openSettings={openSettings}
+            openHelp={() => platform.openLink("https://opencode.ai/desktop-feedback")}
+            language={language}
+          />
+        </Show>
 
         <section
           class="min-h-0 min-w-0 flex-1 flex flex-col pt-6 lg:pt-12 relative"

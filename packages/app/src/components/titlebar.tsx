@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createResource, createSignal, Match, Show, Switch, untrack } from "solid-js"
+import { createEffect, createMemo, createResource, Match, Show, Switch, untrack } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useLocation, useNavigate, useParams } from "@solidjs/router"
 import { IconButton } from "@yoma-desktop/ui/icon-button"
@@ -18,13 +18,12 @@ import { useLanguage } from "@/context/language"
 import { useSettings } from "@/context/settings"
 import { WindowsAppMenu } from "./windows-app-menu"
 import { applyPath, backPath, forwardPath } from "./titlebar-history"
-import { TitlebarTabStrip } from "@/components/titlebar-tab-strip"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { createMediaQuery } from "@solid-primitives/media"
 import { readSessionTabsRemovedDetail, SESSION_TABS_REMOVED_EVENT } from "@/components/titlebar-session-events"
 import { useGlobal } from "@/context/global"
 import { ServerConnection, useServer } from "@/context/server"
-import { tabKey, useTabs } from "@/context/tabs"
+import { useTabs } from "@/context/tabs"
 import "./titlebar.css"
 import { newTabTooltipKeybind } from "./command-tooltip-keybind"
 
@@ -60,7 +59,10 @@ export type TitlebarUpdate = {
   install: () => void
 }
 
-export function Titlebar(props: { update?: TitlebarUpdate }) {
+export function Titlebar(props: {
+  update?: TitlebarUpdate
+  sidebar?: { opened: () => boolean; toggle: () => void }
+}) {
   const layout = useLayout()
   const platform = usePlatform()
   const command = useCommand()
@@ -414,8 +416,6 @@ export function Titlebar(props: { update?: TitlebarUpdate }) {
               ].filter((v) => v !== undefined)
             })
 
-            const [tabsAreOverflowing, setTabsAreOverflowing] = createSignal(false)
-
             return (
               <div
                 class="h-full flex-1 overflow-hidden flex flex-row items-center gap-1.5 px-2 md:pr-3"
@@ -429,6 +429,31 @@ export function Titlebar(props: { update?: TitlebarUpdate }) {
                 <ChannelIndicator />
                 <Show when={windows() || linux()}>
                   <WindowsAppMenu command={command} platform={platform} variant="v2" />
+                </Show>
+                <Show when={props.sidebar}>
+                  {(sidebar) => (
+                    <TooltipV2
+                      placement="bottom"
+                      value={
+                        sidebar().opened() ? language.t("codex.collapseSidebar") : language.t("codex.expandSidebar")
+                      }
+                      class="shrink-0"
+                    >
+                      <IconButtonV2
+                        type="button"
+                        variant="ghost-muted"
+                        size="large"
+                        class="!w-9 shrink-0"
+                        icon={<IconV2 name="sidebar" />}
+                        state={sidebar().opened() ? "pressed" : undefined}
+                        onClick={() => sidebar().toggle()}
+                        aria-label={
+                          sidebar().opened() ? language.t("codex.collapseSidebar") : language.t("codex.expandSidebar")
+                        }
+                        aria-pressed={sidebar().opened()}
+                      />
+                    </TooltipV2>
+                  )}
                 </Show>
                 <TooltipV2
                   placement="bottom"
@@ -453,22 +478,6 @@ export function Titlebar(props: { update?: TitlebarUpdate }) {
                   />
                 </TooltipV2>
 
-                <TitlebarTabStrip
-                  tabs={tabsStore}
-                  currentTab={currentTab}
-                  activeServerKey={server.key}
-                  forceTruncate={tabsAreOverflowing()}
-                  onOverflowChange={setTabsAreOverflowing}
-                  onNavigate={(tab, el) => {
-                    tabs.select(tab)
-                    el?.scrollIntoView({ behavior: "instant" })
-                  }}
-                  onClose={(tab) => {
-                    const index = tabsStore.findIndex((item) => tabKey(item) === tabKey(tab))
-                    if (index !== -1) tabsStoreActions.removeTab(index)
-                  }}
-                  onReorder={(keys) => tabsStoreActions.reorder(keys)}
-                />
                 <Show when={!creating()}>
                   <TooltipV2
                     placement="bottom"
