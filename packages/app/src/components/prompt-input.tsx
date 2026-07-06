@@ -1495,7 +1495,9 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     restoreEndOnFocus = true
     props.ref?.(el)
   }
-  const showAgentControl = createMemo(() => props.controls.agents.visible && props.controls.agents.options.length > 0)
+  // Show the agent switcher whenever there's more than one agent to switch between
+  // (independent of the customAgents visibility preference).
+  const showAgentControl = createMemo(() => props.controls.agents.options.length > 1)
   const agentControlState = createMemo<ComposerAgentControlState>(() => ({
     title: language.t("command.agent.cycle"),
     keybind: command.keybindParts("agent.cycle"),

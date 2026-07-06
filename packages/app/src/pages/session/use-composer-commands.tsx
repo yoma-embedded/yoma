@@ -1,7 +1,6 @@
 import { useCommand, type CommandOption } from "@/context/command"
 import { useLanguage } from "@/context/language"
 import { useLocal } from "@/context/local"
-import { useSettings } from "@/context/settings"
 import { useDialog } from "@yoma-desktop/ui/context/dialog"
 import { useSessionLayout } from "./session-layout"
 import { createSessionOwnership } from "./session-ownership"
@@ -18,7 +17,6 @@ export const useComposerCommands = () => {
   const dialog = useDialog()
   const language = useLanguage()
   const local = useLocal()
-  const settings = useSettings()
   const { sessionKey } = useSessionLayout()
   const sessionOwnership = createSessionOwnership(sessionKey)
   const modelCommand = withCategory(language.t("command.category.model"))
@@ -54,7 +52,7 @@ export const useComposerCommands = () => {
       description: language.t("command.agent.cycle.description"),
       keybind: "mod+.",
       slash: "agent",
-      disabled: !settings.visibility.customAgents(),
+      disabled: local.agent.list().length <= 1,
       onSelect: () => local.agent.move(1),
     }),
     agentCommand({
@@ -62,7 +60,7 @@ export const useComposerCommands = () => {
       title: language.t("command.agent.cycle.reverse"),
       description: language.t("command.agent.cycle.reverse.description"),
       keybind: "shift+mod+.",
-      disabled: !settings.visibility.customAgents(),
+      disabled: local.agent.list().length <= 1,
       onSelect: () => local.agent.move(-1),
     }),
   ])
