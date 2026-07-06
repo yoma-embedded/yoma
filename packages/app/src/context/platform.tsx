@@ -61,6 +61,9 @@ type PlatformBase = {
   /** Open a native save file picker dialog (desktop only) */
   saveFilePickerDialog?(opts?: SaveFilePickerOptions): Promise<string | null>
 
+  /** Create a directory `<parent>/<name>` and return its absolute path (desktop only) */
+  createDirectory?(parent: string, name: string): Promise<string>
+
   /** Storage mechanism, defaults to localStorage */
   storage?: (name?: string) => SyncStorage | AsyncStorage
 

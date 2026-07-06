@@ -199,6 +199,10 @@ const createPlatform = (): Platform => {
       })
     },
 
+    async createDirectory(parent, name) {
+      return window.api.createDirectory(parent, name)
+    },
+
     openLink(url: string) {
       window.api.openLink(url)
     },

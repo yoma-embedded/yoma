@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process"
-import { stat } from "node:fs/promises"
-import { basename } from "node:path"
+import { mkdir, stat } from "node:fs/promises"
+import { basename, join } from "node:path"
 import { app, BrowserWindow, Notification, clipboard, dialog, ipcMain, shell } from "electron"
 import type { IpcMainEvent, IpcMainInvokeEvent } from "electron"
 import type { DesktopMenuAction } from "@yoma-desktop/app/desktop-menu"
@@ -160,6 +160,15 @@ export function registerIpcHandlers(deps: Deps) {
       })
       if (result.canceled) return null
       return result.filePath ?? null
+    },
+  )
+
+  ipcMain.handle(
+    "create-directory",
+    async (_event: IpcMainInvokeEvent, parent: string, name: string) => {
+      const target = join(parent, name)
+      await mkdir(target, { recursive: true })
+      return target
     },
   )
 
