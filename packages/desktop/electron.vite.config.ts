@@ -1,16 +1,6 @@
 import { sentryVitePlugin } from "@sentry/vite-plugin"
 import { defineConfig } from "electron-vite"
 import appPlugin from "@yoma-desktop/app/vite"
-import * as fs from "node:fs/promises"
-import * as path from "node:path"
-import { fileURLToPath } from "node:url"
-
-// The opencode Node server bundle is consumed as the @yoma-desktop/opencode-server
-// artifact (built in the backend repo via `bun publish/build-server.ts`), not from a
-// sibling source tree. Resolve its package dir from node_modules.
-const OPENCODE_SERVER_DIST = path.dirname(
-  fileURLToPath(import.meta.resolve("@yoma-desktop/opencode-server/package.json")),
-)
 
 const channel = (() => {
   const raw = process.env.OPENCODE_CHANNEL
@@ -61,16 +51,13 @@ export default defineConfig({
         name: "opencode:virtual-server-module",
         enforce: "pre",
         resolveId(id) {
-          if (id === "virtual:opencode-server") return this.resolve(`${OPENCODE_SERVER_DIST}/node.js`)
-        },
-      },
-      {
-        name: "opencode:copy-server-assets",
-        async writeBundle() {
-          for (const l of await fs.readdir(OPENCODE_SERVER_DIST)) {
-            if (!l.endsWith(".wasm")) continue
-            await fs.writeFile(`./out/main/chunks/${l}`, await fs.readFile(`${OPENCODE_SERVER_DIST}/${l}`))
-          }
+          // Externalize the prebuilt server bundle as its bare package specifier instead of inlining
+          // (or copying) it. Re-bundling the 30MB bun bundle through rollup/esbuild corrupts it
+          // (v1.17.14 pulls the TS language service in, tripping an "Unterminated string literal" at
+          // renderChunk). Resolving to the package name — not a copied-out file — keeps node.js
+          // running from its own node_modules dir at runtime, where its deps (jsonc-parser,
+          // @lydell/node-pty) and its .wasm files are colocated siblings and resolve naturally.
+          if (id === "virtual:opencode-server") return { id: "@yoma-desktop/opencode-server", external: true }
         },
       },
     ],

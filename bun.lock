@@ -80,7 +80,7 @@
       "name": "@yoma-desktop/desktop",
       "version": "0.1.0",
       "dependencies": {
-        "@yoma-desktop/opencode-server": "file:../../../opencode/publish/server",
+        "@yoma-desktop/opencode-server": "file:../../../yoma/publish/server",
         "@zip.js/zip.js": "2.7.62",
         "effect": "catalog:",
         "electron-context-menu": "4.1.2",
@@ -2114,7 +2114,7 @@
 
     "@tailwindcss/oxide-wasm32-wasi/tslib": ["tslib@2.8.1", "https://registry.npmmirror.com/tslib/-/tslib-2.8.1.tgz", { "bundled": true }, "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w=="],
 
-    "@yoma-desktop/desktop/@yoma-desktop/opencode-server": ["@yoma-desktop/opencode-server@file:../opencode/publish/server", { "dependencies": { "@lydell/node-pty": "1.2.0-beta.12", "jsonc-parser": "3.3.1" } }],
+    "@yoma-desktop/desktop/@yoma-desktop/opencode-server": ["@yoma-desktop/opencode-server@file:../yoma/publish/server", { "dependencies": { "@lydell/node-pty": "1.2.0-beta.12", "jsonc-parser": "3.3.1" } }],
 
     "@yoma-desktop/desktop/marked": ["marked@15.0.12", "https://registry.npmmirror.com/marked/-/marked-15.0.12.tgz", { "bin": { "marked": "bin/marked.js" } }, "sha512-8dD6FusOQSrpv9Z1rdNMdlSgQOIP880DHqnohobOmYLElGEqAL/JvxvuxZO16r4HtjTlfPRDC1hbvxC9dPN2nA=="],
 
