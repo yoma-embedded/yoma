@@ -5,17 +5,38 @@
     "": {
       "name": "my-pi",
       "dependencies": {
-        "@earendil-works/pi-agent-core": "file:../pi-minimal/packages/agent",
-        "@earendil-works/pi-ai": "file:../pi-minimal/packages/ai",
+        "@earendil-works/pi-ai": "workspace:*",
+        "@yoma/my-pi": "workspace:*",
       },
       "devDependencies": {
         "@types/bun": "1.3.14",
         "typescript": "5.9.3",
       },
     },
-  },
-  "overrides": {
-    "@earendil-works/pi-ai": "file:../pi-minimal/packages/ai",
+    "packages/agent": {
+      "name": "@yoma/my-pi",
+      "version": "0.1.0",
+      "dependencies": {
+        "@earendil-works/pi-ai": "workspace:*",
+        "ignore": "7.0.5",
+        "typebox": "1.1.38",
+        "yaml": "2.9.0",
+      },
+    },
+    "packages/ai": {
+      "name": "@earendil-works/pi-ai",
+      "version": "0.80.6",
+      "dependencies": {
+        "@anthropic-ai/sdk": "0.91.1",
+        "openai": "6.26.0",
+        "partial-json": "0.1.7",
+        "typebox": "1.1.38",
+      },
+      "devDependencies": {
+        "@types/node": "24.12.4",
+        "vitest": "4.1.9",
+      },
+    },
   },
   "packages": {
     "@anthropic-ai/sdk": ["@anthropic-ai/sdk@0.91.1", "", { "dependencies": { "json-schema-to-ts": "^3.1.1" }, "peerDependencies": { "zod": "^3.25.0 || ^4.0.0" }, "optionalPeers": ["zod"], "bin": { "anthropic-ai-sdk": "bin/cli" } }, "sha512-LAmu761tSN9r66ixvmciswUj/ZC+1Q4iAfpedTfSVLeswRwnY3n2Nb6Tsk+cLPP28aLOPWeMgIuTuCcMC6W/iw=="],
@@ -32,9 +53,7 @@
 
     "@bcoe/v8-coverage": ["@bcoe/v8-coverage@1.0.2", "", {}, "sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA=="],
 
-    "@earendil-works/pi-agent-core": ["@earendil-works/pi-agent-core@file:../pi-minimal/packages/agent", { "dependencies": { "@earendil-works/pi-ai": "^0.80.6", "ignore": "7.0.5", "typebox": "1.1.38", "yaml": "2.9.0" }, "devDependencies": { "@types/node": "24.12.4", "@vitest/coverage-v8": "4.1.9", "typescript": "5.9.3", "vitest": "4.1.9" } }],
-
-    "@earendil-works/pi-ai": ["@earendil-works/pi-ai@file:../pi-minimal/packages/ai", { "dependencies": { "@anthropic-ai/sdk": "0.91.1", "openai": "6.26.0", "partial-json": "0.1.7", "typebox": "1.1.38" }, "devDependencies": { "@types/node": "24.12.4", "vitest": "4.1.9" } }],
+    "@earendil-works/pi-ai": ["@earendil-works/pi-ai@workspace:packages/ai"],
 
     "@emnapi/core": ["@emnapi/core@1.11.1", "", { "dependencies": { "@emnapi/wasi-threads": "1.2.2", "tslib": "^2.4.0" } }, "sha512-RSvbQmHzdKzNsLYa/wHrbc3KN4sYLKAdPZxqiM2HATqv/SBk2/ENSHpvXGaLOMcsAyz0poEGqkmmKYG3OWiJEQ=="],
 
@@ -113,6 +132,8 @@
     "@vitest/spy": ["@vitest/spy@4.1.9", "", {}, "sha512-fHpsS6mIi+PiEW+vcRVOMkX1oSaPKne3VOclSFICPcGOmfKgXPU5iAah+wcNcj2xPrCCmfq99IDGf+EojhhvhA=="],
 
     "@vitest/utils": ["@vitest/utils@4.1.9", "", { "dependencies": { "@vitest/pretty-format": "4.1.9", "convert-source-map": "^2.0.0", "tinyrainbow": "^3.1.0" } }, "sha512-A51o8ymO5PpqlWNnBP9ZHPXDIpuMtTLlGSjN7la4US+LJzoUMyhwjA5QXlm39JexgwHKW4Xjs8Z2d3dLCXOeuA=="],
+
+    "@yoma/my-pi": ["@yoma/my-pi@workspace:packages/agent"],
 
     "assertion-error": ["assertion-error@2.0.1", "", {}, "sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA=="],
 
@@ -237,7 +258,5 @@
     "why-is-node-running": ["why-is-node-running@2.3.0", "", { "dependencies": { "siginfo": "^2.0.0", "stackback": "0.0.2" }, "bin": { "why-is-node-running": "cli.js" } }, "sha512-hUrmaWBdVDcxvYqnyh09zunKzROWjbZTiNy8dBEjkS7ehEDQibXJ7XvlmtbwuTclUiIyN+CyXQD4Vmko8fNm8w=="],
 
     "yaml": ["yaml@2.9.0", "", { "bin": { "yaml": "bin.mjs" } }, "sha512-2AvhNX3mb8zd6Zy7INTtSpl1F15HW6Wnqj0srWlkKLcpYl/gMIMJiyuGq2KeI2YFxUPjdlB+3Lc10seMLtL4cA=="],
-
-    "@earendil-works/pi-agent-core/@earendil-works/pi-ai": ["@earendil-works/pi-ai@file:../pi-minimal/packages/ai", {}],
   }
 }

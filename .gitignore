@@ -2,6 +2,9 @@ node_modules/
 dist/
 coverage/
 
+# vendored pi-ai is consumed via its prebuilt dist — keep it in git
+!packages/ai/dist/
+
 .env
 .env.*
 !.env.example

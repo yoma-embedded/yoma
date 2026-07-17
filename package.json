@@ -4,21 +4,20 @@
 	"private": true,
 	"type": "module",
 	"packageManager": "bun@1.3.14",
+	"workspaces": ["packages/ai", "packages/agent"],
 	"scripts": {
-		"dev": "bun --watch src/main.ts",
-		"start": "bun src/main.ts",
-		"test": "bun test",
-		"typecheck": "tsc --noEmit"
+		"test": "bun test packages/agent",
+		"typecheck": "tsc --noEmit",
+		"example:01": "bun examples/01-minimal-agent.ts",
+		"example:02": "bun examples/02-anthropic-stream.ts",
+		"example:03": "bun examples/03-harness-session.ts"
 	},
 	"dependencies": {
-		"@earendil-works/pi-agent-core": "file:../pi-minimal/packages/agent",
-		"@earendil-works/pi-ai": "file:../pi-minimal/packages/ai"
+		"@yoma/my-pi": "workspace:*",
+		"@earendil-works/pi-ai": "workspace:*"
 	},
 	"devDependencies": {
 		"@types/bun": "1.3.14",
 		"typescript": "5.9.3"
-	},
-	"overrides": {
-		"@earendil-works/pi-ai": "file:../pi-minimal/packages/ai"
 	}
 }

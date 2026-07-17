@@ -1,0 +1,4 @@
+# scope bare `bun test` to our own package — packages/ai is vendored
+# and its vitest-based tests are not meant to run under bun
+[test]
+root = "packages/agent"

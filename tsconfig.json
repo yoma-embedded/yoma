@@ -16,6 +16,6 @@
 		"noImplicitOverride": true,
 		"forceConsistentCasingInFileNames": true
 	},
-	"include": ["src/**/*.ts", "tests/**/*.ts"],
+	"include": ["packages/agent/src/**/*.ts", "packages/agent/test/**/*.ts", "examples/**/*.ts"],
 	"exclude": ["node_modules", "dist", "coverage"]
 }
