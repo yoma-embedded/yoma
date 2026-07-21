@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron"
 import type { ElectronAPI, WslServersEvent } from "./types"
 import type { UpdaterState } from "@yoma-desktop/app/updater"
+import type { ManualsEvent } from "@yoma-desktop/app/manuals/types"
 
 const updaterCallbacks = new Set<(state: UpdaterState) => void>()
 let updaterState: UpdaterState | undefined
@@ -36,6 +37,23 @@ const api: ElectronAPI = {
     addServer: (distro) => ipcRenderer.invoke("wsl-servers-add", distro),
     removeServer: (id) => ipcRenderer.invoke("wsl-servers-remove", id),
     startServer: (id) => ipcRenderer.invoke("wsl-servers-start", id),
+  },
+  manuals: {
+    config: () => ipcRenderer.invoke("manuals-config"),
+    list: () => ipcRenderer.invoke("manuals-list"),
+    download: (chip, rev) => ipcRenderer.invoke("manuals-download", chip, rev),
+    updateIndex: () => ipcRenderer.invoke("manuals-index-update"),
+    ingest: (req) => ipcRenderer.invoke("manuals-ingest", req),
+    cancelIngest: () => ipcRenderer.invoke("manuals-cancel-ingest"),
+    subscribe: (cb) => {
+      const handler = (_: unknown, event: ManualsEvent) => cb(event)
+      ipcRenderer.on("manuals-event", handler)
+      void ipcRenderer.invoke("manuals-subscribe")
+      return () => {
+        ipcRenderer.removeListener("manuals-event", handler)
+        void ipcRenderer.invoke("manuals-unsubscribe")
+      }
+    },
   },
   updater: {
     subscribe: async (cb) => {

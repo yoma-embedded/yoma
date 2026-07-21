@@ -4,6 +4,7 @@ import type { Accessor } from "solid-js"
 import type { DesktopMenuAction } from "../desktop-menu"
 import { ServerConnection } from "./server"
 import type { WslServersPlatform } from "../wsl/types"
+import type { ManualsPlatform } from "../manuals/types"
 import type { UpdaterPlatform } from "../updater"
 
 type PickerPaths = string | string[] | null
@@ -81,6 +82,9 @@ type PlatformBase = {
 
   /** Manage WSL sidecar servers (Electron on Windows only) */
   wslServers?: WslServersPlatform
+
+  /** Datasheet manual library: list/download shared manuals, ingest user docs (desktop only) */
+  manuals?: ManualsPlatform
 
   /** Get the preferred display backend (desktop only) */
   getDisplayBackend?(): Promise<DisplayBackend | null> | DisplayBackend | null

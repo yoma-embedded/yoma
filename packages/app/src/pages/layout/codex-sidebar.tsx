@@ -1,4 +1,5 @@
 import { createEffect, createMemo, createSignal, For, Show, type JSX } from "solid-js"
+import { useNavigate } from "@solidjs/router"
 import type { Session } from "@opencode-ai/sdk/v2/client"
 import { Icon as IconV2 } from "@yoma-desktop/ui/v2/icon"
 import { IconButtonV2 } from "@yoma-desktop/ui/v2/icon-button-v2"
@@ -34,6 +35,8 @@ export function CodexSidebar(props: { onOpenSearch: () => void }) {
   const language = useLanguage()
   const pickDirectory = useDirectoryPicker()
   const dialog = useDialog()
+  const platform = usePlatform()
+  const navigate = useNavigate()
 
   const projects = createMemo(() => layout.projects.list())
   const projectByID = createMemo(
@@ -118,6 +121,9 @@ export function CodexSidebar(props: { onOpenSearch: () => void }) {
       <div class="flex flex-col gap-0.5 pt-1">
         <ActionRow icon="edit" label={language.t("codex.newChat")} onClick={() => newChat()} />
         <ActionRow icon="magnifying-glass" label={language.t("codex.search")} onClick={props.onOpenSearch} />
+        <Show when={platform.manuals}>
+          <ActionRow icon="archive" label="手册库" onClick={() => navigate("/manuals")} />
+        </Show>
       </div>
 
       <ScrollView class="-mr-1 min-h-0 flex-1 pr-1">

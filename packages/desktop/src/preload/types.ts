@@ -14,6 +14,7 @@ export type {
   WslServersEvent,
   WslServersState,
 } from "@yoma-desktop/app/wsl/types"
+import type { ManualsPlatform } from "@yoma-desktop/app/manuals/types"
 
 export type ServerReadyData = {
   url: string
@@ -22,6 +23,7 @@ export type ServerReadyData = {
 }
 
 export type WslServersAPI = WslServersPlatform
+export type ManualsAPI = ManualsPlatform
 export type UpdaterAPI = {
   subscribe: (cb: (state: UpdaterState) => void) => Promise<() => void>
   check: () => Promise<UpdaterState>
@@ -45,6 +47,7 @@ export type ElectronAPI = {
   installCli: () => Promise<string>
   awaitInitialization: () => Promise<ServerReadyData>
   wslServers: WslServersAPI
+  manuals: ManualsAPI
   updater: UpdaterAPI
   consumeInitialDeepLinks: () => Promise<string[]>
   getDefaultServerUrl: () => Promise<string | null>

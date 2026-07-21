@@ -66,6 +66,7 @@ import Session from "@/pages/session"
 import { NewHome, LegacyHome } from "@/pages/home"
 
 const NewSession = lazy(() => import("@/pages/new-session"))
+const ManualsPage = lazy(() => import("@/pages/manuals"))
 
 const SessionRoute = () => {
   const settings = useSettings()
@@ -627,6 +628,7 @@ function Routes() {
       </Route>
       <Show when={settings.general.newLayoutDesigns()}>
         <Route path="/" component={NewHome} />
+        <Route path="/manuals" component={ManualsPage} />
         <Route path="/:dir/session/:id" component={LegacyTargetSessionRoute} />
       </Show>
       <Route path="/new-session" component={DraftRoute} />
