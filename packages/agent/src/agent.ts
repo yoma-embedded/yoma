@@ -12,11 +12,13 @@ import type {
 	AgentContext,
 	AgentEvent,
 	AgentLoopConfig,
+	AgentLoopTurnUpdate,
 	AgentMessage,
 	AgentState,
 	AgentTool,
 	BeforeToolCallContext,
 	BeforeToolCallResult,
+	PrepareNextTurnContext,
 	QueueMode,
 	StreamFn,
 	ToolExecutionMode,
@@ -139,6 +141,16 @@ export interface AgentOptions {
 	getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
 	beforeToolCall?: (context: BeforeToolCallContext, signal?: AbortSignal) => Promise<BeforeToolCallResult | undefined>;
 	afterToolCall?: (context: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>;
+	/** Legacy variant: only receives the run's abort signal. Ignored when `prepareNextTurnWithContext` is set. */
+	prepareNextTurn?: (
+		signal?: AbortSignal,
+	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
+	prepareNextTurnWithContext?: (
+		context: PrepareNextTurnContext,
+		signal?: AbortSignal,
+	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
+	/** Session identifier forwarded to providers for cache-aware backends. */
+	sessionId?: string;
 	toolExecution?: ToolExecutionMode;
 	steeringMode?: QueueMode;
 	followUpMode?: QueueMode;
@@ -171,6 +183,16 @@ export class Agent {
 		context: AfterToolCallContext,
 		signal?: AbortSignal,
 	) => Promise<AfterToolCallResult | undefined>;
+	/** Legacy variant: only receives the run's abort signal. Ignored when `prepareNextTurnWithContext` is set. */
+	public prepareNextTurn?: (
+		signal?: AbortSignal,
+	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
+	public prepareNextTurnWithContext?: (
+		context: PrepareNextTurnContext,
+		signal?: AbortSignal,
+	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
+	/** Session identifier forwarded to providers for cache-aware backends. */
+	public sessionId?: string;
 	public toolExecution: ToolExecutionMode;
 	private activeRun?: ActiveRun;
 
@@ -182,6 +204,9 @@ export class Agent {
 		this.getApiKey = options.getApiKey;
 		this.beforeToolCall = options.beforeToolCall;
 		this.afterToolCall = options.afterToolCall;
+		this.prepareNextTurn = options.prepareNextTurn;
+		this.prepareNextTurnWithContext = options.prepareNextTurnWithContext;
+		this.sessionId = options.sessionId;
 		this.toolExecution = options.toolExecution ?? "parallel";
 		this.steeringQueue = new PendingMessageQueue(options.steeringMode ?? "one-at-a-time");
 		this.followUpQueue = new PendingMessageQueue(options.followUpMode ?? "one-at-a-time");
@@ -366,12 +391,22 @@ export class Agent {
 		return {
 			model: this._state.model,
 			reasoning: this._state.thinkingLevel === "off" ? undefined : this._state.thinkingLevel,
+			sessionId: this.sessionId,
 			convertToLlm: this.convertToLlm,
 			transformContext: this.transformContext,
 			getApiKey: this.getApiKey,
 			toolExecution: this.toolExecution,
 			beforeToolCall: this.beforeToolCall,
 			afterToolCall: this.afterToolCall,
+			prepareNextTurn:
+				this.prepareNextTurnWithContext || this.prepareNextTurn
+					? async (context: PrepareNextTurnContext) => {
+							if (this.prepareNextTurnWithContext) {
+								return await this.prepareNextTurnWithContext(context, this.signal);
+							}
+							return await this.prepareNextTurn?.(this.signal);
+						}
+					: undefined,
 			getSteeringMessages: async () => {
 				if (skipInitialSteeringPoll) {
 					skipInitialSteeringPoll = false;

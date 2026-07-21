@@ -146,13 +146,16 @@ function createAgentStream(): EventStream<AgentEvent, AgentMessage[]> {
  *   Outer: when tools/steering settle, drain follow-ups and continue if any
  */
 async function runLoop(
-	currentContext: AgentContext,
+	initialContext: AgentContext,
 	newMessages: AgentMessage[],
-	config: AgentLoopConfig,
+	initialConfig: AgentLoopConfig,
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
 	streamFn?: StreamFn,
 ): Promise<void> {
+	// prepareNextTurn may replace context/model/thinking between turns
+	let currentContext = initialContext;
+	let config = initialConfig;
 	let firstTurn = true;
 	// Step 4: steering queued before / during the run (e.g. user typed while waiting)
 	let pendingMessages: AgentMessage[] = (await config.getSteeringMessages?.()) || [];
@@ -210,7 +213,37 @@ async function runLoop(
 
 			await emit({ type: "turn_end", message, toolResults });
 
-			if (signal?.aborted) {
+			// Note: no early return on signal.aborted here. Abort resolves on the next
+			// stream call, which must return an assistant message with stopReason "aborted".
+
+			const nextTurnSnapshot = await config.prepareNextTurn?.({
+				message,
+				toolResults,
+				context: currentContext,
+				newMessages,
+			});
+			if (nextTurnSnapshot) {
+				currentContext = nextTurnSnapshot.context ?? currentContext;
+				config = {
+					...config,
+					model: nextTurnSnapshot.model ?? config.model,
+					reasoning:
+						nextTurnSnapshot.thinkingLevel === undefined
+							? config.reasoning
+							: nextTurnSnapshot.thinkingLevel === "off"
+								? undefined
+								: nextTurnSnapshot.thinkingLevel,
+				};
+			}
+
+			if (
+				await config.shouldStopAfterTurn?.({
+					message,
+					toolResults,
+					context: currentContext,
+					newMessages,
+				})
+			) {
 				await emit({ type: "agent_end", messages: newMessages });
 				return;
 			}
