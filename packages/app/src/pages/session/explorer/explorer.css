@@ -1,0 +1,169 @@
+/* 资源管理器（右栏 file 模式）。
+   编辑器对齐关键：.exp-code 与 .exp-input 的字体/行高/内边距/tab-size 必须完全一致。 */
+
+.exp-scroll {
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.exp-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.exp-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-weaker) 35%, transparent);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.exp-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.exp-surface {
+  --exp-line-h: 20px;
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  width: max-content;
+  min-width: 100%;
+  min-height: 100%;
+  font-family: var(--font-family-mono);
+  font-feature-settings: var(--font-family-mono--font-feature-settings, normal);
+  font-size: 12px;
+  line-height: var(--exp-line-h);
+  tab-size: 4;
+}
+
+.exp-gutter {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  flex-shrink: 0;
+  width: var(--exp-gutter-ch, 5ch);
+  padding: 8px 0 96px;
+  text-align: right;
+  background: var(--background-base);
+  color: var(--text-weaker);
+  user-select: none;
+  pointer-events: none;
+}
+.exp-ln {
+  height: var(--exp-line-h);
+  padding-right: 1.5ch;
+  font-size: 11px;
+}
+
+.exp-code-wrap {
+  position: relative;
+  flex: 1 0 auto;
+  min-height: 100%;
+}
+
+.exp-code {
+  width: max-content;
+  min-width: 100%;
+  min-height: 100%;
+  padding: 8px 48px 96px 16px;
+  color: var(--text-strong);
+}
+.exp-line {
+  height: var(--exp-line-h);
+  white-space: pre;
+}
+
+.exp-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 8px 48px 96px 16px;
+  background: transparent;
+  border: 0;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+  font: inherit;
+  font-feature-settings: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  tab-size: 4;
+  color: var(--text-strong);
+  -webkit-text-fill-color: transparent;
+  caret-color: var(--text-strong);
+}
+.exp-input:read-only {
+  caret-color: transparent;
+}
+
+/* Add to Chat 浮层 */
+.exp-addchat {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-weaker-base);
+  background: var(--background-base);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.12);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-strong);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.exp-addchat:hover {
+  background: var(--background-stronger);
+}
+.exp-addchat-kbd {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-weaker);
+}
+
+/* 空态按钮（Open File / New File） */
+.exp-cta {
+  height: 30px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border-weaker-base);
+  background: var(--background-base);
+  font-size: 13px;
+  color: var(--text-strong);
+  cursor: pointer;
+}
+.exp-cta:hover {
+  background: var(--background-stronger);
+}
+
+/* 未保存小圆点 */
+.exp-dirty-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 4px;
+  border-radius: 9999px;
+  background: var(--text-weak);
+  flex-shrink: 0;
+}
+
+/* 树窗格滚动条与编辑器一致 */
+.exp-tree {
+  scrollbar-width: thin;
+}
+.exp-tree::-webkit-scrollbar {
+  width: 10px;
+}
+.exp-tree::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-weaker) 35%, transparent);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}

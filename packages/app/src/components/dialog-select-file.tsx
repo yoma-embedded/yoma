@@ -267,7 +267,12 @@ function createSessionEntries(props: {
   return { sessions }
 }
 
-export function DialogSelectFile(props: { mode?: DialogSelectFileMode; onOpenFile?: (path: string) => void }) {
+export function DialogSelectFile(props: {
+  mode?: DialogSelectFileMode
+  onOpenFile?: (path: string) => void
+  /** 提供后完全接管“打开文件”行为（例如资源管理器页），不再走 changes 文件页签流程 */
+  openFile?: (path: string) => void
+}) {
   const command = useCommand()
   const language = useLanguage()
   const platform = usePlatform()
@@ -356,6 +361,10 @@ export function DialogSelectFile(props: { mode?: DialogSelectFileMode; onOpenFil
   }
 
   const open = (path: string) => {
+    if (props.openFile) {
+      props.openFile(path)
+      return
+    }
     const value = file.tab(path)
     void tabs().open(value)
     void file.load(path)

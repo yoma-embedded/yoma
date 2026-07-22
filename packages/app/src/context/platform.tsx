@@ -65,6 +65,9 @@ type PlatformBase = {
   /** Create a directory `<parent>/<name>` and return its absolute path (desktop only) */
   createDirectory?(parent: string, name: string): Promise<string>
 
+  /** 把 UTF-8 文本写入工作区根目录内的相对路径，返回绝对路径；exclusive 时目标已存在则失败（desktop only） */
+  writeTextFile?(input: { root: string; path: string; content: string; exclusive?: boolean }): Promise<string>
+
   /** Storage mechanism, defaults to localStorage */
   storage?: (name?: string) => SyncStorage | AsyncStorage
 
