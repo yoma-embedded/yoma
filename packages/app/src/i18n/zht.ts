@@ -614,6 +614,11 @@ export const dict = {
   "terminal.title": "終端機",
   "terminal.title.numbered": "終端機 {{number}}",
   "terminal.close": "關閉終端機",
+  "terminal.list": "終端機列表",
+  "terminal.count.one": "{{count}} 個終端機",
+  "terminal.count.other": "{{count}} 個終端機",
+  "terminal.openInBottomPanel": "終端機已在底部面板打開",
+  "terminal.moveHere": "移回此處",
 
   "terminal.connectionLost.title": "連線中斷",
   "terminal.connectionLost.description": "終端機連線已中斷。這可能會在伺服器重新啟動時發生。",

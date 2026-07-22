@@ -231,25 +231,6 @@ function TestsView() {
 
 // ------------------------------------------------------------ exports
 
-/** cmd 模式的模拟终端输出 —— 真实终端 (node-pty) 接入后替换 */
-export function CmdMock() {
-  return (
-    <>
-      <div class="ydbg-console">
-        <div>
-          <span class="p">$</span> make flash
-        </div>
-        <div class="o">[build] arm-none-eabi-gcc -O2 main.c drivers/i2c.c … ✓</div>
-        <div class="o">[flash] J-Link: 48 KB @ 0x08000000 … ✓</div>
-        <div>
-          <span class="p">$</span> <span class="ydbg-cur" />
-        </div>
-      </div>
-      <div class="ydbg-filehint">模拟输出 —— 真实终端 (node-pty) 接入后替换</div>
-    </>
-  )
-}
-
 /** 调试模式主体：硬件/仪器状态 + HIL 闭环 + 能力驱动子标签 */
 export function DebugContent() {
   const subtabs = createMemo(() => ({

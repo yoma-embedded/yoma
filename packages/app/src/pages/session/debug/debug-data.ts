@@ -251,6 +251,7 @@ export const debug = createRoot(() => {
   const [fullscreen, setFullscreen] = createSignal(false)
   const [mode, setMode] = createSignal<DockMode>("debug")
   const [subtab, setSubtab] = createSignal<string>("v-i2c")
+  const [cmdList, setCmdList] = createSignal(false)
   const [hil, setHil] = createSignal<HilStep[]>(HIL)
   const [running, setRunning] = createSignal(false)
 
@@ -295,6 +296,9 @@ export const debug = createRoot(() => {
     setMode,
     subtab,
     setSubtab,
+    /** cmd 模式：终端列表栏是否展开 */
+    cmdList,
+    toggleCmdList: () => setCmdList((v) => !v),
     // data (mock)
     instruments: INSTRUMENTS,
     views: VIEWS,

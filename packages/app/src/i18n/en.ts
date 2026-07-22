@@ -753,6 +753,11 @@ export const dict = {
   "terminal.title": "Terminal",
   "terminal.title.numbered": "Terminal {{number}}",
   "terminal.close": "Close terminal",
+  "terminal.list": "Terminal List",
+  "terminal.count.one": "{{count}} Terminal",
+  "terminal.count.other": "{{count}} Terminals",
+  "terminal.openInBottomPanel": "Terminal is open in the bottom panel",
+  "terminal.moveHere": "Move back here",
   "terminal.connectionLost.title": "Connection Lost",
   "terminal.connectionLost.abnormalClose": "WebSocket closed abnormally: {{code}}",
   "terminal.connectionLost.description":

@@ -10,6 +10,13 @@ import { defaultTitle, titleNumber } from "./terminal-title"
 import { Persist, persisted, removePersisted } from "@/utils/persist"
 import { ScopedKey, ServerScope, type ServerScope as ServerScopeValue } from "@/utils/server-scope"
 
+/** 新建终端时可指定的 shell（来自服务端 /pty/shells 检测结果） */
+export type TerminalShell = {
+  command?: string
+  args?: string[]
+  title?: string
+}
+
 export type LocalPTY = {
   id: string
   title: string
@@ -267,17 +274,18 @@ function createWorkspaceTerminalSession(
         setStore("all", [])
       })
     },
-    new() {
+    new(shell?: TerminalShell) {
       const nextNumber = pickNextTerminalNumber()
+      const title = shell?.title ?? defaultTitle(nextNumber)
 
       sdk.client.pty
-        .create({ title: defaultTitle(nextNumber) })
+        .create({ title, command: shell?.command, args: shell?.args })
         .then((pty: { data?: { id?: string; title?: string } }) => {
           const id = pty.data?.id
           if (!id) return
           const newTerminal = {
             id,
-            title: pty.data?.title ?? defaultTitle(nextNumber),
+            title: pty.data?.title ?? title,
             titleNumber: nextNumber,
           }
           setStore("all", store.all.length, newTerminal)
@@ -442,7 +450,7 @@ export const { use: useTerminal, provider: TerminalProvider } = createSimpleCont
       ready: () => workspace().ready(),
       all: () => workspace().all(),
       active: () => workspace().active(),
-      new: () => workspace().new(),
+      new: (shell?: TerminalShell) => workspace().new(shell),
       update: (pty: Partial<LocalPTY> & { id: string }) => workspace().update(pty),
       trim: (id: string) => workspace().trim(id),
       trimAll: () => workspace().trimAll(),

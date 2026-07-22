@@ -629,6 +629,11 @@ export const dict = {
   "terminal.title": "终端",
   "terminal.title.numbered": "终端 {{number}}",
   "terminal.close": "关闭终端",
+  "terminal.list": "终端列表",
+  "terminal.count.one": "{{count}} 个终端",
+  "terminal.count.other": "{{count}} 个终端",
+  "terminal.openInBottomPanel": "终端已在底部面板打开",
+  "terminal.moveHere": "移回此处",
   "terminal.connectionLost.title": "连接已丢失",
   "terminal.connectionLost.description": "终端连接已中断。这可能发生在服务器重启时。",
 

@@ -31,8 +31,9 @@ import {
 } from "@/pages/session/helpers"
 import { setSessionHandoff } from "@/pages/session/handoff"
 import { useSessionLayout } from "@/pages/session/session-layout"
-import { DebugContent, CmdMock } from "@/pages/session/debug/debug-content"
+import { DebugContent } from "@/pages/session/debug/debug-content"
 import { debug as dock, type DockMode } from "@/pages/session/debug/debug-data"
+import { CmdPanel } from "@/pages/session/cmd-panel"
 
 type RenderDiff = (SnapshotFileDiff & { file: string }) | VcsFileDiff
 
@@ -125,6 +126,8 @@ export function SessionSidePanel(props: {
   const switchMode = (m: DockMode) => {
     dock.open()
     dock.setMode(m)
+    // 切到 cmd 时收起底部终端面板，避免同一 PTY 双挂载（两个连接互抢尺寸）
+    if (m === "cmd") view().terminal.close()
     if (m === "changes") {
       if (!view().reviewPanel.opened()) view().reviewPanel.open()
     } else if (view().reviewPanel.opened()) {
@@ -549,11 +552,9 @@ export function SessionSidePanel(props: {
               </div>
             </Match>
 
-            {/* -------- cmd：模拟终端 -------- */}
+            {/* -------- cmd：真实终端（workspace PTY） -------- */}
             <Match when={dock.mode() === "cmd"}>
-              <div class="ydbg flex-1 min-h-0 overflow-y-auto px-3 py-3">
-                <CmdMock />
-              </div>
+              <CmdPanel />
             </Match>
           </Switch>
         </aside>
