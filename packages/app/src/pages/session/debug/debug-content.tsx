@@ -1,12 +1,13 @@
-import { For, Show, createMemo, type JSX } from "solid-js"
+import { For, Match, Show, Switch, createMemo } from "solid-js"
 import {
   debug,
-  type DebugView,
+  type Instrument,
   type Transport,
-  type WaveformData,
-  type TimeseriesData,
-  type ScalarData,
-  type RegistersData,
+  type WaveformDisplay,
+  type TimeseriesDisplay,
+  type ScalarDisplay,
+  type StatusDisplay,
+  type OfflineDisplay,
 } from "./debug-data"
 import "./debug-panel.css"
 
@@ -19,324 +20,172 @@ const TRANSPORT_LABEL: Record<Transport, string> = {
   api: "API",
 }
 
-// ------------------------------------------------------------ view renderers
-// 渲染器注册表：面板按 view.kind 挑组件。加新仪器类别 = 加一个 case，排版不动。
+// ------------------------------------------------------------ display bodies
+// 渲染注册表：每种 display.kind 一个渲染器。新增仪器类别 = 补一个 Match，窗口壳不变。
 
-function WaveformView(props: { data: WaveformData }) {
+function WaveformBody(props: { d: WaveformDisplay }) {
   return (
     <>
-      <div class="ydbg-card">
-        <div class="ydbg-card-h">
-          <span class="ydbg-bus">{props.data.bus}</span>
-          <span class="ydbg-meta">{props.data.meta}</span>
-        </div>
-        <div class="ydbg-wave">
-          <div class="ydbg-lane">SCL</div>
-          <svg viewBox="0 0 320 26" preserveAspectRatio="none" aria-label="SCL clock">
-            <polyline
-              fill="none"
-              stroke="var(--d-accent)"
-              stroke-width="1.6"
-              points="0,22 8,22 8,5 22,5 22,22 36,22 36,5 50,5 50,22 64,22 64,5 78,5 78,22 92,22 92,5 106,5 106,22 120,22 120,5 134,5 134,22 148,22 148,5 162,5 162,22 176,22 176,5 190,5 190,22 204,22 204,5 218,5 218,22 232,22 232,5 246,5 246,22 260,22 260,5 274,5 274,22 320,22"
-            />
-          </svg>
-          <div class="ydbg-lane">
-            SDA <em>— 第 9 个时钟应被从机拉低 (ACK)，实际保持高</em>
-          </div>
-          <svg viewBox="0 0 320 30" preserveAspectRatio="none" aria-label="SDA data">
-            <rect x="246" y="0" width="34" height="30" fill="var(--d-fail-bg)" />
-            <line x1="246" y1="0" x2="246" y2="30" stroke="var(--d-fail)" stroke-width="1" stroke-dasharray="3 2" />
-            <polyline
-              fill="none"
-              stroke="var(--d-ink)"
-              stroke-width="1.6"
-              points="0,6 22,6 22,24 50,24 50,6 78,6 78,24 106,24 106,6 134,6 134,24 162,24 162,6 190,6 218,6 218,24 246,24 246,6 320,6"
-            />
-            <text x="263" y="12" fill="var(--d-fail)" font-size="9" text-anchor="middle" font-family="ui-monospace">
-              NACK
-            </text>
-          </svg>
-        </div>
-        <div class="ydbg-decode">
-          <For each={props.data.decode}>
-            {(b) => (
-              <span class="ydbg-byte" data-bad={b.bad ? "true" : "false"} data-faint={b.faint ? "true" : "false"}>
-                {b.text}
-              </span>
-            )}
-          </For>
-        </div>
+      <div class="ydbg-win-meta">
+        <span class="ydbg-mono">{props.d.meta}</span>
+        <Show when={props.d.flag}>
+          <span class="ydbg-flag">⚠ {props.d.flag}</span>
+        </Show>
       </div>
-      <Show when={props.data.analysis}>
-        <div class="ydbg-analysis">
-          <b>信号完整性：</b>
-          {props.data.analysis}
-        </div>
+      {/* 注意：SVG presentation attribute 不解析 var()，主题色必须走内联 style/CSS */}
+      <svg class="ydbg-wave" viewBox="0 0 320 96" preserveAspectRatio="none" aria-label="logic capture">
+        {/* NACK 异常区高亮（跨两条泳道） */}
+        <rect x="246" y="6" width="34" height="84" style={{ fill: "var(--d-fail-bg)" }} />
+        <line
+          x1="246"
+          y1="6"
+          x2="246"
+          y2="90"
+          stroke-width="1"
+          stroke-dasharray="3 2"
+          style={{ stroke: "var(--d-fail)" }}
+        />
+        {/* SCL */}
+        <text x="4" y="14" class="ydbg-wave-label">
+          SCL
+        </text>
+        <polyline
+          fill="none"
+          stroke-width="1.6"
+          style={{ stroke: "var(--d-accent)" }}
+          points="0,38 8,38 8,20 22,20 22,38 36,38 36,20 50,20 50,38 64,38 64,20 78,20 78,38 92,38 92,20 106,20 106,38 120,38 120,20 134,20 134,38 148,38 148,20 162,20 162,38 176,38 176,20 190,20 190,38 204,38 204,20 218,20 218,38 232,38 232,20 246,20 246,38 260,38 260,20 274,20 274,38 320,38"
+        />
+        {/* SDA */}
+        <text x="4" y="62" class="ydbg-wave-label">
+          SDA
+        </text>
+        <polyline
+          fill="none"
+          stroke-width="1.6"
+          style={{ stroke: "var(--d-ink)" }}
+          points="0,68 22,68 22,86 50,86 50,68 78,68 78,86 106,86 106,68 134,68 134,86 162,86 162,68 190,68 218,68 218,86 246,86 246,68 320,68"
+        />
+        <text
+          x="263"
+          y="60"
+          font-size="10"
+          text-anchor="middle"
+          font-family="ui-monospace"
+          style={{ fill: "var(--d-fail)" }}
+        >
+          NACK
+        </text>
+      </svg>
+      <Show when={props.d.caption}>
+        <div class="ydbg-win-caption">{props.d.caption}</div>
       </Show>
     </>
   )
 }
 
-function TimeseriesView(props: { data: TimeseriesData }) {
-  const path = createMemo(() => {
-    const pts = props.data.points
+function TimeseriesBody(props: { d: TimeseriesDisplay }) {
+  const line = createMemo(() => {
+    const pts = props.d.points
     if (pts.length < 2) return ""
     const min = Math.min(...pts)
     const max = Math.max(...pts)
     const span = max - min || 1
     return pts
       .map((p, i) => {
-        const x = (i / (pts.length - 1)) * 100
-        const y = 40 - ((p - min) / span) * 34 - 3
+        const x = (i / (pts.length - 1)) * 320
+        const y = 86 - ((p - min) / span) * 72
         return `${x.toFixed(1)},${y.toFixed(1)}`
       })
       .join(" ")
   })
   return (
-    <div class="ydbg-card">
-      <div class="ydbg-card-h">
-        <span class="ydbg-bus">功耗曲线</span>
-        <span class="ydbg-meta">{props.data.unit}</span>
-        <Show when={props.data.note}>
-          <span class="ydbg-flag" data-tone="warn">
-            ⚠ {props.data.note}
-          </span>
-        </Show>
-      </div>
-      <div class="ydbg-spark">
-        <svg viewBox="0 0 100 40" preserveAspectRatio="none" aria-label="power timeseries">
-          <polyline fill="none" stroke="var(--d-accent)" stroke-width="1.4" points={path()} />
-        </svg>
-      </div>
-      <div class="ydbg-stats">
-        <For each={props.data.stats}>
-          {(s) => (
-            <div class="ydbg-stat">
-              <div class="k">{s.label}</div>
-              <div class="v">{s.value}</div>
-            </div>
-          )}
-        </For>
-      </div>
-    </div>
-  )
-}
-
-function ScalarView(props: { data: ScalarData }) {
-  return (
-    <div class="ydbg-card">
-      <div class="ydbg-scalar">
-        <div>
-          <span class="big">{props.data.value}</span>
-          <span class="unit">{props.data.unit}</span>
-        </div>
-        <div class="lb">
-          {props.data.label}
-          <Show when={props.data.sub}>
-            <br />
-            {props.data.sub}
-          </Show>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function RegistersView(props: { data: RegistersData }) {
-  return (
-    <div class="ydbg-card">
-      <table class="ydbg-regs">
-        <tbody>
-          <For each={props.data.rows}>
-            {(r) => (
-              <tr data-bad={r.bad ? "true" : "false"}>
-                <td class="nm">{r.name}</td>
-                <td>{r.addr}</td>
-                <td class="val">{r.value}</td>
-                <td class="note">{r.note ?? ""}</td>
-              </tr>
-            )}
-          </For>
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
-function renderView(v: DebugView): JSX.Element {
-  switch (v.kind) {
-    case "waveform":
-      return <WaveformView data={v.data as WaveformData} />
-    case "timeseries":
-      return <TimeseriesView data={v.data as TimeseriesData} />
-    case "scalar":
-      return <ScalarView data={v.data as ScalarData} />
-    case "registers":
-      return <RegistersView data={v.data as RegistersData} />
-    default:
-      return <div class="ydbg-placeholder">暂无 {v.kind} 渲染器</div>
-  }
-}
-
-// ------------------------------------------------------------ fixed subpanes
-
-function ConsoleView() {
-  return (
-    <div class="ydbg-console">
-      <For each={debug.console}>
-        {(l) => (
-          <div data-lv={l.level}>
-            <span class="t">[{l.t}]</span> <span class="m">{l.text}</span>
-          </div>
-        )}
-      </For>
-      <span class="ydbg-cur" />
-    </div>
-  )
-}
-
-function TestsView() {
-  const icon = (st: string) => (st === "pass" ? "✓" : st === "fail" ? "✕" : "◠")
-  return (
     <>
-      <div class="ydbg-tests">
-        <For each={debug.tests}>
-          {(t) => (
-            <div class="ydbg-trow" data-st={t.state}>
-              <span class="ic">{icon(t.state)}</span>
-              <span class="nm">{t.name}</span>
-              <Show
-                when={t.evidence}
-                fallback={<span class="ms">{t.state === "run" ? "运行中…" : t.ms ? `${t.ms} ms` : ""}</span>}
-              >
-                <button class="ev" onClick={() => t.evidence && debug.setSubtab(t.evidence)}>
-                  ↗ 波形证据
-                </button>
-              </Show>
-            </div>
-          )}
-        </For>
-      </div>
-      <Show when={debug.tests.find((t) => t.note)}>
-        {(t) => (
-          <div class="ydbg-analysis" style={{ "margin-top": "10px" }}>
-            <b>{t().name} 失败：</b>
-            {t().note}。证据已链接到「波形」子标签与对话中的证据卡片。
-          </div>
-        )}
-      </Show>
+      <svg class="ydbg-ts" viewBox="0 0 320 96" preserveAspectRatio="none" aria-label="timeseries">
+        <polygon style={{ fill: "var(--d-accent-tint)" }} points={`0,96 ${line()} 320,96`} />
+        <polyline fill="none" stroke-width="1.6" style={{ stroke: "var(--d-accent)" }} points={line()} />
+      </svg>
+      <div class="ydbg-win-caption ydbg-mono">{props.d.summary}</div>
     </>
+  )
+}
+
+function ScalarBody(props: { d: ScalarDisplay }) {
+  return (
+    <div class="ydbg-big">
+      <div>
+        <span class="ydbg-big-v ydbg-mono">{props.d.value}</span>
+        <span class="ydbg-big-u">{props.d.unit}</span>
+      </div>
+      <Show when={props.d.sub}>
+        <div class="ydbg-big-sub">{props.d.sub}</div>
+      </Show>
+    </div>
+  )
+}
+
+function StatusBody(props: { d: StatusDisplay }) {
+  return (
+    <div class="ydbg-big">
+      <div class="ydbg-big-v">{props.d.primary}</div>
+      <Show when={props.d.secondary}>
+        <div class="ydbg-big-sub">{props.d.secondary}</div>
+      </Show>
+    </div>
+  )
+}
+
+function OfflineBody(props: { d: OfflineDisplay }) {
+  return (
+    <div class="ydbg-big ydbg-off">
+      <div class="ydbg-big-v">离线</div>
+      <Show when={props.d.hint}>
+        <div class="ydbg-big-sub">{props.d.hint}</div>
+      </Show>
+    </div>
+  )
+}
+
+// ------------------------------------------------------------ instrument window
+
+function InstrumentWindow(props: { ins: Instrument }) {
+  return (
+    <section class="ydbg-win" data-st={props.ins.status}>
+      <header class="ydbg-win-h">
+        <span class="ydbg-led" />
+        <span class="ydbg-win-name">{props.ins.name}</span>
+        <span class="ydbg-tp">{TRANSPORT_LABEL[props.ins.transport]}</span>
+        <span class="ydbg-win-detail ydbg-mono">{props.ins.detail}</span>
+      </header>
+      <div class="ydbg-win-b">
+        <Switch>
+          <Match when={props.ins.display.kind === "waveform"}>
+            <WaveformBody d={props.ins.display as WaveformDisplay} />
+          </Match>
+          <Match when={props.ins.display.kind === "timeseries"}>
+            <TimeseriesBody d={props.ins.display as TimeseriesDisplay} />
+          </Match>
+          <Match when={props.ins.display.kind === "scalar"}>
+            <ScalarBody d={props.ins.display as ScalarDisplay} />
+          </Match>
+          <Match when={props.ins.display.kind === "status"}>
+            <StatusBody d={props.ins.display as StatusDisplay} />
+          </Match>
+          <Match when={props.ins.display.kind === "offline"}>
+            <OfflineBody d={props.ins.display as OfflineDisplay} />
+          </Match>
+        </Switch>
+      </div>
+    </section>
   )
 }
 
 // ------------------------------------------------------------ exports
 
-/** 调试模式主体：硬件/仪器状态 + HIL 闭环 + 能力驱动子标签 */
+/** 调试模式主体：每台仪器一个大显示窗口，纵向堆叠 */
 export function DebugContent() {
-  const subtabs = createMemo(() => ({
-    views: debug.views.map((v) => ({ id: v.id, label: v.title, badge: v.badge })),
-    pass: debug.tests.filter((t) => t.state === "pass").length,
-    fail: debug.tests.filter((t) => t.state === "fail").length,
-  }))
-
   return (
-    <>
-      {/* pinned: hardware / instruments */}
-      <div class="ydbg-sumhead">
-        <span class="ydbg-t">硬件 / 仪器</span>
-        <button class="ydbg-run" data-running={debug.running() ? "true" : "false"} onClick={() => debug.runHil()}>
-          ▶ 运行 HIL
-        </button>
-      </div>
-      <div class="ydbg-hw">
-        <For each={debug.instruments}>
-          {(ins) => (
-            <div class="ydbg-hwrow" data-st={ins.status}>
-              <span class="ydbg-led" />
-              <div>
-                <div class="ydbg-nm">
-                  {ins.name}
-                  <span class="ydbg-tp">{TRANSPORT_LABEL[ins.transport]}</span>
-                </div>
-                <div class="ydbg-sub ydbg-mono">{ins.detail}</div>
-              </div>
-              <Show when={ins.readout}>
-                {(r) => (
-                  <div class="ydbg-val" data-st={ins.status}>
-                    <b>{r().value}</b>
-                    <Show when={r().sub}>
-                      <small>{r().sub}</small>
-                    </Show>
-                  </div>
-                )}
-              </Show>
-            </div>
-          )}
-        </For>
-      </div>
-
-      {/* HIL loop stepper */}
-      <div class="ydbg-hil">
-        <div class="ydbg-cap">
-          <span>BUILD → FLASH → TEST → FIX 闭环</span>
-          <span class="ydbg-mono">{debug.running() ? "运行中…" : "上次 12.4s"}</span>
-        </div>
-        <div class="ydbg-steps">
-          <For each={debug.hil()}>
-            {(s) => (
-              <div class="ydbg-step" data-st={s.state}>
-                <div class="ydbg-bub">
-                  {s.state === "done" ? "✓" : s.state === "fail" ? "✕" : s.state === "run" ? "◠" : s.label[0]}
-                </div>
-                <div class="ydbg-lb">{s.label}</div>
-              </div>
-            )}
-          </For>
-        </div>
-      </div>
-
-      {/* detail subtabs (capability-driven: 视图来自连接仪器 + 控制台 + 测试) */}
-      <div class="ydbg-subtabs">
-        <For each={subtabs().views}>
-          {(t) => (
-            <button
-              class="ydbg-subtab"
-              data-on={debug.subtab() === t.id ? "true" : "false"}
-              onClick={() => debug.setSubtab(t.id)}
-            >
-              {t.label}
-              <Show when={t.badge}>{(b) => <span class="ydbg-b r">{b().text}</span>}</Show>
-            </button>
-          )}
-        </For>
-        <button
-          class="ydbg-subtab"
-          data-on={debug.subtab() === "console" ? "true" : "false"}
-          onClick={() => debug.setSubtab("console")}
-        >
-          控制台
-        </button>
-        <button
-          class="ydbg-subtab"
-          data-on={debug.subtab() === "tests" ? "true" : "false"}
-          onClick={() => debug.setSubtab("tests")}
-        >
-          测试
-          <span class="ydbg-b g">{subtabs().pass}</span>
-          <span class="ydbg-b r">{subtabs().fail}</span>
-        </button>
-      </div>
-
-      {/* subtab content */}
-      <Show when={debug.subtab() === "console"}>
-        <ConsoleView />
-      </Show>
-      <Show when={debug.subtab() === "tests"}>
-        <TestsView />
-      </Show>
-      <Show when={debug.viewById(debug.subtab())} keyed>
-        {(v) => renderView(v)}
-      </Show>
-    </>
+    <div class="ydbg-wins">
+      <For each={debug.instruments}>{(ins) => <InstrumentWindow ins={ins} />}</For>
+    </div>
   )
 }
