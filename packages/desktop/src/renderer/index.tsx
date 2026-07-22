@@ -203,6 +203,10 @@ const createPlatform = (): Platform => {
       return window.api.createDirectory(parent, name)
     },
 
+    async writeTextFile(input) {
+      return window.api.writeTextFile(input)
+    },
+
     openLink(url: string) {
       window.api.openLink(url)
     },

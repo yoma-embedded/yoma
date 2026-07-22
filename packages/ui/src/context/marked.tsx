@@ -379,6 +379,9 @@ export const OpenCodeTheme = {
 
 registerCustomTheme("OpenCode", () => Promise.resolve(OpenCodeTheme))
 
+/** 转出口给 app 直接取共享 shiki 实例（app 未声明 @pierre/diffs 依赖，统一从 ui 走） */
+export { getSharedHighlighter }
+
 function renderMathInText(text: string): string {
   let result = text
 

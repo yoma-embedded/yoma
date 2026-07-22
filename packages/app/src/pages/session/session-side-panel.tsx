@@ -13,13 +13,13 @@ import type { SnapshotFileDiff, VcsFileDiff } from "@opencode-ai/sdk/v2"
 import { ConstrainDragYAxis, getDraggableId } from "@/utils/solid-dnd"
 import { useDialog } from "@yoma-desktop/ui/context/dialog"
 
-import FileTree from "@/components/file-tree"
 import { SessionContextUsage } from "@/components/session-context-usage"
 import { SessionContextTab, SortableTab, FileVisual } from "@/components/session"
 import { useCommand } from "@/context/command"
 import { useFile, type SelectedLineRange } from "@/context/file"
 import { useLanguage } from "@/context/language"
 import { useLayout } from "@/context/layout"
+import { useSDK } from "@/context/sdk"
 import { useSettings } from "@/context/settings"
 import { createFileTabListSync } from "@/pages/session/file-tab-scroll"
 import { FileTabContent } from "@/pages/session/file-tabs"
@@ -33,6 +33,9 @@ import { setSessionHandoff } from "@/pages/session/handoff"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { DebugContent, CmdMock } from "@/pages/session/debug/debug-content"
 import { debug as dock, type DockMode } from "@/pages/session/debug/debug-data"
+import { ExplorerPanel } from "@/pages/session/explorer/explorer-panel"
+import { explorerScope } from "@/pages/session/explorer/explorer-state"
+import { getFilenameTruncated } from "@yoma-desktop/util/path"
 
 type RenderDiff = (SnapshotFileDiff & { file: string }) | VcsFileDiff
 
@@ -89,6 +92,7 @@ export function SessionSidePanel(props: {
   const language = useLanguage()
   const command = useCommand()
   const dialog = useDialog()
+  const sdk = useSDK()
   const { sessionKey, tabs, view, params } = useSessionLayout()
 
   const isDesktop = createMediaQuery("(min-width: 768px)")
@@ -139,7 +143,8 @@ export function SessionSidePanel(props: {
   }
 
   const open = createMemo(() => dock.opened())
-  const wide = createMemo(() => dock.fullscreen() || dock.mode() === "changes")
+  // file 模式与 changes 一样占满剩余宽度（树 + 编辑器需要空间）
+  const wide = createMemo(() => dock.fullscreen() || dock.mode() === "changes" || dock.mode() === "file")
   const panelWidth = createMemo(() => {
     if (!open()) return "0px"
     if (wide()) return "auto"
@@ -175,21 +180,6 @@ export function SessionSidePanel(props: {
     return out
   })
 
-  const empty = (msg: string) => (
-    <div class="h-full flex flex-col">
-      <div class="h-6 shrink-0" aria-hidden />
-      <div class="flex-1 pb-64 flex items-center justify-center text-center">
-        <div class="text-12-regular text-text-weak">{msg}</div>
-      </div>
-    </div>
-  )
-
-  const nofiles = createMemo(() => {
-    const state = file.tree.state("")
-    if (!state?.loaded) return false
-    return file.tree.children("").length === 0
-  })
-
   const normalizeTab = (tab: string) => {
     if (!tab.startsWith("file://")) return tab
     return file.tab(tab)
@@ -219,10 +209,12 @@ export function SessionSidePanel(props: {
 
   const fileTreeTab = () => layout.fileTree.tab()
 
-  const setFileTreeTabValue = (value: string) => {
-    if (value !== "changes" && value !== "all") return
-    layout.fileTree.setTab(value)
-  }
+  /** file 模式按钮上显示当前打开的文件名（参考稿：第四个 tab 即文件页签） */
+  const explorerFile = createMemo(() => {
+    const path = explorerScope(sdk().directory).openPath()
+    if (!path) return undefined
+    return getFilenameTruncated(path, 18)
+  })
 
   const showAllFiles = () => {
     if (fileTreeTab() !== "changes") return
@@ -350,6 +342,7 @@ export function SessionSidePanel(props: {
             <BarButton
               icon="file-tree"
               title={language.t("session.files.all")}
+              label={explorerFile()}
               on={dock.mode() === "file"}
               onClick={() => switchMode("file")}
             />
@@ -480,66 +473,9 @@ export function SessionSidePanel(props: {
               </div>
             </Match>
 
-            {/* -------- file：原文件树（changes / all），占满面板宽 -------- */}
+            {/* -------- file：Cursor 风格资源管理器（文件树 + 可编辑文件视图） -------- */}
             <Match when={dock.mode() === "file"}>
-              <div class="flex-1 min-h-0 flex flex-col overflow-hidden group/filetree">
-                <Tabs variant="pill" value={fileTreeTab()} onChange={setFileTreeTabValue} class="h-full" data-scope="filetree">
-                  <Tabs.List>
-                    <Tabs.Trigger value="changes" class="flex-1" classes={{ button: "w-full" }}>
-                      {props.reviewCount()}{" "}
-                      {language.t(
-                        props.reviewCount() === 1 ? "session.review.change.one" : "session.review.change.other",
-                      )}
-                    </Tabs.Trigger>
-                    <Tabs.Trigger value="all" class="flex-1" classes={{ button: "w-full" }}>
-                      {language.t("session.files.all")}
-                    </Tabs.Trigger>
-                  </Tabs.List>
-                  <Tabs.Content value="changes" class="bg-background-stronger px-3 py-0">
-                    <Switch>
-                      <Match when={props.hasReview() || !props.diffsReady()}>
-                        <Show
-                          when={props.diffsReady()}
-                          fallback={
-                            <div class="px-2 py-2 text-12-regular text-text-weak">
-                              {language.t("common.loading")}
-                              {language.t("common.loading.ellipsis")}
-                            </div>
-                          }
-                        >
-                          <FileTree
-                            path=""
-                            class="pt-3"
-                            allowed={diffFiles()}
-                            kinds={kinds()}
-                            draggable={false}
-                            active={props.activeDiff}
-                            onFileClick={(node) => {
-                              switchMode("changes")
-                              props.focusReviewDiff(node.path)
-                            }}
-                          />
-                        </Show>
-                      </Match>
-                      <Match when={true}>{empty(props.empty())}</Match>
-                    </Switch>
-                  </Tabs.Content>
-                  <Tabs.Content value="all" class="bg-background-stronger px-3 py-0">
-                    <Switch>
-                      <Match when={nofiles()}>{empty(language.t("session.files.empty"))}</Match>
-                      <Match when={true}>
-                        <FileTree
-                          path=""
-                          class="pt-3"
-                          modified={diffFiles()}
-                          kinds={kinds()}
-                          onFileClick={(node) => openTab(file.tab(node.path))}
-                        />
-                      </Match>
-                    </Switch>
-                  </Tabs.Content>
-                </Tabs>
-              </div>
+              <ExplorerPanel modified={diffFiles()} kinds={kinds()} />
             </Match>
 
             {/* -------- 调试：仪器 / HIL / 波形证据（模拟数据） -------- */}

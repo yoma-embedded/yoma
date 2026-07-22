@@ -223,8 +223,9 @@ export default function Page() {
   const sessionPanelWidth = createMemo(() => {
     if (dockVisible()) {
       if (!debugDock.opened()) return "calc(100% - 36px)" // 收起态：给展开窄条(w-9)留位
-      if (debugDock.mode() === "changes") return `${layout.session.width()}px` // changes：中间固定宽，面板 flex-1
-      return `calc(100% - ${debugDock.width()}px)` // 调试/cmd/file：面板固定宽
+      if (debugDock.mode() === "changes" || debugDock.mode() === "file")
+        return `${layout.session.width()}px` // changes/file：中间固定宽，面板 flex-1
+      return `calc(100% - ${debugDock.width()}px)` // 调试/cmd：面板固定宽
     }
     if (!desktopSidePanelOpen()) return "100%"
     if (desktopReviewOpen()) return `${layout.session.width()}px`
@@ -1807,7 +1808,7 @@ export default function Page() {
             <Show when={!!params.id && mobileTabsBottom()}>{mobileTabs(true, true)}</Show>
           </div>
 
-          <Show when={desktopReviewOpen()}>
+          <Show when={desktopReviewOpen() || (dockVisible() && debugDock.opened() && debugDock.mode() === "file")}>
             <div onPointerDown={() => size.start()}>
               <ResizeHandle
                 classList={{

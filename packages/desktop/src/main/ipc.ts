@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process"
-import { mkdir, stat } from "node:fs/promises"
-import { basename, join } from "node:path"
+import { mkdir, stat, writeFile } from "node:fs/promises"
+import { basename, dirname, join, resolve, sep } from "node:path"
 import { app, BrowserWindow, Notification, clipboard, dialog, ipcMain, shell } from "electron"
 import type { IpcMainEvent, IpcMainInvokeEvent } from "electron"
 import type { DesktopMenuAction } from "@yoma-desktop/app/desktop-menu"
@@ -168,6 +168,26 @@ export function registerIpcHandlers(deps: Deps) {
     async (_event: IpcMainInvokeEvent, parent: string, name: string) => {
       const target = join(parent, name)
       await mkdir(target, { recursive: true })
+      return target
+    },
+  )
+
+  ipcMain.handle(
+    "write-file",
+    async (
+      _event: IpcMainInvokeEvent,
+      input: { root: string; path: string; content: string; exclusive?: boolean },
+    ) => {
+      // 只允许写入工作区根目录以内（同 manuals.ts 的路径围栏惯例）；
+      // 盘符根（如 "C:\"）resolve 后自带尾分隔符，不能盲目再拼一个
+      const root = resolve(input.root)
+      const target = resolve(root, input.path)
+      const prefix = root.endsWith(sep) ? root : root + sep
+      if (target === root || !target.startsWith(prefix)) {
+        throw new Error(`refusing to write outside workspace root: ${input.path}`)
+      }
+      await mkdir(dirname(target), { recursive: true })
+      await writeFile(target, input.content, { encoding: "utf8", flag: input.exclusive ? "wx" : "w" })
       return target
     },
   )
