@@ -542,7 +542,7 @@ export function SessionSidePanel(props: {
               </div>
             </Match>
 
-            {/* -------- 调试：仪器 / HIL / 波形证据（模拟数据） -------- */}
+            {/* -------- 调试：仪器大窗口堆叠（模拟数据） -------- */}
             <Match when={dock.mode() === "debug"}>
               <div class="ydbg flex-1 min-h-0 overflow-y-auto px-3 py-3">
                 <DebugContent />
