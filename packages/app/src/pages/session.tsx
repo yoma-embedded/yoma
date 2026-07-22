@@ -65,6 +65,7 @@ import { type DiffStyle, SessionReviewTab, type SessionReviewTabProps } from "@/
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { syncSessionModel } from "@/pages/session/session-model-helpers"
 import { SessionSidePanel } from "@/pages/session/session-side-panel"
+import { debug as debugDock } from "@/pages/session/debug/debug-data"
 import { TerminalPanel } from "@/pages/session/terminal-panel"
 import { useComposerCommands } from "@/pages/session/use-composer-commands"
 import { useSessionCommands } from "@/pages/session/use-session-commands"
@@ -217,7 +218,14 @@ export default function Page() {
       }),
   )
   const desktopSidePanelOpen = createMemo(() => desktopReviewOpen() || desktopFileTreeOpen())
+  // 右侧四模式面板的可见性 —— 与 SessionSidePanel 内的 Show 条件保持一致
+  const dockVisible = createMemo(() => isDesktop() && !(settings.general.newLayoutDesigns() && !params.id))
   const sessionPanelWidth = createMemo(() => {
+    if (dockVisible()) {
+      if (!debugDock.opened()) return "calc(100% - 36px)" // 收起态：给展开窄条(w-9)留位
+      if (debugDock.mode() === "changes") return `${layout.session.width()}px` // changes：中间固定宽，面板 flex-1
+      return `calc(100% - ${debugDock.width()}px)` // 调试/cmd/file：面板固定宽
+    }
     if (!desktopSidePanelOpen()) return "100%"
     if (desktopReviewOpen()) return `${layout.session.width()}px`
     return `calc(100% - ${layout.fileTree.width()}px)`
@@ -1715,6 +1723,8 @@ export default function Page() {
           }}
           style={{
             width: sessionPanelWidth(),
+            // 右侧面板全屏时隐藏中间会话栏（inline style 优先级高于 flex 类）
+            display: debugDock.fullscreen() ? "none" : undefined,
           }}
         >
           <div
