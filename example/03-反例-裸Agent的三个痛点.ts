@@ -89,7 +89,7 @@ console.log(`transcript 共 ${transcript.length} 条,只会越来越长——裸
 console.log(`最朴素的瘦身:掉头部,比如 transcript.slice(4):\n`);
 
 const truncated = transcript.slice(4);
-console.log(`截断后的第一条消息: role=${truncated[0].role}`, `toolCallId=${(truncated[0] as any).toolCallId}`);
+console.log(`截断后的第一条消息: role=${truncated[0]?.role}`, `toolCallId=${(truncated[0] as any)?.toolCallId}`);
 console.log(`
 → 开头是一条 toolResult,但它对应的 assistant toolCall(call-9)被切掉了。
   真实 provider 会直接 400 拒绝这个请求:"tool result without matching tool call"。

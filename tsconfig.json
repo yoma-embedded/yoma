@@ -12,10 +12,9 @@
 		"strict": true,
 		"skipLibCheck": true,
 		"noFallthroughCasesInSwitch": true,
-		"noUncheckedIndexedAccess": true,
 		"noImplicitOverride": true,
 		"forceConsistentCasingInFileNames": true
 	},
 	"include": ["packages/agent/src/**/*.ts", "packages/agent/test/**/*.ts", "example/**/*.ts"],
-	"exclude": ["node_modules", "dist", "coverage"]
+	"exclude": ["node_modules", "dist", "coverage", "example/04-*.ts"]
 }

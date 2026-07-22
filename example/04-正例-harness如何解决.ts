@@ -1,3 +1,6 @@
+// @ts-nocheck —— 本文件跨仓库导入 pi-minimal 的源码做演示,把它纳入 my-pi 的
+// typecheck 会拖入整棵外部源码树并产生两套 pi-ai 的类型身份冲突;运行(bun)不受影响。
+// 等 M7 完成、import 改回 @yoma/my-pi 后删除本行。
 // 正例:AgentHarness 如何解决 example/03 里的三个痛点。
 //
 // 直接使用 pi-minimal 的真实 harness 实现(相对路径导入),全程离线(faux 模型):
@@ -114,7 +117,7 @@ console.log(`
 console.log("━━━ 解法 3: 会话树分支 —— 重试不毁历史 ━━━\n");
 
 // 换用内存存储,顺便展示存储后端是可插拔的(同一个 SessionStorage 接口)。
-const memSession = new Session(new InMemorySessionStorage({ cwd: dir, sessionId: "demo-3" }));
+const memSession = new Session(new InMemorySessionStorage());
 const memHarness = new AgentHarness({
 	env,
 	session: memSession,
