@@ -61,6 +61,112 @@ export class SessionError extends Error {
 }
 
 // ---------------------------------------------------------------------------
+// FileSystem 能力(M6 首付,Step 4 的磁盘存储需要):所有操作永不 throw,
+// 失败编码为 Result<T, FileError>。Shell/ExecutionEnv 等 M6 再补。
+// ---------------------------------------------------------------------------
+
+/** Kind of filesystem object as addressed by a {@link FileSystem}. Symlinks are not followed automatically. */
+export type FileKind = "file" | "directory" | "symlink";
+
+/** Stable, backend-independent file error codes returned by {@link FileSystem} file operations. */
+export type FileErrorCode =
+	| "aborted"
+	| "not_found"
+	| "permission_denied"
+	| "not_directory"
+	| "is_directory"
+	| "invalid"
+	| "not_supported"
+	| "unknown";
+
+/** Error returned by {@link FileSystem} file operations. */
+export class FileError extends Error {
+	/** Backend-independent error code. */
+	public code: FileErrorCode;
+	/** Absolute addressed path associated with the failure, when available. */
+	public path?: string;
+
+	constructor(code: FileErrorCode, message: string, path?: string, cause?: Error) {
+		super(message, cause === undefined ? undefined : { cause });
+		this.name = "FileError";
+		this.code = code;
+		this.path = path;
+	}
+}
+
+/** Metadata for one filesystem object in a {@link FileSystem}. */
+export interface FileInfo {
+	/** Basename of {@link path}. */
+	name: string;
+	/** Absolute, syntactically normalized addressed path in the execution environment. Symlinks are not followed. */
+	path: string;
+	/** Object kind. Symlink targets are not followed; use {@link FileSystem.canonicalPath} explicitly. */
+	kind: FileKind;
+	/** Size in bytes for the addressed filesystem object. */
+	size: number;
+	/** Modification time as milliseconds since Unix epoch. */
+	mtimeMs: number;
+}
+
+/**
+ * Filesystem capability used by the harness.
+ *
+ * Paths passed to methods may be absolute or relative to {@link cwd}. Operation methods must never throw or reject —
+ * all filesystem failures are encoded in the returned {@link Result}.
+ */
+export interface FileSystem {
+	/** Current working directory for relative paths. */
+	cwd: string;
+
+	/** Return an absolute addressed path without requiring it to exist and without resolving symlinks. */
+	absolutePath(path: string, abortSignal?: AbortSignal): Promise<Result<string, FileError>>;
+	/** Join path segments in the filesystem namespace without requiring the result to exist. */
+	joinPath(parts: string[], abortSignal?: AbortSignal): Promise<Result<string, FileError>>;
+	/** Read a UTF-8 text file. */
+	readTextFile(path: string, abortSignal?: AbortSignal): Promise<Result<string, FileError>>;
+	/** Read UTF-8 text lines. Implementations should stop once `maxLines` lines have been read. */
+	readTextLines(
+		path: string,
+		options?: { maxLines?: number; abortSignal?: AbortSignal },
+	): Promise<Result<string[], FileError>>;
+	/** Read a binary file. */
+	readBinaryFile(path: string, abortSignal?: AbortSignal): Promise<Result<Uint8Array, FileError>>;
+	/** Create or overwrite a file, creating parent directories when supported. */
+	writeFile(path: string, content: string | Uint8Array, abortSignal?: AbortSignal): Promise<Result<void, FileError>>;
+	/** Create or append to a file, creating parent directories when supported. */
+	appendFile(path: string, content: string | Uint8Array, abortSignal?: AbortSignal): Promise<Result<void, FileError>>;
+	/** Return metadata for the addressed path without following symlinks. */
+	fileInfo(path: string, abortSignal?: AbortSignal): Promise<Result<FileInfo, FileError>>;
+	/** List direct children of a directory without following symlinks. */
+	listDir(path: string, abortSignal?: AbortSignal): Promise<Result<FileInfo[], FileError>>;
+	/** Return the canonical path for an existing path, resolving symlinks where supported. */
+	canonicalPath(path: string, abortSignal?: AbortSignal): Promise<Result<string, FileError>>;
+	/** Return false for missing paths. Other errors, such as permission failures, return a {@link FileError}. */
+	exists(path: string, abortSignal?: AbortSignal): Promise<Result<boolean, FileError>>;
+	/** Create a directory. Defaults: `recursive: true`, no abort signal. */
+	createDir(
+		path: string,
+		options?: { recursive?: boolean; abortSignal?: AbortSignal },
+	): Promise<Result<void, FileError>>;
+	/** Remove a file or directory. Defaults: `recursive: false`, `force: false`, no abort signal. */
+	remove(
+		path: string,
+		options?: { recursive?: boolean; force?: boolean; abortSignal?: AbortSignal },
+	): Promise<Result<void, FileError>>;
+	/** Create a temporary directory and return its absolute path. Defaults: `prefix: "tmp-"`, no abort signal. */
+	createTempDir(prefix?: string, abortSignal?: AbortSignal): Promise<Result<string, FileError>>;
+	/** Create a temporary file and return its absolute path. Defaults: `prefix: ""`, `suffix: ""`, no abort signal. */
+	createTempFile(options?: {
+		prefix?: string;
+		suffix?: string;
+		abortSignal?: AbortSignal;
+	}): Promise<Result<string, FileError>>;
+
+	/** Release filesystem resources. Must be best-effort and must not throw or reject. */
+	cleanup(): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
 // 会话树条目:每个条目带 {id(UUIDv7), parentId, timestamp},树 = parentId 链接。
 // 换模型、压缩、打标签、甚至移动光标(leaf)本身都是追加的条目。
 // ---------------------------------------------------------------------------

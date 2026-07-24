@@ -1,11 +1,13 @@
-// Step 3 验收:Session 门面 + buildContext 投影(参考 pi-minimal session.test.ts)。
-// 测试套件参数化于存储后端:目前只跑 InMemory;Step 4 实现 JsonlSessionStorage 后,
-// 在文件末尾追加第二个 runSessionSuite 调用即可让同一套测试双后端复跑。
+// Step 3+4 验收:Session 门面 + buildContext 投影,同一套测试参数化跑双存储后端。
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "bun:test";
+import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
+import { JsonlSessionStorage } from "../../src/harness/session/jsonl-storage.ts";
 import { InMemorySessionStorage } from "../../src/harness/session/memory-storage.ts";
 import { type ContextEntryTransform, Session } from "../../src/harness/session/session.ts";
 import type { SessionStorage } from "../../src/harness/types.ts";
-import { createAssistantMessage, createUserMessage } from "./session-test-utils.ts";
+import { createAssistantMessage, createTempDir, createUserMessage, getLatestTempDir } from "./session-test-utils.ts";
 
 function getTextData(data: unknown): string {
 	if (typeof data !== "object" || data === null || !("text" in data)) {
@@ -177,5 +179,26 @@ async function runSessionSuite(
 
 runSessionSuite("Session with in-memory storage", () => new InMemorySessionStorage());
 
-// Step 4(JsonlSessionStorage)完成后追加:
-// runSessionSuite("Session with JSONL storage", async () => { ... JsonlSessionStorage.create(...) ... }, inspect);
+runSessionSuite(
+	"Session with JSONL storage",
+	async () => {
+		const dir = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: dir });
+		return await JsonlSessionStorage.create(env, join(dir, "session.jsonl"), { cwd: dir, sessionId: "session-1" });
+	},
+	() => {
+		const dir = getLatestTempDir();
+		const filePath = join(dir, "session.jsonl");
+		const lines = readFileSync(filePath, "utf8").trim().split("\n");
+		expect(lines.length).toBeGreaterThan(1);
+		const header = JSON.parse(lines[0]!);
+		expect(header.type).toBe("session");
+		expect(header.version).toBe(3);
+		const entries = lines.slice(1).map((line) => JSON.parse(line));
+		expect(entries.some((entry) => entry.type === "leaf")).toBe(true);
+		for (const entry of entries) {
+			expect(entry.type).not.toBe("entry");
+			expect(typeof entry.id).toBe("string");
+		}
+	},
+);
