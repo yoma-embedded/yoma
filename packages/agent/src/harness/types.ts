@@ -294,3 +294,48 @@ export interface SessionStorage<TMetadata extends SessionMetadata = SessionMetad
 	getPathToRoot(leafId: string | null): Promise<SessionTreeEntry[]>;
 	getEntries(): Promise<SessionTreeEntry[]>;
 }
+
+// ---------------------------------------------------------------------------
+// M7 资源类型:Skill 与 PromptTemplate
+// 技能/模板不是魔法 —— 本质是"被格式化后注入对话的提示词文本"。
+// 这里只放数据形状;从磁盘发现/加载(loadSkills 等)是 M9 的事。
+// ---------------------------------------------------------------------------
+
+/**
+ * Skill loaded from a `SKILL.md` file or provided by an application.
+ *
+ * `name`, `description`, and `filePath` are inserted into the system prompt in an XML-formatted block.
+ */
+export interface Skill {
+	/** Stable skill name used for lookup and model-visible listings. */
+	name: string;
+	/** Short model-visible description of when to use the skill. */
+	description: string;
+	/** Full skill instructions. */
+	content: string;
+	/** Absolute path to the skill file. Used for model-visible location and resolving relative references. */
+	filePath: string;
+	/** Exclude this skill from model-visible skill lists while still allowing explicit application invocation. */
+	disableModelInvocation?: boolean;
+}
+
+/** Prompt template that can be formatted into a prompt for explicit invocation. */
+export interface PromptTemplate {
+	/** Stable template name used for lookup or application command routing. */
+	name: string;
+	/** Optional description for command lists or autocomplete. */
+	description?: string;
+	/** Template content. Argument placeholders are formatted by `formatPromptTemplateInvocation`. */
+	content: string;
+}
+
+/** Resources made available to explicit invocation methods and system-prompt callbacks. */
+export interface AgentHarnessResources<
+	TSkill extends Skill = Skill,
+	TPromptTemplate extends PromptTemplate = PromptTemplate,
+> {
+	/** Prompt templates available for explicit invocation. */
+	promptTemplates?: TPromptTemplate[];
+	/** Skills available to the model and explicit skill invocation. */
+	skills?: TSkill[];
+}
