@@ -5,9 +5,9 @@ export * from "./agent-loop.ts";
 // Types
 export * from "./types.ts";
 
-// Harness / proxy — source files are currently empty stubs.
+// Harness / proxy — remaining commented modules are still empty stubs.
 // Re-enable when those modules are implemented.
-// export * from "./harness/agent-harness.ts";
+export * from "./harness/agent-harness.ts";
 // export {
 // 	type BranchPreparation,
 // 	type BranchSummaryDetails,

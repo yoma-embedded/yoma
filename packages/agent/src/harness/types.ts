@@ -1,9 +1,10 @@
-// M5 切片:会话树相关类型(Step 0)。
-// 参考 pi-minimal harness/types.ts —— 本文件只含 session 层需要的部分;
-// Skill/PromptTemplate(M9)、FileSystem/Shell/ExecutionEnv(M6/Step 4)、
-// SessionRepo(Step 5)、harness 钩子与事件类型(M7)随后续里程碑补入。
-import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
-import type { AgentMessage } from "../types.ts";
+// harness 类型总仓,随里程碑逐步补入:M5 会话树 + FileSystem(已全)、
+// M7 harness 骨架(错误/能力/选项,施工中)。
+// 参考 pi-minimal harness/types.ts(838 行)。尚缺:SessionRepo 家族(M5 Step 5)、
+// harness 钩子/事件联合(M7 Step 7)、compaction 设置与结果类型(M8)。
+import type { ImageContent, Model, Models, SimpleStreamOptions, TextContent, Transport } from "@earendil-works/pi-ai";
+import type { AgentEvent, AgentMessage, AgentTool, QueueMode, ThinkingLevel } from "../types.ts";
+import type { Session } from "./session/session.ts";
 
 /** Result of a fallible operation. Expected failures are returned as `ok: false` instead of thrown. */
 export type Result<TValue, TError> = { ok: true; value: TValue } | { ok: false; error: TError };
@@ -339,3 +340,483 @@ export interface AgentHarnessResources<
 	/** Skills available to the model and explicit skill invocation. */
 	skills?: TSkill[];
 }
+
+// ---------------------------------------------------------------------------
+// M7 harness 层:错误、执行环境能力、配置选项(Step 2 切片)
+// ---------------------------------------------------------------------------
+
+export type AgentHarnessErrorCode =
+	| "busy"
+	| "invalid_state"
+	| "invalid_argument"
+	| "session"
+	| "hook"
+	| "auth"
+	| "compaction"
+	| "branch_summary"
+	| "unknown";
+
+/** Public AgentHarness failure with a stable top-level classification. */
+export class AgentHarnessError extends Error {
+	public code: AgentHarnessErrorCode;
+
+	constructor(code: AgentHarnessErrorCode, message: string, cause?: Error) {
+		super(message, cause === undefined ? undefined : { cause });
+		this.name = "AgentHarnessError";
+		this.code = code;
+	}
+}
+
+/** Stable, backend-independent execution error codes returned by {@link Shell.exec}. */
+export type ExecutionErrorCode =
+	| "aborted"
+	| "timeout"
+	| "shell_unavailable"
+	| "spawn_error"
+	| "callback_error"
+	| "unknown";
+
+/** Error returned by {@link Shell.exec}. */
+export class ExecutionError extends Error {
+	/** Backend-independent error code. */
+	public code: ExecutionErrorCode;
+
+	constructor(code: ExecutionErrorCode, message: string, cause?: Error) {
+		super(message, cause === undefined ? undefined : { cause });
+		this.name = "ExecutionError";
+		this.code = code;
+	}
+}
+
+export type CompactionErrorCode = "aborted" | "summarization_failed" | "invalid_session" | "unknown";
+
+/** Error returned by compaction helpers(实现在 M8;错误类型先就位供 harness 归一化)。 */
+export class CompactionError extends Error {
+	/** Backend-independent error code. */
+	public code: CompactionErrorCode;
+
+	constructor(code: CompactionErrorCode, message: string, cause?: Error) {
+		super(message, cause === undefined ? undefined : { cause });
+		this.name = "CompactionError";
+		this.code = code;
+	}
+}
+
+export type BranchSummaryErrorCode = "aborted" | "summarization_failed" | "invalid_session";
+
+/** Error returned by branch summarization helpers(实现在 M8)。 */
+export class BranchSummaryError extends Error {
+	/** Backend-independent error code. */
+	public code: BranchSummaryErrorCode;
+
+	constructor(code: BranchSummaryErrorCode, message: string, cause?: Error) {
+		super(message, cause === undefined ? undefined : { cause });
+		this.name = "BranchSummaryError";
+		this.code = code;
+	}
+}
+
+/** Curated provider request options owned by the harness and snapshotted per turn. */
+export interface AgentHarnessStreamOptions {
+	/** Preferred transport forwarded to the stream function. */
+	transport?: Transport;
+	/** Provider request timeout in milliseconds. */
+	timeoutMs?: number;
+	/** Maximum provider retry attempts. */
+	maxRetries?: number;
+	/** Optional cap for provider-requested retry delays. */
+	maxRetryDelayMs?: number;
+	/** Additional request headers merged with auth and lifecycle headers. */
+	headers?: Record<string, string>;
+	/** Provider metadata forwarded with requests. */
+	metadata?: SimpleStreamOptions["metadata"];
+	/** Provider cache retention hint. */
+	cacheRetention?: SimpleStreamOptions["cacheRetention"];
+}
+
+/** Per-request stream option patch returned by provider hooks. */
+export interface AgentHarnessStreamOptionsPatch
+	extends Omit<Partial<AgentHarnessStreamOptions>, "headers" | "metadata"> {
+	/** Header patch. `undefined` values delete keys; explicit `headers: undefined` clears all headers. */
+	headers?: Record<string, string | undefined>;
+	/** Metadata patch. `undefined` values delete keys; explicit `metadata: undefined` clears all metadata. */
+	metadata?: Record<string, unknown | undefined>;
+}
+
+/** Options for {@link Shell.exec}. */
+export interface ShellExecOptions {
+	/** Working directory for the command. Relative paths are resolved against {@link ExecutionEnv.cwd}. Defaults to {@link ExecutionEnv.cwd}. */
+	cwd?: string;
+	/** Additional environment variables for the command. Values override the environment defaults. Defaults to no overrides. */
+	env?: Record<string, string>;
+	/** Timeout in seconds. Implementations should return a timeout error when the command exceeds this duration. Defaults to no timeout. */
+	timeout?: number;
+	/** Abort signal used to terminate the command. Defaults to no abort signal. */
+	abortSignal?: AbortSignal;
+	/** Called with stdout chunks as they are produced. */
+	onStdout?: (chunk: string) => void;
+	/** Called with stderr chunks as they are produced. */
+	onStderr?: (chunk: string) => void;
+}
+
+/** Shell execution capability used by the harness(接口先行;NodeExecutionEnv 的 exec 实现在 M6)。 */
+export interface Shell {
+	/** Execute a shell command in {@link FileSystem.cwd} unless `options.cwd` is provided. */
+	exec(
+		command: string,
+		options?: ShellExecOptions,
+	): Promise<Result<{ stdout: string; stderr: string; exitCode: number }, ExecutionError>>;
+	/** Release shell resources. Must be best-effort and must not throw or reject. */
+	cleanup(): Promise<void>;
+}
+
+/** Filesystem and process execution environment used by the harness. */
+export interface ExecutionEnv extends FileSystem, Shell {}
+
+/** harness 相位机:结构性操作要求 idle,忙时确定性抛 busy,而非排队。 */
+export type AgentHarnessPhase = "idle" | "turn" | "compaction" | "branch_summary" | "retry";
+
+/**
+ * 挂起写入 = 还没分配 id/parentId/timestamp 三件套的树条目。
+ * 条件类型对联合分布式展开,使每个变体各自 Omit(直接 Omit 联合会塌成交集)。
+ */
+export type PendingSessionWrite = SessionTreeEntry extends infer TEntry
+	? TEntry extends SessionTreeEntry
+		? Omit<TEntry, "id" | "parentId" | "timestamp">
+		: never
+	: never;
+
+export interface AgentHarnessOptions<
+	TSkill extends Skill = Skill,
+	TPromptTemplate extends PromptTemplate = PromptTemplate,
+	TTool extends AgentTool = AgentTool,
+> {
+	env: ExecutionEnv;
+	session: Session;
+	/**
+	 * Provider collection used for all model requests (turn streaming,
+	 * compaction, branch summarization). Auth resolves through the providers'
+	 * auth.
+	 */
+	models: Models;
+	tools?: TTool[];
+	/**
+	 * Concrete resources available to explicit invocation methods and system-prompt callbacks.
+	 * Applications own loading/reloading resources and should call `setResources()` with new values.
+	 */
+	resources?: AgentHarnessResources<TSkill, TPromptTemplate>;
+	systemPrompt?:
+		| string
+		| ((context: {
+				env: ExecutionEnv;
+				session: Session;
+				model: Model<any>;
+				thinkingLevel: ThinkingLevel;
+				activeTools: TTool[];
+				resources: AgentHarnessResources<TSkill, TPromptTemplate>;
+		  }) => string | Promise<string>);
+	/** Curated stream/provider request options. Snapshotted at turn start. */
+	streamOptions?: AgentHarnessStreamOptions;
+	model: Model<any>;
+	thinkingLevel?: ThinkingLevel;
+	activeToolNames?: string[];
+	steeringMode?: QueueMode;
+	followUpMode?: QueueMode;
+}
+
+export interface AgentHarnessPromptOptions {
+	images?: ImageContent[];
+}
+
+/** abort() 的返回值:被清空的两条队列(nextTurn 队列在 abort 后幸存)。 */
+export interface AbortResult {
+	clearedSteer: AgentMessage[];
+	clearedFollowUp: AgentMessage[];
+}
+
+// ---------------------------------------------------------------------------
+// M8 数据形状(compaction/branch-summarization 的输入输出;实现在 M8,
+// 类型先就位,让下面的事件联合从今天起就是完整形态)
+// ---------------------------------------------------------------------------
+
+export interface CompactResult {
+	summary: string;
+	firstKeptEntryId: string;
+	tokensBefore: number;
+	details?: unknown;
+}
+
+export interface CompactionSettings {
+	enabled: boolean;
+	reserveTokens: number;
+	keepRecentTokens: number;
+}
+
+export interface FileOperations {
+	read: Set<string>;
+	written: Set<string>;
+	edited: Set<string>;
+}
+
+export interface CompactionPreparation {
+	firstKeptEntryId: string;
+	messagesToSummarize: AgentMessage[];
+	turnPrefixMessages: AgentMessage[];
+	isSplitTurn: boolean;
+	tokensBefore: number;
+	previousSummary?: string;
+	fileOps: FileOperations;
+	settings: CompactionSettings;
+}
+
+export interface TreePreparation {
+	targetId: string;
+	oldLeafId: string | null;
+	commonAncestorId: string | null;
+	entriesToSummarize: SessionTreeEntry[];
+	userWantsSummary: boolean;
+	customInstructions?: string;
+	replaceInstructions?: boolean;
+	label?: string;
+}
+
+export interface BranchSummaryResult {
+	summary: string;
+	readFiles: string[];
+	modifiedFiles: string[];
+}
+
+// ---------------------------------------------------------------------------
+// M7 harness 事件词汇表。
+// 两种消费方式,同一张 handlers 表:subscribe()(通配 listener,纯观察)
+// 与 on()(类型化 hook,返回值按 AgentHarnessEventResultMap 被消费、可改行为)。
+// ---------------------------------------------------------------------------
+
+export interface QueueUpdateEvent {
+	type: "queue_update";
+	steer: AgentMessage[];
+	followUp: AgentMessage[];
+	nextTurn: AgentMessage[];
+}
+
+export interface SavePointEvent {
+	type: "save_point";
+	hadPendingMutations: boolean;
+}
+
+export interface AbortEvent {
+	type: "abort";
+	clearedSteer: AgentMessage[];
+	clearedFollowUp: AgentMessage[];
+}
+
+export interface SettledEvent {
+	type: "settled";
+	nextTurnCount: number;
+}
+
+export interface BeforeAgentStartEvent<
+	TSkill extends Skill = Skill,
+	TPromptTemplate extends PromptTemplate = PromptTemplate,
+> {
+	type: "before_agent_start";
+	prompt: string;
+	images?: ImageContent[];
+	systemPrompt: string;
+	resources: AgentHarnessResources<TSkill, TPromptTemplate>;
+}
+
+export interface ContextEvent {
+	type: "context";
+	messages: AgentMessage[];
+}
+
+export interface BeforeProviderRequestEvent {
+	type: "before_provider_request";
+	model: Model<any>;
+	sessionId: string;
+	streamOptions: AgentHarnessStreamOptions;
+}
+
+export interface BeforeProviderPayloadEvent {
+	type: "before_provider_payload";
+	model: Model<any>;
+	payload: unknown;
+}
+
+export interface AfterProviderResponseEvent {
+	type: "after_provider_response";
+	status: number;
+	headers: Record<string, string>;
+}
+
+export interface ToolCallEvent {
+	type: "tool_call";
+	toolCallId: string;
+	toolName: string;
+	input: Record<string, unknown>;
+}
+
+export interface ToolResultEvent {
+	type: "tool_result";
+	toolCallId: string;
+	toolName: string;
+	input: Record<string, unknown>;
+	content: Array<TextContent | ImageContent>;
+	details: unknown;
+	isError: boolean;
+}
+
+export interface SessionBeforeCompactEvent {
+	type: "session_before_compact";
+	preparation: CompactionPreparation;
+	branchEntries: SessionTreeEntry[];
+	customInstructions?: string;
+	signal: AbortSignal;
+}
+
+export interface SessionCompactEvent {
+	type: "session_compact";
+	compactionEntry: CompactionEntry;
+	fromHook: boolean;
+}
+
+export interface SessionBeforeTreeEvent {
+	type: "session_before_tree";
+	preparation: TreePreparation;
+	signal: AbortSignal;
+}
+
+export interface SessionTreeEvent {
+	type: "session_tree";
+	newLeafId: string | null;
+	oldLeafId: string | null;
+	summaryEntry?: BranchSummaryEntry;
+	fromHook?: boolean;
+}
+
+export interface ModelUpdateEvent {
+	type: "model_update";
+	model: Model<any>;
+	previousModel: Model<any> | undefined;
+	source: "set" | "restore";
+}
+
+export interface ThinkingLevelUpdateEvent {
+	type: "thinking_level_update";
+	level: ThinkingLevel;
+	previousLevel: ThinkingLevel;
+}
+
+export interface ToolsUpdateEvent {
+	type: "tools_update";
+	toolNames: string[];
+	previousToolNames: string[];
+	activeToolNames: string[];
+	previousActiveToolNames: string[];
+	source: "set" | "restore";
+}
+
+export interface ResourcesUpdateEvent<
+	TSkill extends Skill = Skill,
+	TPromptTemplate extends PromptTemplate = PromptTemplate,
+> {
+	type: "resources_update";
+	resources: AgentHarnessResources<TSkill, TPromptTemplate>;
+	previousResources: AgentHarnessResources<TSkill, TPromptTemplate>;
+}
+
+/** harness 自有事件(区别于向上转发的 loop AgentEvent)。 */
+export type AgentHarnessOwnEvent<
+	TSkill extends Skill = Skill,
+	TPromptTemplate extends PromptTemplate = PromptTemplate,
+> =
+	| QueueUpdateEvent
+	| SavePointEvent
+	| AbortEvent
+	| SettledEvent
+	| BeforeAgentStartEvent<TSkill, TPromptTemplate>
+	| ContextEvent
+	| BeforeProviderRequestEvent
+	| BeforeProviderPayloadEvent
+	| AfterProviderResponseEvent
+	| ToolCallEvent
+	| ToolResultEvent
+	| SessionBeforeCompactEvent
+	| SessionCompactEvent
+	| SessionBeforeTreeEvent
+	| SessionTreeEvent
+	| ModelUpdateEvent
+	| ThinkingLevelUpdateEvent
+	| ResourcesUpdateEvent<TSkill, TPromptTemplate>
+	| ToolsUpdateEvent;
+
+/** subscribe() 听到的全部词汇 = loop 的 10 种 AgentEvent + harness 自有事件。 */
+export type AgentHarnessEvent<TSkill extends Skill = Skill, TPromptTemplate extends PromptTemplate = PromptTemplate> =
+	| AgentEvent
+	| AgentHarnessOwnEvent<TSkill, TPromptTemplate>;
+
+export interface BeforeAgentStartResult {
+	messages?: AgentMessage[];
+	systemPrompt?: string;
+}
+
+export interface ContextResult {
+	messages: AgentMessage[];
+}
+
+export interface BeforeProviderRequestResult {
+	streamOptions?: AgentHarnessStreamOptionsPatch;
+}
+
+export interface BeforeProviderPayloadResult {
+	payload: unknown;
+}
+
+export interface ToolCallResult {
+	block?: boolean;
+	reason?: string;
+}
+
+export interface ToolResultPatch {
+	content?: Array<TextContent | ImageContent>;
+	details?: unknown;
+	isError?: boolean;
+	terminate?: boolean;
+}
+
+export interface SessionBeforeCompactResult {
+	cancel?: boolean;
+	compaction?: CompactResult;
+}
+
+export interface SessionBeforeTreeResult {
+	cancel?: boolean;
+	summary?: { summary: string; details?: unknown };
+	customInstructions?: string;
+	replaceInstructions?: boolean;
+	label?: string;
+}
+
+/** on(type, handler) 的返回值契约:undefined = 纯观察,非 undefined = 改行为。 */
+export type AgentHarnessEventResultMap = {
+	before_agent_start: BeforeAgentStartResult | undefined;
+	context: ContextResult | undefined;
+	before_provider_request: BeforeProviderRequestResult | undefined;
+	before_provider_payload: BeforeProviderPayloadResult | undefined;
+	after_provider_response: undefined;
+	tool_call: ToolCallResult | undefined;
+	tool_result: ToolResultPatch | undefined;
+	session_before_compact: SessionBeforeCompactResult | undefined;
+	session_compact: undefined;
+	session_before_tree: SessionBeforeTreeResult | undefined;
+	session_tree: undefined;
+	model_update: undefined;
+	thinking_level_update: undefined;
+	resources_update: undefined;
+	tools_update: undefined;
+	queue_update: undefined;
+	save_point: undefined;
+	abort: undefined;
+	settled: undefined;
+};

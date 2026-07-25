@@ -4,7 +4,10 @@ import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { uuidv7 } from "../../src/harness/session/uuid.ts";
 
 const UUID_V7_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const TIMESTAMP = 0x0123456789ab;
+// bun 与 vitest 不同,所有测试文件共享一个模块图:先跑的文件若碰过 uuidv7()
+// (如 InMemorySessionStorage 构造默认 metadata id),模块级单调游标已是真实时间。
+// stub 的时间戳必须比真实时间大,才能确定性地走进"新时间戳"分支。
+const TIMESTAMP = 0x0abcdef01234; // ≈ 公元 2344 年
 
 function parseTimestamp(uuid: string): number {
 	return Number.parseInt(uuid.replaceAll("-", "").slice(0, 12), 16);
@@ -35,9 +38,9 @@ describe("uuidv7", () => {
 			const second = uuidv7();
 			const third = uuidv7();
 
-			expect(first).toBe("01234567-89ab-7fff-bfff-f91122334455");
-			expect(second).toBe("01234567-89ab-7fff-bfff-fc0000000000");
-			expect(third).toBe("01234567-89ac-7000-8000-000000000000");
+			expect(first).toBe("0abcdef0-1234-7fff-bfff-f91122334455");
+			expect(second).toBe("0abcdef0-1234-7fff-bfff-fc0000000000");
+			expect(third).toBe("0abcdef0-1235-7000-8000-000000000000");
 			expect(first).toMatch(UUID_V7_RE);
 			expect(second).toMatch(UUID_V7_RE);
 			expect(third).toMatch(UUID_V7_RE);
