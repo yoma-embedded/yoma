@@ -23,8 +23,7 @@ const models = createModels();
 models.setProvider(faux.provider);
 
 const dir = mkdtempSync(join(tmpdir(), "harness-demo-"));
-// M6 给 NodeExecutionEnv 补上 exec 后,这个 cast 即可删除。
-const env = new NodeExecutionEnv({ cwd: dir }) as unknown as ExecutionEnv;
+const env = new NodeExecutionEnv({ cwd: dir });
 
 // ============================================================================
 console.log("━━━ 解法 1: 自动持久化 + 重启恢复 ━━━\n");

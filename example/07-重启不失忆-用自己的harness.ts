@@ -22,9 +22,7 @@ import {
 
 const dir = mkdtempSync(join(tmpdir(), "my-pi-example-07-"));
 const sessionPath = join(dir, "session.jsonl");
-const nodeEnv = new NodeExecutionEnv({ cwd: dir });
-// M6 给 NodeExecutionEnv 补上 exec 后,这个 cast 即可删除。
-const env = nodeEnv as unknown as ExecutionEnv;
+const env = new NodeExecutionEnv({ cwd: dir });
 
 const faux = fauxProvider();
 const models = createModels();

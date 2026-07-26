@@ -38,7 +38,7 @@ function newFaux(options: RegisterFauxProviderOptions = {}): FauxProviderHandle 
 
 // M6 给 NodeExecutionEnv 补上 exec 之后,这个 cast 即可删除。
 function createEnv(): ExecutionEnv {
-	return new NodeExecutionEnv({ cwd: process.cwd() }) as unknown as ExecutionEnv;
+	return new NodeExecutionEnv({ cwd: process.cwd() });
 }
 
 function harnessOptions(overrides: Record<string, unknown> = {}) {
