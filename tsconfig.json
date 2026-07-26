@@ -16,5 +16,5 @@
 		"forceConsistentCasingInFileNames": true
 	},
 	"include": ["packages/agent/src/**/*.ts", "packages/agent/test/**/*.ts", "example/**/*.ts"],
-	"exclude": ["node_modules", "dist", "coverage", "example/04-*.ts"]
+	"exclude": ["node_modules", "dist", "coverage"]
 }

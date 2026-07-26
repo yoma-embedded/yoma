@@ -1,9 +1,5 @@
-// @ts-nocheck —— 本文件跨仓库导入 pi-minimal 的源码做演示,把它纳入 my-pi 的
-// typecheck 会拖入整棵外部源码树并产生两套 pi-ai 的类型身份冲突;运行(bun)不受影响。
-// 等 M7 完成、import 改回 @yoma/my-pi 后删除本行。
-// 正例:AgentHarness 如何解决 example/03 里的三个痛点。
-//
-// 直接使用 pi-minimal 的真实 harness 实现(相对路径导入),全程离线(faux 模型):
+// 🎓 毕业典礼:本文件曾导入 pi-minimal 的 harness 做演示,现在跑的是 **你自己写的** 实现。
+// 正例:AgentHarness 如何解决 example/03 里的三个痛点。全程离线(faux 模型):
 //   解法 1: 自动持久化 —— message_end 先落盘再通知;重启 = 重新打开同一个 JSONL 文件
 //   解法 2: compaction —— 树里一条不删,只是"投影"变小;切点永远在轮边界
 //   解法 3: 会话树分支 —— navigateTree 移动 leaf 指针,重试不销毁历史
@@ -12,25 +8,23 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-	createModels,
-	fauxAssistantMessage,
-	fauxProvider,
-} from "../../pi-minimal/packages/ai/src/index.ts";
+import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import {
 	AgentHarness,
+	type ExecutionEnv,
 	InMemorySessionStorage,
 	JsonlSessionStorage,
 	NodeExecutionEnv,
 	Session,
-} from "../../pi-minimal/packages/agent/src/node.ts";
+} from "@yoma/my-pi/node";
 
 const faux = fauxProvider();
 const models = createModels();
 models.setProvider(faux.provider);
 
 const dir = mkdtempSync(join(tmpdir(), "harness-demo-"));
-const env = new NodeExecutionEnv({ cwd: dir });
+// M6 给 NodeExecutionEnv 补上 exec 后,这个 cast 即可删除。
+const env = new NodeExecutionEnv({ cwd: dir }) as unknown as ExecutionEnv;
 
 // ============================================================================
 console.log("━━━ 解法 1: 自动持久化 + 重启恢复 ━━━\n");
@@ -104,7 +98,7 @@ const result = await longHarness.compact();
 
 const after = await longSession.buildContext();
 console.log(`压缩后: 上下文 ${after.messages.length} 条消息,约 ${contextChars(after.messages)} 字符`);
-console.log(`         上下文第一条消息的角色: "${after.messages[0].role}"(摘要顶替了被压掉的历史)`);
+console.log(`         上下文第一条消息的角色: "${after.messages[0]?.role}"(摘要顶替了被压掉的历史)`);
 console.log(`         会话树 ${(await longSession.getEntries()).length} 个条目 —— 不减反增(+1 条 compaction 条目)!`);
 console.log(`
 → 关键:压缩改变的是"投影"(buildContext 的输出),不是历史本身。

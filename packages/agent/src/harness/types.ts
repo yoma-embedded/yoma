@@ -546,6 +546,13 @@ export interface CompactResult {
 	details?: unknown;
 }
 
+export interface NavigateTreeResult {
+	cancelled: boolean;
+	/** 目标是 user 消息时,把它的原文交还给应用做"编辑后重发"。 */
+	editorText?: string;
+	summaryEntry?: BranchSummaryEntry;
+}
+
 export interface CompactionSettings {
 	enabled: boolean;
 	reserveTokens: number;

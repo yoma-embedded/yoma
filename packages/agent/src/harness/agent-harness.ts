@@ -19,6 +19,8 @@ import type {
 	StreamFn,
 	ThinkingLevel,
 } from "../types.ts";
+import { collectEntriesForBranchSummary, generateBranchSummary } from "./compaction/branch-summarization.ts";
+import { compact, DEFAULT_COMPACTION_SETTINGS, prepareCompaction } from "./compaction/compaction.ts";
 import { convertToLlm } from "./messages.ts";
 import { formatPromptTemplateInvocation } from "./prompt-templates.ts";
 import type { Session } from "./session/session.ts";
@@ -35,6 +37,7 @@ import type {
 	AgentHarnessStreamOptions,
 	AgentHarnessStreamOptionsPatch,
 	ExecutionEnv,
+	NavigateTreeResult,
 	PendingSessionWrite,
 	PromptTemplate,
 	Skill,
@@ -713,6 +716,157 @@ export class AgentHarness<
 			}
 		} catch (error) {
 			throw normalizeHarnessError(error, "session");
+		}
+	}
+
+	// ---- 结构性会话操作:compact / navigateTree(M8)--------------------------
+	// 两者都是 idle-only,**不走挂起写入队列**,直接写持久 session;各自占用一个相位,
+	// finally 里归位。它们与 turn 循环没有交集 —— 是两条自包含的侧枝。
+
+	async compact(
+		customInstructions?: string,
+	): Promise<{ summary: string; firstKeptEntryId: string; tokensBefore: number; details?: unknown }> {
+		if (this.phase !== "idle") throw new AgentHarnessError("busy", "compact() requires idle harness");
+		this.phase = "compaction";
+		try {
+			const model = this.model;
+			if (!model) throw new AgentHarnessError("invalid_state", "No model set for compaction");
+			const branchEntries = await this.session.getBranch();
+			const preparationResult = prepareCompaction(branchEntries, DEFAULT_COMPACTION_SETTINGS);
+			if (!preparationResult.ok) throw preparationResult.error;
+			const preparation = preparationResult.value;
+			if (!preparation) throw new AgentHarnessError("compaction", "Nothing to compact");
+			// hook 可以取消压缩,或直接提供现成的摘要(自己调别的模型/走缓存)。
+			const hookResult = await this.emitHook({
+				type: "session_before_compact",
+				preparation,
+				branchEntries,
+				customInstructions,
+				signal: new AbortController().signal,
+			});
+			if (hookResult?.cancel) throw new AgentHarnessError("compaction", "Compaction cancelled");
+			const provided = hookResult?.compaction;
+			const compactResult = provided
+				? { ok: true as const, value: provided }
+				: await compact(preparation, this.models, model, customInstructions, undefined, this.thinkingLevel);
+			if (!compactResult.ok) throw compactResult.error;
+			const result = compactResult.value;
+			// 到这一步才落盘:摘要生成途中失败的话,树分毫未动。
+			const entryId = await this.session.appendCompaction(
+				result.summary,
+				result.firstKeptEntryId,
+				result.tokensBefore,
+				result.details,
+				provided !== undefined,
+			);
+			const entry = await this.session.getEntry(entryId);
+			if (entry?.type === "compaction") {
+				await this.emitOwn({ type: "session_compact", compactionEntry: entry, fromHook: provided !== undefined });
+			}
+			return result;
+		} catch (error) {
+			throw normalizeHarnessError(error, "compaction");
+		} finally {
+			this.phase = "idle";
+		}
+	}
+
+	async navigateTree(
+		targetId: string,
+		options?: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string },
+	): Promise<NavigateTreeResult> {
+		if (this.phase !== "idle") throw new AgentHarnessError("busy", "navigateTree() requires idle harness");
+		this.phase = "branch_summary";
+		try {
+			const oldLeafId = await this.session.getLeafId();
+			if (oldLeafId === targetId) return { cancelled: false };
+			const targetEntry = await this.session.getEntry(targetId);
+			if (!targetEntry) throw new AgentHarnessError("invalid_argument", `Entry ${targetId} not found`);
+			const { entries, commonAncestorId } = await collectEntriesForBranchSummary(this.session, oldLeafId, targetId);
+			const preparation = {
+				targetId,
+				oldLeafId,
+				commonAncestorId,
+				entriesToSummarize: entries,
+				userWantsSummary: options?.summarize ?? false,
+				customInstructions: options?.customInstructions,
+				replaceInstructions: options?.replaceInstructions,
+				label: options?.label,
+			};
+			const signal = new AbortController().signal;
+			const hookResult = await this.emitHook({ type: "session_before_tree", preparation, signal });
+			if (hookResult?.cancel) return { cancelled: true };
+			let summaryEntry: NavigateTreeResult["summaryEntry"];
+			let summaryText: string | undefined = hookResult?.summary?.summary;
+			let summaryDetails: unknown = hookResult?.summary?.details;
+			if (!summaryText && options?.summarize && entries.length > 0) {
+				const model = this.model;
+				if (!model) throw new AgentHarnessError("invalid_state", "No model set for branch summary");
+				const branchSummary = await generateBranchSummary(entries, {
+					models: this.models,
+					model,
+					signal: new AbortController().signal,
+					customInstructions: hookResult?.customInstructions ?? options?.customInstructions,
+					replaceInstructions: hookResult?.replaceInstructions ?? options?.replaceInstructions,
+				});
+				if (!branchSummary.ok) {
+					if (branchSummary.error.code === "aborted") return { cancelled: true };
+					throw new AgentHarnessError("branch_summary", branchSummary.error.message, branchSummary.error);
+				}
+				summaryText = branchSummary.value.summary;
+				summaryDetails = {
+					readFiles: branchSummary.value.readFiles,
+					modifiedFiles: branchSummary.value.modifiedFiles,
+				};
+			}
+			// 目标是一条 user 消息 = "回到发这句话之前":leaf 落到它的父节点,
+			// 原文交还给应用编辑后重发(这就是 CLI 里"编辑上一条消息重试"的实现)。
+			let editorText: string | undefined;
+			let newLeafId: string | null;
+			if (targetEntry.type === "message" && targetEntry.message.role === "user") {
+				newLeafId = targetEntry.parentId;
+				const content = targetEntry.message.content;
+				editorText =
+					typeof content === "string"
+						? content
+						: content
+								.filter((c): c is { readonly type: "text"; readonly text: string } => c.type === "text")
+								.map((c) => c.text)
+								.join("");
+			} else if (targetEntry.type === "custom_message") {
+				newLeafId = targetEntry.parentId;
+				editorText =
+					typeof targetEntry.content === "string"
+						? targetEntry.content
+						: targetEntry.content
+								.filter((c): c is { readonly type: "text"; readonly text: string } => c.type === "text")
+								.map((c) => c.text)
+								.join("");
+			} else {
+				newLeafId = targetId;
+			}
+			const summaryId = await this.session.moveTo(
+				newLeafId,
+				summaryText
+					? { summary: summaryText, details: summaryDetails, fromHook: hookResult?.summary !== undefined }
+					: undefined,
+			);
+			if (summaryId) {
+				const entry = await this.session.getEntry(summaryId);
+				if (entry?.type === "branch_summary") summaryEntry = entry;
+			}
+			await this.emitOwn({
+				type: "session_tree",
+				newLeafId: await this.session.getLeafId(),
+				oldLeafId,
+				summaryEntry,
+				fromHook: hookResult?.summary !== undefined,
+			});
+			return { cancelled: false, editorText, summaryEntry };
+		} catch (error) {
+			throw normalizeHarnessError(error, "branch_summary");
+		} finally {
+			this.phase = "idle";
 		}
 	}
 

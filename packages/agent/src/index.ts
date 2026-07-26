@@ -8,28 +8,30 @@ export * from "./types.ts";
 // Harness / proxy — remaining commented modules are still empty stubs.
 // Re-enable when those modules are implemented.
 export * from "./harness/agent-harness.ts";
-// export {
-// 	type BranchPreparation,
-// 	type BranchSummaryDetails,
-// 	type CollectEntriesResult,
-// 	collectEntriesForBranchSummary,
-// 	generateBranchSummary,
-// 	prepareBranchEntries,
-// } from "./harness/compaction/branch-summarization.ts";
-// export {
-// 	calculateContextTokens,
-// 	compact,
-// 	DEFAULT_COMPACTION_SETTINGS,
-// 	estimateContextTokens,
-// 	estimateTokens,
-// 	findCutPoint,
-// 	findTurnStartIndex,
-// 	generateSummary,
-// 	getLastAssistantUsage,
-// 	prepareCompaction,
-// 	serializeConversation,
-// 	shouldCompact,
-// } from "./harness/compaction/compaction.ts";
+// 只导出具名清单:compaction 模块内部还定义了与 harness/types.ts 同名的类型,
+// 用 export * 会产生歧义星号导出。
+export {
+	type BranchPreparation,
+	type BranchSummaryDetails,
+	type CollectEntriesResult,
+	collectEntriesForBranchSummary,
+	generateBranchSummary,
+	prepareBranchEntries,
+} from "./harness/compaction/branch-summarization.ts";
+export {
+	calculateContextTokens,
+	compact,
+	DEFAULT_COMPACTION_SETTINGS,
+	estimateContextTokens,
+	estimateTokens,
+	findCutPoint,
+	findTurnStartIndex,
+	generateSummary,
+	getLastAssistantUsage,
+	prepareCompaction,
+	serializeConversation,
+	shouldCompact,
+} from "./harness/compaction/compaction.ts";
 export * from "./harness/messages.ts";
 export * from "./harness/prompt-templates.ts";
 // export * from "./harness/session/jsonl-repo.ts";
