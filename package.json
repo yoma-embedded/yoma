@@ -4,15 +4,16 @@
 	"private": true,
 	"type": "module",
 	"packageManager": "bun@1.3.14",
-	"workspaces": ["packages/ai", "packages/agent"],
+	"workspaces": ["packages/ai", "packages/agent", "packages/coding-agent"],
 	"scripts": {
-		"test": "bun test packages/agent",
+		"test": "bun test packages/agent && bun test --cwd packages/coding-agent",
 		"typecheck": "tsc --noEmit",
 		"example:01": "bun example/01-minimal-agent.ts",
 		"example:02": "bun example/02-parallel-tools.ts"
 	},
 	"dependencies": {
 		"@yoma/my-pi": "workspace:*",
+		"@yoma/my-pi-coding-agent": "workspace:*",
 		"@earendil-works/pi-ai": "workspace:*"
 	},
 	"devDependencies": {

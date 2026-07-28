@@ -15,6 +15,12 @@
 		"noImplicitOverride": true,
 		"forceConsistentCasingInFileNames": true
 	},
-	"include": ["packages/agent/src/**/*.ts", "packages/agent/test/**/*.ts", "example/**/*.ts"],
+	"include": [
+		"packages/agent/src/**/*.ts",
+		"packages/agent/test/**/*.ts",
+		"packages/coding-agent/src/**/*.ts",
+		"packages/coding-agent/test/**/*.ts",
+		"example/**/*.ts"
+	],
 	"exclude": ["node_modules", "dist", "coverage"]
 }

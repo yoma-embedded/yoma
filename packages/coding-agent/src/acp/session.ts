@@ -1,0 +1,175 @@
+/**
+ * 一个 ACP 会话 = 一个 AgentHarness + 一条到客户端(Zed)的事件翻译管线。
+ *
+ * 翻译表(左边是 my-pi 的 harness 事件,右边是 ACP 的 session/update):
+ *   message_update(text_delta)      → agent_message_chunk
+ *   message_update(thinking_delta)  → agent_thought_chunk
+ *   tool_execution_start            → tool_call        (status: in_progress)
+ *   tool_execution_end              → tool_call_update (status: completed / failed)
+ */
+import type { AgentHarness, AgentHarnessEvent } from "@yoma/my-pi";
+import type { EditToolDetails } from "../core/tools/edit.ts";
+import type { ReadToolDetails } from "../core/tools/read.ts";
+import type { WriteToolDetails } from "../core/tools/write.ts";
+
+/** ACP 的工具种类,决定 Zed 用什么图标和展示方式。 */
+export type AcpToolKind = "read" | "edit" | "delete" | "move" | "search" | "execute" | "think" | "fetch" | "other";
+
+const TOOL_KINDS: Record<string, AcpToolKind> = {
+	read: "read",
+	write: "edit",
+	edit: "edit",
+	bash: "execute",
+	grep: "search",
+};
+
+export function toolKindOf(toolName: string): AcpToolKind {
+	return TOOL_KINDS[toolName] ?? "other";
+}
+
+/** 工具调用在 Zed 里显示的标题。 */
+export function toolTitleOf(toolName: string, args: unknown): string {
+	const input = (args ?? {}) as Record<string, unknown>;
+	switch (toolName) {
+		case "read":
+			return typeof input.path === "string" ? `Read ${input.path}` : "Read";
+		case "write":
+			return typeof input.path === "string" ? `Write ${input.path}` : "Write";
+		case "edit":
+			return typeof input.path === "string" ? `Edit ${input.path}` : "Edit";
+		case "bash":
+			return typeof input.command === "string" ? `$ ${input.command}` : "Run command";
+		case "grep":
+			return typeof input.pattern === "string" ? `Search /${input.pattern}/` : "Search";
+		default:
+			return toolName;
+	}
+}
+
+/** 从工具参数里挖出受影响的文件,Zed 会用它做"跟随定位"。 */
+export function toolLocationsOf(details: unknown, args: unknown): Array<{ path: string; line?: number }> {
+	const fromDetails = details as (ReadToolDetails & EditToolDetails & WriteToolDetails) | undefined;
+	if (fromDetails?.path) {
+		const line = fromDetails.firstChangedLine;
+		return [line === undefined ? { path: fromDetails.path } : { path: fromDetails.path, line }];
+	}
+	const input = (args ?? {}) as Record<string, unknown>;
+	return typeof input.path === "string" ? [{ path: input.path }] : [];
+}
+
+/**
+ * 工具结果转成 ACP 的 tool_call content。
+ * edit 走结构化 diff —— Zed 会画成真正的 diff 视图,而不是一段纯文本。
+ */
+export function toolContentOf(
+	toolName: string,
+	details: unknown,
+	text: string,
+): Array<
+	| { type: "content"; content: { type: "text"; text: string } }
+	| { type: "diff"; path: string; oldText: string | null; newText: string }
+> {
+	if (toolName === "edit") {
+		const editDetails = details as EditToolDetails | undefined;
+		if (editDetails?.path) {
+			return [
+				{
+					type: "diff",
+					path: editDetails.path,
+					oldText: editDetails.oldContent,
+					newText: editDetails.newContent,
+				},
+			];
+		}
+	}
+	if (toolName === "write") {
+		const writeDetails = details as WriteToolDetails | undefined;
+		if (writeDetails?.path) {
+			// 新建文件时 oldText 为 null,Zed 会整块显示为新增。
+			return [{ type: "diff", path: writeDetails.path, oldText: null, newText: "" }];
+		}
+	}
+	return text ? [{ type: "content", content: { type: "text", text } }] : [];
+}
+
+function textOfContent(content: unknown): string {
+	if (!Array.isArray(content)) return "";
+	return content
+		.filter((part): part is { type: "text"; text: string } => {
+			return typeof part === "object" && part !== null && (part as { type?: string }).type === "text";
+		})
+		.map((part) => part.text)
+		.join("");
+}
+
+/** session/update 通知的发送口,由 acp.ts 用当前的客户端上下文填进来。 */
+export type UpdateSink = (update: Record<string, unknown>) => Promise<void>;
+
+/**
+ * 把 harness 的事件流接到 ACP 的通知流上。
+ * 返回退订函数。
+ */
+export function pipeHarnessToAcp(harness: AgentHarness<any, any, any>, sink: UpdateSink): () => void {
+	// 已经报给客户端的 toolCallId,避免 start/end 之间重复发 tool_call。
+	const announced = new Set<string>();
+
+	return harness.subscribe((event: AgentHarnessEvent) => {
+		switch (event.type) {
+			case "message_end": {
+				// 内核的纪律是"错误即数据":provider 挂了不会抛,而是合成一条 stopReason:"error"
+				// 的 assistant 消息。ACP 这层必须把它翻出来,否则 Zed 只会看到一轮空转。
+				const message = event.message as { role?: string; stopReason?: string; errorMessage?: string };
+				if (message.role === "assistant" && message.stopReason === "error") {
+					void sink({
+						sessionUpdate: "agent_message_chunk",
+						content: { type: "text", text: `⚠️ ${message.errorMessage ?? "Model request failed."}` },
+					});
+				}
+				return;
+			}
+			case "message_update": {
+				const delta = event.assistantMessageEvent;
+				if (delta.type === "text_delta") {
+					void sink({
+						sessionUpdate: "agent_message_chunk",
+						content: { type: "text", text: delta.delta },
+					});
+				} else if (delta.type === "thinking_delta") {
+					void sink({
+						sessionUpdate: "agent_thought_chunk",
+						content: { type: "text", text: delta.delta },
+					});
+				}
+				return;
+			}
+			case "tool_execution_start": {
+				announced.add(event.toolCallId);
+				void sink({
+					sessionUpdate: "tool_call",
+					toolCallId: event.toolCallId,
+					title: toolTitleOf(event.toolName, event.args),
+					kind: toolKindOf(event.toolName),
+					status: "in_progress",
+					locations: toolLocationsOf(undefined, event.args),
+					rawInput: event.args,
+				});
+				return;
+			}
+			case "tool_execution_end": {
+				const text = textOfContent(event.result?.content);
+				void sink({
+					sessionUpdate: "tool_call_update",
+					toolCallId: event.toolCallId,
+					status: event.isError ? "failed" : "completed",
+					content: toolContentOf(event.toolName, event.result?.details, text),
+					locations: toolLocationsOf(event.result?.details, undefined),
+					rawOutput: { text },
+				});
+				announced.delete(event.toolCallId);
+				return;
+			}
+			default:
+				return;
+		}
+	});
+}

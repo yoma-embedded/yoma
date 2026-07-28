@@ -1,4 +1,5 @@
-# scope bare `bun test` to our own package — packages/ai is vendored
-# and its vitest-based tests are not meant to run under bun
+# scope bare `bun test` to the core package — packages/ai is vendored and its
+# vitest-based tests (15 files) are not meant to run under bun.
+# 跑全量用 `bun run test`,它显式列出 agent + coding-agent 两个包。
 [test]
 root = "packages/agent"

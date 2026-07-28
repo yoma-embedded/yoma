@@ -42,7 +42,7 @@ export * from "./harness/session/repo-utils.ts";
 export * from "./harness/session/session.ts";
 export { uuidv7 } from "./harness/session/uuid.ts";
 export * from "./harness/skills.ts";
-// export * from "./harness/system-prompt.ts";
+export * from "./harness/system-prompt.ts";
 export * from "./harness/types.ts";
 export * from "./harness/utils/shell-output.ts";
 export * from "./harness/utils/truncate.ts";
