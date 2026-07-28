@@ -60,6 +60,7 @@ async function main(): Promise<void> {
 		.onRequest("initialize", (ctx: any) => agent.initialize(ctx.params))
 		.onRequest("authenticate", (ctx: any) => agent.authenticate(ctx.params))
 		.onRequest("session/new", (ctx: any) => agent.newSession(ctx.params))
+		.onRequest("session/load", (ctx: any) => agent.loadSession(ctx.params, ctx.client))
 		.onRequest("session/prompt", (ctx: any) => agent.prompt(ctx.params, ctx.client))
 		.onNotification("session/cancel", (ctx: any) => agent.cancel(ctx.params))
 		.connect(stream);

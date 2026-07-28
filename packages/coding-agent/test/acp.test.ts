@@ -1,7 +1,7 @@
 // ACP 翻译层的测试。这一层没有 IO,全是"harness 事件 → ACP 消息"的映射,
 // 但它决定了 Zed 里显示成什么样,映射错了在编辑器里很难查,所以钉死在测试里。
 import { describe, expect, it } from "bun:test";
-import { toolContentOf, toolKindOf, toolLocationsOf, toolTitleOf } from "../src/acp/session.ts";
+import { replayUpdatesOf, toolContentOf, toolKindOf, toolLocationsOf, toolTitleOf } from "../src/acp/session.ts";
 
 describe("toolKindOf", () => {
 	it("maps my-pi tools onto ACP kinds", () => {
@@ -74,5 +74,56 @@ describe("toolContentOf", () => {
 
 	it("emits nothing when a tool produced no text", () => {
 		expect(toolContentOf("bash", undefined, "")).toEqual([]);
+	});
+});
+
+describe("replayUpdatesOf", () => {
+	it("replays a full conversation: user, thinking, text, tool call, tool result", () => {
+		const updates = replayUpdatesOf([
+			{ role: "user", content: [{ type: "text", text: "改一下 a.ts" }], timestamp: 1 },
+			{
+				role: "assistant",
+				content: [
+					{ type: "thinking", thinking: "先看文件" },
+					{ type: "text", text: "好的。" },
+					{ type: "toolCall", id: "call-1", name: "read", arguments: { path: "a.ts" } },
+				],
+				timestamp: 2,
+			},
+			{
+				role: "toolResult",
+				toolCallId: "call-1",
+				toolName: "read",
+				content: [{ type: "text", text: "file body" }],
+				isError: false,
+				timestamp: 3,
+			},
+		]);
+
+		expect(updates.map((update) => update.sessionUpdate)).toEqual([
+			"user_message_chunk",
+			"agent_thought_chunk",
+			"agent_message_chunk",
+			"tool_call",
+			"tool_call_update",
+		]);
+		expect(updates[3]).toMatchObject({ toolCallId: "call-1", kind: "read", title: "Read a.ts" });
+		expect(updates[4]).toMatchObject({ toolCallId: "call-1", status: "completed" });
+	});
+
+	it("accepts string user content and marks failed tool results", () => {
+		const updates = replayUpdatesOf([
+			{ role: "user", content: "hi", timestamp: 1 },
+			{
+				role: "toolResult",
+				toolCallId: "call-2",
+				toolName: "bash",
+				content: [{ type: "text", text: "boom" }],
+				isError: true,
+				timestamp: 2,
+			},
+		]);
+		expect(updates[0]).toMatchObject({ sessionUpdate: "user_message_chunk", content: { text: "hi" } });
+		expect(updates[1]).toMatchObject({ sessionUpdate: "tool_call_update", status: "failed" });
 	});
 });

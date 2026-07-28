@@ -6,10 +6,11 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Model, Models } from "@earendil-works/pi-ai";
-import { AgentHarness, JsonlSessionStorage, type NodeExecutionEnv, Session, uuidv7 } from "@yoma/my-pi/node";
+import { AgentHarness, JsonlSessionRepo, type NodeExecutionEnv, type Session, uuidv7 } from "@yoma/my-pi/node";
 import { buildSystemPrompt, collectToolPromptData } from "../core/system-prompt.ts";
 import { createCodingToolDefinitions, wrapToolDefinitions } from "../core/tools/index.ts";
-import { pipeHarnessToAcp, type UpdateSink } from "./session.ts";
+import { type ResolvedModel, resolveModelFor } from "./models.ts";
+import { pipeHarnessToAcp, replayUpdatesOf, type UpdateSink } from "./session.ts";
 
 export const SESSIONS_DIR = join(homedir(), ".my-pi", "sessions");
 export const LOGS_DIR = join(homedir(), ".my-pi", "logs");
@@ -34,13 +35,17 @@ export interface MyPiAcpAgentOptions {
 
 export class MyPiAcpAgent {
 	private sessions = new Map<string, AcpSession>();
+	// 会话仓库,目录布局与 pi 相同:<root>/--<cwd 编码>--/<时间戳>_<sessionId>.jsonl。
+	private repo: JsonlSessionRepo;
 
-	constructor(private options: MyPiAcpAgentOptions) {}
+	constructor(private options: MyPiAcpAgentOptions) {
+		this.repo = new JsonlSessionRepo({ fs: options.env, sessionsRoot: options.sessionsDir ?? SESSIONS_DIR });
+	}
 
 	async initialize(_params: any) {
 		return {
 			protocolVersion: this.options.protocolVersion,
-			agentCapabilities: { loadSession: false },
+			agentCapabilities: { loadSession: true },
 			authMethods: [],
 		};
 	}
@@ -54,10 +59,60 @@ export class MyPiAcpAgent {
 		const cwd: string = params?.cwd ?? this.options.env.cwd;
 		const sessionId = uuidv7();
 
-		// 会话落 ~/.my-pi/sessions/<id>.jsonl,重开 Zed 也不会丢。
-		await this.options.env.createDir(this.options.sessionsDir ?? SESSIONS_DIR, { recursive: true });
-		const sessionPath = join(this.options.sessionsDir ?? SESSIONS_DIR, `${sessionId}.jsonl`);
-		const storage = await JsonlSessionStorage.create(this.options.env, sessionPath, { cwd, sessionId });
+		// 会话经 repo 落盘,重开 Zed 也不会丢(经 session/load 找回)。
+		const session = await this.repo.create({ cwd, id: sessionId });
+		// 把"当前用什么模型"记进会话树,对齐 pi 会话文件开头的记账条目;恢复时靠它选模型。
+		await session.appendModelChange(this.options.model.provider, this.options.model.id);
+
+		await this.setupSession(sessionId, cwd, session);
+		return { sessionId, modes: null };
+	}
+
+	async loadSession(params: any, cx: any) {
+		const sessionId: string = params?.sessionId;
+		const cwd: string | undefined = params?.cwd;
+
+		// 先在 Zed 给的 cwd 目录下找,找不到再全局找(会话可能建在别的项目里)。
+		const candidates = cwd ? await this.repo.list({ cwd }) : [];
+		const metadata =
+			candidates.find((entry) => entry.id === sessionId) ??
+			(await this.repo.list()).find((entry) => entry.id === sessionId);
+		if (!metadata) {
+			throw new Error(`Session ${sessionId} not found`);
+		}
+		const session = await this.repo.open(metadata);
+
+		// 恢复模型:会话树里最后一条 model_change 记着当时用的什么。能装配就装配,
+		// 装配不出来(provider 没配 key 等)就回退到启动时解析的默认模型。
+		const modelChanges = await session.getStorage().findEntries("model_change");
+		const lastModelChange = modelChanges[modelChanges.length - 1];
+		const resolved =
+			lastModelChange &&
+			(lastModelChange.provider !== this.options.model.provider ||
+				lastModelChange.modelId !== this.options.model.id)
+				? await resolveModelFor(lastModelChange.provider, lastModelChange.modelId)
+				: undefined;
+
+		await this.setupSession(sessionId, cwd ?? metadata.cwd, session, resolved);
+
+		// 重放历史:把会话树的线性投影翻译成 session/update 逐条发给客户端,
+		// Zed 收完这串通知才会把旧对话画出来。
+		const context = await session.buildContext();
+		for (const update of replayUpdatesOf(context.messages)) {
+			await cx.notify("session/update", { sessionId, update });
+		}
+		return { modes: null };
+	}
+
+	/** newSession / loadSession 共用的装配:env、工具、harness、观测日志、会话注册。 */
+	private async setupSession(
+		sessionId: string,
+		cwd: string,
+		session: Session,
+		resolved?: ResolvedModel,
+	): Promise<AcpSession> {
+		const models = resolved?.models ?? this.options.models;
+		const model = resolved?.model ?? this.options.model;
 
 		// 每个会话有自己的 cwd,所以工具也要绑到那个 cwd 上的 env。
 		const env =
@@ -70,9 +125,9 @@ export class MyPiAcpAgent {
 		const toolDefinitions = createCodingToolDefinitions(env);
 		const harness = new AgentHarness({
 			env,
-			session: new Session(storage),
-			models: this.options.models,
-			model: this.options.model,
+			session,
+			models,
+			model,
 			systemPrompt: buildSystemPrompt({
 				cwd,
 				...collectToolPromptData(toolDefinitions),
@@ -96,9 +151,8 @@ export class MyPiAcpAgent {
 		});
 
 		const acpSession: AcpSession = { harness, cwd, pendingPrompt: null };
-
 		this.sessions.set(sessionId, acpSession);
-		return { sessionId, modes: null };
+		return acpSession;
 	}
 
 	async prompt(params: any, cx: any): Promise<{ stopReason: "end_turn" | "cancelled" }> {

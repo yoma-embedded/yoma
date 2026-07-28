@@ -1,7 +1,6 @@
 // harness 类型总仓,随里程碑逐步补入:M5 会话树 + FileSystem(已全)、
 // M7 harness 骨架(错误/能力/选项,施工中)。
-// 参考 pi-minimal harness/types.ts(838 行)。尚缺:SessionRepo 家族(M5 Step 5)、
-// harness 钩子/事件联合(M7 Step 7)、compaction 设置与结果类型(M8)。
+// 参考 pi-minimal harness/types.ts(838 行)。SessionRepo 家族(M5 Step 5)已随会话恢复补入。
 import type { ImageContent, Model, Models, SimpleStreamOptions, TextContent, Transport } from "@earendil-works/pi-ai";
 import type { AgentEvent, AgentMessage, AgentTool, QueueMode, ThinkingLevel } from "../types.ts";
 import type { Session } from "./session/session.ts";
@@ -295,6 +294,46 @@ export interface SessionStorage<TMetadata extends SessionMetadata = SessionMetad
 	getPathToRoot(leafId: string | null): Promise<SessionTreeEntry[]>;
 	getEntries(): Promise<SessionTreeEntry[]>;
 }
+
+// ---------------------------------------------------------------------------
+// SessionRepo 家族(M5 Step 5,对应 pi harness/types.ts 的同名区块):
+// storage 管"一个会话文件怎么读写",repo 管"一堆会话怎么建/找/开/删/fork"。
+// ---------------------------------------------------------------------------
+
+export interface SessionCreateOptions {
+	id?: string;
+}
+
+export interface SessionForkOptions {
+	entryId?: string;
+	position?: "before" | "at";
+	id?: string;
+}
+
+export interface SessionRepo<
+	TMetadata extends SessionMetadata = SessionMetadata,
+	TCreateOptions extends SessionCreateOptions = SessionCreateOptions,
+	TListOptions = void,
+> {
+	create(options: TCreateOptions): Promise<Session<TMetadata>>;
+	open(metadata: TMetadata): Promise<Session<TMetadata>>;
+	list(options?: TListOptions): Promise<TMetadata[]>;
+	delete(metadata: TMetadata): Promise<void>;
+	fork(source: TMetadata, options: SessionForkOptions & TCreateOptions): Promise<Session<TMetadata>>;
+}
+
+export interface JsonlSessionCreateOptions extends SessionCreateOptions {
+	cwd: string;
+	parentSessionPath?: string;
+	metadata?: Record<string, unknown>;
+}
+
+export interface JsonlSessionListOptions {
+	cwd?: string;
+}
+
+export interface JsonlSessionRepoApi
+	extends SessionRepo<JsonlSessionMetadata, JsonlSessionCreateOptions, JsonlSessionListOptions> {}
 
 // ---------------------------------------------------------------------------
 // M7 资源类型:Skill 与 PromptTemplate

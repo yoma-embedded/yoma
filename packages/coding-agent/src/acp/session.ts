@@ -106,6 +106,69 @@ function textOfContent(content: unknown): string {
 export type UpdateSink = (update: Record<string, unknown>) => Promise<void>;
 
 /**
+ * session/load 的历史重放:把已落盘的线性消息翻译成一串 session/update。
+ * 纯函数,方便测试;真正的 notify 由 agent.ts 逐条发出。
+ * 和 pipeHarnessToAcp 的区别:那边消费的是流式事件(delta),这边消费的是整条消息。
+ */
+export function replayUpdatesOf(messages: unknown[]): Record<string, unknown>[] {
+	const updates: Record<string, unknown>[] = [];
+	for (const raw of messages) {
+		const message = raw as {
+			role?: string;
+			content?: unknown;
+			toolCallId?: string;
+			toolName?: string;
+			details?: unknown;
+			isError?: boolean;
+		};
+		if (message.role === "user") {
+			const blocks =
+				typeof message.content === "string"
+					? [{ type: "text", text: message.content }]
+					: ((message.content as Array<{ type: string; text?: string }>) ?? []);
+			for (const block of blocks) {
+				if (block.type === "text" && block.text) {
+					updates.push({ sessionUpdate: "user_message_chunk", content: { type: "text", text: block.text } });
+				}
+			}
+		} else if (message.role === "assistant") {
+			const blocks = (message.content as Array<Record<string, any>>) ?? [];
+			for (const block of blocks) {
+				if (block.type === "text" && block.text) {
+					updates.push({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: block.text } });
+				} else if (block.type === "thinking" && block.thinking) {
+					updates.push({
+						sessionUpdate: "agent_thought_chunk",
+						content: { type: "text", text: block.thinking },
+					});
+				} else if (block.type === "toolCall") {
+					updates.push({
+						sessionUpdate: "tool_call",
+						toolCallId: block.id,
+						title: toolTitleOf(block.name, block.arguments),
+						kind: toolKindOf(block.name),
+						status: "in_progress",
+						locations: toolLocationsOf(undefined, block.arguments),
+						rawInput: block.arguments,
+					});
+				}
+			}
+		} else if (message.role === "toolResult" && message.toolCallId && message.toolName) {
+			const text = textOfContent(message.content);
+			updates.push({
+				sessionUpdate: "tool_call_update",
+				toolCallId: message.toolCallId,
+				status: message.isError ? "failed" : "completed",
+				content: toolContentOf(message.toolName, message.details, text),
+				locations: toolLocationsOf(message.details, undefined),
+				rawOutput: { text },
+			});
+		}
+	}
+	return updates;
+}
+
+/**
  * 把 harness 的事件流接到 ACP 的通知流上。
  * 返回退订函数。
  */

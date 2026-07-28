@@ -53,7 +53,7 @@ function readJson(path: string): any {
 	}
 }
 
-interface ResolvedModel {
+export interface ResolvedModel {
 	models: Models;
 	model: Model<any>;
 }
@@ -85,6 +85,23 @@ export async function resolveModel(): Promise<ResolvedModel> {
 
 	const modelId = process.env.MY_PI_MODEL ?? (settings.defaultProvider === providerId ? settings.defaultModel : undefined) ?? spec.defaultModel;
 
+	return buildResolvedModel(spec, modelId, apiKey);
+}
+
+/**
+ * 按 provider/model 精确装配(session/load 恢复会话记录的模型用)。
+ * 装配不出来(provider 不认识、没有 key)返回 undefined,调用方回退默认模型。
+ */
+export async function resolveModelFor(providerId: string, modelId: string): Promise<ResolvedModel | undefined> {
+	const spec = PROVIDERS[providerId];
+	if (!spec) return undefined;
+	const auth = readJson(join(homedir(), ".pi", "agent", "auth.json")) ?? {};
+	const apiKey = process.env.MY_PI_API_KEY ?? auth[providerId]?.key;
+	if (!apiKey) return undefined;
+	return buildResolvedModel(spec, modelId, apiKey);
+}
+
+function buildResolvedModel(spec: ProviderSpec, modelId: string, apiKey: string): ResolvedModel {
 	const model: Model<"openai-completions"> = {
 		id: modelId,
 		name: `${spec.name} ${modelId}`,
