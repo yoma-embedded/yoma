@@ -313,3 +313,59 @@ describe("parseSlashCommand", () => {
 		expect(parseSlashCommand("/deploy production")).toBeUndefined();
 	});
 });
+
+// ---- 自动压缩的判断 -------------------------------------------------------
+//
+// 这两个分支只在长会话里暴露:漏了 no_usage 会让空会话一上来就压;
+// 漏了 just_compacted 会压完立刻再压,一路压到没东西可压。
+import { shouldAutoCompact } from "../src/acp/agent.ts";
+
+const zeroCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+
+function assistantWithUsage(totalTokens: number, timestamp: number): any {
+	return {
+		role: "assistant",
+		content: [{ type: "text", text: "ok" }],
+		timestamp,
+		usage: { input: totalTokens, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens, cost: zeroCost },
+	};
+}
+
+// DEFAULT_COMPACTION_SETTINGS.reserveTokens 是 16384,所以窗口必须比它大才有真阈值。
+const WINDOW = 20000;
+const THRESHOLD = WINDOW - 16384; // 3616
+
+describe("shouldAutoCompact", () => {
+	it("does nothing without usage data — a fresh session must not compact itself", () => {
+		const result = shouldAutoCompact([{ role: "user", content: "hi", timestamp: 1 } as any], WINDOW);
+		expect(result).toMatchObject({ compact: false, reason: "no_usage" });
+	});
+
+	it("stays put below the threshold", () => {
+		const result = shouldAutoCompact([assistantWithUsage(THRESHOLD - 100, 10)], WINDOW);
+		expect(result).toMatchObject({ compact: false, reason: "under_threshold" });
+	});
+
+	it("compacts above the threshold", () => {
+		const result = shouldAutoCompact([assistantWithUsage(THRESHOLD + 100, 10)], WINDOW);
+		expect(result).toMatchObject({ compact: true, reason: "over_threshold" });
+		expect(result.tokens).toBeGreaterThan(THRESHOLD);
+	});
+
+	it("refuses to re-compact on usage that predates the last compaction", () => {
+		// 保留下来的消息带的是压缩前那个更大上下文的 usage。信它就会无限压。
+		const result = shouldAutoCompact([assistantWithUsage(THRESHOLD + 5000, 100)], WINDOW, 200);
+		expect(result).toMatchObject({ compact: false, reason: "just_compacted" });
+	});
+
+	it("compacts again once a turn after the compaction produced fresh usage", () => {
+		const result = shouldAutoCompact([assistantWithUsage(THRESHOLD + 5000, 300)], WINDOW, 200);
+		expect(result).toMatchObject({ compact: true, reason: "over_threshold" });
+	});
+
+	it("scales with the model's window — the same context is fine in a bigger one", () => {
+		const messages = [assistantWithUsage(THRESHOLD + 100, 10)];
+		expect(shouldAutoCompact(messages, WINDOW).compact).toBe(true);
+		expect(shouldAutoCompact(messages, 200000).compact).toBe(false);
+	});
+});

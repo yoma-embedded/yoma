@@ -9,9 +9,13 @@ import { RequestError } from "@agentclientprotocol/sdk";
 import { getSupportedThinkingLevels, type Model, type Models } from "@earendil-works/pi-ai";
 import {
 	AgentHarness,
+	type AgentMessage,
+	DEFAULT_COMPACTION_SETTINGS,
+	estimateContextTokens,
 	JsonlSessionRepo,
 	type NodeExecutionEnv,
 	type Session,
+	shouldCompact,
 	type ThinkingLevel,
 	uuidv7,
 } from "@yoma/my-pi/node";
@@ -135,6 +139,42 @@ export function parseSlashCommand(text: string): { name: string; argument: strin
 	return { name, argument: match[2]?.trim() ?? "" };
 }
 
+/**
+ * 一轮结束后该不该自动压缩。抽成纯函数,因为这里有两个容易写错、又只在长会话里
+ * 才暴露的判断,埋在效果代码里测不动。
+ *
+ * @param messages           buildContext() 投影出的消息(已应用最后一次压缩)
+ * @param contextWindow      当前模型的上下文窗口
+ * @param lastCompactionAtMs 最后一条 compaction 条目的时间戳;没压过则 undefined
+ */
+export function shouldAutoCompact(
+	messages: AgentMessage[],
+	contextWindow: number,
+	lastCompactionAtMs?: number,
+): { compact: boolean; tokens: number; reason: "no_usage" | "just_compacted" | "under_threshold" | "over_threshold" } {
+	const estimate = estimateContextTokens(messages);
+
+	// 没有任何 usage 数据时不猜:纯估算会把还没跑过一轮的会话误判成该压。
+	if (estimate.lastUsageIndex === null) return { compact: false, tokens: estimate.tokens, reason: "no_usage" };
+
+	// 压缩刚做完时,保留下来的消息带的仍是压缩前(更大)那个上下文的 usage。
+	// 信了它就会压完立刻又触发,一路压到没东西可压。
+	if (lastCompactionAtMs !== undefined) {
+		const usageMessage = messages[estimate.lastUsageIndex] as { role?: string; timestamp?: number } | undefined;
+		if (
+			usageMessage?.role === "assistant" &&
+			typeof usageMessage.timestamp === "number" &&
+			usageMessage.timestamp <= lastCompactionAtMs
+		) {
+			return { compact: false, tokens: estimate.tokens, reason: "just_compacted" };
+		}
+	}
+
+	return shouldCompact(estimate.tokens, contextWindow, DEFAULT_COMPACTION_SETTINGS)
+		? { compact: true, tokens: estimate.tokens, reason: "over_threshold" }
+		: { compact: false, tokens: estimate.tokens, reason: "under_threshold" };
+}
+
 /** 换模型后旧档位可能不再受支持(例如切到 reasoning:false 的模型),夹回去。 */
 export function clampThinkingLevel(model: Model<any>, level: ThinkingLevel): ThinkingLevel {
 	const supported = getSupportedThinkingLevels(model) as ThinkingLevel[];
@@ -143,6 +183,8 @@ export function clampThinkingLevel(model: Model<any>, level: ThinkingLevel): Thi
 
 interface AcpSession {
 	harness: AgentHarness<any, any, any>;
+	/** harness 不暴露 session,但自动压缩要读 buildContext(),所以这里留一份引用。 */
+	session: Session;
 	cwd: string;
 	pendingPrompt: AbortController | null;
 	/** 当前 prompt 的通知发送口;不在 prompt 中时为 undefined。 */
@@ -331,7 +373,7 @@ export class MyPiAcpAgent {
 			}
 		});
 
-		const acpSession: AcpSession = { harness, cwd, pendingPrompt: null };
+		const acpSession: AcpSession = { harness, session, cwd, pendingPrompt: null };
 		this.sessions.set(sessionId, acpSession);
 		return acpSession;
 	}
@@ -433,6 +475,8 @@ export class MyPiAcpAgent {
 				return { stopReason: "end_turn" };
 			}
 			await session.harness.prompt(text);
+			// 压缩放在这一轮之后:下一轮开始时才有腾出来的空间,和上游的 threshold 路径一致。
+			await this.maybeAutoCompact(session, sink);
 			return { stopReason: "end_turn" };
 		} catch (error) {
 			if (session.pendingPrompt.signal.aborted) {
@@ -444,6 +488,47 @@ export class MyPiAcpAgent {
 			session.unsubscribe = undefined;
 			session.sink = undefined;
 			session.pendingPrompt = null;
+		}
+	}
+
+	/**
+	 * 一轮结束后按阈值自动压缩。对齐上游 pi 的 threshold 路径(它放在 agent-session.ts,
+	 * 也就是应用层而非 harness —— harness 只提供 compact(),什么时候压是应用的事)。
+	 *
+	 * 不做会怎样:Zed 里聊长了直接撞上下文窗口,除非用户自己想起来敲 /compact。
+	 *
+	 * 返回是否真的压缩了。任何失败都只记一条消息,绝不让这一轮 prompt 失败 ——
+	 * 压缩是善后动作,它挂了不该把用户已经拿到的回答一起废掉。
+	 */
+	private async maybeAutoCompact(session: AcpSession, sink: UpdateSink): Promise<boolean> {
+		try {
+			const model = session.harness.getModel();
+			const context = await session.session.buildContext();
+			const compactions = await session.session.getStorage().findEntries("compaction");
+			const lastCompaction = compactions[compactions.length - 1];
+
+			const decision = shouldAutoCompact(
+				context.messages,
+				model.contextWindow,
+				lastCompaction ? new Date(lastCompaction.timestamp).getTime() : undefined,
+			);
+			if (!decision.compact) return false;
+
+			await session.harness.compact();
+			await sink({
+				sessionUpdate: "agent_message_chunk",
+				content: {
+					type: "text",
+					text: `\n\n🗜️ 上下文接近上限(约 ${decision.tokens}/${model.contextWindow} tokens),已自动压缩。\n`,
+				},
+			});
+			return true;
+		} catch (error) {
+			await sink({
+				sessionUpdate: "agent_message_chunk",
+				content: { type: "text", text: `\n\n⚠️ 自动压缩失败:${(error as Error)?.message ?? String(error)}\n` },
+			});
+			return false;
 		}
 	}
 
