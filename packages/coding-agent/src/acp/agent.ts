@@ -5,15 +5,102 @@
  */
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Model, Models } from "@earendil-works/pi-ai";
-import { AgentHarness, JsonlSessionRepo, type NodeExecutionEnv, type Session, uuidv7 } from "@yoma/my-pi/node";
+import { RequestError } from "@agentclientprotocol/sdk";
+import { getSupportedThinkingLevels, type Model, type Models } from "@earendil-works/pi-ai";
+import {
+	AgentHarness,
+	JsonlSessionRepo,
+	type NodeExecutionEnv,
+	type Session,
+	type ThinkingLevel,
+	uuidv7,
+} from "@yoma/my-pi/node";
 import { buildSystemPrompt, collectToolPromptData } from "../core/system-prompt.ts";
 import { createCodingToolDefinitions, wrapToolDefinitions } from "../core/tools/index.ts";
-import { type ResolvedModel, resolveModelFor } from "./models.ts";
 import { pipeHarnessToAcp, replayUpdatesOf, type UpdateSink } from "./session.ts";
 
 export const SESSIONS_DIR = join(homedir(), ".my-pi", "sessions");
 export const LOGS_DIR = join(homedir(), ".my-pi", "logs");
+
+/**
+ * Zed 的模型下拉框和 thinking 下拉框都由 session/new / session/load 返回的
+ * configOptions 渲染 —— 不是 models 字段(SDK 1.3.0 里根本没有 models 和
+ * session/set_model),也不是 modes。这两个 id 就是 Zed settings.json 里
+ * agent_servers.<name>.default_config_options 的键,改名会让默认值配置失效。
+ */
+export const MODEL_CONFIG_ID = "model";
+export const THOUGHT_LEVEL_CONFIG_ID = "thought_level";
+
+/** ACP 的 SessionConfigOption(select 分支)。字段名逐字对齐 SDK 1.3.0 的 schema。 */
+export interface AcpSelectConfigOption {
+	type: "select";
+	id: string;
+	name: string;
+	description: string | null;
+	category: "model" | "thought_level";
+	currentValue: string;
+	options: Array<{ value: string; name: string; description: string | null }>;
+}
+
+/** 模型在 ACP 侧的稳定标识。Zed 把它原样回传给 session/set_config_option。 */
+export function modelValueOf(model: { provider: string; id: string }): string {
+	return `${model.provider}/${model.id}`;
+}
+
+/** modelValueOf 的逆运算。模型 id 本身可能含 "/",所以只切第一个。 */
+export function parseModelValue(value: string): { provider: string; modelId: string } | undefined {
+	const slash = value.indexOf("/");
+	if (slash <= 0 || slash === value.length - 1) return undefined;
+	return { provider: value.slice(0, slash), modelId: value.slice(slash + 1) };
+}
+
+/**
+ * 纯函数版的 configOptions 构造,方便测试。
+ *
+ * thinking 档位来自模型自身的 thinkingLevelMap —— 模型 reasoning:false 时
+ * getSupportedThinkingLevels 只会返回 ["off"],这是正确行为而不是 bug。
+ */
+export function buildConfigOptionsFor(
+	models: Models,
+	model: Model<any>,
+	thinkingLevel: ThinkingLevel,
+): AcpSelectConfigOption[] {
+	const catalog = models.getModels();
+	return [
+		{
+			type: "select",
+			id: MODEL_CONFIG_ID,
+			name: "Model",
+			description: "Select the model for this session",
+			category: "model",
+			currentValue: modelValueOf(model),
+			options: catalog.map((m) => ({
+				value: modelValueOf(m),
+				name: `${m.provider}/${m.name}`,
+				description: null,
+			})),
+		},
+		{
+			type: "select",
+			id: THOUGHT_LEVEL_CONFIG_ID,
+			name: "Thinking",
+			description: "Set the reasoning effort for this session",
+			category: "thought_level",
+			currentValue: thinkingLevel,
+			options: getSupportedThinkingLevels(model).map((level) => ({
+				value: level,
+				name: `Thinking: ${level}`,
+				description: null,
+			})),
+		},
+	];
+}
+
+/** 换模型后旧档位可能不再受支持(例如切到 reasoning:false 的模型),夹回去。 */
+export function clampThinkingLevel(model: Model<any>, level: ThinkingLevel): ThinkingLevel {
+	const supported = getSupportedThinkingLevels(model) as ThinkingLevel[];
+	return supported.includes(level) ? level : (supported[0] ?? "off");
+}
 
 interface AcpSession {
 	harness: AgentHarness<any, any, any>;
@@ -50,6 +137,38 @@ export class MyPiAcpAgent {
 		};
 	}
 
+	/** 当前会话的 configOptions。响应和通知共用一处构造,防止两边漂移。 */
+	private configOptionsOf(sessionId: string): AcpSelectConfigOption[] {
+		const session = this.sessions.get(sessionId);
+		if (!session) throw new Error(`Session ${sessionId} not found`);
+		return buildConfigOptionsFor(
+			this.options.models,
+			session.harness.getModel(),
+			session.harness.getThinkingLevel(),
+		);
+	}
+
+	/**
+	 * thinking 档位同时也用 ACP 的 session modes 表达一份。
+	 *
+	 * 这是照抄 pi-acp 的双保险:它同时发 configOptions 和 modes,而 Zed 只画出一个
+	 * thinking 选择器 —— 说明客户端会二选一,不会重复渲染。哪条路被采用无所谓,
+	 * 两条路最终都落到 harness.setThinkingLevel()。
+	 */
+	private modesOf(sessionId: string) {
+		const session = this.sessions.get(sessionId);
+		if (!session) throw new Error(`Session ${sessionId} not found`);
+		const model = session.harness.getModel();
+		return {
+			currentModeId: session.harness.getThinkingLevel(),
+			availableModes: getSupportedThinkingLevels(model).map((level) => ({
+				id: level,
+				name: `Thinking: ${level}`,
+				description: null,
+			})),
+		};
+	}
+
 	async authenticate(_params: unknown) {
 		// key 由 pi-ai 的 provider 从环境变量读,ACP 这层不需要额外认证。
 		return {};
@@ -65,7 +184,11 @@ export class MyPiAcpAgent {
 		await session.appendModelChange(this.options.model.provider, this.options.model.id);
 
 		await this.setupSession(sessionId, cwd, session);
-		return { sessionId, modes: null };
+		return {
+			sessionId,
+			configOptions: this.configOptionsOf(sessionId),
+			modes: this.modesOf(sessionId),
+		};
 	}
 
 	async loadSession(params: any, cx: any) {
@@ -82,26 +205,29 @@ export class MyPiAcpAgent {
 		}
 		const session = await this.repo.open(metadata);
 
-		// 恢复模型:会话树里最后一条 model_change 记着当时用的什么。能装配就装配,
-		// 装配不出来(provider 没配 key 等)就回退到启动时解析的默认模型。
-		const modelChanges = await session.getStorage().findEntries("model_change");
-		const lastModelChange = modelChanges[modelChanges.length - 1];
-		const resolved =
-			lastModelChange &&
-			(lastModelChange.provider !== this.options.model.provider ||
-				lastModelChange.modelId !== this.options.model.id)
-				? await resolveModelFor(lastModelChange.provider, lastModelChange.modelId)
-				: undefined;
+		// buildContext 一次拿全:消息投影、当时的模型、当时的 thinking 档位。
+		// 必须在 setupSession 之前算,因为 thinkingLevel 要在构造 harness 时就传进去。
+		const context = await session.buildContext();
 
-		await this.setupSession(sessionId, cwd ?? metadata.cwd, session, resolved);
+		// 恢复模型:注册表里找得到就用,找不到(provider 没配 key、模型已下架)
+		// 就回退到启动时解析的默认模型。
+		const model = context.model
+			? (this.options.models.getModel(context.model.provider, context.model.modelId) ?? this.options.model)
+			: this.options.model;
+		// 恢复 thinking 档位。会话记的是字符串,换过模型后可能已不受支持,夹一次。
+		const thinkingLevel = clampThinkingLevel(model, context.thinkingLevel as ThinkingLevel);
+
+		await this.setupSession(sessionId, cwd ?? metadata.cwd, session, model, thinkingLevel);
 
 		// 重放历史:把会话树的线性投影翻译成 session/update 逐条发给客户端,
 		// Zed 收完这串通知才会把旧对话画出来。
-		const context = await session.buildContext();
 		for (const update of replayUpdatesOf(context.messages)) {
 			await cx.notify("session/update", { sessionId, update });
 		}
-		return { modes: null };
+		return {
+			configOptions: this.configOptionsOf(sessionId),
+			modes: this.modesOf(sessionId),
+		};
 	}
 
 	/** newSession / loadSession 共用的装配:env、工具、harness、观测日志、会话注册。 */
@@ -109,10 +235,14 @@ export class MyPiAcpAgent {
 		sessionId: string,
 		cwd: string,
 		session: Session,
-		resolved?: ResolvedModel,
+		restoredModel?: Model<any>,
+		restoredThinkingLevel?: ThinkingLevel,
 	): Promise<AcpSession> {
-		const models = resolved?.models ?? this.options.models;
-		const model = resolved?.model ?? this.options.model;
+		// 注册表是全局唯一的(resolveModel 把所有配了 key 的 provider 都注册了进去),
+		// 所以跨 provider 切模型不需要换注册表 —— 也换不了,harness.models 是 readonly。
+		const models = this.options.models;
+		const model = restoredModel ?? this.options.model;
+		const thinkingLevel = restoredThinkingLevel ?? clampThinkingLevel(model, "off");
 
 		// 每个会话有自己的 cwd,所以工具也要绑到那个 cwd 上的 env。
 		const env =
@@ -128,6 +258,7 @@ export class MyPiAcpAgent {
 			session,
 			models,
 			model,
+			thinkingLevel,
 			systemPrompt: buildSystemPrompt({
 				cwd,
 				...collectToolPromptData(toolDefinitions),
@@ -153,6 +284,77 @@ export class MyPiAcpAgent {
 		const acpSession: AcpSession = { harness, cwd, pendingPrompt: null };
 		this.sessions.set(sessionId, acpSession);
 		return acpSession;
+	}
+
+	/**
+	 * Zed 在下拉框里选了值 → 这里落到 harness。
+	 *
+	 * 必须返回 { configOptions }:SetSessionConfigOptionResponse 里这个字段是必填的,
+	 * 而且这个方法在 SDK 里没有 void→{} 的兜底 mapper(session/set_mode 才有),
+	 * 返回 undefined 会在响应校验时直接失败。
+	 */
+	async setSessionConfigOption(params: any, cx: any): Promise<{ configOptions: AcpSelectConfigOption[] }> {
+		const sessionId: string = params?.sessionId;
+		const session = this.sessions.get(sessionId);
+		if (!session) {
+			throw new Error(`Session ${sessionId} not found`);
+		}
+		const value = String(params?.value ?? "");
+
+		switch (params?.configId) {
+			case MODEL_CONFIG_ID: {
+				const parsed = parseModelValue(value);
+				const model = parsed ? this.options.models.getModel(parsed.provider, parsed.modelId) : undefined;
+				// 用 JSON-RPC 的 invalidParams 而不是裸 Error:后者会被 SDK 包成
+				// "Internal error",客户端只能看到一句废话。
+				if (!model) throw RequestError.invalidParams(undefined, `Unknown model: ${value}`);
+				await session.harness.setModel(model);
+				// 新模型未必支持旧档位(例如切到 reasoning:false 的模型),夹一次并落盘。
+				const clamped = clampThinkingLevel(model, session.harness.getThinkingLevel());
+				if (clamped !== session.harness.getThinkingLevel()) {
+					await session.harness.setThinkingLevel(clamped);
+				}
+				break;
+			}
+			case THOUGHT_LEVEL_CONFIG_ID: {
+				const supported = getSupportedThinkingLevels(session.harness.getModel()) as ThinkingLevel[];
+				if (!supported.includes(value as ThinkingLevel)) {
+					throw RequestError.invalidParams(undefined, `Unsupported thinking level: ${value}`);
+				}
+				await session.harness.setThinkingLevel(value as ThinkingLevel);
+				break;
+			}
+			default:
+				throw RequestError.invalidParams(undefined, `Unknown config option: ${params?.configId}`);
+		}
+
+		// 回推一份完整的新状态,否则客户端那边的选中项不会跟着变。
+		const configOptions = this.configOptionsOf(sessionId);
+		await cx?.notify?.("session/update", {
+			sessionId,
+			update: { sessionUpdate: "config_option_update", configOptions },
+		});
+		return { configOptions };
+	}
+
+	/** thinking 档位的 modes 表达。语义与 setSessionConfigOption 的 thought_level 分支相同。 */
+	async setSessionMode(params: any, cx: any): Promise<Record<string, never>> {
+		const sessionId: string = params?.sessionId;
+		const session = this.sessions.get(sessionId);
+		if (!session) {
+			throw new Error(`Session ${sessionId} not found`);
+		}
+		const modeId = String(params?.modeId ?? "");
+		const supported = getSupportedThinkingLevels(session.harness.getModel()) as ThinkingLevel[];
+		if (!supported.includes(modeId as ThinkingLevel)) {
+			throw RequestError.invalidParams(undefined, `Unknown mode: ${modeId}`);
+		}
+		await session.harness.setThinkingLevel(modeId as ThinkingLevel);
+		await cx?.notify?.("session/update", {
+			sessionId,
+			update: { sessionUpdate: "current_mode_update", currentModeId: modeId },
+		});
+		return {};
 	}
 
 	async prompt(params: any, cx: any): Promise<{ stopReason: "end_turn" | "cancelled" }> {

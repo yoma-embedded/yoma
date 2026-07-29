@@ -127,3 +127,122 @@ describe("replayUpdatesOf", () => {
 		expect(updates[1]).toMatchObject({ sessionUpdate: "tool_call_update", status: "failed" });
 	});
 });
+
+// ---- configOptions:Zed 的模型/thinking 下拉框 ----------------------------
+//
+// 这两个下拉框完全由 session/new / session/load 返回的 configOptions 渲染。
+// 字段名或 id 一漂,Zed 那边就是"框消失了"这种极难查的现象,所以钉死。
+import { AGENT_METHODS } from "@agentclientprotocol/sdk";
+import {
+	buildConfigOptionsFor,
+	clampThinkingLevel,
+	MODEL_CONFIG_ID,
+	modelValueOf,
+	parseModelValue,
+	THOUGHT_LEVEL_CONFIG_ID,
+} from "../src/acp/agent.ts";
+
+function fakeModel(over: Record<string, unknown> = {}): any {
+	return {
+		id: "deepseek-v4-pro",
+		name: "DeepSeek V4 Pro",
+		api: "openai-completions",
+		provider: "deepseek",
+		baseUrl: "https://api.deepseek.com",
+		reasoning: true,
+		thinkingLevelMap: { minimal: null, low: null, medium: null, high: "high", max: "max" },
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 1000,
+		maxTokens: 100,
+		...over,
+	};
+}
+
+function fakeModels(list: any[]): any {
+	return { getModels: () => list, getModel: (p: string, id: string) => list.find((m) => m.provider === p && m.id === id) };
+}
+
+describe("buildConfigOptionsFor", () => {
+	const reasoningModel = fakeModel();
+	const plainModel = fakeModel({ id: "kimi-k2-turbo-preview", name: "Kimi K2 Turbo", provider: "moonshotai-cn", reasoning: false, thinkingLevelMap: undefined });
+
+	it("emits exactly the two options Zed renders as dropdowns", () => {
+		const options = buildConfigOptionsFor(fakeModels([reasoningModel, plainModel]), reasoningModel, "high");
+		expect(options.map((o) => o.id)).toEqual([MODEL_CONFIG_ID, THOUGHT_LEVEL_CONFIG_ID]);
+		expect(options.map((o) => o.category)).toEqual(["model", "thought_level"]);
+		expect(options.every((o) => o.type === "select")).toBe(true);
+	});
+
+	it("keeps ids stable — they are the keys of Zed's default_config_options", () => {
+		// 改这两个字面量会让用户 settings.json 里的默认模型配置静默失效。
+		expect(MODEL_CONFIG_ID).toBe("model");
+		expect(THOUGHT_LEVEL_CONFIG_ID).toBe("thought_level");
+	});
+
+	it("lists every registered model across providers, currentValue included", () => {
+		const options = buildConfigOptionsFor(fakeModels([reasoningModel, plainModel]), reasoningModel, "high");
+		const model = options[0]!;
+		expect(model.options.map((o) => o.value)).toEqual(["deepseek/deepseek-v4-pro", "moonshotai-cn/kimi-k2-turbo-preview"]);
+		expect(model.options.map((o) => o.value)).toContain(model.currentValue);
+	});
+
+	it("derives thinking levels from the model, not from a fixed list", () => {
+		// thinkingLevelMap 把 minimal/low/medium 标成 null,只剩 off/high/max。
+		const options = buildConfigOptionsFor(fakeModels([reasoningModel]), reasoningModel, "high");
+		expect(options[1]!.options.map((o) => o.value)).toEqual(["off", "high", "max"]);
+		expect(options[1]!.currentValue).toBe("high");
+	});
+
+	it("collapses to off for models that cannot reason", () => {
+		const options = buildConfigOptionsFor(fakeModels([plainModel]), plainModel, "off");
+		expect(options[1]!.options.map((o) => o.value)).toEqual(["off"]);
+	});
+
+	it("always keeps currentValue selectable in its own option list", () => {
+		for (const model of [reasoningModel, plainModel]) {
+			for (const option of buildConfigOptionsFor(fakeModels([reasoningModel, plainModel]), model, "off")) {
+				expect(option.options.map((o) => o.value)).toContain(option.currentValue);
+			}
+		}
+	});
+});
+
+describe("model value round-trip", () => {
+	it("round-trips provider/id", () => {
+		expect(parseModelValue(modelValueOf({ provider: "deepseek", id: "deepseek-v4-pro" }))).toEqual({
+			provider: "deepseek",
+			modelId: "deepseek-v4-pro",
+		});
+	});
+
+	it("splits on the first slash only — model ids may contain slashes", () => {
+		expect(parseModelValue("openrouter/meta/llama-3")).toEqual({ provider: "openrouter", modelId: "meta/llama-3" });
+	});
+
+	it("rejects malformed values instead of inventing a provider", () => {
+		expect(parseModelValue("no-slash")).toBeUndefined();
+		expect(parseModelValue("/leading")).toBeUndefined();
+		expect(parseModelValue("trailing/")).toBeUndefined();
+	});
+});
+
+describe("clampThinkingLevel", () => {
+	it("keeps a level the model supports", () => {
+		expect(clampThinkingLevel(fakeModel(), "high")).toBe("high");
+	});
+
+	it("falls back when switching to a model that dropped the level", () => {
+		// deepseek 的 map 把 medium 标成 null。
+		expect(clampThinkingLevel(fakeModel(), "medium")).toBe("off");
+		expect(clampThinkingLevel(fakeModel({ reasoning: false, thinkingLevelMap: undefined }), "high")).toBe("off");
+	});
+});
+
+describe("registered ACP methods", () => {
+	it("matches the SDK's own method constants", () => {
+		// 方法名写错的表现是 Zed 点下拉框收到 -32601,而不是编译错误。
+		expect(AGENT_METHODS.session_set_config_option).toBe("session/set_config_option");
+		expect(AGENT_METHODS.session_set_mode).toBe("session/set_mode");
+	});
+});

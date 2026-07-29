@@ -61,6 +61,9 @@ async function main(): Promise<void> {
 		.onRequest("authenticate", (ctx: any) => agent.authenticate(ctx.params))
 		.onRequest("session/new", (ctx: any) => agent.newSession(ctx.params))
 		.onRequest("session/load", (ctx: any) => agent.loadSession(ctx.params, ctx.client))
+		// 模型 / thinking 下拉框的落点。不注册的话 Zed 点一下只会拿到 -32601。
+		.onRequest("session/set_config_option", (ctx: any) => agent.setSessionConfigOption(ctx.params, ctx.client))
+		.onRequest("session/set_mode", (ctx: any) => agent.setSessionMode(ctx.params, ctx.client))
 		.onRequest("session/prompt", (ctx: any) => agent.prompt(ctx.params, ctx.client))
 		.onNotification("session/cancel", (ctx: any) => agent.cancel(ctx.params))
 		.connect(stream);
