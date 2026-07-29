@@ -22,6 +22,10 @@ export interface WriteToolDetails {
 	bytes: number;
 	/** 之前不存在则为 true,给 UI 区分"新建"和"覆盖"。 */
 	created: boolean;
+	/** 覆盖前的内容;新建时为 null。与 EditToolDetails 一样,给 ACP 的结构化 diff 用。 */
+	oldContent: string | null;
+	/** 写入后的内容。没有它 Zed 只能画出一个空 diff。 */
+	newContent: string;
 }
 
 export interface WriteToolOptions {}
@@ -53,6 +57,16 @@ export function createWriteToolDefinition(
 				const existed = await env.exists(absolutePath);
 				throwIfAborted();
 
+				const created = !(existed.ok && existed.value);
+				// 覆盖时先把旧内容读出来,否则 ACP 那边只能画出"从空白变成新内容"的假 diff。
+				// 读失败(二进制、权限)不阻断写入,退化成新建的表现即可。
+				let oldContent: string | null = null;
+				if (!created) {
+					const previous = await env.readTextFile(absolutePath);
+					if (previous.ok) oldContent = previous.value;
+					throwIfAborted();
+				}
+
 				const writeResult = await env.writeFile(absolutePath, content);
 				if (!writeResult.ok) throw new Error(writeResult.error.message);
 				throwIfAborted();
@@ -62,7 +76,9 @@ export function createWriteToolDefinition(
 					details: {
 						path: absolutePath,
 						bytes: content.length,
-						created: !(existed.ok && existed.value),
+						created,
+						oldContent,
+						newContent: content,
 					},
 				};
 			});

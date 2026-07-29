@@ -96,6 +96,45 @@ export function buildConfigOptionsFor(
 	];
 }
 
+/** ACP 的 AvailableCommand。字段名逐字对齐 SDK 1.3.0。 */
+export interface AcpAvailableCommand {
+	name: string;
+	description: string;
+	input?: { hint: string } | null;
+}
+
+/**
+ * 会话里可用的斜杠命令。
+ *
+ * 客户端收到 available_commands_update 才会把输入框提示改成
+ * "@ to include context, / for commands" —— 不发这条通知,Zed 里就没有 / 菜单。
+ *
+ * 只登记 harness 真能执行的东西:登记了却不实现,用户敲了会石沉大海。
+ * navigateTree 需要一个 entry id,没有树浏览 UI 之前不适合做成命令,所以不在列。
+ */
+export function availableCommands(): AcpAvailableCommand[] {
+	return [
+		{
+			name: "compact",
+			description: "Summarize the conversation so far and drop the compacted history",
+			input: { hint: "optional instructions for the summary" },
+		},
+		{
+			name: "status",
+			description: "Show the session id, model, thinking level and working directory",
+		},
+	];
+}
+
+/** 把一条 prompt 文本解析成斜杠命令。不是命令则返回 undefined。 */
+export function parseSlashCommand(text: string): { name: string; argument: string } | undefined {
+	const match = /^\/([a-zA-Z][\w-]*)\s*([\s\S]*)$/.exec(text.trim());
+	if (!match) return undefined;
+	const name = match[1]!;
+	if (!availableCommands().some((command) => command.name === name)) return undefined;
+	return { name, argument: match[2]?.trim() ?? "" };
+}
+
 /** 换模型后旧档位可能不再受支持(例如切到 reasoning:false 的模型),夹回去。 */
 export function clampThinkingLevel(model: Model<any>, level: ThinkingLevel): ThinkingLevel {
 	const supported = getSupportedThinkingLevels(model) as ThinkingLevel[];
@@ -174,7 +213,7 @@ export class MyPiAcpAgent {
 		return {};
 	}
 
-	async newSession(params: any) {
+	async newSession(params: any, cx?: any) {
 		const cwd: string = params?.cwd ?? this.options.env.cwd;
 		const sessionId = uuidv7();
 
@@ -184,11 +223,21 @@ export class MyPiAcpAgent {
 		await session.appendModelChange(this.options.model.provider, this.options.model.id);
 
 		await this.setupSession(sessionId, cwd, session);
+		// 命令清单只能靠通知送达 —— session/new 的响应里没有装它的字段。
+		await this.announceCommands(sessionId, cx);
 		return {
 			sessionId,
 			configOptions: this.configOptionsOf(sessionId),
 			modes: this.modesOf(sessionId),
 		};
+	}
+
+	/** 推送斜杠命令清单。客户端据此把输入框变成 "/ for commands"。 */
+	private async announceCommands(sessionId: string, cx: any): Promise<void> {
+		await cx?.notify?.("session/update", {
+			sessionId,
+			update: { sessionUpdate: "available_commands_update", availableCommands: availableCommands() },
+		});
 	}
 
 	async loadSession(params: any, cx: any) {
@@ -218,6 +267,7 @@ export class MyPiAcpAgent {
 		const thinkingLevel = clampThinkingLevel(model, context.thinkingLevel as ThinkingLevel);
 
 		await this.setupSession(sessionId, cwd ?? metadata.cwd, session, model, thinkingLevel);
+		await this.announceCommands(sessionId, cx);
 
 		// 重放历史:把会话树的线性投影翻译成 session/update 逐条发给客户端,
 		// Zed 收完这串通知才会把旧对话画出来。
@@ -375,6 +425,13 @@ export class MyPiAcpAgent {
 
 		const text = promptToText(params.prompt);
 		try {
+			// 斜杠命令在本地执行,不进模型。命令是会话级操作(压缩、查状态),
+			// 交给模型只会变成它对着一句 "/compact" 瞎猜。
+			const command = parseSlashCommand(text);
+			if (command) {
+				await this.runCommand(params.sessionId, session, command, sink);
+				return { stopReason: "end_turn" };
+			}
 			await session.harness.prompt(text);
 			return { stopReason: "end_turn" };
 		} catch (error) {
@@ -387,6 +444,50 @@ export class MyPiAcpAgent {
 			session.unsubscribe = undefined;
 			session.sink = undefined;
 			session.pendingPrompt = null;
+		}
+	}
+
+	/**
+	 * 执行一条斜杠命令,结果以 agent_message_chunk 回显。
+	 *
+	 * 命令失败(例如没东西可压缩)不往上抛 —— 那会让 Zed 弹一个红色的协议错误,
+	 * 而用户想看到的只是一句"没什么可压缩的"。
+	 */
+	private async runCommand(
+		sessionId: string,
+		session: AcpSession,
+		command: { name: string; argument: string },
+		sink: UpdateSink,
+	): Promise<void> {
+		const say = (text: string) => sink({ sessionUpdate: "agent_message_chunk", content: { type: "text", text } });
+
+		switch (command.name) {
+			case "compact": {
+				try {
+					const result = await session.harness.compact(command.argument || undefined);
+					await say(
+						`🗜️ 已压缩会话(压缩前约 ${result.tokensBefore} tokens)。\n\n**摘要**\n\n${result.summary}`,
+					);
+				} catch (error) {
+					await say(`⚠️ 压缩失败:${(error as Error)?.message ?? String(error)}`);
+				}
+				return;
+			}
+			case "status": {
+				const model = session.harness.getModel();
+				await say(
+					[
+						`**session** ${sessionId}`,
+						`**model** ${modelValueOf(model)}${model.reasoning ? "" : "(不支持 thinking)"}`,
+						`**thinking** ${session.harness.getThinkingLevel()}`,
+						`**cwd** ${session.cwd}`,
+						`**tools** ${session.harness.getTools().length}`,
+					].join("\n"),
+				);
+				return;
+			}
+			default:
+				await say(`未知命令:/${command.name}`);
 		}
 	}
 

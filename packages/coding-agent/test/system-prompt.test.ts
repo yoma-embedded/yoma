@@ -189,19 +189,25 @@ describe("collectToolPromptData", () => {
 		const env = new NodeExecutionEnv({ cwd: process.cwd() });
 		const data = collectToolPromptData(createCodingToolDefinitions(env));
 
-		expect(data.selectedTools).toEqual(["read", "bash", "edit", "write"]);
+		expect(data.selectedTools).toEqual(["read", "bash", "edit", "write", "grep"]);
 		expect(data.toolSnippets?.read).toBe("Read file contents");
 		expect(data.promptGuidelines?.length).toBeGreaterThan(0);
 	});
 
 	it("produces a prompt that only mentions registered tools", () => {
 		const env = new NodeExecutionEnv({ cwd: process.cwd() });
-		const prompt = buildSystemPrompt({ cwd: env.cwd, ...collectToolPromptData(createCodingToolDefinitions(env)) });
+		const definitions = createCodingToolDefinitions(env);
+		const prompt = buildSystemPrompt({ cwd: env.cwd, ...collectToolPromptData(definitions) });
 
 		expect(prompt).toContain("- read: Read file contents");
 		expect(prompt).toContain("- bash:");
-		// 之前的硬编码提示词让模型"优先用 grep 工具",但 grep 根本没注册——
-		// 现在提示词从真实工具定义生成,这类谎言在结构上不可能再出现。
-		expect(prompt).not.toContain("- grep:");
+		// grep 曾经出现在硬编码提示词里却没有注册,模型被指使去用一个不存在的工具。
+		// 提示词现在完全由真实工具定义生成,所以"提到的"和"注册的"是同一份清单 ——
+		// 这条断言守的是这个不变式,而不是某个具体工具在不在。
+		for (const definition of definitions) {
+			expect(prompt).toContain(`- ${definition.name}:`);
+		}
+		expect(prompt).not.toContain("- find:");
+		expect(prompt).not.toContain("- ls:");
 	});
 });

@@ -114,13 +114,14 @@ export function createTool(toolName: ToolName, env: ExecutionEnv, options?: Tool
 	}
 }
 
-/** 编码用的四件套,顺序与 pi 一致。 */
+/** 编码用的五件套,顺序与 pi 一致。 */
 export function createCodingToolDefinitions(env: ExecutionEnv, options?: ToolsOptions): ToolDef[] {
 	return [
 		createReadToolDefinition(env, options?.read),
 		createBashToolDefinition(env, options?.bash),
 		createEditToolDefinition(env, options?.edit),
 		createWriteToolDefinition(env, options?.write),
+		createGrepToolDefinition(env, options?.grep),
 	];
 }
 
@@ -130,6 +131,7 @@ export function createCodingTools(env: ExecutionEnv, options?: ToolsOptions): To
 		createBashTool(env, options?.bash),
 		createEditTool(env, options?.edit),
 		createWriteTool(env, options?.write),
+		createGrepTool(env, options?.grep),
 	];
 }
 

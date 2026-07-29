@@ -66,6 +66,22 @@ describe("toolContentOf", () => {
 		expect(content).toEqual([{ type: "diff", path: "/abs/a.ts", oldText: "one\ntwo\n", newText: "one\nTWO\n" }]);
 	});
 
+	it("emits the written content for write — an empty newText renders as a blank file in Zed", () => {
+		expect(
+			toolContentOf("write", { path: "/abs/new.ts", created: true, oldContent: null, newContent: "hello\n" }, ""),
+		).toEqual([{ type: "diff", path: "/abs/new.ts", oldText: null, newText: "hello\n" }]);
+	});
+
+	it("emits a real before/after diff when write overwrites an existing file", () => {
+		expect(
+			toolContentOf(
+				"write",
+				{ path: "/abs/a.ts", created: false, oldContent: "old\n", newContent: "new\n" },
+				"",
+			),
+		).toEqual([{ type: "diff", path: "/abs/a.ts", oldText: "old\n", newText: "new\n" }]);
+	});
+
 	it("emits plain text for other tools", () => {
 		expect(toolContentOf("bash", undefined, "hello")).toEqual([
 			{ type: "content", content: { type: "text", text: "hello" } },
@@ -244,5 +260,56 @@ describe("registered ACP methods", () => {
 		// 方法名写错的表现是 Zed 点下拉框收到 -32601,而不是编译错误。
 		expect(AGENT_METHODS.session_set_config_option).toBe("session/set_config_option");
 		expect(AGENT_METHODS.session_set_mode).toBe("session/set_mode");
+	});
+});
+
+// ---- 斜杠命令 -------------------------------------------------------------
+import { availableCommands, parseSlashCommand } from "../src/acp/agent.ts";
+
+describe("availableCommands", () => {
+	it("only advertises commands the harness can actually run", () => {
+		// 登记了却不实现的命令,用户敲下去会石沉大海。
+		expect(availableCommands().map((c) => c.name).sort()).toEqual(["compact", "status"]);
+		for (const command of availableCommands()) {
+			expect(command.description.length).toBeGreaterThan(0);
+		}
+	});
+
+	it("declares an input hint only for the command that takes an argument", () => {
+		const byName = Object.fromEntries(availableCommands().map((c) => [c.name, c]));
+		expect(byName.compact!.input).toEqual({ hint: "optional instructions for the summary" });
+		expect(byName.status!.input).toBeUndefined();
+	});
+});
+
+describe("parseSlashCommand", () => {
+	it("parses a bare command", () => {
+		expect(parseSlashCommand("/status")).toEqual({ name: "status", argument: "" });
+	});
+
+	it("keeps everything after the name as the argument", () => {
+		expect(parseSlashCommand("/compact focus on the auth refactor")).toEqual({
+			name: "compact",
+			argument: "focus on the auth refactor",
+		});
+	});
+
+	it("tolerates surrounding whitespace and multi-line arguments", () => {
+		expect(parseSlashCommand("  /compact  keep\nthe API notes  ")).toEqual({
+			name: "compact",
+			argument: "keep\nthe API notes",
+		});
+	});
+
+	it("does not hijack ordinary prompts that merely contain a slash", () => {
+		// 误判的后果是用户的正常问题被本地吞掉,永远到不了模型。
+		expect(parseSlashCommand("what does src/acp.ts do?")).toBeUndefined();
+		expect(parseSlashCommand("run ./scripts/build.sh")).toBeUndefined();
+		expect(parseSlashCommand("/ leading space is not a command")).toBeUndefined();
+		expect(parseSlashCommand("//comment")).toBeUndefined();
+	});
+
+	it("ignores unknown commands so they reach the model as plain text", () => {
+		expect(parseSlashCommand("/deploy production")).toBeUndefined();
 	});
 });

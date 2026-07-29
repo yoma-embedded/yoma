@@ -85,8 +85,16 @@ export function toolContentOf(
 	if (toolName === "write") {
 		const writeDetails = details as WriteToolDetails | undefined;
 		if (writeDetails?.path) {
-			// 新建文件时 oldText 为 null,Zed 会整块显示为新增。
-			return [{ type: "diff", path: writeDetails.path, oldText: null, newText: "" }];
+			// 新建文件时 oldText 为 null,Zed 会整块显示为新增;覆盖时给出旧内容,画成真 diff。
+			// newContent 必须来自 details —— 这里是纯函数,读不了盘。
+			return [
+				{
+					type: "diff",
+					path: writeDetails.path,
+					oldText: writeDetails.oldContent ?? null,
+					newText: writeDetails.newContent ?? "",
+				},
+			];
 		}
 	}
 	return text ? [{ type: "content", content: { type: "text", text } }] : [];
@@ -173,9 +181,6 @@ export function replayUpdatesOf(messages: unknown[]): Record<string, unknown>[] 
  * 返回退订函数。
  */
 export function pipeHarnessToAcp(harness: AgentHarness<any, any, any>, sink: UpdateSink): () => void {
-	// 已经报给客户端的 toolCallId,避免 start/end 之间重复发 tool_call。
-	const announced = new Set<string>();
-
 	return harness.subscribe((event: AgentHarnessEvent) => {
 		switch (event.type) {
 			case "message_end": {
@@ -206,7 +211,6 @@ export function pipeHarnessToAcp(harness: AgentHarness<any, any, any>, sink: Upd
 				return;
 			}
 			case "tool_execution_start": {
-				announced.add(event.toolCallId);
 				void sink({
 					sessionUpdate: "tool_call",
 					toolCallId: event.toolCallId,
@@ -228,7 +232,6 @@ export function pipeHarnessToAcp(harness: AgentHarness<any, any, any>, sink: Upd
 					locations: toolLocationsOf(event.result?.details, undefined),
 					rawOutput: { text },
 				});
-				announced.delete(event.toolCallId);
 				return;
 			}
 			default:
