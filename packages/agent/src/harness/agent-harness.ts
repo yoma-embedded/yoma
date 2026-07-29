@@ -1,7 +1,9 @@
 // M7 大节点 A:setters 落树(Step 3)+ 挂起写入(Step 4)+ turn 快照(Step 5)
 // + prompt()/skill()/promptFromTemplate() 完整闭环(Step 6),外加队列/hooks/abort
 // (原计划 Step 7-9,因管线本来就要就位,一并完成)。
-// 尚缺(M8 时补):compact() 与 navigateTree() —— 两个自包含侧枝。
+// compact() 与 navigateTree() 两个自包含侧枝已随 M8 落地(见下方"结构性会话操作"一节),
+// 但都还没有针对 harness 方法本身的测试 —— compaction.test.ts 测的是 compaction.ts 里的
+// 自由函数,不经过这里的相位守卫与 hook 分支。
 // 参考 pi-minimal harness/agent-harness.ts(1029 行)。
 //
 // 心智模型:harness 没有自己的循环,它只是 runAgentLoop 的一个高级调用者。

@@ -1,5 +1,7 @@
 // M7 验收:构造/校验/getters(Step 2)+ 行为测试(大节点 A,移植自参考 agent-harness.test.ts)。
-// 尚未移植:无(13 个参考测试全部在列;compact()/navigateTree() 的测试在 compaction.test.ts,属 M8)。
+// 尚未移植:13 个参考测试全部在列,但 harness.compact() 与 harness.navigateTree() 仍无覆盖 ——
+// compaction.test.ts 测的是 compaction.ts 的自由函数,绕开了这两个方法的相位守卫、
+// session_before_compact hook(取消/直接提供摘要两条分支)和 session_compact 事件。
 import {
 	createModels,
 	type FauxProviderHandle,
