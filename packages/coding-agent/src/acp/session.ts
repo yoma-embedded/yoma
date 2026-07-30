@@ -65,8 +65,9 @@ export function toolContentOf(
 	toolName: string,
 	details: unknown,
 	text: string,
+	blocks?: unknown,
 ): Array<
-	| { type: "content"; content: { type: "text"; text: string } }
+	| { type: "content"; content: { type: "text"; text: string } | { type: "image"; data: string; mimeType: string } }
 	| { type: "diff"; path: string; oldText: string | null; newText: string }
 > {
 	if (toolName === "edit") {
@@ -97,7 +98,16 @@ export function toolContentOf(
 			];
 		}
 	}
-	return text ? [{ type: "content", content: { type: "text", text } }] : [];
+	const out: ReturnType<typeof toolContentOf> = text ? [{ type: "content", content: { type: "text", text } }] : [];
+	// 图片内容块(view_figure 的裁图)透传给 ACP —— Zed 会把图直接画在工具卡片里。
+	if (Array.isArray(blocks)) {
+		for (const block of blocks as Array<Record<string, any>>) {
+			if (block?.type === "image" && typeof block.data === "string" && typeof block.mimeType === "string") {
+				out.push({ type: "content", content: { type: "image", data: block.data, mimeType: block.mimeType } });
+			}
+		}
+	}
+	return out;
 }
 
 function textOfContent(content: unknown): string {
@@ -167,7 +177,7 @@ export function replayUpdatesOf(messages: unknown[]): Record<string, unknown>[] 
 				sessionUpdate: "tool_call_update",
 				toolCallId: message.toolCallId,
 				status: message.isError ? "failed" : "completed",
-				content: toolContentOf(message.toolName, message.details, text),
+				content: toolContentOf(message.toolName, message.details, text, message.content),
 				locations: toolLocationsOf(message.details, undefined),
 				rawOutput: { text },
 			});
@@ -228,7 +238,8 @@ export function pipeHarnessToAcp(harness: AgentHarness<any, any, any>, sink: Upd
 					sessionUpdate: "tool_call_update",
 					toolCallId: event.toolCallId,
 					status: event.isError ? "failed" : "completed",
-					content: toolContentOf(event.toolName, event.result?.details, text),
+					// 第 4 参必须传:实时路径丢了它,图片块(datasheet view_figure)就只在重放时可见。
+					content: toolContentOf(event.toolName, event.result?.details, text, event.result?.content),
 					locations: toolLocationsOf(event.result?.details, undefined),
 					rawOutput: { text },
 				});

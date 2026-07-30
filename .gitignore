@@ -2,6 +2,10 @@ node_modules/
 dist/
 coverage/
 
+# engines 运行时布局由 build.ts 生成(开发期是符号链接)
+engines/bin/
+engines/data/
+
 # vendored pi-ai is consumed via its prebuilt dist — keep it in git
 !packages/ai/dist/
 

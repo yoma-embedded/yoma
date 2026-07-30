@@ -91,6 +91,52 @@ describe("toolContentOf", () => {
 	it("emits nothing when a tool produced no text", () => {
 		expect(toolContentOf("bash", undefined, "")).toEqual([]);
 	});
+
+	it("forwards image blocks (datasheet view_figure) after the text", () => {
+		const content = toolContentOf("datasheet", { action: "view_figure" }, "Figure (attached below): clock tree", [
+			{ type: "text", text: "Figure (attached below): clock tree" },
+			{ type: "image", data: "QUJD", mimeType: "image/png" },
+		]);
+		expect(content).toEqual([
+			{ type: "content", content: { type: "text", text: "Figure (attached below): clock tree" } },
+			{ type: "content", content: { type: "image", data: "QUJD", mimeType: "image/png" } },
+		]);
+	});
+});
+
+describe("pipeHarnessToAcp tool_execution_end", () => {
+	it("delivers image blocks on the LIVE path, not only on replay", async () => {
+		// 假 harness:只要 subscribe 能把 listener 交出来就够了。
+		let listener: ((event: any) => void) | undefined;
+		const harness = {
+			subscribe(fn: (event: any) => void) {
+				listener = fn;
+				return () => {};
+			},
+		};
+		const updates: any[] = [];
+		const { pipeHarnessToAcp } = await import("../src/acp/session.ts");
+		pipeHarnessToAcp(harness as any, async (update) => {
+			updates.push(update);
+		});
+		listener!({
+			type: "tool_execution_end",
+			toolCallId: "t1",
+			toolName: "datasheet",
+			result: {
+				content: [
+					{ type: "text", text: "Figure (attached below): clock tree" },
+					{ type: "image", data: "QUJD", mimeType: "image/png" },
+				],
+				details: { action: "view_figure" },
+			},
+		});
+		const end = updates.find((u) => u.sessionUpdate === "tool_call_update" && u.status === "completed");
+		expect(end.content).toContainEqual({
+			type: "content",
+			content: { type: "image", data: "QUJD", mimeType: "image/png" },
+		});
+	});
 });
 
 describe("replayUpdatesOf", () => {

@@ -20,7 +20,7 @@ import {
 	uuidv7,
 } from "@yoma/my-pi/node";
 import { buildSystemPrompt, collectToolPromptData } from "../core/system-prompt.ts";
-import { createCodingToolDefinitions, wrapToolDefinitions } from "../core/tools/index.ts";
+import { createCodingToolDefinitions, createEmbeddedToolDefinitions, wrapToolDefinitions } from "../core/tools/index.ts";
 import { pipeHarnessToAcp, replayUpdatesOf, type UpdateSink } from "./session.ts";
 
 export const SESSIONS_DIR = join(homedir(), ".my-pi", "sessions");
@@ -344,7 +344,7 @@ export class MyPiAcpAgent {
 
 		// 系统提示词按会话构建:身份 + 实际注册的工具清单与守则 + cwd,
 		// 全部来自工具定义自带的 promptSnippet / promptGuidelines,不再手写。
-		const toolDefinitions = createCodingToolDefinitions(env);
+		const toolDefinitions = [...createCodingToolDefinitions(env), ...createEmbeddedToolDefinitions(env)];
 		const harness = new AgentHarness({
 			env,
 			session,
@@ -455,15 +455,23 @@ export class MyPiAcpAgent {
 			throw new Error(`Session ${params.sessionId} not found`);
 		}
 
-		// 同一会话的新 prompt 先掐掉上一个,和 ACP 参考实现一致。
-		session.pendingPrompt?.abort();
-		session.pendingPrompt = new AbortController();
+		// 同一会话的新 prompt 顶替上一个,和 ACP 参考实现一致。只翻旗标不够:
+		// harness 还在 turn 相位,新 prompt 会撞相位守卫得到 busy —— 必须等它真停下来。
+		if (session.pendingPrompt) {
+			session.pendingPrompt.abort();
+			await session.harness.abort();
+		}
 
+		// 本轮的三件套一律用局部值;session 上的字段只是"当前活跃轮"的影子,
+		// finally 里先比对仍是自己那份再清理,重叠时旧轮不会误清新轮的状态。
+		const controller = new AbortController();
 		const sink: UpdateSink = async (update) => {
 			await cx.notify("session/update", { sessionId: params.sessionId, update });
 		};
+		const unsubscribe = pipeHarnessToAcp(session.harness, sink);
+		session.pendingPrompt = controller;
 		session.sink = sink;
-		session.unsubscribe = pipeHarnessToAcp(session.harness, sink);
+		session.unsubscribe = unsubscribe;
 
 		const text = promptToText(params.prompt);
 		try {
@@ -475,19 +483,25 @@ export class MyPiAcpAgent {
 				return { stopReason: "end_turn" };
 			}
 			await session.harness.prompt(text);
+			// 取消不会让 harness.prompt 抛错:abort 以 stopReason:"aborted" 的合成消息
+			// 正常 resolve(agent-loop 把中断当数据),所以 cancelled 必须在 resolve 路径上判,
+			// 并且跳过善后压缩 —— 用户刚按了停止,不该紧接着又发起一次压缩的模型调用。
+			if (controller.signal.aborted) {
+				return { stopReason: "cancelled" };
+			}
 			// 压缩放在这一轮之后:下一轮开始时才有腾出来的空间,和上游的 threshold 路径一致。
 			await this.maybeAutoCompact(session, sink);
 			return { stopReason: "end_turn" };
 		} catch (error) {
-			if (session.pendingPrompt.signal.aborted) {
+			if (controller.signal.aborted) {
 				return { stopReason: "cancelled" };
 			}
 			throw error;
 		} finally {
-			session.unsubscribe?.();
-			session.unsubscribe = undefined;
-			session.sink = undefined;
-			session.pendingPrompt = null;
+			unsubscribe();
+			if (session.unsubscribe === unsubscribe) session.unsubscribe = undefined;
+			if (session.sink === sink) session.sink = undefined;
+			if (session.pendingPrompt === controller) session.pendingPrompt = null;
 		}
 	}
 

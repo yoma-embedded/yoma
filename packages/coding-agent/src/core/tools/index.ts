@@ -16,6 +16,17 @@ export {
 	createBashToolDefinition,
 } from "./bash.ts";
 export {
+	clampChars,
+	clampTopK,
+	createDatasheetTool,
+	createDatasheetToolDefinition,
+	type DatasheetToolDetails,
+	type DatasheetToolInput,
+	encodeRel,
+	formatCitation,
+	type SearchHit,
+} from "./datasheet.ts";
+export {
 	createEditTool,
 	createEditToolDefinition,
 	type EditToolDetails,
@@ -36,12 +47,30 @@ export {
 } from "./edit-diff.ts";
 export { withFileMutationQueue } from "./file-mutation-queue.ts";
 export {
+	buildFlashArgs,
+	createFlashTool,
+	createFlashToolDefinition,
+	FLASH_ACTIONS,
+	type FlashAction,
+	type FlashToolDetails,
+	type FlashToolInput,
+	type FlashToolOptions,
+} from "./flash.ts";
+export {
 	createGrepTool,
 	createGrepToolDefinition,
 	type GrepToolDetails,
 	type GrepToolInput,
 	type GrepToolOptions,
 } from "./grep.ts";
+export {
+	createNetlistTool,
+	createNetlistToolDefinition,
+	type NetlistToolDetails,
+	type NetlistToolInput,
+	type NetlistToolOptions,
+	sanitizeStem,
+} from "./netlist.ts";
 export { resolveReadPath, resolveToCwd } from "./path-utils.ts";
 export {
 	createReadTool,
@@ -50,6 +79,16 @@ export {
 	type ReadToolInput,
 	type ReadToolOptions,
 } from "./read.ts";
+export {
+	buildStm32ConfigArgs,
+	createStm32ConfigTool,
+	createStm32ConfigToolDefinition,
+	STM32CONFIG_COMMANDS,
+	type Stm32ConfigCommand,
+	type Stm32ConfigToolDetails,
+	type Stm32ConfigToolInput,
+	type Stm32ConfigToolOptions,
+} from "./stm32config.ts";
 export { type ToolDefinition, wrapToolDefinition, wrapToolDefinitions } from "./types.ts";
 export {
 	createWriteTool,
@@ -62,15 +101,29 @@ export {
 import type { AgentTool, ExecutionEnv } from "@yoma/my-pi";
 import { type BashToolOptions, createBashTool, createBashToolDefinition } from "./bash.ts";
 import { createEditTool, createEditToolDefinition, type EditToolOptions } from "./edit.ts";
+import { createDatasheetTool, createDatasheetToolDefinition } from "./datasheet.ts";
+import { createFlashTool, createFlashToolDefinition, type FlashToolOptions } from "./flash.ts";
 import { createGrepTool, createGrepToolDefinition, type GrepToolOptions } from "./grep.ts";
+import { createNetlistTool, createNetlistToolDefinition, type NetlistToolOptions } from "./netlist.ts";
 import { createReadTool, createReadToolDefinition, type ReadToolOptions } from "./read.ts";
+import { createStm32ConfigTool, createStm32ConfigToolDefinition, type Stm32ConfigToolOptions } from "./stm32config.ts";
 import type { ToolDefinition } from "./types.ts";
 import { createWriteTool, createWriteToolDefinition, type WriteToolOptions } from "./write.ts";
 
 export type Tool = AgentTool<any>;
 export type ToolDef = ToolDefinition<any, any>;
-export type ToolName = "read" | "bash" | "edit" | "write" | "grep";
-export const allToolNames: Set<ToolName> = new Set(["read", "bash", "edit", "write", "grep"]);
+export type ToolName = "read" | "bash" | "edit" | "write" | "grep" | "stm32config" | "netlist" | "flash" | "datasheet";
+export const allToolNames: Set<ToolName> = new Set([
+	"read",
+	"bash",
+	"edit",
+	"write",
+	"grep",
+	"stm32config",
+	"netlist",
+	"flash",
+	"datasheet",
+]);
 
 export interface ToolsOptions {
 	read?: ReadToolOptions;
@@ -78,6 +131,9 @@ export interface ToolsOptions {
 	write?: WriteToolOptions;
 	edit?: EditToolOptions;
 	grep?: GrepToolOptions;
+	stm32config?: Stm32ConfigToolOptions;
+	netlist?: NetlistToolOptions;
+	flash?: FlashToolOptions;
 }
 
 export function createToolDefinition(toolName: ToolName, env: ExecutionEnv, options?: ToolsOptions): ToolDef {
@@ -92,6 +148,14 @@ export function createToolDefinition(toolName: ToolName, env: ExecutionEnv, opti
 			return createWriteToolDefinition(env, options?.write);
 		case "grep":
 			return createGrepToolDefinition(env, options?.grep);
+		case "stm32config":
+			return createStm32ConfigToolDefinition(env, options?.stm32config);
+		case "netlist":
+			return createNetlistToolDefinition(env, options?.netlist);
+		case "flash":
+			return createFlashToolDefinition(env, options?.flash);
+		case "datasheet":
+			return createDatasheetToolDefinition(env);
 		default:
 			throw new Error(`Unknown tool name: ${toolName}`);
 	}
@@ -109,6 +173,14 @@ export function createTool(toolName: ToolName, env: ExecutionEnv, options?: Tool
 			return createWriteTool(env, options?.write);
 		case "grep":
 			return createGrepTool(env, options?.grep);
+		case "stm32config":
+			return createStm32ConfigTool(env, options?.stm32config);
+		case "netlist":
+			return createNetlistTool(env, options?.netlist);
+		case "flash":
+			return createFlashTool(env, options?.flash);
+		case "datasheet":
+			return createDatasheetTool(env);
 		default:
 			throw new Error(`Unknown tool name: ${toolName}`);
 	}
@@ -135,6 +207,30 @@ export function createCodingTools(env: ExecutionEnv, options?: ToolsOptions): To
 	];
 }
 
+/**
+ * 嵌入式引擎工具组,顺序即流水线:
+ * netlist(原理图)→ datasheet(查手册,全在线)→ stm32config(驱动)→ flash(烧录)。
+ * 与编码五件套分开装配:引擎未构建/服务器未配置时工具仍会注册,
+ * 调用时才返回修复指引(与 yoma 行为一致)。
+ */
+export function createEmbeddedToolDefinitions(env: ExecutionEnv, options?: ToolsOptions): ToolDef[] {
+	return [
+		createNetlistToolDefinition(env, options?.netlist),
+		createDatasheetToolDefinition(env),
+		createStm32ConfigToolDefinition(env, options?.stm32config),
+		createFlashToolDefinition(env, options?.flash),
+	];
+}
+
+export function createEmbeddedTools(env: ExecutionEnv, options?: ToolsOptions): Tool[] {
+	return [
+		createNetlistTool(env, options?.netlist),
+		createDatasheetTool(env),
+		createStm32ConfigTool(env, options?.stm32config),
+		createFlashTool(env, options?.flash),
+	];
+}
+
 export function createReadOnlyTools(env: ExecutionEnv, options?: ToolsOptions): Tool[] {
 	return [createReadTool(env, options?.read), createGrepTool(env, options?.grep)];
 }
@@ -146,5 +242,9 @@ export function createAllTools(env: ExecutionEnv, options?: ToolsOptions): Recor
 		edit: createEditTool(env, options?.edit),
 		write: createWriteTool(env, options?.write),
 		grep: createGrepTool(env, options?.grep),
+		stm32config: createStm32ConfigTool(env, options?.stm32config),
+		netlist: createNetlistTool(env, options?.netlist),
+		flash: createFlashTool(env, options?.flash),
+		datasheet: createDatasheetTool(env),
 	};
 }

@@ -231,6 +231,65 @@ describe("session/prompt", () => {
 	});
 });
 
+describe("session/cancel", () => {
+	// 取消/顶替要求 prompt 真的"在飞",所以这里用限速的 faux 把流拉长。
+	function slowSetup() {
+		const models = createModels();
+		const provider = fauxProvider({ provider: `faux-slow-${++fauxCount}`, tokensPerSecond: 40 });
+		models.setProvider(provider.provider);
+		const agent = new MyPiAcpAgent({
+			env: new NodeExecutionEnv({ cwd: workdir }),
+			models,
+			model: provider.getModel(),
+			protocolVersion: 1,
+			sessionsDir: join(workdir, "sessions"),
+			logsDir: join(workdir, "logs"),
+		});
+		return { agent, provider };
+	}
+
+	const LONG_ANSWER = "long streamed answer ".repeat(30);
+
+	async function waitFor(predicate: () => boolean, timeoutMs = 5000) {
+		const start = Date.now();
+		while (!predicate()) {
+			if (Date.now() - start > timeoutMs) throw new Error("waitFor timed out");
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+	}
+
+	it("answers the in-flight prompt with cancelled — the harness resolves aborts as data, it never throws", async () => {
+		const { agent, provider } = slowSetup();
+		const client = createClient();
+		const { sessionId }: any = await agent.newSession({ cwd: workdir }, client.cx);
+		provider.setResponses([fauxAssistantMessage(LONG_ANSWER)]);
+
+		const pending = agent.prompt({ sessionId, prompt: [{ type: "text", text: "hi" }] }, client.cx);
+		await waitFor(() => client.updates("agent_message_chunk").length > 0);
+		await agent.cancel({ sessionId });
+
+		const result = await pending;
+		expect(result.stopReason).toBe("cancelled");
+	});
+
+	it("a new prompt supersedes the in-flight one instead of hitting the busy guard", async () => {
+		const { agent, provider } = slowSetup();
+		const client = createClient();
+		const { sessionId }: any = await agent.newSession({ cwd: workdir }, client.cx);
+		provider.setResponses([fauxAssistantMessage(LONG_ANSWER), fauxAssistantMessage("SECOND_ANSWER done")]);
+
+		const first = agent.prompt({ sessionId, prompt: [{ type: "text", text: "one" }] }, client.cx);
+		await waitFor(() => client.updates("agent_message_chunk").length > 0);
+		const second = agent.prompt({ sessionId, prompt: [{ type: "text", text: "two" }] }, client.cx);
+
+		const [firstResult, secondResult] = await Promise.all([first, second]);
+		expect(firstResult.stopReason).toBe("cancelled");
+		expect(secondResult.stopReason).toBe("end_turn");
+		const said = client.updates("agent_message_chunk").map((u: any) => u.content.text).join("");
+		expect(said).toContain("SECOND_ANSWER");
+	});
+});
+
 describe("session/load", () => {
 	it("restores the model and thinking level chosen in the previous process", async () => {
 		const { agent, second } = setup();
