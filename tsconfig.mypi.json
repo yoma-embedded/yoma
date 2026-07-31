@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "//": "my-pi 内核的 TypeScript 解析映射 —— 必须和 packages/kernel/mypi.ts 的 MY_PI_ALIASES 保持一致。见那里的说明:my-pi 只能走 alias,不能进 install graph。paths 里的相对路径按声明它的配置文件位置解析,所以这张表在被 extends 时依然指向仓库的兄弟目录 ../my-pi。注意 paths 是整体替换而不是合并,自己有 paths 的包(如 app 的 @/*)必须把这几条抄进去。",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "paths": {
+      "@yoma/my-pi": ["../my-pi/packages/agent/src/index.ts"],
+      "@yoma/my-pi/node": ["../my-pi/packages/agent/src/node.ts"],
+      "@yoma/my-pi-coding-agent": ["../my-pi/packages/coding-agent/src/index.ts"],
+      "@yoma/my-pi-coding-agent/system-prompt": ["../my-pi/packages/coding-agent/src/core/system-prompt.ts"],
+      "@yoma/my-pi-coding-agent/models": ["../my-pi/packages/coding-agent/src/acp/models.ts"],
+      "@earendil-works/pi-ai": ["../my-pi/packages/ai/dist/index.d.ts"],
+      "@earendil-works/pi-ai/providers/*": ["../my-pi/packages/ai/dist/providers/*.d.ts"]
+    }
+  }
+}

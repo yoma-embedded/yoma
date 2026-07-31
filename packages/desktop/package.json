@@ -37,6 +37,7 @@
     "@actions/artifact": "4.0.0",
     "@lydell/node-pty": "catalog:",
     "@yoma-desktop/app": "workspace:*",
+    "@yoma-desktop/kernel": "workspace:*",
     "@yoma-desktop/ui": "workspace:*",
     "@sentry/solid": "catalog:",
     "@sentry/vite-plugin": "catalog:",

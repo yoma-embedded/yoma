@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": ["@tsconfig/bun/tsconfig.json", "../../tsconfig.mypi.json"],
+  "compilerOptions": {
+    "noEmit": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": false,
+    "moduleResolution": "bundler",
+    "skipLibCheck": true
+  },
+  "include": ["src", "mypi.ts"]
+}
