@@ -9,6 +9,9 @@ import { AgentHarness } from "@yoma/my-pi"
 import { NodeExecutionEnv } from "@yoma/my-pi/node"
 import { createCodingToolDefinitions, createEmbeddedToolDefinitions } from "@yoma/my-pi-coding-agent"
 
+// 纯类型模块,无运行时产物。re-export 只为把工具 details 的漂移闸门拉进编译单元。
+export type * from "./details-check.ts"
+
 export interface KernelHostOptions {
   /** engines/bin + engines/data 的所在目录。生产环境是 process.resourcesPath/engines。 */
   enginesDir?: string

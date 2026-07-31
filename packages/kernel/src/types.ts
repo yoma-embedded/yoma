@@ -1,2 +1,439 @@
-// P2 填充。占位以保持包可编译。
-export {}
+/**
+ * 视图模型 —— 前端看到的会话数据形状。
+ *
+ * 刻意保留 opencode SDK 的类型 **名字**(Message/Part/ToolPart/ToolState/Session…),
+ * 只把 body 换成 my-pi 能真实产出的东西。这样 packages/session-ui 的 transcript 渲染
+ * 和 packages/app 里有单测的 store reducer 基本原样存活,迁移变成"改 import 说明符 +
+ * 让编译器逐字段报错",而不是重写。
+ *
+ * 相对 opencode 删掉的 Part 变体,以及原因:
+ *   step-start / step-finish  my-pi 的每轮状态是 turn_start/turn_end 事件,不落 transcript
+ *   snapshot / patch          my-pi 没有文件快照 —— 它的回滚是 Session.moveTo() 挪 leaf 指针
+ *   subtask                   没有子代理
+ *   agent                     只有一个系统提示词,没有 persona,也没有 @agent 提及的偏移量
+ *   retry                     内核对 provider 失败不重试,失败就是一条带 error 的 assistant 消息
+ *
+ * 本文件必须保持 **浏览器安全**:不 import my-pi、不 import node:*。
+ * 工具 details 的形状是从 my-pi 结构化复制过来的,漂移由 host/details-check.ts 在编译期兜住。
+ */
+
+// ---------------------------------------------------------------------------
+// 会话
+// ---------------------------------------------------------------------------
+
+export interface Session {
+  id: string
+  /** 会话的工作目录(绝对路径)。my-pi 里一个 session 就是一个 cwd,没有 project/worktree 层级。 */
+  directory: string
+  title: string
+  time: {
+    created: number
+    updated: number
+    /** 正在压缩时置位,用来在 UI 上显示压缩中。 */
+    compacting?: number
+    archived?: number
+  }
+  model?: {
+    providerID: string
+    modelID: string
+    /** my-pi 的 thinking level(off/minimal/low/medium/high…),内核真有这个能力,opencode 没有。 */
+    thinking?: string
+  }
+  cost?: number
+  tokens?: Tokens
+}
+
+export interface Tokens {
+  input: number
+  output: number
+  reasoning: number
+  cache: {
+    read: number
+    write: number
+  }
+}
+
+export type SessionStatus = { type: "idle" } | { type: "busy" } | { type: "compacting" }
+
+// ---------------------------------------------------------------------------
+// 消息
+// ---------------------------------------------------------------------------
+
+/**
+ * 错误按 opencode 的判别名保留 —— session-ui 已经按 name 分支渲染。
+ * my-pi 的内核对 provider 失败 **永不抛异常**:失败是一条 stopReason:"error" 的 assistant
+ * 消息。不投影成这个,UI 上就是一个空白轮次。
+ */
+export type MessageError =
+  | { name: "MessageAbortedError"; data: { message: string } }
+  | { name: "ContextOverflowError"; data: { message: string } }
+  | { name: "ProviderAuthError"; data: { providerID: string; message: string } }
+  | { name: "UnknownError"; data: { message: string } }
+
+export interface UserMessage {
+  id: string
+  sessionID: string
+  role: "user"
+  time: { created: number }
+  model: {
+    providerID: string
+    modelID: string
+  }
+}
+
+export interface AssistantMessage {
+  id: string
+  sessionID: string
+  role: "assistant"
+  /** 触发这一轮的用户消息 id。session-ui 用它把一轮的消息归组。 */
+  parentID: string
+  time: {
+    created: number
+    completed?: number
+  }
+  error?: MessageError
+  providerID: string
+  modelID: string
+  cost: number
+  tokens: Tokens
+  /** 这条 assistant 消息是压缩/分支摘要合成出来的,不是模型直接说的。 */
+  synthetic?: boolean
+}
+
+export type Message = UserMessage | AssistantMessage
+
+// ---------------------------------------------------------------------------
+// Part
+// ---------------------------------------------------------------------------
+
+interface PartBase {
+  id: string
+  sessionID: string
+  messageID: string
+}
+
+export interface TextPart extends PartBase {
+  type: "text"
+  text: string
+  /** 不是模型说的(bash 执行回显、自定义消息、压缩摘要正文)。 */
+  synthetic?: boolean
+  time?: { start: number; end?: number }
+}
+
+export interface ReasoningPart extends PartBase {
+  type: "reasoning"
+  text: string
+  time: { start: number; end?: number }
+}
+
+export interface FilePart extends PartBase {
+  type: "file"
+  mime: string
+  filename?: string
+  /** data: URL 或 file: URL。my-pi 的 ImageContent 是 base64,投影成 data: URL。 */
+  url: string
+}
+
+export interface CompactionPart extends PartBase {
+  type: "compaction"
+  /** 自动压缩 vs 用户手动触发。 */
+  auto: boolean
+  /** 分支摘要(从一条支线回到主干)而不是上下文压缩。 */
+  branch?: boolean
+}
+
+export interface ToolPart extends PartBase {
+  type: "tool"
+  /**
+   * my-pi 的 ToolCall.id。工具调用和结果 **必须按它配对,绝不按到达顺序** ——
+   * 并行工具时 tool_execution_end 按完成序发,而 transcript 是源序。
+   */
+  callID: string
+  tool: ToolName | (string & {})
+  state: ToolState
+}
+
+export type Part = TextPart | ReasoningPart | FilePart | ToolPart | CompactionPart
+
+export type PartType = Part["type"]
+
+// ---------------------------------------------------------------------------
+// 工具状态机
+// ---------------------------------------------------------------------------
+
+export interface ToolStatePending {
+  status: "pending"
+  input: Record<string, unknown>
+  /** 参数还在流式拼接时的原始 JSON 片段。 */
+  raw?: string
+}
+
+export interface ToolStateRunning {
+  status: "running"
+  input: Record<string, unknown>
+  title?: string
+  time: { start: number }
+}
+
+export interface ToolStateCompleted {
+  status: "completed"
+  input: Record<string, unknown>
+  /** 给模型看的文本输出。 */
+  output: string
+  title: string
+  /** 结构化结果。这是硬件工具卡片的全部信息来源。 */
+  metadata: ToolDetails
+  time: { start: number; end: number }
+  /** 工具返回的图片(datasheet view_figure)。 */
+  attachments?: FilePart[]
+}
+
+export interface ToolStateError {
+  status: "error"
+  input: Record<string, unknown>
+  error: string
+  metadata?: ToolDetails
+  time: { start: number; end: number }
+}
+
+export type ToolState = ToolStatePending | ToolStateRunning | ToolStateCompleted | ToolStateError
+
+// ---------------------------------------------------------------------------
+// 工具 details —— 从 my-pi 结构化复制,漂移由 host/details-check.ts 编译期兜住
+// ---------------------------------------------------------------------------
+
+export const TOOL_NAMES = [
+  "read",
+  "bash",
+  "edit",
+  "write",
+  "grep",
+  "stm32config",
+  "netlist",
+  "flash",
+  "datasheet",
+  "log",
+  "gdb",
+] as const
+
+export type ToolName = (typeof TOOL_NAMES)[number]
+
+export interface TruncationInfo {
+  content: string
+  truncated: boolean
+  truncatedBy: "lines" | "bytes" | null
+  totalLines: number
+  totalBytes: number
+  outputLines: number
+}
+
+export interface ReadToolDetails {
+  truncation?: TruncationInfo
+  path?: string
+}
+
+export interface BashToolDetails {
+  truncation?: TruncationInfo
+  fullOutputPath?: string
+}
+
+export interface GrepToolDetails {
+  truncation?: TruncationInfo
+  matchLimitReached?: number
+  linesTruncated?: boolean
+}
+
+/** edit 和 write 都带前后全文 + unified patch —— 比 opencode 的还全,Pierre diff 直接能用。 */
+export interface EditToolDetails {
+  path: string
+  oldContent: string
+  newContent: string
+  patch: string
+  firstChangedLine?: number
+}
+
+export interface WriteToolDetails {
+  path: string
+  bytes: number
+  created: boolean
+  oldContent: string | null
+  newContent: string
+}
+
+export interface NetlistToolDetails {
+  mode: "map" | "board_ir"
+  part?: string
+  files?: { boardIr: string; stm32Map: string; cfgSeed: string }
+}
+
+export interface DatasheetSearchHit {
+  manual_name?: string
+  page?: number
+  /** 单个字符串,不是数组 —— 内核里就是一条已经拼好的标题路径。别对它 join()。 */
+  headings?: string
+  score?: number
+  parsed_path?: string
+  image_path?: string
+  source_pdf?: string
+}
+
+export interface DatasheetToolDetails {
+  action: "search" | "read_section" | "view_figure"
+  chip?: string
+  rev?: string
+  topK?: number
+  hits?: DatasheetSearchHit[]
+  parsedPath?: string
+  mode?: string
+  heading?: string
+  level?: number
+  lines?: number[]
+  chars?: number
+  sections?: number
+  truncated?: boolean
+  imagePath?: string
+  mime?: string
+  bytes?: number
+}
+
+export interface Stm32ConfigToolDetails {
+  command: string
+  exitCode: number | null
+}
+
+export type FlashAction = "list" | "info" | "download" | "erase" | "reset"
+
+export interface FlashToolDetails {
+  action: FlashAction
+  chip?: string
+  exitCode: number | null
+}
+
+export type LogAction = "start" | "read" | "wait" | "status" | "stop"
+
+export interface LogToolDetails {
+  action: LogAction
+  running: boolean
+  cursor: number
+  totalLines: number
+  dropped: number
+  file?: string
+  matched?: boolean
+  exitCode?: number | null
+}
+
+export type GdbAction = "start" | "break" | "exec" | "eval" | "status" | "stop"
+export type GdbTargetState = "halted" | "running" | "exited" | "connection-lost"
+
+export interface GdbToolDetails {
+  action: GdbAction
+  state: GdbTargetState | "no-session"
+  epoch: number
+  stopId: number
+  connection?: string
+  file?: string
+  /** 停在有源码的位置时才有 —— 文件在本机不存在时内核 **不填**,别拿它去开文件。 */
+  path?: string
+  firstChangedLine?: number
+}
+
+/**
+ * 按工具名判别的 details。渲染器拿到 ToolPart 之后先 narrow 工具名,再读 metadata,
+ * 全程有编译期类型 —— 这是 opencode 那边 `metadata: {[k:string]: unknown}` 给不了的。
+ */
+export interface ToolDetailsMap {
+  read: ReadToolDetails
+  bash: BashToolDetails
+  edit: EditToolDetails
+  write: WriteToolDetails
+  grep: GrepToolDetails
+  stm32config: Stm32ConfigToolDetails
+  netlist: NetlistToolDetails
+  flash: FlashToolDetails
+  datasheet: DatasheetToolDetails
+  log: LogToolDetails
+  gdb: GdbToolDetails
+}
+
+export type ToolDetails = ToolDetailsMap[ToolName] | Record<string, unknown>
+
+/** 渲染器用:`if (isTool(part, "flash")) part.state.metadata.chip` 就有类型了。 */
+export function isTool<K extends ToolName>(
+  part: Part,
+  tool: K,
+): part is ToolPart & { tool: K; state: ToolState & { metadata?: ToolDetailsMap[K] } } {
+  return part.type === "tool" && part.tool === tool
+}
+
+// ---------------------------------------------------------------------------
+// 权限
+// ---------------------------------------------------------------------------
+
+/**
+ * my-pi 内核 **没有** 权限系统 —— 这一整套是 host 用 harness.on("tool_call") 钩子新建的。
+ * 对一个会跑 flash download / gdb / bash 的产品,这不是可选项。
+ */
+export interface PermissionRequest {
+  id: string
+  sessionID: string
+  messageID: string
+  callID: string
+  tool: string
+  input: Record<string, unknown>
+  /** 人话描述,直接显示在弹窗里。 */
+  title: string
+  time: { created: number }
+}
+
+export type PermissionResponse = "once" | "always" | "reject"
+
+export type PermissionAction = "ask" | "allow"
+
+export type PermissionRules = Partial<Record<ToolName, PermissionAction>> & Record<string, PermissionAction | undefined>
+
+// ---------------------------------------------------------------------------
+// 模型目录
+// ---------------------------------------------------------------------------
+
+export interface ModelInfo {
+  id: string
+  providerID: string
+  name: string
+  /** 该模型支持的 thinking 档位,来自 pi-ai 的 getSupportedThinkingLevels。 */
+  thinkingLevels: string[]
+  contextWindow?: number
+  maxOutput?: number
+  cost?: { input: number; output: number; cacheRead?: number; cacheWrite?: number }
+}
+
+export interface ProviderInfo {
+  id: string
+  name: string
+  /** 凭据是否已配置。没有的话前端要引导去填 API key。 */
+  authenticated: boolean
+  models: ModelInfo[]
+}
+
+// ---------------------------------------------------------------------------
+// 文件 / 版本控制(host 侧的纯 Node 服务,和内核无关)
+// ---------------------------------------------------------------------------
+
+export interface FileEntry {
+  path: string
+  name: string
+  type: "file" | "directory"
+}
+
+export interface FileDiff {
+  path: string
+  added: number
+  removed: number
+  status: "added" | "modified" | "deleted" | "renamed"
+  patch?: string
+}
+
+export interface VcsInfo {
+  root?: string
+  branch?: string
+  dirty: boolean
+}

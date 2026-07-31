@@ -1,12 +1,42 @@
 {
   "$schema": "https://json.schemastore.org/tsconfig",
-  "extends": ["@tsconfig/bun/tsconfig.json", "../../tsconfig.mypi.json"],
+  "extends": [
+    "@tsconfig/bun/tsconfig.json",
+    "../../tsconfig.mypi.json"
+  ],
   "compilerOptions": {
     "noEmit": true,
     "strict": true,
     "noUncheckedIndexedAccess": false,
     "moduleResolution": "bundler",
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "paths": {
+      "@yoma/my-pi": [
+        "../../../my-pi/packages/agent/src/index.ts"
+      ],
+      "@yoma/my-pi/node": [
+        "../../../my-pi/packages/agent/src/node.ts"
+      ],
+      "@yoma/my-pi-coding-agent": [
+        "../../../my-pi/packages/coding-agent/src/index.ts"
+      ],
+      "@yoma/my-pi-coding-agent/system-prompt": [
+        "../../../my-pi/packages/coding-agent/src/core/system-prompt.ts"
+      ],
+      "@yoma/my-pi-coding-agent/models": [
+        "../../../my-pi/packages/coding-agent/src/acp/models.ts"
+      ],
+      "@earendil-works/pi-ai": [
+        "../../../my-pi/packages/ai/dist/index.d.ts"
+      ],
+      "@earendil-works/pi-ai/providers/*": [
+        "../../../my-pi/packages/ai/dist/providers/*.d.ts"
+      ]
+    },
+    "allowImportingTsExtensions": true
   },
-  "include": ["src", "mypi.ts"]
+  "include": [
+    "src",
+    "mypi.ts"
+  ]
 }
