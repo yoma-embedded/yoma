@@ -43,6 +43,7 @@
         "@tanstack/solid-query": "5.91.4",
         "@tanstack/solid-virtual": "catalog:",
         "@thisbeyond/solid-dnd": "0.7.5",
+        "@yoma-desktop/kernel": "workspace:*",
         "@yoma-desktop/session-ui": "workspace:*",
         "@yoma-desktop/ui": "workspace:*",
         "@yoma-desktop/util": "workspace:*",

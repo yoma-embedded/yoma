@@ -17,6 +17,13 @@
     "emitDeclarationOnly": true,
     "outDir": "node_modules/.ts-dist",
     "isolatedModules": true,
+    // @yoma-desktop/kernel 和仓库里其它 workspace 包一样直接发 raw TypeScript,
+    // 而它内部用 "./x.ts" 形式的说明符,所以消费方必须开这个。
+    "allowImportingTsExtensions": true,
+    // packages/app 刻意 **不** 引入 my-pi 的 paths:@yoma-desktop/kernel 的浏览器侧入口
+    // (types/protocol/client/ids)不 import 内核任何东西,视图模型是独立复制的。
+    // 加上 my-pi 映射只会把整个内核依赖图拖进 app 的 typecheck,还会让"渲染层不依赖
+    // 内核"这条边界悄悄失效。碰内核的只有 kernel/src/host,它在自己的包里编译。
     "paths": {
       "@/*": ["./src/*"]
     }

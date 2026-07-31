@@ -51,6 +51,7 @@
     "@dnd-kit/solid": "0.5.0",
     "@kobalte/core": "catalog:",
     "@opencode-ai/sdk": "workspace:*",
+    "@yoma-desktop/kernel": "workspace:*",
     "@yoma-desktop/session-ui": "workspace:*",
     "@yoma-desktop/ui": "workspace:*",
     "@pierre/trees": "1.0.0-beta.4",
