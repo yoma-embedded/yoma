@@ -40,9 +40,13 @@ function resolvePaths(configFile: string): Record<string, string> {
   return out
 }
 
-/** 别名表指向 .ts 源码,tsconfig 对 pi-ai 指向 .d.ts。比较时抹平这个差别。 */
+/**
+ * pi-ai 的路径必须指向 **运行时的 .js**,不能指向 .d.ts:bun 会照着 tsconfig paths
+ * 真去加载那个文件,声明文件执行不了(实测 "Cannot find module './api/lazy.ts'")。
+ * 指向 .js 之后 TypeScript 仍然能从同目录的 .d.ts 拿到类型,两边都满意。
+ */
 function normalize(file: string): string {
-  return file.replace(/\.d\.ts$/, ".js")
+  return file
 }
 
 describe("my-pi 别名映射", () => {

@@ -20,8 +20,12 @@
 import { AgentHarness, JsonlSessionRepo, type AgentMessage, type Session as PiSession } from "@yoma/my-pi"
 import type { AgentHarnessEvent, JsonlSessionMetadata } from "@yoma/my-pi"
 import { NodeExecutionEnv } from "@yoma/my-pi/node"
-import { createCodingToolDefinitions, createEmbeddedToolDefinitions } from "@yoma/my-pi-coding-agent"
-import { buildSystemPrompt } from "@yoma/my-pi-coding-agent/system-prompt"
+import {
+  createCodingToolDefinitions,
+  createEmbeddedToolDefinitions,
+  wrapToolDefinitions,
+} from "@yoma/my-pi-coding-agent"
+import { buildSystemPrompt, collectToolPromptData } from "@yoma/my-pi-coding-agent/system-prompt"
 import { resolveModel } from "@yoma/my-pi-coding-agent/models"
 import type { Model, Models } from "@earendil-works/pi-ai"
 
@@ -57,6 +61,12 @@ export interface SessionManagerOptions {
   enginesDir?: string
   emit(events: KernelEvent[]): void
   permissionRules?: PermissionRules
+  /**
+   * 模型目录的来源。默认复用 my-pi 的 resolveModel()(读 ~/.pi/agent/auth.json)。
+   * 可注入是为了两件事:测试用 pi-ai 的 faux provider 跑完整一轮而不需要网络和 key;
+   * 以及 P6 换成我们自己的凭据管理(Electron safeStorage)时不用改这里。
+   */
+  resolveModels?: () => Promise<{ models: Models; model: Model<string> }>
 }
 
 export class SessionManager {
@@ -94,7 +104,9 @@ export class SessionManager {
   private async ensureModels(): Promise<{ models: Models; model: Model<string> }> {
     if (this.models && this.defaultModel) return { models: this.models, model: this.defaultModel }
     try {
-      const resolved = await resolveModel()
+      const resolved = this.options.resolveModels
+        ? await this.options.resolveModels()
+        : ((await resolveModel()) as { models: Models; model: Model<string> })
       this.models = resolved.models
       this.defaultModel = resolved.model as Model<string>
       this.modelError = undefined
@@ -222,13 +234,21 @@ export class SessionManager {
         } as never)
       : undefined
 
+    // 工具定义必须过 wrapToolDefinitions 才能交给 harness;系统提示词由工具集反推
+    // (collectToolPromptData 会把每个工具的使用指导拼进去)。这两步照抄 my-pi 自己的
+    // ACP 适配器 acp/agent.ts:351-359 —— 系统提示词编码了嵌入式工具的用法,自己重写
+    // 等于产品行为分叉。
+    const toolDefinitions = [
+      ...createCodingToolDefinitions(env),
+      ...createEmbeddedToolDefinitions(env, engineOptions),
+    ]
     const harness = new AgentHarness({
       env,
       session,
       models,
       model,
-      tools: [...createCodingToolDefinitions(env), ...createEmbeddedToolDefinitions(env, engineOptions)],
-      systemPrompt: (context) => buildSystemPrompt(context as never),
+      tools: wrapToolDefinitions(toolDefinitions),
+      systemPrompt: buildSystemPrompt({ cwd: entry.cwd, ...collectToolPromptData(toolDefinitions) }),
     })
     entry.harness = harness
 

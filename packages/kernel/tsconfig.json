@@ -27,10 +27,10 @@
         "../../../my-pi/packages/coding-agent/src/acp/models.ts"
       ],
       "@earendil-works/pi-ai": [
-        "../../../my-pi/packages/ai/dist/index.d.ts"
+        "../../../my-pi/packages/ai/dist/index.js"
       ],
       "@earendil-works/pi-ai/providers/*": [
-        "../../../my-pi/packages/ai/dist/providers/*.d.ts"
+        "../../../my-pi/packages/ai/dist/providers/*.js"
       ]
     },
     "allowImportingTsExtensions": true

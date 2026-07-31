@@ -9,8 +9,8 @@
       "@yoma/my-pi-coding-agent": ["../my-pi/packages/coding-agent/src/index.ts"],
       "@yoma/my-pi-coding-agent/system-prompt": ["../my-pi/packages/coding-agent/src/core/system-prompt.ts"],
       "@yoma/my-pi-coding-agent/models": ["../my-pi/packages/coding-agent/src/acp/models.ts"],
-      "@earendil-works/pi-ai": ["../my-pi/packages/ai/dist/index.d.ts"],
-      "@earendil-works/pi-ai/providers/*": ["../my-pi/packages/ai/dist/providers/*.d.ts"]
+      "@earendil-works/pi-ai": ["../my-pi/packages/ai/dist/index.js"],
+      "@earendil-works/pi-ai/providers/*": ["../my-pi/packages/ai/dist/providers/*.js"]
     }
   }
 }

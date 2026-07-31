@@ -14,7 +14,7 @@ import { createCodingToolDefinitions, createEmbeddedToolDefinitions } from "@yom
 
 import type { KernelEvent, KernelHandlers, KernelMethod, KernelParams, KernelResult } from "../protocol.ts"
 import type { PermissionRules } from "../types.ts"
-import { SessionManager } from "./session-manager.ts"
+import { SessionManager, type SessionManagerOptions } from "./session-manager.ts"
 import { ProjectStore, listFiles, readFile, searchFiles, vcsDiff, vcsInfo } from "./services.ts"
 import { StreamSink } from "./stream.ts"
 
@@ -35,6 +35,8 @@ export interface KernelHostOptions {
   stateDir: string
   version?: string
   permissionRules?: PermissionRules
+  /** 模型目录的来源。默认复用 my-pi 的 resolveModel();测试注入 faux provider。 */
+  resolveModels?: SessionManagerOptions["resolveModels"]
   /** 成批推事件出去。host 已经做过合并,这里拿到的就是最终批次。 */
   onEvents(events: KernelEvent[]): void
 }
@@ -52,6 +54,7 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     sessionsRoot: options.sessionsRoot,
     enginesDir: options.enginesDir,
     permissionRules: options.permissionRules,
+    resolveModels: options.resolveModels,
     emit: (events) => sink.push(events),
   })
   const projects = new ProjectStore(path.join(options.stateDir, "projects.json"))
