@@ -27,10 +27,16 @@ import {
 } from "@yoma/my-pi-coding-agent"
 import { buildSystemPrompt, collectToolPromptData } from "@yoma/my-pi-coding-agent/system-prompt"
 import { resolveModel } from "@yoma/my-pi-coding-agent/models"
-import type { Model, Models } from "@earendil-works/pi-ai"
+import { clampThinkingLevel, getSupportedThinkingLevels, type Model, type Models } from "@earendil-works/pi-ai"
 
 import type { KernelEvent, PromptInput } from "../protocol.ts"
-import type { PermissionRequest, PermissionRules, Session as ViewSession, SessionStatus } from "../types.ts"
+import type {
+  PermissionRequest,
+  PermissionRules,
+  ProviderInfo,
+  Session as ViewSession,
+  SessionStatus,
+} from "../types.ts"
 import { Identifier } from "../ids.ts"
 import { SessionProjection } from "./projector.ts"
 import { PermissionGate } from "./permission.ts"
@@ -54,6 +60,7 @@ interface Entry {
   touched: number
   /** 本轮的 AbortController —— harness.prompt() 在 abort 后 resolve,靠它区分取消。 */
   aborter?: AbortController
+  model?: { providerID: string; modelID: string; thinking?: string }
 }
 
 export interface SessionManagerOptions {
@@ -119,6 +126,83 @@ export class SessionManager {
 
   modelStatus(): { ready: boolean; error?: string } {
     return { ready: Boolean(this.models), error: this.modelError }
+  }
+
+  /**
+   * 模型目录。
+   *
+   * thinkingLevels 必须走 pi-ai 的 getSupportedThinkingLevels(model) 去问,不能自己编 ——
+   * 每个模型的 thinkingLevelMap 不同,编错的直接后果是档位在 UI 上能选但发不出去。
+   * 解析失败不抛:返回空列表,让前端去引导配置凭据,而不是白屏。
+   */
+  async providers(): Promise<ProviderInfo[]> {
+    let models: Models
+    try {
+      models = (await this.ensureModels()).models
+    } catch {
+      return []
+    }
+
+    const out: ProviderInfo[] = []
+    for (const provider of models.getProviders()) {
+      const list = provider.getModels()
+      // 没配凭据的 provider 也要列出来,否则用户不知道还能选什么。
+      let authenticated = false
+      try {
+        authenticated = list.length > 0 && Boolean(await models.getAuth(list[0]!))
+      } catch {
+        authenticated = false
+      }
+      out.push({
+        id: provider.id,
+        name: provider.name,
+        authenticated,
+        models: list.map((model) => ({
+          id: model.id,
+          providerID: provider.id,
+          name: model.name ?? model.id,
+          thinkingLevels: getSupportedThinkingLevels(model) as string[],
+          contextWindow: model.contextWindow,
+          maxOutput: model.maxTokens,
+          cost: model.cost
+            ? {
+                input: model.cost.input,
+                output: model.cost.output,
+                cacheRead: model.cost.cacheRead,
+                cacheWrite: model.cost.cacheWrite,
+              }
+            : undefined,
+        })),
+      })
+    }
+    return out
+  }
+
+  /**
+   * 换模型 / 换 thinking 档位。
+   *
+   * 跨 provider 切换只有在所有 provider 都提前注册好的前提下才成立 ——
+   * AgentHarness.models 是 readonly,建好之后换不掉,而 ModelsImpl.requireProvider
+   * 对未注册的 provider 会等到真正发请求时才抛 Unknown provider。resolveModel() 已经把
+   * auth.json 里每个有 key 的 provider 都注册了,所以这里安全。
+   */
+  async setModel(sessionID: string, providerID: string, modelID: string, thinking?: string): Promise<ViewSession> {
+    const entry = await this.ensureOpen(sessionID)
+    const { models } = await this.ensureModels()
+    const model = models.getModel(providerID, modelID)
+    if (!model) throw new Error(`未知模型 ${providerID}/${modelID}`)
+
+    await entry.harness!.setModel(model)
+    if (thinking) {
+      // 钳一下:模型不支持的档位直接设进去会等到发请求时才炸。
+      await entry.harness!.setThinkingLevel(clampThinkingLevel(model, thinking as never))
+    }
+    entry.model = { providerID, modelID, thinking }
+    entry.projection?.setModel(providerID, modelID)
+    entry.updatedAt = Date.now()
+    const view = toView(entry)
+    this.options.emit([{ type: "session.updated", session: view }])
+    return view
   }
 
   // -------------------------------------------------------------------------
@@ -460,6 +544,7 @@ function toView(entry: Entry): ViewSession {
     directory: entry.cwd,
     title: entry.title || defaultTitle(entry),
     time: { created: entry.createdAt, updated: entry.updatedAt },
+    ...(entry.model ? { model: entry.model } : {}),
   }
 }
 
