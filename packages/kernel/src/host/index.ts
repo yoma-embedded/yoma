@@ -5,22 +5,123 @@
  * log capture 都是 **模块级全局**(coding-agent/src/core/tools/engines.ts:63-113),
  * 所以整个 app 只能有一个内核进程 —— 绝不按窗口或按目录分片 fork。
  */
+
+import path from "node:path"
+
 import { AgentHarness } from "@yoma/my-pi"
 import { NodeExecutionEnv } from "@yoma/my-pi/node"
 import { createCodingToolDefinitions, createEmbeddedToolDefinitions } from "@yoma/my-pi-coding-agent"
 
+import type { KernelEvent, KernelHandlers, KernelMethod, KernelParams, KernelResult } from "../protocol.ts"
+import type { PermissionRules } from "../types.ts"
+import { SessionManager } from "./session-manager.ts"
+import { ProjectStore, listFiles, readFile, searchFiles, vcsDiff, vcsInfo } from "./services.ts"
+import { StreamSink } from "./stream.ts"
+
 // 纯类型模块,无运行时产物。re-export 只为把工具 details 的漂移闸门拉进编译单元。
 export type * from "./details-check.ts"
+
+export { SessionProjection } from "./projector.ts"
+export { SessionManager } from "./session-manager.ts"
+export { PermissionGate, DEFAULT_PERMISSION_RULES } from "./permission.ts"
+export { StreamSink } from "./stream.ts"
 
 export interface KernelHostOptions {
   /** engines/bin + engines/data 的所在目录。生产环境是 process.resourcesPath/engines。 */
   enginesDir?: string
   /** session JSONL 的根目录,通常是 Electron 的 userData/sessions。 */
   sessionsRoot: string
+  /** 存放 projects.json / permission 规则的目录。 */
+  stateDir: string
+  version?: string
+  permissionRules?: PermissionRules
+  /** 成批推事件出去。host 已经做过合并,这里拿到的就是最终批次。 */
+  onEvents(events: KernelEvent[]): void
+}
+
+export interface KernelHost {
+  handle<M extends KernelMethod>(method: M, params: KernelParams<M>): Promise<KernelResult<M>>
+  /** renderer 重连:重推未决权限请求,否则关掉窗口再开就是一个永久卡住的会话。 */
+  resync(): void
+  dispose(): Promise<void>
+}
+
+export function createKernelHost(options: KernelHostOptions): KernelHost {
+  const sink = new StreamSink({ flush: options.onEvents })
+  const sessions = new SessionManager({
+    sessionsRoot: options.sessionsRoot,
+    enginesDir: options.enginesDir,
+    permissionRules: options.permissionRules,
+    emit: (events) => sink.push(events),
+  })
+  const projects = new ProjectStore(path.join(options.stateDir, "projects.json"))
+  void projects.load()
+
+  const handlers = {
+    "app.info": async () => ({
+      version: options.version ?? "0.0.0",
+      enginesDir: options.enginesDir ?? null,
+      sessionsRoot: options.sessionsRoot,
+      node: process.versions.node,
+    }),
+
+    "session.list": ({ directory }) => sessions.list(directory),
+    "session.get": ({ sessionID }) => sessions.get(sessionID),
+    "session.create": ({ directory, title }) => sessions.create(directory, title),
+    "session.delete": ({ sessionID }) => sessions.delete(sessionID),
+    "session.rename": ({ sessionID, title }) => sessions.rename(sessionID, title),
+    "session.status": ({ sessionID }) => sessions.status(sessionID),
+    "session.messages": async ({ sessionID }) => sessions.messages(sessionID),
+    "session.prompt": ({ sessionID, input }) => sessions.prompt(sessionID, input),
+    "session.abort": ({ sessionID }) => sessions.abort(sessionID),
+    "session.compact": ({ sessionID }) => sessions.compact(sessionID),
+    "session.navigate": ({ sessionID, messageID }) => sessions.navigate(sessionID, messageID),
+    "session.setModel": async ({ sessionID }) => sessions.get(sessionID),
+
+    "permission.respond": async ({ id, response }) => sessions.permissions.respond(id, response),
+    "permission.rules": async () => sessions.permissions.getRules(),
+    "permission.setRules": async ({ rules }) => sessions.permissions.setRules(rules),
+
+    "model.list": async () => [],
+    "auth.set": async () => [],
+    "auth.remove": async () => [],
+
+    "file.list": ({ directory, path: relative }) => listFiles(directory, relative),
+    "file.read": ({ path: file }) => readFile(file),
+    "file.search": ({ directory, query, limit }) => searchFiles(directory, query, limit),
+
+    "vcs.info": ({ directory }) => vcsInfo(directory),
+    "vcs.diff": ({ directory }) => vcsDiff(directory),
+
+    "project.list": async () => projects.list(),
+    "project.add": ({ directory }) => projects.add(directory),
+    "project.remove": ({ directory }) => projects.remove(directory),
+    // `satisfies` 是这里的重点:协议加了方法而 host 没实现,是编译错误,不是运行时 404。
+  } satisfies KernelHandlers
+
+  return {
+    async handle(method, params) {
+      const handler = handlers[method] as (p: unknown) => Promise<unknown>
+      if (!handler) throw new Error(`未知方法 ${method}`)
+      return (await handler(params)) as never
+    },
+    resync() {
+      const outstanding = sessions.permissions.outstanding()
+      sink.push([
+        { type: "kernel.connected", version: options.version ?? "0.0.0" },
+        ...outstanding.map((request) => ({ type: "permission.asked" as const, request })),
+      ])
+      sink.flushNow()
+    },
+    async dispose() {
+      sink.close()
+      await sessions.disposeAll()
+    },
+  }
 }
 
 /** 冒烟自检:确认整个 my-pi 依赖图在当前 runtime 下真的加载得起来。 */
-export function kernelSelfCheck(options: Partial<KernelHostOptions> = {}) {
+export function kernelSelfCheck(options: { enginesDir?: string } = {}) {
   const env = new NodeExecutionEnv({ cwd: process.cwd() })
   const engineOptions = options.enginesDir
     ? ({

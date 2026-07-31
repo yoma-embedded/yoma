@@ -464,6 +464,24 @@ export class SessionProjection {
     }
   }
 
+  /**
+   * 收尾当前这条流式 assistant 消息。
+   *
+   * 必须和 applyAssistant 分开:message_end 到达时那条消息 **已经有 id 了**,再走
+   * applyAssistant 会铸一个新 id,transcript 上就多出一条重复回复。没有流式过
+   * (非流式 provider、或历史重放)时退化成新建,所以两条路都安全。
+   */
+  finalizeAssistant(message: Extract<AgentMessage, { role: "assistant" }>): KernelEvent[] {
+    const id = this.streamingID
+    const entry = id ? this.messages.get(id) : undefined
+    if (!id || !entry) return this.applyAssistant(message)
+
+    entry.info = this.assistantInfo(id, message)
+    entry.parts = this.assistantParts(id, message.content as AssistantBlock[])
+    this.streamingID = ""
+    return [{ type: "message.updated", message: entry.info }, ...entry.parts.map(partEvent)]
+  }
+
   // -------------------------------------------------------------------------
   // 工具执行事件(来自 loop,而不是消息)
   // -------------------------------------------------------------------------
