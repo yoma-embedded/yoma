@@ -1,7 +1,6 @@
 import { createEffect, createSignal, Show, Suspense, type ParentProps } from "solid-js"
 import { useNavigate } from "@solidjs/router"
 import { DebugBar } from "@/components/debug-bar"
-import { HelpButton } from "@/components/help-button"
 import { Titlebar, type TitlebarUpdate } from "@/components/titlebar"
 import { usePlatform } from "@/context/platform"
 import { setNavigate } from "@/utils/notification-click"
@@ -47,7 +46,6 @@ export default function NewLayout(props: ParentProps) {
         </main>
       </div>
       {import.meta.env.DEV && <DebugBar inline />}
-      <HelpButton />
       <ToastRegion v2 />
       <Show when={searchOpen()}>
         <CodexSearch onClose={() => setSearchOpen(false)} />

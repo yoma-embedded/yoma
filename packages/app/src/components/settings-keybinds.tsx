@@ -10,7 +10,6 @@ import fuzzysort from "fuzzysort"
 import { formatKeybind, parseKeybind, useCommand } from "@/context/command"
 import { useLanguage } from "@/context/language"
 import { useSettings } from "@/context/settings"
-import { SettingsList } from "./settings-list"
 
 const ButtonV2 = lazy(() => import("@yoma-desktop/ui/v2/button-v2").then((module) => ({ default: module.ButtonV2 })))
 const IconV2 = lazy(() => import("@yoma-desktop/ui/v2/icon").then((module) => ({ default: module.Icon })))
@@ -412,7 +411,7 @@ export const SettingsKeybinds: Component<{ v2?: boolean }> = (props) => {
     </Show>
   )
 
-  const List = props.v2 ? SettingsListV2 : SettingsList
+  const List = SettingsListV2
 
   const groups = (
     <div

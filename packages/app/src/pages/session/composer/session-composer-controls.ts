@@ -15,7 +15,6 @@ import { useSDK } from "@/context/sdk"
 import { useSettings } from "@/context/settings"
 import { useSync } from "@/context/sync"
 import { useTabs } from "@/context/tabs"
-import { useProviders } from "@/hooks/use-providers"
 import { pathKey } from "@/utils/path-key"
 
 export function createPromptInputController(input: {
@@ -25,7 +24,6 @@ export function createPromptInputController(input: {
 }) {
   const layout = useLayout()
   const local = useLocal()
-  const providers = useProviders()
   const settings = useSettings()
   const sync = useSync()
   const sdk = useSDK()
@@ -45,7 +43,6 @@ export function createPromptInputController(input: {
     },
     model: {
       selection: local.model,
-      paid: providers.paid().length > 0,
       loading: agentsQuery.isLoading || providersQuery.isLoading || globalProvidersQuery.isLoading,
     },
     session: {

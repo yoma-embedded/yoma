@@ -83,11 +83,6 @@ export const dict = {
   "command.session.compact.description": "Сократить сессию для уменьшения размера контекста",
   "command.session.fork": "Создать ответвление",
   "command.session.fork.description": "Создать новую сессию из сообщения",
-  "command.session.share": "Поделиться сессией",
-  "command.session.share.description": "Поделиться сессией и скопировать URL в буфер обмена",
-  "command.session.unshare": "Отменить публикацию",
-  "command.session.unshare.description": "Прекратить публикацию сессии",
-
   "palette.search.placeholder": "Поиск файлов, команд и сессий",
   "palette.empty": "Ничего не найдено",
   "palette.group.commands": "Команды",
@@ -114,9 +109,6 @@ export const dict = {
   "dialog.model.manage": "Управление моделями",
   "dialog.model.manage.description": "Настройте какие модели появляются в выборе модели",
   "dialog.model.manage.provider.toggle": "Переключить все модели {{provider}}",
-
-  "dialog.model.unpaid.freeModels.title": "Бесплатные модели от OpenCode",
-  "dialog.model.unpaid.addMore.title": "Добавьте больше моделей от популярных провайдеров",
 
   "dialog.provider.viewAll": "Показать больше провайдеров",
 
@@ -432,17 +424,6 @@ export const dict = {
   "toast.file.listFailed.title": "Не удалось получить список файлов",
   "toast.context.noLineSelection.title": "Нет выделения строк",
   "toast.context.noLineSelection.description": "Сначала выберите диапазон строк во вкладке файла.",
-  "toast.session.share.copyFailed.title": "Не удалось скопировать URL в буфер обмена",
-  "toast.session.share.success.title": "Сессия опубликована",
-  "toast.session.share.success.description": "URL скопирован в буфер обмена!",
-  "toast.session.share.failed.title": "Не удалось опубликовать сессию",
-  "toast.session.share.failed.description": "Произошла ошибка при публикации сессии",
-
-  "toast.session.unshare.success.title": "Публикация отменена",
-  "toast.session.unshare.success.description": "Публикация успешно отменена!",
-  "toast.session.unshare.failed.title": "Не удалось отменить публикацию",
-  "toast.session.unshare.failed.description": "Произошла ошибка при отмене публикации",
-
   "toast.session.listFailed.title": "Не удалось загрузить сессии для {{project}}",
 
   "toast.update.title": "Доступно обновление",
@@ -566,20 +547,7 @@ export const dict = {
   "status.popover.tab.plugins": "Плагины",
   "status.popover.action.manageServers": "Управлять серверами",
 
-  "session.share.popover.title": "Опубликовать в интернете",
-  "session.share.popover.description.shared":
-    "Эта сессия общедоступна. Доступ к ней может получить любой, у кого есть ссылка.",
-  "session.share.popover.description.unshared":
-    "Опубликуйте сессию в интернете. Доступ к ней сможет получить любой, у кого есть ссылка.",
-  "session.share.action.share": "Поделиться",
-  "session.share.action.publish": "Опубликовать",
-  "session.share.action.publishing": "Публикация...",
-  "session.share.action.unpublish": "Отменить публикацию",
-  "session.share.action.unpublishing": "Отмена публикации...",
-  "session.share.action.view": "Посмотреть",
   "session.share.copy.copied": "Скопировано",
-  "session.share.copy.copyLink": "Копировать ссылку",
-
   "lsp.tooltip.none": "Нет LSP серверов",
   "lsp.label.connected": "{{count}} LSP",
 
@@ -625,9 +593,6 @@ export const dict = {
   "settings.section.server": "Сервер",
   "settings.tab.general": "Основные",
   "settings.tab.shortcuts": "Горячие клавиши",
-  "settings.desktop.section.wsl": "WSL",
-  "settings.desktop.wsl.title": "Интеграция с WSL",
-  "settings.desktop.wsl.description": "Запускать сервер OpenCode внутри WSL на Windows.",
 
   "settings.general.section.appearance": "Внешний вид",
   "settings.general.section.notifications": "Системные уведомления",
@@ -668,9 +633,6 @@ export const dict = {
   "settings.general.row.wayland.description": "Отключить X11 fallback на Wayland. Требуется перезапуск.",
   "settings.general.row.wayland.tooltip":
     "На Linux с мониторами разной частоты обновления нативный Wayland может быть стабильнее.",
-
-  "settings.general.row.releaseNotes.title": "Примечания к выпуску",
-  "settings.general.row.releaseNotes.description": 'Показывать всплывающие окна "Что нового" после обновлений',
 
   "settings.updates.row.startup.title": "Проверять обновления при запуске",
   "settings.updates.row.startup.description": "Автоматически проверять обновления при запуске OpenCode",
@@ -850,10 +812,6 @@ export const dict = {
   "workspace.reset.archived.many": "{{count}} сессий будет архивировано.",
   "workspace.reset.note": "Это сбросит рабочее пространство до соответствия ветке по умолчанию.",
   "common.open": "Открыть",
-  "dialog.releaseNotes.action.getStarted": "Начать",
-  "dialog.releaseNotes.action.next": "Далее",
-  "dialog.releaseNotes.action.hideFuture": "Больше не показывать",
-  "dialog.releaseNotes.media.alt": "Превью релиза",
   "toast.project.reloadFailed.title": "Не удалось перезагрузить {{project}}",
   "error.server.invalidConfiguration": "Недопустимая конфигурация",
   "common.moreCountSuffix": " (ещё {{count}})",

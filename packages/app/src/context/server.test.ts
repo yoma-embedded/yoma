@@ -61,15 +61,7 @@ describe("resolveServerList", () => {
   })
 })
 
-test("treats WSL sidecars as remote server connections", () => {
-  expect(
-    ServerConnection.local({
-      type: "sidecar",
-      variant: "wsl",
-      distro: "Debian",
-      http: { url: "http://127.0.0.1:4097" },
-    }),
-  ).toBe(false)
+test("classifies built-in and loopback connections as local", () => {
   expect(ServerConnection.local({ type: "sidecar", variant: "base", http: { url: "http://127.0.0.1:4096" } })).toBe(
     true,
   )
@@ -79,17 +71,12 @@ test("treats WSL sidecars as remote server connections", () => {
 
 test("active server removal falls back across built-in and persisted servers", () => {
   const local = { type: "sidecar", variant: "base", http: { url: "http://127.0.0.1:4096" } } as const
-  const debian = {
-    type: "sidecar",
-    variant: "wsl",
-    distro: "Debian",
-    http: { url: "http://127.0.0.1:4097" },
-  } as const
+  const remote = { type: "http", http: { url: "https://server.example.test" } } as const
 
   expect(
     nextServerAfterRemoval(
-      [local, debian],
-      ServerConnection.Key.make("wsl:Debian"),
+      [local, remote],
+      ServerConnection.Key.make("https://server.example.test"),
       ServerConnection.Key.make("sidecar"),
     ),
   ).toBe(ServerConnection.Key.make("sidecar"))

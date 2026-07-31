@@ -122,11 +122,6 @@ export const dict = {
   "command.session.compact.description": "總結工作階段以減少上下文大小",
   "command.session.fork": "從訊息分支",
   "command.session.fork.description": "從先前的訊息建立新工作階段",
-  "command.session.share": "分享工作階段",
-  "command.session.share.description": "分享此工作階段並將連結複製到剪貼簿",
-  "command.session.unshare": "取消分享工作階段",
-  "command.session.unshare.description": "停止分享此工作階段",
-
   "palette.search.placeholder": "搜尋檔案、命令和工作階段",
   "palette.empty": "找不到結果",
   "palette.group.commands": "命令",
@@ -153,9 +148,6 @@ export const dict = {
   "dialog.model.manage": "管理模型",
   "dialog.model.manage.description": "自訂模型選擇器中顯示的模型。",
   "dialog.model.manage.provider.toggle": "切換所有 {{provider}} 模型",
-
-  "dialog.model.unpaid.freeModels.title": "OpenCode 提供的免費模型",
-  "dialog.model.unpaid.addMore.title": "從熱門提供者新增更多模型",
 
   "dialog.provider.viewAll": "查看更多提供者",
 
@@ -464,17 +456,6 @@ export const dict = {
   "toast.file.listFailed.title": "列出檔案失敗",
   "toast.context.noLineSelection.title": "未選取行",
   "toast.context.noLineSelection.description": "請先在檔案分頁中選取行範圍。",
-  "toast.session.share.copyFailed.title": "無法複製連結到剪貼簿",
-  "toast.session.share.success.title": "工作階段已分享",
-  "toast.session.share.success.description": "分享連結已複製到剪貼簿",
-  "toast.session.share.failed.title": "分享工作階段失敗",
-  "toast.session.share.failed.description": "分享工作階段時發生錯誤",
-
-  "toast.session.unshare.success.title": "已取消分享工作階段",
-  "toast.session.unshare.success.description": "工作階段已成功取消分享",
-  "toast.session.unshare.failed.title": "取消分享失敗",
-  "toast.session.unshare.failed.description": "取消分享工作階段時發生錯誤",
-
   "toast.session.listFailed.title": "無法載入 {{project}} 的工作階段",
 
   "toast.update.title": "有可用更新",
@@ -621,18 +602,7 @@ export const dict = {
   "status.popover.tab.plugins": "外掛程式",
   "status.popover.action.manageServers": "管理伺服器",
 
-  "session.share.popover.title": "發佈到網頁",
-  "session.share.popover.description.shared": "此工作階段已在網頁上公開。任何擁有連結的人都可以存取。",
-  "session.share.popover.description.unshared": "在網頁上公開分享此工作階段。任何擁有連結的人都可以存取。",
-  "session.share.action.share": "分享",
-  "session.share.action.publish": "發佈",
-  "session.share.action.publishing": "正在發佈...",
-  "session.share.action.unpublish": "取消發佈",
-  "session.share.action.unpublishing": "正在取消發佈...",
-  "session.share.action.view": "檢視",
   "session.share.copy.copied": "已複製",
-  "session.share.copy.copyLink": "複製連結",
-
   "lsp.tooltip.none": "沒有 LSP 伺服器",
   "lsp.label.connected": "{{count}} LSP",
 
@@ -681,9 +651,6 @@ export const dict = {
   "settings.section.server": "伺服器",
   "settings.tab.general": "一般",
   "settings.tab.shortcuts": "快速鍵",
-  "settings.desktop.section.wsl": "WSL",
-  "settings.desktop.wsl.title": "WSL 整合",
-  "settings.desktop.wsl.description": "在 Windows 上的 WSL 中執行 OpenCode 伺服器。",
 
   "settings.general.section.appearance": "外觀",
   "settings.general.section.notifications": "系統通知",
@@ -720,9 +687,6 @@ export const dict = {
   "settings.general.row.wayland.title": "使用原生 Wayland",
   "settings.general.row.wayland.description": "在 Wayland 上停用 X11 後備模式。需要重新啟動。",
   "settings.general.row.wayland.tooltip": "在混合更新率螢幕的 Linux 系統上，原生 Wayland 可能更穩定。",
-
-  "settings.general.row.releaseNotes.title": "發行說明",
-  "settings.general.row.releaseNotes.description": "更新後顯示「新功能」彈出視窗",
 
   "settings.updates.row.startup.title": "啟動時檢查更新",
   "settings.updates.row.startup.description": "在 OpenCode 啟動時自動檢查更新",
@@ -898,10 +862,6 @@ export const dict = {
   "workspace.reset.archived.many": "將封存 {{count}} 個工作階段。",
   "workspace.reset.note": "這將把工作區重設為與預設分支一致。",
   "common.open": "打開",
-  "dialog.releaseNotes.action.getStarted": "開始",
-  "dialog.releaseNotes.action.next": "下一步",
-  "dialog.releaseNotes.action.hideFuture": "不再顯示",
-  "dialog.releaseNotes.media.alt": "發佈預覽",
   "toast.project.reloadFailed.title": "無法重新載入 {{project}}",
   "error.server.invalidConfiguration": "無效的設定",
   "common.moreCountSuffix": " (還有 {{count}} 個)",

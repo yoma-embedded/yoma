@@ -21,7 +21,6 @@ export interface SoundSettings {
 export interface Settings {
   general: {
     autoSave: boolean
-    releaseNotes: boolean
     followup: "queue" | "steer"
     showFileTree: boolean
     showNavigation: boolean
@@ -33,7 +32,6 @@ export interface Settings {
     editToolPartsExpanded: boolean
     showCustomAgents: boolean
     mobileTitlebarPosition: "top" | "bottom"
-    newLayoutDesigns?: boolean
   }
   appearance: {
     fontSize: number
@@ -52,7 +50,6 @@ export interface Settings {
 export const monoDefault = "System Mono"
 export const sansDefault = "System Sans"
 export const terminalDefault = "JetBrainsMono Nerd Font Mono"
-export const newLayoutDesignsDefault = import.meta.env.VITE_OPENCODE_CHANNEL !== "prod"
 
 const monoFallback =
   'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace'
@@ -106,7 +103,6 @@ export function terminalFontFamily(font: string | undefined) {
 const defaultSettings: Settings = {
   general: {
     autoSave: true,
-    releaseNotes: true,
     followup: "steer",
     showFileTree: false,
     showNavigation: false,
@@ -160,8 +156,10 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
       () => store.general?.showCustomAgents,
       defaultSettings.general.showCustomAgents,
     )
-    const newLayoutDesigns = withFallback(() => store.general?.newLayoutDesigns, newLayoutDesignsDefault)
-    const visible = (preference: () => boolean) => createMemo(() => !newLayoutDesigns() || preference())
+    // The legacy layout is gone; the flag is pinned on and kept only so the
+    // remaining `newLayoutDesigns()` call sites keep compiling until they are collapsed.
+    const newLayoutDesigns = () => true
+    const visible = (preference: () => boolean) => createMemo(preference)
 
     createEffect(() => {
       if (typeof document === "undefined") return
@@ -184,10 +182,6 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
         autoSave: withFallback(() => store.general?.autoSave, defaultSettings.general.autoSave),
         setAutoSave(value: boolean) {
           setStore("general", "autoSave", value)
-        },
-        releaseNotes: withFallback(() => store.general?.releaseNotes, defaultSettings.general.releaseNotes),
-        setReleaseNotes(value: boolean) {
-          setStore("general", "releaseNotes", value)
         },
         followup: withFallback(
           () => (store.general?.followup === "queue" ? "steer" : store.general?.followup),
@@ -249,9 +243,6 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
           setStore("general", "mobileTitlebarPosition", value)
         },
         newLayoutDesigns,
-        setNewLayoutDesigns(value: boolean) {
-          setStore("general", "newLayoutDesigns", value)
-        },
       },
       visibility: {
         fileTree: visible(showFileTree),

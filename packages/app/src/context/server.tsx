@@ -163,16 +163,8 @@ export namespace ServerConnection {
   export type Sidecar = {
     type: "sidecar"
     http: HttpBase
-  } & (
-    | // Regular desktop server
-    { variant: "base" }
-    // WSL server (windows only)
-    | {
-        variant: "wsl"
-        distro: string
-      }
-  ) &
-    Base
+  } & // Regular desktop server
+  { variant: "base" } & Base
 
   // Remote server desktop can SSH into
   export type Ssh = {
@@ -191,10 +183,8 @@ export namespace ServerConnection {
     switch (conn.type) {
       case "http":
         return Key.make(conn.http.url)
-      case "sidecar": {
-        if (conn.variant === "wsl") return Key.make(`wsl:${conn.distro}`)
+      case "sidecar":
         return Key.make("sidecar")
-      }
       case "ssh":
         return Key.make(`ssh:${conn.host}`)
     }
