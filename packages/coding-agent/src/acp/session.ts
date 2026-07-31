@@ -5,6 +5,7 @@
  *   message_update(text_delta)      → agent_message_chunk
  *   message_update(thinking_delta)  → agent_thought_chunk
  *   tool_execution_start            → tool_call        (status: in_progress)
+ *   tool_execution_update           → tool_call_update (status: in_progress,内容替换)
  *   tool_execution_end              → tool_call_update (status: completed / failed)
  */
 import type { AgentHarness, AgentHarnessEvent } from "@yoma/my-pi";
@@ -21,6 +22,8 @@ const TOOL_KINDS: Record<string, AcpToolKind> = {
 	edit: "edit",
 	bash: "execute",
 	grep: "search",
+	log: "execute",
+	gdb: "execute",
 };
 
 export function toolKindOf(toolName: string): AcpToolKind {
@@ -41,6 +44,25 @@ export function toolTitleOf(toolName: string, args: unknown): string {
 			return typeof input.command === "string" ? `$ ${input.command}` : "Run command";
 		case "grep":
 			return typeof input.pattern === "string" ? `Search /${input.pattern}/` : "Search";
+		case "log": {
+			const action = typeof input.action === "string" ? input.action : "";
+			// wait 的标题带上正在等的模式,卡片折叠时也能看出它在等什么。
+			if (action === "wait" && typeof input.pattern === "string") return `Log wait /${input.pattern}/`;
+			return action ? `Log ${action}` : "Log";
+		}
+		case "gdb": {
+			const action = typeof input.action === "string" ? input.action : "";
+			// 折叠的卡片上也要看得出这一步到底在干什么:continue 和 step 的区别很重要。
+			if (action === "exec") return `GDB ${typeof input.op === "string" ? input.op : "continue"}`;
+			if (action === "eval" && typeof input.command === "string") return `GDB ${input.command}`;
+			if (action === "break") {
+				if (typeof input.at === "string") return `GDB break ${input.at}`;
+				if (typeof input.watch === "string") return `GDB watch ${input.watch}`;
+				if (input.remove !== undefined) return `GDB break remove ${String(input.remove)}`;
+				return "GDB breakpoints";
+			}
+			return action ? `GDB ${action}` : "GDB";
+		}
 		default:
 			return toolName;
 	}
@@ -229,6 +251,21 @@ export function pipeHarnessToAcp(harness: AgentHarness<any, any, any>, sink: Upd
 					status: "in_progress",
 					locations: toolLocationsOf(undefined, event.args),
 					rawInput: event.args,
+				});
+				return;
+			}
+			case "tool_execution_update": {
+				// 工具执行中的增量(log wait 的实时日志、bash 的流式输出)。
+				// 只替换 in_progress 卡片的内容,不改状态 —— transcript 里什么都不留,
+				// 最终态照旧由 tool_execution_end 覆盖。工具侧自己节流(100ms)。
+				const partial = event.partialResult as { content?: unknown; details?: unknown } | undefined;
+				const text = textOfContent(partial?.content);
+				if (!text) return;
+				void sink({
+					sessionUpdate: "tool_call_update",
+					toolCallId: event.toolCallId,
+					status: "in_progress",
+					content: toolContentOf(event.toolName, partial?.details, text, partial?.content),
 				});
 				return;
 			}

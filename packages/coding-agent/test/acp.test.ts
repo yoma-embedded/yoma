@@ -139,6 +139,49 @@ describe("pipeHarnessToAcp tool_execution_end", () => {
 	});
 });
 
+describe("pipeHarnessToAcp tool_execution_update", () => {
+	async function pipe() {
+		let listener: ((event: any) => void) | undefined;
+		const harness = {
+			subscribe(fn: (event: any) => void) {
+				listener = fn;
+				return () => {};
+			},
+		};
+		const updates: any[] = [];
+		const { pipeHarnessToAcp } = await import("../src/acp/session.ts");
+		pipeHarnessToAcp(harness as any, async (update) => {
+			updates.push(update);
+		});
+		return { emit: (event: any) => listener!(event), updates };
+	}
+
+	it("streams a running tool's partial output as in_progress content", async () => {
+		// log wait 的实时日志走这条路:卡片内容随着新行刷新,状态仍是 in_progress。
+		const { emit, updates } = await pipe();
+		emit({
+			type: "tool_execution_update",
+			toolCallId: "t1",
+			toolName: "log",
+			args: { action: "wait", pattern: "boot" },
+			partialResult: { content: [{ type: "text", text: "[+0.004] [boot] HAL init ok" }], details: { action: "wait" } },
+		});
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toMatchObject({
+			sessionUpdate: "tool_call_update",
+			toolCallId: "t1",
+			status: "in_progress",
+			content: [{ type: "content", content: { type: "text", text: "[+0.004] [boot] HAL init ok" } }],
+		});
+	});
+
+	it("skips empty partials so the card never blanks out", async () => {
+		const { emit, updates } = await pipe();
+		emit({ type: "tool_execution_update", toolCallId: "t1", toolName: "bash", args: {}, partialResult: { content: [] } });
+		expect(updates).toHaveLength(0);
+	});
+});
+
 describe("replayUpdatesOf", () => {
 	it("replays a full conversation: user, thinking, text, tool call, tool result", () => {
 		const updates = replayUpdatesOf([

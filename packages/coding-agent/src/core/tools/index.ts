@@ -57,12 +57,96 @@ export {
 	type FlashToolOptions,
 } from "./flash.ts";
 export {
+	buildServerArgv,
+	classifyEval,
+	createGdbTool,
+	createGdbToolDefinition,
+	elfMachine,
+	type EvalClass,
+	type ExecOp,
+	EXEC_OPS,
+	GDB_ACTIONS,
+	GDB_SERVERS,
+	type GdbAction,
+	type GdbServerKind,
+	GdbSession,
+	type GdbToolDetails,
+	type GdbToolInput,
+	type GdbToolOptions,
+	hexToWords,
+	parseConnect,
+	pickFreePort,
+	preferredGdbNames,
+	renderBanner,
+	resolveGdbPath,
+	SERVER_CAPS,
+	type ServerCaps,
+	spawnServer,
+	waitForServerReady,
+} from "./gdb.ts";
+export {
+	clip,
+	type CoreId,
+	decodeBreakpointUnits,
+	decodeCpuid,
+	decodeDfsr,
+	decodeDhcsr,
+	decodeException,
+	decodeExcReturn,
+	decodeFault,
+	decodeStackedFrame,
+	decodeWatchpointUnits,
+	escapeCString,
+	type ExcReturnInfo,
+	type FaultDecode,
+	type Flag,
+	type Frame,
+	frameOf,
+	frameRecords,
+	type FrameResult,
+	hex,
+	MAX_RECORD_CHARS,
+	type MiRecord,
+	type MiTuple,
+	type MiValue,
+	miNumber,
+	miString,
+	miTuple,
+	parseMiValue,
+	parseRecord,
+	parseResults,
+	parseResultsStrict,
+	type RecordKind,
+	renderFrame,
+	renderFrames,
+	SCB,
+	type StackedFrame,
+	unwrapList,
+} from "./gdb-mi.ts";
+export {
 	createGrepTool,
 	createGrepToolDefinition,
 	type GrepToolDetails,
 	type GrepToolInput,
 	type GrepToolOptions,
 } from "./grep.ts";
+export {
+	buildAttachArgs,
+	createLogTool,
+	createLogToolDefinition,
+	foldLines,
+	LOG_ACTIONS,
+	LogCapture,
+	type LogAction,
+	type LogLine,
+	type LogToolDetails,
+	type LogToolInput,
+	type LogToolOptions,
+	renderRows,
+	selectForDisplay,
+	splitArgv,
+	splitChunk,
+} from "./log.ts";
 export {
 	createNetlistTool,
 	createNetlistToolDefinition,
@@ -103,7 +187,9 @@ import { type BashToolOptions, createBashTool, createBashToolDefinition } from "
 import { createEditTool, createEditToolDefinition, type EditToolOptions } from "./edit.ts";
 import { createDatasheetTool, createDatasheetToolDefinition } from "./datasheet.ts";
 import { createFlashTool, createFlashToolDefinition, type FlashToolOptions } from "./flash.ts";
+import { createGdbTool, createGdbToolDefinition, type GdbToolOptions } from "./gdb.ts";
 import { createGrepTool, createGrepToolDefinition, type GrepToolOptions } from "./grep.ts";
+import { createLogTool, createLogToolDefinition, type LogToolOptions } from "./log.ts";
 import { createNetlistTool, createNetlistToolDefinition, type NetlistToolOptions } from "./netlist.ts";
 import { createReadTool, createReadToolDefinition, type ReadToolOptions } from "./read.ts";
 import { createStm32ConfigTool, createStm32ConfigToolDefinition, type Stm32ConfigToolOptions } from "./stm32config.ts";
@@ -112,7 +198,18 @@ import { createWriteTool, createWriteToolDefinition, type WriteToolOptions } fro
 
 export type Tool = AgentTool<any>;
 export type ToolDef = ToolDefinition<any, any>;
-export type ToolName = "read" | "bash" | "edit" | "write" | "grep" | "stm32config" | "netlist" | "flash" | "datasheet";
+export type ToolName =
+	| "read"
+	| "bash"
+	| "edit"
+	| "write"
+	| "grep"
+	| "stm32config"
+	| "netlist"
+	| "flash"
+	| "datasheet"
+	| "log"
+	| "gdb";
 export const allToolNames: Set<ToolName> = new Set([
 	"read",
 	"bash",
@@ -123,6 +220,8 @@ export const allToolNames: Set<ToolName> = new Set([
 	"netlist",
 	"flash",
 	"datasheet",
+	"log",
+	"gdb",
 ]);
 
 export interface ToolsOptions {
@@ -134,6 +233,8 @@ export interface ToolsOptions {
 	stm32config?: Stm32ConfigToolOptions;
 	netlist?: NetlistToolOptions;
 	flash?: FlashToolOptions;
+	log?: LogToolOptions;
+	gdb?: GdbToolOptions;
 }
 
 export function createToolDefinition(toolName: ToolName, env: ExecutionEnv, options?: ToolsOptions): ToolDef {
@@ -156,6 +257,10 @@ export function createToolDefinition(toolName: ToolName, env: ExecutionEnv, opti
 			return createFlashToolDefinition(env, options?.flash);
 		case "datasheet":
 			return createDatasheetToolDefinition(env);
+		case "log":
+			return createLogToolDefinition(env, options?.log);
+		case "gdb":
+			return createGdbToolDefinition(env, options?.gdb);
 		default:
 			throw new Error(`Unknown tool name: ${toolName}`);
 	}
@@ -181,6 +286,10 @@ export function createTool(toolName: ToolName, env: ExecutionEnv, options?: Tool
 			return createFlashTool(env, options?.flash);
 		case "datasheet":
 			return createDatasheetTool(env);
+		case "log":
+			return createLogTool(env, options?.log);
+		case "gdb":
+			return createGdbTool(env, options?.gdb);
 		default:
 			throw new Error(`Unknown tool name: ${toolName}`);
 	}
@@ -209,7 +318,8 @@ export function createCodingTools(env: ExecutionEnv, options?: ToolsOptions): To
 
 /**
  * 嵌入式引擎工具组,顺序即流水线:
- * netlist(原理图)→ datasheet(查手册,全在线)→ stm32config(驱动)→ flash(烧录)。
+ * netlist(原理图)→ datasheet(查手册,全在线)→ stm32config(驱动)→ flash(烧录)
+ * → log(看板子真正打了什么)→ gdb(日志不够时进去看寄存器和栈,闭环的最后一环)。
  * 与编码五件套分开装配:引擎未构建/服务器未配置时工具仍会注册,
  * 调用时才返回修复指引(与 yoma 行为一致)。
  */
@@ -219,6 +329,8 @@ export function createEmbeddedToolDefinitions(env: ExecutionEnv, options?: Tools
 		createDatasheetToolDefinition(env),
 		createStm32ConfigToolDefinition(env, options?.stm32config),
 		createFlashToolDefinition(env, options?.flash),
+		createLogToolDefinition(env, options?.log),
+		createGdbToolDefinition(env, options?.gdb),
 	];
 }
 
@@ -228,6 +340,8 @@ export function createEmbeddedTools(env: ExecutionEnv, options?: ToolsOptions): 
 		createDatasheetTool(env),
 		createStm32ConfigTool(env, options?.stm32config),
 		createFlashTool(env, options?.flash),
+		createLogTool(env, options?.log),
+		createGdbTool(env, options?.gdb),
 	];
 }
 
@@ -246,5 +360,7 @@ export function createAllTools(env: ExecutionEnv, options?: ToolsOptions): Recor
 		netlist: createNetlistTool(env, options?.netlist),
 		flash: createFlashTool(env, options?.flash),
 		datasheet: createDatasheetTool(env),
+		log: createLogTool(env, options?.log),
+		gdb: createGdbTool(env, options?.gdb),
 	};
 }
