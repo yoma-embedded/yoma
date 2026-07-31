@@ -19,7 +19,8 @@
     "package:mac": "electron-builder --mac --config electron-builder.config.ts",
     "package:win": "electron-builder --win --config electron-builder.config.ts",
     "package:linux": "electron-builder --linux --config electron-builder.config.ts",
-    "native:build": "bun install --cwd native"
+    "native:build": "bun install --cwd native",
+    "smoke": "bun ./scripts/kernel-smoke.ts"
   },
   "main": "./out/main/index.js",
   "dependencies": {

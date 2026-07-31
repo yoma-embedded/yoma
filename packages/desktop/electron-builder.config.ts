@@ -64,6 +64,23 @@ const getBase = (appId: string): Configuration => ({
       to: "native/",
       filter: ["index.js", "index.d.ts", "build/Release/mac_window.node", "swift-build/**"],
     },
+    // 嵌入式引擎(stm32kernel / probe-rs / controller_map / board_ir / connections)
+    // 和 stm32 数据包。**必须走 extraResources 而不是 files** —— 它们是原生可执行文件,
+    // 打进 asar 之后不能直接 spawn,而 my-pi 的工具就是 argv 进 JSON 出的黑盒 CLI。
+    // 运行时由 main/index.ts 的 resolveEnginesDir() 解析到 process.resourcesPath/engines。
+    //
+    // 开发期仓库根的 engines 是指向 ../my-pi/engines 的软链,而 engines/bin 与
+    // engines/data 里又是指向各引擎构建产物的软链。electron-builder 会 dereference,
+    // 所以打包机上必须先跑过 `bun engines/build.ts`,否则这里会是空的 —— 而且不会报错,
+    // 只会在用户第一次点烧录时才炸。CI 里要显式校验这两个目录非空。
+    {
+      from: "../../engines/bin/",
+      to: "engines/bin/",
+    },
+    {
+      from: "../../engines/data/",
+      to: "engines/data/",
+    },
   ],
   mac: {
     category: "public.app-category.developer-tools",
