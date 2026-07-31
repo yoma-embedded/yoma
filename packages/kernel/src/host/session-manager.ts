@@ -40,6 +40,7 @@ import type {
 import { Identifier } from "../ids.ts"
 import { SessionProjection } from "./projector.ts"
 import { PermissionGate } from "./permission.ts"
+import { shouldAutoCompact } from "./compaction.ts"
 
 /** 同时活着的 harness 上限。淘汰只是丢弃内存态,重开就是 repo.open + buildContext,很便宜。 */
 const MAX_LIVE_SESSIONS = 8
@@ -61,6 +62,8 @@ interface Entry {
   /** 本轮的 AbortController —— harness.prompt() 在 abort 后 resolve,靠它区分取消。 */
   aborter?: AbortController
   model?: { providerID: string; modelID: string; thinking?: string }
+  /** 正在自动压缩。防止 turn_end 连发时重入。 */
+  compacting?: boolean
 }
 
 export interface SessionManagerOptions {
@@ -401,6 +404,8 @@ export class SessionManager {
       case "turn_end":
       case "settled":
       case "agent_end":
+        // 一轮结束后按阈值自动压缩。内核不做这件事,不补就是聊长了直接撞上下文窗口。
+        void this.maybeAutoCompact(entry)
         return this.setStatus(entry, { type: "idle" })
       case "session_compact":
         return this.setStatus(entry, { type: "idle" })
@@ -409,6 +414,45 @@ export class SessionManager {
         return [{ type: "session.updated", session: toView(entry) }]
       default:
         return []
+    }
+  }
+
+  /**
+   * 一轮结束后按阈值自动压缩。
+   *
+   * 任何失败都只发一条 kernel.error,**绝不让这一轮失败** —— 压缩是善后动作,
+   * 它挂了不该把用户已经拿到的回答一起废掉。
+   */
+  private async maybeAutoCompact(entry: Entry): Promise<void> {
+    if (!entry.harness || !entry.session || entry.compacting) return
+    try {
+      const model = entry.harness.getModel()
+      const context = await entry.session.buildContext()
+      const compactions = await entry.session.getStorage().findEntries("compaction")
+      const last = compactions[compactions.length - 1]
+      const decision = shouldAutoCompact(
+        context.messages as AgentMessage[],
+        model.contextWindow,
+        last ? new Date(last.timestamp).getTime() : undefined,
+      )
+      if (!decision.compact) return
+
+      entry.compacting = true
+      entry.status = { type: "compacting" }
+      this.options.emit([{ type: "session.status", sessionID: entry.id, status: entry.status }])
+      await entry.harness.compact()
+    } catch (error) {
+      this.options.emit([
+        {
+          type: "kernel.error",
+          sessionID: entry.id,
+          message: `自动压缩失败:${(error as Error)?.message ?? String(error)}`,
+        },
+      ])
+    } finally {
+      entry.compacting = false
+      entry.status = { type: "idle" }
+      this.options.emit([{ type: "session.status", sessionID: entry.id, status: { type: "idle" } }])
     }
   }
 
