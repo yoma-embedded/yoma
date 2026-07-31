@@ -15,6 +15,7 @@ import type { ServerReadyData } from "../preload/types"
 import { checkAppExists, resolveAppPath } from "./apps"
 import { CHANNEL } from "./constants"
 import { registerIpcHandlers, sendDeepLinks, sendMenuCommand } from "./ipc"
+import { spawnKernel, type KernelProcess } from "./kernel"
 import { forwardInitializationFailure } from "./initialization"
 import { exportDebugLogs, initCrashReporter, initLogging, startNetLog, write as writeLog } from "./logging"
 import { parseMarkdown } from "./markdown"
@@ -34,10 +35,7 @@ import {
   setBackgroundColor,
   setDockIcon,
 } from "./windows"
-import { createWslServersController } from "./wsl/servers"
-import { registerWslIpcHandlers } from "./wsl/ipc"
 import { registerManualsIpcHandlers } from "./manuals"
-import { spawnWslSidecar } from "./wsl/sidecar"
 import { migrate } from "./migrate"
 
 const APP_NAMES: Record<string, string> = {
@@ -56,8 +54,36 @@ const jsCallStackFeature = "DocumentPolicyIncludeJSCallStacksInCrashReports"
 let logger: ReturnType<typeof initLogging>
 let mainWindow: BrowserWindow | null = null
 let server: SidecarListener | null = null
+let kernelProcess: KernelProcess | null = null
 
 const pendingDeepLinks: string[] = []
+
+/**
+ * engines/bin + engines/data 的位置。
+ *
+ * 必须显式传给工具工厂,**不能** 依赖 my-pi 的 enginesDir() 向上查找:那个查找只认
+ * "名字叫 engines 且存在"的目录,会高高兴兴地找到一个没有 bin/ 的空壳,然后报
+ * "去跑 bun engines/build.ts",让人以为是没编译。
+ */
+/**
+ * 把窗口接到内核上。
+ *
+ * 必须挂在 did-finish-load 上而不是只调一次:每次 reload(开发期 HMR、崩溃恢复)
+ * renderer 的 MessagePort 都会失效,不重新牵线就是一个哑掉的通道 —— 而且不报错,
+ * 表现为"点什么都没反应"。
+ */
+function attachKernelToWindow(win: BrowserWindow): void {
+  const attach = () => kernelProcess?.attach(win)
+  win.webContents.on("did-finish-load", attach)
+  if (!win.webContents.isLoading()) attach()
+}
+
+function resolveEnginesDir(): string | undefined {
+  if (process.env.YOMA_ENGINES_DIR) return process.env.YOMA_ENGINES_DIR
+  // 打包后走 extraResources;开发期走仓库根的 engines 软链(指向 ../my-pi/engines)。
+  if (app.isPackaged) return join(process.resourcesPath, "engines")
+  return join(app.getAppPath(), "..", "..", "engines")
+}
 
 function useEnvProxy() {
   try {
@@ -137,24 +163,11 @@ const main = Effect.gen(function* () {
   logger = initLogging()
   initCrashReporter()
 
-  const wslServers = createWslServersController(
-    app.getVersion(),
-    async (distro) => {
-      logger.log("spawning wsl sidecar", { distro })
-      return spawnWslSidecar(distro, {
-        onLine: (line) => logger.log("wsl sidecar", { distro, stream: line.stream, text: line.text }),
-      })
-    },
-    {
-      logger: {
-        log: (message, meta) => logger.log(message, meta),
-        error: (message, meta) => logger.error(message, meta),
-      },
-    },
-  )
   const stopSidecars = async () => {
     await killSidecar()
-    wslServers.stopAll()
+    const kernel = kernelProcess
+    kernelProcess = null
+    await kernel?.stop()
   }
   const relaunch = () => {
     void stopSidecars().finally(() => {
@@ -244,6 +257,10 @@ const main = Effect.gen(function* () {
   const updater = setupAutoUpdater(stopSidecars)
   registerIpcHandlers({
     killSidecar: () => killSidecar(),
+    attachKernel: (event) => {
+      const win = BrowserWindow.fromWebContents(event.sender)
+      if (win) kernelProcess?.attach(win)
+    },
     relaunch,
     awaitInitialization: Effect.fnUntraced(
       function* () {
@@ -268,7 +285,6 @@ const main = Effect.gen(function* () {
     exportDebugLogs: () => exportDebugLogs(),
     recordFatalRendererError: (error) => writeLog("renderer", "fatal renderer error", { ...error }, "error"),
   })
-  registerWslIpcHandlers(wslServers)
   registerManualsIpcHandlers()
   void updater.start()
   const updateTimer = setInterval(() => void updater.check(), 10 * 60 * 1000)
@@ -331,10 +347,6 @@ const main = Effect.gen(function* () {
       password,
     })
 
-    if (process.platform === "win32") {
-      void wslServers.initialize().catch((error) => logger.error("wsl server initialization failed", error))
-    }
-
     yield* Effect.promise(() => health.wait).pipe(
       Effect.timeout("30 seconds"),
       Effect.catch((e) =>
@@ -349,8 +361,24 @@ const main = Effect.gen(function* () {
 
   yield* Fiber.await(loadingTask)
 
+  // my-pi 内核进程。和上面那个 HTTP sidecar 暂时并存 —— renderer 的数据面还没切过来
+  // (P5),现在就拆掉 sidecar 会让整个 app 立刻不可用。切完之后 sidecar 整条路径删除。
+  kernelProcess = spawnKernel({
+    sessionsRoot: join(app.getPath("userData"), "sessions"),
+    stateDir: app.getPath("userData"),
+    enginesDir: resolveEnginesDir(),
+    onStdout: (message) => writeLog("kernel", "stdout", { message }),
+    onStderr: (message) => writeLog("kernel", "stderr", { message }, "warn"),
+    onExit: (code) => writeLog("kernel", "kernel exited", { code }, "warn"),
+  })
+  kernelProcess.ready.catch((error: unknown) => {
+    // 内核起不来不该让窗口开不出来 —— 前端还得能显示错误并引导去配置模型凭据。
+    logger.error("kernel failed to start", String(error))
+  })
+
   mainWindow = createMainWindow()
   if (mainWindow) {
+    attachKernelToWindow(mainWindow)
     createMenu({
       trigger: (id) => {
         const win = BrowserWindow.getFocusedWindow() ?? mainWindow

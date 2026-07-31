@@ -22,6 +22,8 @@ const pickedFiles = createPickedFileAuthorizations()
 
 type Deps = {
   killSidecar: () => Promise<void> | void
+  /** 给发起调用的那个窗口重新牵一条到内核的 MessagePort。 */
+  attachKernel: (event: IpcMainInvokeEvent) => void
   relaunch: () => void
   awaitInitialization: () => Promise<ServerReadyData>
   consumeInitialDeepLinks: () => Promise<string[]> | string[]
@@ -44,6 +46,8 @@ export function registerIpcHandlers(deps: Deps) {
   app.once("will-quit", updaterSubscriptions.clear)
 
   ipcMain.handle("kill-sidecar", () => deps.killSidecar())
+  // renderer reload 之后端口失效,preload 主动来要一次重新牵线。
+  ipcMain.handle("kernel-attach", (event: IpcMainInvokeEvent) => deps.attachKernel(event))
   ipcMain.handle("await-initialization", () => deps.awaitInitialization())
   ipcMain.handle("consume-initial-deep-links", () => deps.consumeInitialDeepLinks())
   ipcMain.handle("get-default-server-url", () => deps.getDefaultServerUrl())

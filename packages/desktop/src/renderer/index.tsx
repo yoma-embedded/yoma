@@ -12,7 +12,6 @@ import {
   PlatformProvider,
   ServerConnection,
   useCommand,
-  useWslServers,
 } from "@yoma-desktop/app"
 import type { UpdaterState } from "@yoma-desktop/app/updater"
 import * as Sentry from "@sentry/solid"
@@ -24,7 +23,6 @@ import pkg from "../../package.json"
 import { initI18n, t } from "./i18n"
 import { initializationData, initializationReady } from "./initialization"
 import { resetZoom, setPinchZoomEnabled, webviewZoom, zoomIn, zoomOut } from "./webview-zoom"
-import { availableStartupServer, readyWslConnections } from "./wsl/connections"
 import "./styles.css"
 import { Splash } from "@yoma-desktop/ui/logo"
 import { useTheme } from "@yoma-desktop/ui/theme/context"
@@ -155,8 +153,6 @@ const createPlatform = (): Platform => {
     }
   })()
 
-  const wslServersApi = os === "windows" ? window.api.wslServers : undefined
-
   return {
     platform: "desktop",
     os,
@@ -274,8 +270,6 @@ const createPlatform = (): Platform => {
       await window.api.setDefaultServerUrl(url)
     },
 
-    wslServers: wslServersApi,
-
     manuals: window.api.manuals,
 
     getDisplayBackend: async () => {
@@ -366,7 +360,6 @@ render(() => {
   }
 
   function App() {
-    const wslServers = useWslServers()
     const splash = (
       <div class="h-dvh w-screen flex flex-col items-center justify-center bg-background-base">
         <Splash class="w-16 h-20 opacity-50 animate-pulse" />
@@ -391,12 +384,9 @@ render(() => {
           },
         })
       }
-      list.push(...readyWslConnections(wslServers.data))
       return list
     })
-    const effectiveDefaultServer = createMemo(() =>
-      ServerConnection.Key.make(availableStartupServer(defaultServer.latest, wslServers.data)),
-    )
+    const effectiveDefaultServer = createMemo(() => ServerConnection.Key.make(defaultServer.latest ?? "sidecar"))
 
     return (
       <Show when={ready()} fallback={splash}>

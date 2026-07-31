@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron"
-import type { ElectronAPI, WslServersEvent } from "./types"
+import type { ElectronAPI } from "./types"
 import type { UpdaterState } from "@yoma-desktop/app/updater"
 import type { ManualsEvent } from "@yoma-desktop/app/manuals/types"
 
@@ -11,33 +11,70 @@ const updaterHandler = (_: unknown, state: UpdaterState) => {
   updaterCallbacks.forEach((callback) => callback(state))
 }
 
+/**
+ * 内核通道。
+ *
+ * MessagePort **不能** 过 contextBridge,所以端口留在 preload world 里,只把
+ * request/subscribe 两个函数暴露给 renderer。数据全是可结构化克隆的纯对象。
+ *
+ * 窗口 reload 之后端口会失效 —— 这里主动 invoke("kernel-attach") 让 main 重新牵一次线,
+ * 内核那边会回一个 kernel.connected,前端据此重新 bootstrap。
+ */
+const kernelPending = new Map<number, { resolve(value: unknown): void; reject(error: unknown): void }>()
+const kernelListeners = new Set<(events: unknown[]) => void>()
+let kernelPort: MessagePort | undefined
+let kernelNextId = 1
+
+ipcRenderer.on("kernel-port", (event) => {
+  const port = event.ports[0]
+  if (!port) return
+  kernelPort?.close()
+  kernelPort = port
+  port.onmessage = (message: MessageEvent) => {
+    const frame = message.data as
+      | { kind: "response"; id: number; result?: unknown; error?: { message: string } }
+      | { kind: "push"; events: unknown[] }
+      | undefined
+    if (!frame) return
+    if (frame.kind === "push") {
+      kernelListeners.forEach((listener) => listener(frame.events))
+      return
+    }
+    const entry = kernelPending.get(frame.id)
+    if (!entry) return
+    kernelPending.delete(frame.id)
+    if (frame.error) entry.reject(new Error(frame.error.message))
+    else entry.resolve(frame.result)
+  }
+  port.start()
+})
+
+const kernel = {
+  request(method: string, params: unknown) {
+    return new Promise((resolve, reject) => {
+      if (!kernelPort) {
+        reject(new Error("内核通道尚未建立"))
+        return
+      }
+      const id = kernelNextId++
+      kernelPending.set(id, { resolve, reject })
+      kernelPort.postMessage({ kind: "request", id, method, params })
+    })
+  },
+  subscribe(handler: (events: unknown[]) => void) {
+    kernelListeners.add(handler)
+    return () => {
+      kernelListeners.delete(handler)
+    }
+  },
+  reattach: () => ipcRenderer.invoke("kernel-attach"),
+}
+
 const api: ElectronAPI = {
+  kernel,
   killSidecar: () => ipcRenderer.invoke("kill-sidecar"),
   installCli: () => ipcRenderer.invoke("install-cli"),
   awaitInitialization: () => ipcRenderer.invoke("await-initialization"),
-  wslServers: {
-    getState: () => ipcRenderer.invoke("wsl-servers-get-state"),
-    subscribe: (cb) => {
-      const handler = (_: unknown, event: WslServersEvent) => cb(event)
-      ipcRenderer.on("wsl-servers-event", handler)
-      void ipcRenderer.invoke("wsl-servers-subscribe")
-      return () => {
-        ipcRenderer.removeListener("wsl-servers-event", handler)
-        void ipcRenderer.invoke("wsl-servers-unsubscribe")
-      }
-    },
-    probeRuntime: () => ipcRenderer.invoke("wsl-servers-probe-runtime"),
-    refreshDistros: () => ipcRenderer.invoke("wsl-servers-refresh-distros"),
-    installWsl: () => ipcRenderer.invoke("wsl-servers-install-wsl"),
-    installDistro: (name) => ipcRenderer.invoke("wsl-servers-install-distro", name),
-    probeDistro: (name) => ipcRenderer.invoke("wsl-servers-probe-distro", name),
-    probeOpencode: (name) => ipcRenderer.invoke("wsl-servers-probe-opencode", name),
-    installOpencode: (name) => ipcRenderer.invoke("wsl-servers-install-opencode", name),
-    openTerminal: (name) => ipcRenderer.invoke("wsl-servers-open-terminal", name),
-    addServer: (distro) => ipcRenderer.invoke("wsl-servers-add", distro),
-    removeServer: (id) => ipcRenderer.invoke("wsl-servers-remove", id),
-    startServer: (id) => ipcRenderer.invoke("wsl-servers-start", id),
-  },
   manuals: {
     config: () => ipcRenderer.invoke("manuals-config"),
     list: () => ipcRenderer.invoke("manuals-list"),

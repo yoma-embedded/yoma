@@ -1,19 +1,5 @@
 import type { DesktopMenuAction } from "@yoma-desktop/app/desktop-menu"
-import type { WslServersPlatform } from "@yoma-desktop/app/wsl/types"
 import type { UpdaterState } from "@yoma-desktop/app/updater"
-export type {
-  WslDistroProbe,
-  WslInstalledDistro,
-  WslJob,
-  WslOnlineDistro,
-  WslOpencodeCheck,
-  WslRuntimeCheck,
-  WslServerConfig,
-  WslServerItem,
-  WslServerRuntime,
-  WslServersEvent,
-  WslServersState,
-} from "@yoma-desktop/app/wsl/types"
 import type { ManualsPlatform } from "@yoma-desktop/app/manuals/types"
 
 export type ServerReadyData = {
@@ -22,7 +8,18 @@ export type ServerReadyData = {
   password: string | null
 }
 
-export type WslServersAPI = WslServersPlatform
+/**
+ * 内核通道。形状必须和 @yoma-desktop/kernel 的 KernelTransport 一致 ——
+ * renderer 直接 `createKernelClient(window.api.kernel)`。
+ * 这里不 import 那个类型,是为了让 preload 保持零依赖(它是 CJS,而且沙箱化)。
+ */
+export type KernelAPI = {
+  request(method: string, params: unknown): Promise<unknown>
+  subscribe(handler: (events: unknown[]) => void): () => void
+  /** 窗口 reload 之后端口会失效,主动让 main 重新牵线。 */
+  reattach(): Promise<void>
+}
+
 export type ManualsAPI = ManualsPlatform
 export type UpdaterAPI = {
   subscribe: (cb: (state: UpdaterState) => void) => Promise<() => void>
@@ -43,10 +40,10 @@ export type FatalRendererError = {
 }
 
 export type ElectronAPI = {
+  kernel: KernelAPI
   killSidecar: () => Promise<void>
   installCli: () => Promise<string>
   awaitInitialization: () => Promise<ServerReadyData>
-  wslServers: WslServersAPI
   manuals: ManualsAPI
   updater: UpdaterAPI
   consumeInitialDeepLinks: () => Promise<string[]>
