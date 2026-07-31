@@ -1,5 +1,5 @@
 import { Binary } from "@yoma-desktop/util/binary"
-import type { AssistantMessage, Message, Part, SessionStatus, UserMessage } from "@opencode-ai/sdk/v2"
+import type { AssistantMessage, Message, Part, SessionStatus, UserMessage } from "@yoma-desktop/kernel"
 import { createMemo, mapArray, type Accessor } from "solid-js"
 import { Timeline, TimelineRow } from "./rows"
 

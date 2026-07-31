@@ -1,4 +1,4 @@
-import type { FileContent } from "@opencode-ai/sdk/v2"
+import type { FileContent } from "@yoma-desktop/kernel"
 import { createEffect, createMemo, createResource, Match, on, Show, Switch, type JSX } from "solid-js"
 import { useI18n } from "@yoma-desktop/ui/context/i18n"
 import {

@@ -12,7 +12,7 @@ import { useTabs, type Tab } from "./tabs"
 import { ServerConnection } from "./server"
 import { requireServerKey } from "@/utils/session-route"
 import { useSettings } from "./settings"
-import type { FilePartSource } from "@opencode-ai/sdk/v2/client"
+import type { FilePartSource } from "@yoma-desktop/kernel"
 
 interface PartBase {
   content: string

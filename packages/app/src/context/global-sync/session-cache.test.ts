@@ -7,7 +7,7 @@ import type {
   SessionStatus,
   SnapshotFileDiff,
   Todo,
-} from "@opencode-ai/sdk/v2/client"
+} from "@yoma-desktop/kernel"
 import { dropSessionCaches, pickSessionCacheEvictions } from "./session-cache"
 
 const msg = (id: string, sessionID: string) =>

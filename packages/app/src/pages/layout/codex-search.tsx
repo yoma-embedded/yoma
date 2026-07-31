@@ -1,7 +1,7 @@
 import { createMemo, createSignal, For, onMount, Show, type JSX } from "solid-js"
 import { Portal } from "solid-js/web"
 import { makeEventListener } from "@solid-primitives/event-listener"
-import type { Session } from "@opencode-ai/sdk/v2/client"
+import type { Session } from "@yoma-desktop/kernel"
 import { Icon as IconV2 } from "@yoma-desktop/ui/v2/icon"
 import { ScrollView } from "@yoma-desktop/ui/scroll-view"
 import { useServer } from "@/context/server"

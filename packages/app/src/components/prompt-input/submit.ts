@@ -1,4 +1,4 @@
-import type { Message, Session } from "@opencode-ai/sdk/v2/client"
+import type { Message, Session } from "@yoma-desktop/kernel"
 import { showToast } from "@/utils/toast"
 import { base64Encode } from "@yoma-desktop/util/encode"
 import { Binary } from "@yoma-desktop/util/binary"

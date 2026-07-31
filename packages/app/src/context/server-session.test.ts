@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { retry } from "@yoma-desktop/util/retry"
-import type { Message, OpencodeClient, Part, Session } from "@opencode-ai/sdk/v2/client"
+import type { Message, OpencodeClient, Part, Session } from "@yoma-desktop/kernel"
 import { createServerSession } from "./server-session"
 
 const session = (id: string, parentID?: string): Session => ({

@@ -30,7 +30,7 @@ import {
   Todo,
   QuestionAnswer,
   QuestionInfo,
-} from "@opencode-ai/sdk/v2"
+} from "@yoma-desktop/kernel"
 import { useData } from "../context"
 import { useFileComponent } from "@yoma-desktop/ui/context/file"
 import { useDialog } from "@yoma-desktop/ui/context/dialog"

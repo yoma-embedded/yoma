@@ -1,4 +1,4 @@
-import type { AssistantMessage, Message, Session } from "@opencode-ai/sdk/v2/client"
+import type { AssistantMessage, Message, Session } from "@yoma-desktop/kernel"
 
 type Provider = {
   id: string

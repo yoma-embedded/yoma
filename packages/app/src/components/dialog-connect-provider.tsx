@@ -1,4 +1,4 @@
-import type { ProviderAuthAuthorization, ProviderAuthMethod } from "@opencode-ai/sdk/v2/client"
+import type { ProviderAuthAuthorization, ProviderAuthMethod } from "@yoma-desktop/kernel"
 import { Button } from "@yoma-desktop/ui/button"
 import { useDialog } from "@yoma-desktop/ui/context/dialog"
 import { Dialog } from "@yoma-desktop/ui/dialog"

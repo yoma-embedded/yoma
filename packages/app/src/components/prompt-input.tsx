@@ -68,7 +68,7 @@ import { promptPlaceholder } from "./prompt-input/placeholder"
 import { createPromptInputTransientState } from "./prompt-input/transient-state"
 import { showToast } from "@/utils/toast"
 import { ImagePreview } from "@yoma-desktop/ui/image-preview"
-import type { ReferenceInfo } from "@opencode-ai/sdk/v2/client"
+import type { ReferenceInfo } from "@yoma-desktop/kernel"
 
 export type PromptInputState = ReturnType<typeof usePrompt>
 

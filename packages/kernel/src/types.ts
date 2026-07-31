@@ -424,6 +424,30 @@ export interface FileEntry {
   type: "file" | "directory"
 }
 
+/** 文件树节点。children 只在展开过的目录上有值。 */
+export interface FileNode extends FileEntry {
+  children?: FileNode[]
+}
+
+export interface FileContent {
+  path: string
+  content: string
+  mime: string
+  truncated: boolean
+}
+
+/**
+ * 一个"项目"就是一个最近打开过的工作目录。
+ *
+ * 顶替 opencode 的 project + worktree 两层结构 —— my-pi 里一个会话就是一个 cwd,
+ * 没有 git worktree 感知,也没有服务端的项目注册表。
+ */
+export interface Project {
+  directory: string
+  name: string
+  lastOpened: number
+}
+
 export interface FileDiff {
   path: string
   added: number
@@ -431,6 +455,9 @@ export interface FileDiff {
   status: "added" | "modified" | "deleted" | "renamed"
   patch?: string
 }
+
+/** 版本控制里单个文件的改动。和 FileDiff 同形,保留这个名字是因为调用点按它命名。 */
+export type VcsFileDiff = FileDiff
 
 export interface VcsInfo {
   root?: string

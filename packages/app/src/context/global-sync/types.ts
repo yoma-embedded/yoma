@@ -16,7 +16,7 @@ import type {
   SnapshotFileDiff,
   Todo,
   VcsInfo,
-} from "@opencode-ai/sdk/v2/client"
+} from "@yoma-desktop/kernel"
 import { NormalizedProviderListResponse } from "@yoma-desktop/session-ui/context"
 import type { Accessor } from "solid-js"
 import type { SetStoreFunction, Store } from "solid-js/store"

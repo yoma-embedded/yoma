@@ -1,4 +1,4 @@
-import type { Message, Session, Part, SnapshotFileDiff, SessionStatus, Provider } from "@opencode-ai/sdk/v2"
+import type { Message, Session, Part, SnapshotFileDiff, SessionStatus, Provider } from "@yoma-desktop/kernel"
 import { createSimpleContext } from "@yoma-desktop/ui/context"
 import { PreloadMultiFileDiffResult } from "@pierre/diffs/ssr"
 

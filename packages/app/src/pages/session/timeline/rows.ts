@@ -1,5 +1,5 @@
 import { parseCommentNote, readCommentMetadata } from "@/utils/comment-note"
-import { AssistantMessage, Part, SessionStatus, SnapshotFileDiff, UserMessage } from "@opencode-ai/sdk/v2"
+import { AssistantMessage, Part, SessionStatus, SnapshotFileDiff, UserMessage } from "@yoma-desktop/kernel"
 import { groupParts, PartGroup, renderable } from "@yoma-desktop/session-ui/message-part"
 import { Data, Equal } from "effect"
 

@@ -9,7 +9,7 @@ import { ServerConnection } from "@/context/server"
 import { projectForSession } from "@/pages/layout/helpers"
 import { SessionTabAvatar } from "@/pages/layout/session-tab-avatar"
 import { showToast } from "@/utils/toast"
-import type { Session } from "@opencode-ai/sdk/v2"
+import type { Session } from "@yoma-desktop/kernel"
 import { canOpenTabRename, forwardTabRef } from "./titlebar-tab-gesture"
 import "./titlebar-tab-nav.css"
 

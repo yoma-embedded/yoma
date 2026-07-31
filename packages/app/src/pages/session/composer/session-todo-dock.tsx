@@ -1,4 +1,4 @@
-import type { Todo } from "@opencode-ai/sdk/v2"
+import type { Todo } from "@yoma-desktop/kernel"
 import { AnimatedNumber } from "@yoma-desktop/ui/animated-number"
 import { Checkbox } from "@yoma-desktop/ui/checkbox"
 import { DockTray } from "@yoma-desktop/ui/dock-surface"

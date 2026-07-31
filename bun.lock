@@ -173,6 +173,7 @@
         "@solid-primitives/resize-observer": "2.1.3",
         "@solidjs/meta": "catalog:",
         "@solidjs/router": "catalog:",
+        "@yoma-desktop/kernel": "workspace:*",
         "@yoma-desktop/ui": "workspace:*",
         "@yoma-desktop/util": "workspace:*",
         "diff": "catalog:",

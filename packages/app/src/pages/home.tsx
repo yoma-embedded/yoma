@@ -1,4 +1,4 @@
-import type { Session } from "@opencode-ai/sdk/v2/client"
+import type { Session } from "@yoma-desktop/kernel"
 import {
   type ComponentProps,
   createEffect,

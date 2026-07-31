@@ -1,4 +1,4 @@
-import type { Session } from "@opencode-ai/sdk/v2/client"
+import type { Session } from "@yoma-desktop/kernel"
 
 /** Timestamp a session should be sorted/labelled by. */
 export function sessionTime(session: Session) {

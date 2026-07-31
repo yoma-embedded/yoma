@@ -1,5 +1,5 @@
 import { For, Show } from "solid-js"
-import type { PermissionRequest } from "@opencode-ai/sdk/v2"
+import type { PermissionRequest } from "@yoma-desktop/kernel"
 import { Button } from "@yoma-desktop/ui/button"
 import { DockPrompt } from "@yoma-desktop/session-ui/dock-prompt"
 import { Icon } from "@yoma-desktop/ui/icon"

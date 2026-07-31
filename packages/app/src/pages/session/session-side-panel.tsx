@@ -9,7 +9,7 @@ import { ResizeHandle } from "@yoma-desktop/ui/resize-handle"
 import { Mark } from "@yoma-desktop/ui/logo"
 import { DragDropProvider, DragDropSensors, DragOverlay, SortableProvider, closestCenter } from "@thisbeyond/solid-dnd"
 import type { DragEvent } from "@thisbeyond/solid-dnd"
-import type { SnapshotFileDiff, VcsFileDiff } from "@opencode-ai/sdk/v2"
+import type { SnapshotFileDiff, VcsFileDiff } from "@yoma-desktop/kernel"
 import { ConstrainDragYAxis, getDraggableId } from "@/utils/solid-dnd"
 import { useDialog } from "@yoma-desktop/ui/context/dialog"
 

@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, on, onCleanup, Show } from "solid-js"
-import type { SessionStatus } from "@opencode-ai/sdk/v2/client"
+import type { SessionStatus } from "@yoma-desktop/kernel"
 import { useI18n } from "@yoma-desktop/ui/context/i18n"
 import { Card } from "@yoma-desktop/ui/card"
 import { Tooltip } from "@yoma-desktop/ui/tooltip"
