@@ -1,4 +1,4 @@
-import type { PermissionRequest, QuestionRequest, Session } from "@yoma-desktop/kernel"
+import type { PermissionRequest, QuestionRequest, Session } from "@opencode-ai/sdk/v2/client"
 
 function sessionTreeRequest<T>(
   session: Session[],

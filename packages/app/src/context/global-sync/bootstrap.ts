@@ -8,7 +8,7 @@ import type {
   QuestionRequest,
   ReferenceInfo,
   Session,
-} from "@yoma-desktop/kernel"
+} from "@opencode-ai/sdk/v2/client"
 import { showToast } from "@/utils/toast"
 import { getFilename } from "@yoma-desktop/util/path"
 import { retry } from "@yoma-desktop/util/retry"

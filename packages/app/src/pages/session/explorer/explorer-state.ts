@@ -11,7 +11,7 @@
  */
 import { createRoot, createSignal } from "solid-js"
 import { createStore, produce, unwrap } from "solid-js/store"
-import type { FileContent } from "@yoma-desktop/kernel"
+import type { FileContent } from "@opencode-ai/sdk/v2"
 import type { FileSelection } from "@/context/file"
 
 export type MarkdownView = "preview" | "markdown"

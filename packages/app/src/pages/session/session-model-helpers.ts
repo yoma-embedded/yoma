@@ -1,4 +1,4 @@
-import type { UserMessage } from "@yoma-desktop/kernel"
+import type { UserMessage } from "@opencode-ai/sdk/v2"
 
 type Local = {
   session: {

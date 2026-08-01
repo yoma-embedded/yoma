@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, For, Show, type JSX } from "solid-js"
 import { useNavigate } from "@solidjs/router"
-import type { Session } from "@yoma-desktop/kernel"
+import type { Session } from "@opencode-ai/sdk/v2/client"
 import { Icon as IconV2 } from "@yoma-desktop/ui/v2/icon"
 import { IconButtonV2 } from "@yoma-desktop/ui/v2/icon-button-v2"
 import { TooltipV2 } from "@yoma-desktop/ui/v2/tooltip-v2"

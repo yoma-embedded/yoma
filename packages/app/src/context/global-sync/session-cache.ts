@@ -6,7 +6,7 @@ import type {
   SessionStatus,
   SnapshotFileDiff,
   Todo,
-} from "@yoma-desktop/kernel"
+} from "@opencode-ai/sdk/v2/client"
 
 export const SESSION_CACHE_LIMIT = 40
 

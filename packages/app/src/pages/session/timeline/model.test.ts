@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { AssistantMessage, Message, UserMessage } from "@yoma-desktop/kernel"
+import type { AssistantMessage, Message, UserMessage } from "@opencode-ai/sdk/v2"
 import { loadOlderTimeline, selectUserMessages, selectVisibleUserMessages } from "./model"
 
 const user = (id: string) => ({ id, role: "user" }) as UserMessage

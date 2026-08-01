@@ -1,4 +1,4 @@
-import type { Agent, Project, ProviderListResponse } from "@yoma-desktop/kernel"
+import type { Agent, Project, ProviderListResponse } from "@opencode-ai/sdk/v2/client"
 import { NormalizedProviderListResponse } from "@yoma-desktop/session-ui/context"
 export { pathKey as directoryKey, type PathKey as DirectoryKey } from "@/utils/path-key"
 

@@ -1,5 +1,5 @@
 import { getFilename } from "@yoma-desktop/util/path"
-import { type Session } from "@yoma-desktop/kernel"
+import { type Session } from "@opencode-ai/sdk/v2/client"
 import { pathKey } from "@/utils/path-key"
 import type { ServerConnection } from "@/context/server"
 import type { HomeProjectSelection } from "@/context/layout"

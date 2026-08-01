@@ -50,7 +50,7 @@ import type {
   Part as PartType,
   ToolPart,
   UserMessage,
-} from "@yoma-desktop/kernel"
+} from "@opencode-ai/sdk/v2"
 import { showToast } from "@/utils/toast"
 import { getDirectory, getFilename } from "@yoma-desktop/util/path"
 import { normalize } from "@yoma-desktop/session-ui/session-diff"

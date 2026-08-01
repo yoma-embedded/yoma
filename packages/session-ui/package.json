@@ -62,7 +62,6 @@
     "solid-js": "catalog:",
     "solid-list": "catalog:",
     "strip-ansi": "7.1.2",
-    "@yoma-desktop/util": "workspace:*",
-    "@yoma-desktop/kernel": "workspace:*"
+    "@yoma-desktop/util": "workspace:*"
   }
 }

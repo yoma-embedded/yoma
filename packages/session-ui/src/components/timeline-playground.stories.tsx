@@ -11,7 +11,7 @@ import type {
   ToolPart,
   FilePart,
   AgentPart,
-} from "@yoma-desktop/kernel"
+} from "@opencode-ai/sdk/v2"
 import { DataProvider } from "../context/data"
 import { FileComponentProvider } from "@yoma-desktop/ui/context/file"
 import { SessionTurn } from "./session-turn"

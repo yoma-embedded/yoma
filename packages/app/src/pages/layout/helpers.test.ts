@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { type Session } from "@yoma-desktop/kernel"
+import { type Session } from "@opencode-ai/sdk/v2/client"
 import {
   childSessionOnPath,
   closeHomeProject,

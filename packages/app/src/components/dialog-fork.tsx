@@ -8,7 +8,7 @@ import { Dialog } from "@yoma-desktop/ui/dialog"
 import { List } from "@yoma-desktop/ui/list"
 import { showToast } from "@/utils/toast"
 import { extractPromptFromParts } from "@/utils/prompt"
-import type { TextPart as SDKTextPart } from "@yoma-desktop/kernel"
+import type { TextPart as SDKTextPart } from "@opencode-ai/sdk/v2/client"
 import { base64Encode } from "@yoma-desktop/util/encode"
 import { useLanguage } from "@/context/language"
 
