@@ -1,41 +1,36 @@
-import { createOpencodeClient } from "@opencode-ai/sdk/v2/client"
-import type { ServerConnection } from "@/context/server"
-import { decode64 } from "@/utils/base64"
+/**
+ * 内核客户端的构造入口。
+ *
+ * 文件名还叫 server 是刻意的:它原来导出 `createSdkForServer`,全应用几百处调用点通过
+ * context/sdk.tsx 间接依赖它的返回值形状。**把内脏换掉而不是把文件删掉**,迁移就不会
+ * 一次性炸出上百个"模块找不到",可以一个目录一个目录地收敛。改名留到收尾。
+ *
+ * 换掉之后没有 baseUrl、没有 Basic auth、没有 CORS —— 一个 Electron 进程里只有一个内核,
+ * 传输是 preload 暴露的 window.api.kernel(形状就是 KernelTransport)。
+ */
 
+import { kernel } from "@/utils/kernel"
+
+/**
+ * 返回全应用唯一的内核客户端。
+ *
+ * 参数保留但被忽略 —— 调用点还在传 ServerConnection,收尾时一并清掉。
+ * **不按 server 分实例**:内核是进程内单例,分实例只会造出多份互相看不见的事件流。
+ */
+export function createSdkForServer(_config?: unknown) {
+  return kernel
+}
+
+export type Sdk = typeof kernel
+
+/**
+ * 下面两个是 HTTP 时代的凭据编解码,现在没有任何调用意义(内核不走 Basic auth)。
+ * 暂时留着只为让 localStorage 里的旧值还能被读懂并丢弃,收尾时删。
+ */
 export function authTokenFromCredentials(input: { username?: string; password: string }) {
   return btoa(`${input.username ?? "opencode"}:${input.password}`)
 }
 
-export function authFromToken(token: string | null) {
-  const decoded = decode64(token ?? undefined)
-  if (!decoded) return
-  const separator = decoded.indexOf(":")
-  if (separator === -1) return
-  return {
-    username: decoded.slice(0, separator) || "opencode",
-    password: decoded.slice(separator + 1),
-  }
-}
-
-export function createSdkForServer({
-  server,
-  ...config
-}: Omit<NonNullable<Parameters<typeof createOpencodeClient>[0]>, "baseUrl"> & {
-  server: ServerConnection.HttpBase
-}) {
-  const auth = (() => {
-    if (!server.password) return
-    return {
-      Authorization: `Basic ${authTokenFromCredentials({ username: server.username, password: server.password })}`,
-    }
-  })()
-
-  return createOpencodeClient({
-    ...config,
-    headers: {
-      ...(config.headers instanceof Headers ? Object.fromEntries(config.headers.entries()) : config.headers),
-      ...auth,
-    },
-    baseUrl: server.url,
-  })
+export function authFromToken(_token: string | null): { username: string; password: string } | undefined {
+  return undefined
 }
