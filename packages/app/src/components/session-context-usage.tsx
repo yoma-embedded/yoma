@@ -9,8 +9,7 @@ import { useFile } from "@/context/file"
 import { useLayout } from "@/context/layout"
 import { useSync } from "@/context/sync"
 import { useLanguage } from "@/context/language"
-import { useProviders } from "@/hooks/use-providers"
-import { useSDK } from "@/context/sdk"
+import { createProviderCatalog } from "@/components/kernel-providers"
 import { getSessionContext, getSessionTokenTotal } from "@/components/session/session-context-metrics"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { createSessionTabs } from "@/pages/session/helpers"
@@ -37,8 +36,7 @@ export function SessionContextUsage(props: SessionContextUsageProps) {
   const file = useFile()
   const layout = useLayout()
   const language = useLanguage()
-  const sdk = useSDK()
-  const providers = useProviders(() => sdk().directory)
+  const providers = createProviderCatalog()
   const { params, tabs, view } = useSessionLayout()
 
   const variant = createMemo(() => props.variant ?? "button")
@@ -59,7 +57,7 @@ export function SessionContextUsage(props: SessionContextUsageProps) {
       }),
   )
 
-  const context = createMemo(() => getSessionContext(messages(), [...providers.all().values()]))
+  const context = createMemo(() => getSessionContext(messages(), providers()))
   const tokens = createMemo(() => info()?.tokens)
   const cost = createMemo(() => {
     return usd().format(info()?.cost ?? 0)

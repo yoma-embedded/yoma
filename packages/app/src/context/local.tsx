@@ -6,7 +6,7 @@ import { createStore } from "solid-js/store"
 import { useModels } from "@/context/models"
 import { useProviders } from "@/hooks/use-providers"
 import { Persist, persisted } from "@/utils/persist"
-import { cycleModelVariant, getConfiguredAgentVariant, resolveModelVariant } from "./model-variant"
+import { cycleModelVariant, resolveModelVariant } from "./model-variant"
 import { useSDK } from "./sdk"
 import { useSync } from "./sync"
 import { useServerSDK } from "./server-sdk"
@@ -15,8 +15,8 @@ import { ScopedKey, type ServerScope } from "@/utils/server-scope"
 export type ModelKey = { providerID: string; modelID: string; variant?: string }
 
 type State = {
-  agent?: string
   model?: ModelKey
+  /** 内核里这就是 thinking level(off/low/high…),沿用 variant 这个名字是因为存档键已经这么写了。 */
   variant?: string | null
 }
 
@@ -64,7 +64,6 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const models = useModels()
 
     const id = createMemo(() => params.id || undefined)
-    const list = createMemo(() => sync().data.agent.filter((item) => item.mode !== "subagent" && !item.hidden))
     const connected = createMemo(() => new Set(providers.connected().map((item) => item.id)))
 
     const [saved, setSaved] = persisted(
@@ -78,24 +77,22 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     )
 
     const [store, setStore] = createStore<{
-      current?: string
       draft?: State
       promoting?: State
       last?: {
-        type: "agent" | "model" | "variant"
-        agent?: string
+        type: "model" | "variant"
         model?: ModelKey | null
         variant?: string | null
       }
     }>({
-      current: list()[0]?.name,
       draft: undefined,
       last: undefined,
     })
 
     const validModel = (model: ModelKey) => {
       const provider = providers.all().get(model.providerID)
-      return !!provider?.models[model.modelID] && connected().has(model.providerID)
+      if (!provider) return false
+      return provider.models.some((item) => item.id === model.modelID) && connected().has(model.providerID)
     }
 
     const firstModel = (...items: Array<() => ModelKey | undefined>) => {
@@ -106,21 +103,6 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       }
     }
 
-    const pickAgent = (name: string | undefined) => {
-      const items = list()
-      if (items.length === 0) return
-      return items.find((item) => item.name === name) ?? items[0]
-    }
-
-    createEffect(() => {
-      const items = list()
-      if (items.length === 0) {
-        if (store.current !== undefined) setStore("current", undefined)
-        return
-      }
-      if (items.some((item) => item.name === store.current)) return
-      setStore("current", items[0]?.name)
-    })
 
     const scope = createMemo<State | undefined>(() => {
       const session = id()
@@ -146,14 +128,6 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       setStore("promoting", undefined)
     })
 
-    const configuredModel = () => {
-      const configured = sync().data.config.model
-      if (!configured) return
-      const [providerID, modelID] = configured.split("/")
-      const model = { providerID, modelID }
-      if (validModel(model)) return model
-    }
-
     const recentModel = () => {
       for (const item of models.recent.list()) {
         if (validModel(item)) return item
@@ -169,91 +143,29 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           if (validModel(model)) return model
         }
 
-        const first = Object.values(provider.models)[0]
+        const first = provider.models[0]
         if (!first) continue
         const model = { providerID: provider.id, modelID: first.id }
         if (validModel(model)) return model
       }
     }
 
-    const fallback = createMemo<ModelKey | undefined>(() => configuredModel() ?? recentModel() ?? defaultModel())
-
-    const agent = {
-      list,
-      current() {
-        return pickAgent(scope()?.agent ?? store.current)
-      },
-      set(name: string | undefined) {
-        const item = pickAgent(name)
-        if (!item) {
-          setStore("current", undefined)
-          return
-        }
-
-        batch(() => {
-          setStore("current", item.name)
-          setStore("last", {
-            type: "agent",
-            agent: item.name,
-            model: item.model,
-            variant: item.variant ?? null,
-          })
-          const prev = scope()
-          const next = {
-            agent: item.name,
-            model: item.model ?? prev?.model,
-            variant: item.variant ?? prev?.variant,
-          } satisfies State
-          const session = id()
-          if (session) {
-            setSaved("session", session, next)
-            return
-          }
-          setStore("draft", next)
-        })
-      },
-      move(direction: 1 | -1) {
-        const items = list()
-        if (items.length === 0) {
-          setStore("current", undefined)
-          return
-        }
-
-        let next = items.findIndex((item) => item.name === agent.current()?.name) + direction
-        if (next < 0) next = items.length - 1
-        if (next >= items.length) next = 0
-        const item = items[next]
-        if (!item) return
-        agent.set(item.name)
-      },
-    }
+    const fallback = createMemo<ModelKey | undefined>(() => recentModel() ?? defaultModel())
 
     const current = () => {
-      const item = firstModel(
-        () => scope()?.model,
-        () => agent.current()?.model,
-        fallback,
-      )
+      const item = firstModel(() => scope()?.model, fallback)
       if (!item) return
       return models.find(item)
     }
 
-    const configured = () => {
-      const item = agent.current()
-      const model = current()
-      if (!item || !model) return
-      return getConfiguredAgentVariant({
-        agent: { model: item.model, variant: item.variant },
-        model: { providerID: model.provider.id, modelID: model.id, variants: model.variants },
-      })
-    }
+    // 内核没有 agent,也就没有"agent 配置的默认 thinking level"这一层。
+    const configured = () => undefined
 
     const selected = () => scope()?.variant
 
     const snapshot = () => {
       const model = current()
       return {
-        agent: agent.current()?.name,
         model: model ? { providerID: model.provider.id, modelID: model.id } : undefined,
         variant: selected(),
       } satisfies State
@@ -261,7 +173,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
 
     const write = (next: Partial<State>) => {
       const state = {
-        ...(scope() ?? { agent: agent.current()?.name }),
+        ...(scope() ?? {}),
         ...next,
       } satisfies State
 
@@ -301,7 +213,6 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           batch(() => {
             setStore("last", {
               type: "model",
-              agent: agent.current()?.name,
               model: item ?? null,
               variant: selected(),
             })
@@ -335,9 +246,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           if (saved && this.list().includes(saved)) return saved
         },
         list() {
-          const item = current()
-          if (!item?.variants) return []
-          return Object.keys(item.variants)
+          return current()?.thinkingLevels ?? []
         },
         set(value: string | undefined) {
           startTransition(() =>
@@ -345,7 +254,6 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
               const model = current()
               setStore("last", {
                 type: "variant",
-                agent: agent.current()?.name,
                 model: model ? { providerID: model.provider.id, modelID: model.id } : null,
                 variant: value ?? null,
               })
@@ -373,7 +281,6 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const result = {
       slug: createMemo(() => base64Encode(sdk().directory)),
       model,
-      agent,
       session: {
         reset() {
           setStore({ draft: undefined, promoting: undefined })
@@ -391,7 +298,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           setStore("promoting", next)
           setStore("draft", undefined)
         },
-        restore(msg: { sessionID: string; agent: string; model: ModelKey }) {
+        restore(msg: { sessionID: string; model: ModelKey }) {
           const session = id()
           if (!session) return
           if (msg.sessionID !== session) return
@@ -399,7 +306,6 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           if (handoff.has(handoffKey(serverSDK().scope, sdk().directory, session))) return
 
           setSaved("session", session, {
-            agent: msg.agent,
             model: msg.model,
             variant: msg.model?.variant ?? null,
           })

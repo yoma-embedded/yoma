@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { type Session } from "@opencode-ai/sdk/v2/client"
+import { type Session } from "@yoma-desktop/kernel"
 import {
-  childSessionOnPath,
   closeHomeProject,
   displayName,
   effectiveWorkspaceOrder,
@@ -18,16 +17,11 @@ import { ServerConnection } from "@/context/server"
 
 const serverKey = ServerConnection.Key.make
 
-const session = (input: Partial<Session> & Pick<Session, "id" | "directory">) =>
-  ({
-    title: "",
-    version: "v2",
-    parentID: undefined,
-    messageCount: 0,
-    permissions: { session: {}, share: {} },
-    time: { created: 0, updated: 0, archived: undefined },
-    ...input,
-  }) as Session
+const session = (input: Partial<Session> & Pick<Session, "id" | "directory">): Session => ({
+  title: "",
+  time: { created: 0, updated: 0, archived: undefined },
+  ...input,
+})
 
 describe("layout workspace helpers", () => {
   test("normalizes trailing slash in workspace key", () => {
@@ -95,7 +89,7 @@ describe("layout workspace helpers", () => {
     expect(result).toBe(false)
   })
 
-  test("ignores archived and child sessions when finding latest root session", () => {
+  test("ignores archived sessions when finding latest root session", () => {
     const result = latestRootSession(
       [
         {
@@ -104,13 +98,7 @@ describe("layout workspace helpers", () => {
             session({
               id: "archived",
               directory: "/workspace",
-              time: { created: 10, updated: 10, archived: 10 },
-            }),
-            session({
-              id: "child",
-              directory: "/workspace",
-              parentID: "parent",
-              time: { created: 20, updated: 20, archived: undefined },
+              time: { created: 40, updated: 40, archived: 40 },
             }),
             session({
               id: "root",
@@ -124,19 +112,6 @@ describe("layout workspace helpers", () => {
     )
 
     expect(result?.id).toBe("root")
-  })
-
-  test("finds the direct child on the active session path", () => {
-    const list = [
-      session({ id: "root", directory: "/workspace" }),
-      session({ id: "child", directory: "/workspace", parentID: "root" }),
-      session({ id: "leaf", directory: "/workspace", parentID: "child" }),
-    ]
-
-    expect(childSessionOnPath(list, "root", "leaf")?.id).toBe("child")
-    expect(childSessionOnPath(list, "child", "leaf")?.id).toBe("leaf")
-    expect(childSessionOnPath(list, "root", "root")).toBeUndefined()
-    expect(childSessionOnPath(list, "root", "other")).toBeUndefined()
   })
 
   test("formats fallback project display name", () => {

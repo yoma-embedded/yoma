@@ -1,5 +1,5 @@
 import { Binary } from "@yoma-desktop/util/binary"
-import type { Message, Part, Session } from "@opencode-ai/sdk/v2/client"
+import type { Message, Part, Session } from "@yoma-desktop/kernel"
 import { createMemo } from "solid-js"
 import { produce, reconcile, type SetStoreFunction } from "solid-js/store"
 import type { createServerSdkContext } from "./server-sdk"
@@ -7,13 +7,12 @@ import type { createServerSyncContextInner } from "./server-sync"
 import type { State } from "./global-sync/types"
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
+// 会话内容住在服务器级的 session store 里,目录 store 只持有会话列表。
+// 删掉的 session_diff / todo / question:内核没有文件快照、没有 todo 工具、没有问答请求。
 const sessionFields = new Set([
   "session_status",
   "session_working",
-  "session_diff",
-  "todo",
   "permission",
-  "question",
   "message",
   "part",
   "part_text_accum_delta",
@@ -24,8 +23,8 @@ export const createDirSyncContext = (
   serverSync: ReturnType<typeof createServerSyncContextInner>,
   serverSDK: ReturnType<typeof createServerSdkContext>,
 ) => {
-  const client = serverSDK.createClient({ directory, throwOnError: true })
-  const current = createMemo(() => serverSync.child(directory, { mcp: true }))
+  const client = serverSDK.createClient()
+  const current = createMemo(() => serverSync.child(directory))
   const absolute = (path: string) => (current()[0].path.directory + "/" + path).replace("//", "/")
   const data = new Proxy({} as State, {
     get(_, property: keyof State) {
@@ -68,9 +67,9 @@ export const createDirSyncContext = (
       return current()[0].status !== "loading"
     },
     get project() {
+      // 项目没有服务端 id,它**就是**目录;而且项目列表按 lastOpened 排序,不能二分查找。
       const store = current()[0]
-      const match = Binary.search(serverSync.data.project, store.project, (project) => project.id)
-      if (match.found) return serverSync.data.project[match.index]
+      return serverSync.data.project.find((project) => project.directory === store.project)
     },
     session: {
       remember(session: Session) {
@@ -89,33 +88,11 @@ export const createDirSyncContext = (
           serverSync.session.optimistic.remove(input)
         },
       },
-      addOptimisticMessage(input: {
-        sessionID: string
-        messageID: string
-        parts: Part[]
-        agent: string
-        model: { providerID: string; modelID: string }
-        variant?: string
-      }) {
-        serverSync.session.optimistic.add({
-          sessionID: input.sessionID,
-          message: {
-            id: input.messageID,
-            sessionID: input.sessionID,
-            role: "user",
-            time: { created: Date.now() },
-            agent: input.agent,
-            model: { ...input.model, variant: input.variant },
-          },
-          parts: input.parts,
-        })
-      },
       async sync(sessionID: string, options?: { force?: boolean }) {
         await serverSync.session.sync(sessionID, options)
         index(sessionID)
       },
-      diff: serverSync.session.diff,
-      todo: serverSync.session.todo,
+      // 删掉的 diff / todo:内核没有文件快照,也没有 todo 工具。
       history: serverSync.session.history,
       evict(sessionID: string) {
         serverSync.session.evict(sessionID)
@@ -123,8 +100,7 @@ export const createDirSyncContext = (
       fetch: async (count = 10) => {
         const [store, setStore] = current()
         setStore("limit", (value) => value + count)
-        const response = await client.session.list()
-        const sessions = (response.data ?? [])
+        const sessions = (await client.session.list({ directory }))
           .filter((session) => !!session?.id)
           .sort((a, b) => cmp(a.id, b.id))
           .slice(0, store.limit)
@@ -132,19 +108,7 @@ export const createDirSyncContext = (
         setStore("session", reconcile(sessions, { key: "id" }))
       },
       more: createMemo(() => current()[0].session.length >= current()[0].limit),
-      archive: async (sessionID: string) => {
-        await serverSDK.client.session.update({ sessionID, time: { archived: Date.now() } })
-        current()[1](
-          "session",
-          produce((draft) => {
-            const match = Binary.search(draft, sessionID, (session) => session.id)
-            if (match.found) draft.splice(match.index, 1)
-          }),
-        )
-      },
-    },
-    mcp: {
-      toggle: (name: string) => serverSync.mcp.toggle(directory, name),
+      // 删掉的 archive:内核没有归档,会话只能删除(session.delete)。
     },
     absolute,
     get directory() {

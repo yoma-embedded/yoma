@@ -1,5 +1,4 @@
-import { Show, createEffect, createMemo, createResource, untrack } from "solid-js"
-import { createStore } from "solid-js/store"
+import { Show, createEffect, createResource, untrack } from "solid-js"
 import { useSearchParams } from "@solidjs/router"
 import { NewSessionDesignView } from "@/components/session"
 import { PromptInput } from "@/components/prompt-input"
@@ -11,17 +10,12 @@ import {
 } from "@/components/prompt-project-selector"
 import { useComments } from "@/context/comments"
 import { usePrompt } from "@/context/prompt"
-import { useSDK } from "@/context/sdk"
-import { useSync } from "@/context/sync"
 import { useServerSync } from "@/context/server-sync"
 import { useLanguage } from "@/context/language"
 import { createPromptInputController, createPromptProjectControls } from "@/pages/session/composer"
 import { useSessionKey } from "@/pages/session/session-layout"
 import { useComposerCommands } from "@/pages/session/use-composer-commands"
 import { NEW_SESSION_CONTENT_WIDTH } from "@/pages/session/new-session-layout"
-import { PromptWorkspaceSelector } from "@/components/prompt-workspace-selector"
-
-const showWorkspaceBar = import.meta.env.VITE_OPENCODE_CHANNEL !== "prod"
 
 /**
  * The `/new-session` draft page. Unlike `session.tsx`, this only renders the prompt
@@ -30,8 +24,6 @@ const showWorkspaceBar = import.meta.env.VITE_OPENCODE_CHANNEL !== "prod"
  */
 export default function NewSessionPage() {
   const prompt = usePrompt()
-  const sdk = useSDK()
-  const sync = useSync()
   const serverSync = useServerSync()
   const comments = useComments()
   const language = useLanguage()
@@ -52,22 +44,6 @@ export default function NewSessionPage() {
   const projectController = createPromptProjectController({
     controls: projectControls,
     onDone: () => inputRef?.focus(),
-  })
-
-  const [store, setStore] = createStore<{ worktree?: string }>({})
-
-  const newSessionWorktree = createMemo(() => {
-    if (store.worktree) return store.worktree
-    const project = sync().project
-    if (project && sdk().directory !== project.worktree) return sdk().directory
-    return "main"
-  })
-  const projectRoot = createMemo(() => sync().project?.worktree ?? sdk().directory)
-  const localBranch = createMemo(() => serverSync().child(projectRoot())[0].vcs?.branch)
-  const selectedBranch = createMemo(() => {
-    const worktree = newSessionWorktree()
-    if (worktree === "main" || worktree === "create") return localBranch()
-    return serverSync().child(worktree)[0].vcs?.branch ?? localBranch()
   })
 
   createEffect(() => {
@@ -105,15 +81,13 @@ export default function NewSessionPage() {
                     </div>
                   }
                 >
-                  <div class="flex flex-col" classList={{ "gap-8": showWorkspaceBar, "gap-3": !showWorkspaceBar }}>
+                  <div class="flex flex-col gap-3">
                     <PromptInput
                       controls={inputController()}
                       variant="new-session"
                       ref={(el) => {
                         inputRef = el
                       }}
-                      newSessionWorktree={newSessionWorktree()}
-                      onNewSessionWorktreeReset={() => setStore("worktree", undefined)}
                       onSubmit={() => comments.clear()}
                       toolbar={
                         <Show when={!projectController.selected()}>
@@ -122,34 +96,8 @@ export default function NewSessionPage() {
                       }
                     />
                     <Show when={projectController.selected()}>
-                      <div
-                        class="flex min-h-7 min-w-0 items-center gap-0 text-v2-text-text-faint"
-                        classList={{
-                          "flex-col justify-center sm:flex-row": showWorkspaceBar,
-                          "justify-start": !showWorkspaceBar,
-                        }}
-                      >
-                        <PromptProjectSelector
-                          controller={projectController}
-                          placement={showWorkspaceBar ? "bottom" : "bottom-start"}
-                        />
-                        <Show when={showWorkspaceBar}>
-                          <PromptWorkspaceSelector
-                            value={newSessionWorktree()}
-                            projectRoot={projectRoot()}
-                            workspaces={sync().project?.sandboxes ?? []}
-                            branch={selectedBranch()}
-                            onChange={(value) =>
-                              setStore(
-                                "worktree",
-                                value === "main" && sync().project?.worktree !== sdk().directory
-                                  ? sync().project?.worktree
-                                  : value,
-                              )
-                            }
-                            onDone={() => inputRef?.focus()}
-                          />
-                        </Show>
+                      <div class="flex min-h-7 min-w-0 items-center justify-start gap-0 text-v2-text-text-faint">
+                        <PromptProjectSelector controller={projectController} placement="bottom-start" />
                       </div>
                     </Show>
                   </div>

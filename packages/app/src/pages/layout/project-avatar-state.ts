@@ -15,7 +15,7 @@ export function useSessionTabAvatarState(
   const hasPermissions = createMemo(() => {
     if (!active()) return false
     const [store] = globalSync().child(directory(), { bootstrap: false })
-    return !!sessionPermissionRequest(store.session, globalSync().session.data.permission, sessionId(), (item) => {
+    return !!sessionPermissionRequest(store.permission, sessionId(), (item) => {
       return !permission.autoResponds(item, directory())
     })
   })

@@ -7,45 +7,19 @@ import { Icon } from "@yoma-desktop/ui/icon"
 import { Mark } from "@yoma-desktop/ui/logo"
 import { getDirectory, getFilename } from "@yoma-desktop/util/path"
 
-const MAIN_WORKTREE = "main"
-const CREATE_WORKTREE = "create"
 const ROOT_CLASS = "size-full flex flex-col"
 
-interface NewSessionViewProps {
-  worktree: string
-}
-
-export function NewSessionView(props: NewSessionViewProps) {
+/**
+ * 一个项目就是一个工作目录 —— 内核没有 worktree / sandbox 两层结构,
+ * 所以原来的 main/sandbox/create 工作区切换整块删掉,只留当前 git 分支。
+ */
+export function NewSessionView() {
   const sync = useSync()
   const sdk = useSDK()
   const language = useLanguage()
 
-  const sandboxes = createMemo(() => sync().project?.sandboxes ?? [])
-  const options = createMemo(() => [MAIN_WORKTREE, ...sandboxes(), CREATE_WORKTREE])
-  const current = createMemo(() => {
-    const selection = props.worktree
-    if (options().includes(selection)) return selection
-    return MAIN_WORKTREE
-  })
-  const projectRoot = createMemo(() => sync().project?.worktree ?? sdk().directory)
-  const isWorktree = createMemo(() => {
-    const project = sync().project
-    if (!project) return false
-    return sdk().directory !== project.worktree
-  })
-
-  const label = (value: string) => {
-    if (value === MAIN_WORKTREE) {
-      if (isWorktree()) return language.t("session.new.worktree.main")
-      const branch = sync().data.vcs?.branch
-      if (branch) return language.t("session.new.worktree.mainWithBranch", { branch })
-      return language.t("session.new.worktree.main")
-    }
-
-    if (value === CREATE_WORKTREE) return language.t("session.new.worktree.create")
-
-    return getFilename(value)
-  }
+  const projectRoot = createMemo(() => sync().project?.directory ?? sdk().directory)
+  const branch = createMemo(() => sync().data.vcs?.branch)
 
   return (
     <div class={ROOT_CLASS}>
@@ -63,19 +37,23 @@ export function NewSessionView(props: NewSessionViewProps) {
                 <span class="text-text-strong">{getFilename(projectRoot())}</span>
               </div>
             </div>
-            <div class="flex items-start justify-center gap-1.5 min-h-5">
-              <Icon name="branch" size="small" class="mt-0.5 shrink-0" />
-              <div class="text-12-medium text-text-weak select-text leading-5 min-w-0 max-w-160 break-words text-center">
-                {label(current())}
-              </div>
-            </div>
+            <Show when={branch()}>
+              {(value) => (
+                <div class="flex items-start justify-center gap-1.5 min-h-5">
+                  <Icon name="branch" size="small" class="mt-0.5 shrink-0" />
+                  <div class="text-12-medium text-text-weak select-text leading-5 min-w-0 max-w-160 break-words text-center">
+                    {value()}
+                  </div>
+                </div>
+              )}
+            </Show>
             <Show when={sync().project}>
               {(project) => (
                 <div class="flex items-start justify-center gap-3 min-h-5">
                   <div class="text-12-medium text-text-weak leading-5 min-w-0 max-w-160 break-words text-center">
                     {language.t("session.new.lastModified")}&nbsp;
                     <span class="text-text-strong">
-                      {DateTime.fromMillis(project().time.updated ?? project().time.created)
+                      {DateTime.fromMillis(project().lastOpened)
                         .setLocale(language.intl())
                         .toRelative()}
                     </span>

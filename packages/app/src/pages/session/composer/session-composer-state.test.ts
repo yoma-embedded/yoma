@@ -1,13 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import type { PermissionRequest, QuestionRequest, Session } from "@opencode-ai/sdk/v2/client"
-import { todoDockAtBoundary, todoState } from "./session-composer-state"
-import { sessionPermissionRequest, sessionQuestionRequest } from "./session-request-tree"
-
-const session = (input: { id: string; parentID?: string }) =>
-  ({
-    id: input.id,
-    parentID: input.parentID,
-  }) as Session
+import type { PermissionRequest } from "@yoma-desktop/kernel"
+import { sessionPermissionRequest } from "./session-request-tree"
 
 const permission = (id: string, sessionID: string) =>
   ({
@@ -15,124 +8,45 @@ const permission = (id: string, sessionID: string) =>
     sessionID,
   }) as PermissionRequest
 
-const question = (id: string, sessionID: string) =>
-  ({
-    id,
-    sessionID,
-    questions: [],
-  }) as QuestionRequest
-
 describe("sessionPermissionRequest", () => {
-  test("prefers the current session permission", () => {
-    const sessions = [session({ id: "root" }), session({ id: "child", parentID: "root" })]
+  test("returns the current session permission", () => {
     const permissions = {
       root: [permission("perm-root", "root")],
-      child: [permission("perm-child", "child")],
-    }
-
-    expect(sessionPermissionRequest(sessions, permissions, "root")?.id).toBe("perm-root")
-  })
-
-  test("returns a nested child permission", () => {
-    const sessions = [
-      session({ id: "root" }),
-      session({ id: "child", parentID: "root" }),
-      session({ id: "grand", parentID: "child" }),
-      session({ id: "other" }),
-    ]
-    const permissions = {
-      grand: [permission("perm-grand", "grand")],
       other: [permission("perm-other", "other")],
     }
 
-    expect(sessionPermissionRequest(sessions, permissions, "root")?.id).toBe("perm-grand")
+    expect(sessionPermissionRequest(permissions, "root")?.id).toBe("perm-root")
   })
 
-  test("returns undefined without a matching tree permission", () => {
-    const sessions = [session({ id: "root" }), session({ id: "child", parentID: "root" })]
+  test("returns undefined without a permission on this session", () => {
     const permissions = {
       other: [permission("perm-other", "other")],
     }
 
-    expect(sessionPermissionRequest(sessions, permissions, "root")).toBeUndefined()
+    expect(sessionPermissionRequest(permissions, "root")).toBeUndefined()
   })
 
-  test("skips filtered permissions in the current tree", () => {
-    const sessions = [session({ id: "root" }), session({ id: "child", parentID: "root" })]
+  test("returns undefined without a session", () => {
     const permissions = {
       root: [permission("perm-root", "root")],
-      child: [permission("perm-child", "child")],
     }
 
-    expect(sessionPermissionRequest(sessions, permissions, "root", (item) => item.id !== "perm-root"))?.toMatchObject({
-      id: "perm-child",
-    })
+    expect(sessionPermissionRequest(permissions, undefined)).toBeUndefined()
   })
 
-  test("returns undefined when all tree permissions are filtered out", () => {
-    const sessions = [session({ id: "root" }), session({ id: "child", parentID: "root" })]
+  test("skips filtered permissions", () => {
     const permissions = {
-      root: [permission("perm-root", "root")],
-      child: [permission("perm-child", "child")],
+      root: [permission("perm-a", "root"), permission("perm-b", "root")],
     }
 
-    expect(sessionPermissionRequest(sessions, permissions, "root", () => false)).toBeUndefined()
+    expect(sessionPermissionRequest(permissions, "root", (item) => item.id !== "perm-a")?.id).toBe("perm-b")
   })
-})
 
-describe("sessionQuestionRequest", () => {
-  test("prefers the current session question", () => {
-    const sessions = [session({ id: "root" }), session({ id: "child", parentID: "root" })]
-    const questions = {
-      root: [question("q-root", "root")],
-      child: [question("q-child", "child")],
+  test("returns undefined when every permission is filtered out", () => {
+    const permissions = {
+      root: [permission("perm-a", "root"), permission("perm-b", "root")],
     }
 
-    expect(sessionQuestionRequest(sessions, questions, "root")?.id).toBe("q-root")
-  })
-
-  test("returns a nested child question", () => {
-    const sessions = [
-      session({ id: "root" }),
-      session({ id: "child", parentID: "root" }),
-      session({ id: "grand", parentID: "child" }),
-    ]
-    const questions = {
-      grand: [question("q-grand", "grand")],
-    }
-
-    expect(sessionQuestionRequest(sessions, questions, "root")?.id).toBe("q-grand")
-  })
-})
-
-describe("todoState", () => {
-  test("hides when there are no todos", () => {
-    expect(todoState({ count: 0, done: false, live: true })).toBe("hide")
-  })
-
-  test("opens while the session is still working", () => {
-    expect(todoState({ count: 2, done: false, live: true })).toBe("open")
-  })
-
-  test("closes completed todos after a running turn", () => {
-    expect(todoState({ count: 2, done: true, live: true })).toBe("close")
-  })
-
-  test("clears stale todos when the turn ends", () => {
-    expect(todoState({ count: 2, done: false, live: false })).toBe("clear")
-  })
-
-  test("clears completed todos when the session is no longer live", () => {
-    expect(todoState({ count: 2, done: true, live: false })).toBe("clear")
-  })
-})
-
-describe("todoDockAtBoundary", () => {
-  test("shows active todos when entering a session", () => {
-    expect(todoDockAtBoundary("open")).toBe(true)
-  })
-
-  test("hides completed todos when entering a session", () => {
-    expect(todoDockAtBoundary("close")).toBe(false)
+    expect(sessionPermissionRequest(permissions, "root", () => false)).toBeUndefined()
   })
 })

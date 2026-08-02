@@ -68,7 +68,6 @@ import { promptPlaceholder } from "./prompt-input/placeholder"
 import { createPromptInputTransientState } from "./prompt-input/transient-state"
 import { showToast } from "@/utils/toast"
 import { ImagePreview } from "@yoma-desktop/ui/image-preview"
-import type { ReferenceInfo } from "@opencode-ai/sdk/v2/client"
 
 export type PromptInputState = ReturnType<typeof usePrompt>
 
@@ -83,14 +82,6 @@ export type PromptInputSubmission = {
 }
 
 export type PromptInputControls = {
-  agents: {
-    available: { name: string; hidden?: boolean; mode: string }[]
-    options: string[]
-    current: string
-    loading: boolean
-    visible: boolean
-    select: (name: string | undefined) => void
-  }
   model: {
     selection: ReturnType<typeof useLocal>["model"]
     loading: boolean
@@ -157,8 +148,6 @@ export interface PromptInputProps {
   submission?: PromptInputSubmission
   controls: PromptInputControls
   ref?: (el: HTMLDivElement) => void
-  newSessionWorktree?: string
-  onNewSessionWorktreeReset?: () => void
   edit?: { id: string; prompt: Prompt; context: FollowupDraft["context"] }
   onEditLoaded?: () => void
   shouldQueue?: () => boolean
@@ -266,15 +255,6 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     normalizeTab: (tab) => (tab.startsWith("file://") ? files.tab(tab) : tab),
   }).activeFileTab
 
-  const commentInReview = (path: string) => {
-    const sessionID = props.controls.session.id
-    if (!sessionID) return false
-
-    const diffs = sync().data.session_diff[sessionID]
-    if (!diffs) return false
-    return diffs.some((diff) => diff.file === path)
-  }
-
   const openComment = (item: { path: string; commentID?: string; commentOrigin?: "review" | "file" }) => {
     if (!item.commentID) return
 
@@ -298,8 +278,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       schedule(attempts)
     }
 
-    const wantsReview = item.commentOrigin === "review" || (item.commentOrigin !== "file" && commentInReview(item.path))
-    if (wantsReview) {
+    if (item.commentOrigin === "review") {
       if (!props.controls.session.reviewPanel.opened()) props.controls.session.reviewPanel.open()
       layout.fileTree.setTab("changes")
       tabs().setActive("review")
@@ -640,90 +619,12 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     })
   }
 
-  const referenceDescription = (reference: ReferenceInfo) =>
-    reference.source.type === "git" ? reference.source.repository : reference.source.path
-
-  const referenceList = createMemo(() =>
-    sync()
-      .data.reference.filter((reference) => !reference.hidden)
-      .map(
-        (reference): AtOption => ({
-          type: "reference",
-          name: reference.name,
-          path: reference.path,
-          display: reference.name,
-          description: reference.description ?? referenceDescription(reference),
-        }),
-      ),
-  )
-
-  const agentList = createMemo(() =>
-    props.controls.agents.available
-      .filter((agent) => !agent.hidden && agent.mode !== "primary")
-      .map((agent): AtOption => ({ type: "agent", name: agent.name, display: agent.name })),
-  )
-
-  const mcpResourceList = createMemo(() =>
-    Object.values(sync().data.mcp_resource).map(
-      (resource): AtOption => ({
-        type: "resource",
-        name: resource.name,
-        uri: resource.uri,
-        client: resource.client,
-        display: resource.name,
-        description: resource.description,
-        mime: resource.mimeType,
-      }),
-    ),
-  )
-
   const handleAtSelect = (option: AtOption | undefined) => {
     if (!option) return
-    if (option.type === "agent") {
-      addPart({ type: "agent", name: option.name, content: "@" + option.name, start: 0, end: 0 })
-      return
-    }
-    if (option.type === "reference") {
-      addPart({
-        type: "file",
-        path: option.path,
-        content: "@" + option.name,
-        start: 0,
-        end: 0,
-        mime: "application/x-directory",
-        filename: option.name,
-      })
-      return
-    }
-    if (option.type === "resource") {
-      addPart({
-        type: "file",
-        path: option.uri,
-        content: "@" + option.name,
-        start: 0,
-        end: 0,
-        mime: option.mime ?? "text/plain",
-        filename: option.name,
-        url: option.uri,
-        source: {
-          type: "resource",
-          text: { value: "@" + option.name, start: 0, end: 0 },
-          clientName: option.client,
-          uri: option.uri,
-        },
-      })
-      return
-    }
     addPart({ type: "file", path: option.path, content: "@" + option.path, start: 0, end: 0 })
   }
 
-  const atKey = (x: AtOption | undefined) => {
-    if (!x) return ""
-    if (x.type === "agent") return `agent:${x.name}`
-    if (x.type === "reference") return `reference:${x.name}`
-    if (x.type === "resource") return `resource:${x.client}:${x.uri}`
-    return `file:${x.path}`
-  }
+  const atKey = (x: AtOption | undefined) => (x ? `file:${x.path}` : "")
 
   const {
     flat: atFlat,
@@ -733,44 +634,29 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     onKeyDown: atOnKeyDown,
   } = useFilteredList<AtOption>({
     items: async (query) => {
-      const references = referenceList()
-      const agents = agentList()
-      const mcpResources = mcpResourceList()
       const open = recent()
       const seen = new Set(open)
       const pinned: AtOption[] = open.map((path) => ({ type: "file", path, display: path, recent: true }))
-      if (!query.trim()) return [...references, ...agents, ...mcpResources, ...pinned]
-      const paths = await files.searchFilesAndDirectories(query)
+      if (!query.trim()) return pinned
+      const paths: string[] = await files.searchFilesAndDirectories(query)
       const fileOptions: AtOption[] = paths
         .filter((path) => !seen.has(path))
         .map((path) => ({ type: "file", path, display: path }))
-      return [...references, ...agents, ...mcpResources, ...pinned, ...fileOptions]
+      return [...pinned, ...fileOptions]
     },
     key: atKey,
     filterKeys: ["display"],
     skipFilter: (item) => item.type === "file" && !item.recent,
-    groupBy: (item) => {
-      if (item.type === "reference") return "reference"
-      if (item.type === "agent") return "agent"
-      if (item.type === "resource") return "resource"
-      if (item.recent) return "recent"
-      return "file"
-    },
+    groupBy: (item) => (item.recent ? "recent" : "file"),
     sortGroupsBy: (a, b) => {
-      const rank = (category: string) => {
-        if (category === "reference") return 0
-        if (category === "agent") return 1
-        if (category === "resource") return 2
-        if (category === "recent") return 3
-        return 4
-      }
+      const rank = (category: string) => (category === "recent" ? 0 : 1)
       return rank(a.category) - rank(b.category)
     },
     onSelect: handleAtSelect,
   })
 
-  const slashCommands = createMemo<SlashCommand[]>(() => {
-    const builtin = command.options
+  const slashCommands = createMemo<SlashCommand[]>(() =>
+    command.options
       .filter((opt) => !opt.disabled && !opt.id.startsWith("suggested.") && opt.slash)
       .map((opt) => ({
         id: opt.id,
@@ -778,33 +664,13 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
         title: opt.title,
         description: opt.description,
         keybind: opt.keybind,
-        type: "builtin" as const,
-      }))
-
-    const custom = sync().data.command.map((cmd) => ({
-      id: `custom.${cmd.name}`,
-      trigger: cmd.name,
-      title: cmd.name,
-      description: cmd.description,
-      type: "custom" as const,
-      source: cmd.source,
-    }))
-
-    return [...custom, ...builtin]
-  })
+      })),
+  )
 
   const handleSlashSelect = (cmd: SlashCommand | undefined) => {
     if (!cmd) return
     closePopover()
     const images = imageAttachments()
-
-    if (cmd.type === "custom") {
-      const text = `/${cmd.trigger} `
-      setEditorText(text)
-      prompt.set([{ type: "text", content: text, start: 0, end: text.length }, ...images], text.length)
-      focusEditorEnd()
-      return
-    }
 
     clearEditor()
     prompt.set([...DEFAULT_PROMPT, ...images], 0)
@@ -833,11 +699,6 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       if (part.mime) pill.setAttribute("data-mime", part.mime)
       if (part.filename) pill.setAttribute("data-filename", part.filename)
       if (part.url) pill.setAttribute("data-url", part.url)
-      if (part.source?.type === "resource") {
-        pill.setAttribute("data-source-type", part.source.type)
-        pill.setAttribute("data-source-client-name", part.source.clientName)
-        pill.setAttribute("data-source-uri", part.source.uri)
-      }
     }
     if (part.type === "agent") pill.setAttribute("data-name", part.name)
     pill.setAttribute("contenteditable", "false")
@@ -953,19 +814,6 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
 
     const pushFile = (file: HTMLElement) => {
       const content = file.textContent ?? ""
-      const source =
-        file.dataset.sourceType === "resource" && file.dataset.sourceClientName && file.dataset.sourceUri
-          ? {
-              type: "resource" as const,
-              text: {
-                value: content,
-                start: position,
-                end: position + content.length,
-              },
-              clientName: file.dataset.sourceClientName,
-              uri: file.dataset.sourceUri,
-            }
-          : undefined
       parts.push({
         type: "file",
         path: file.dataset.path!,
@@ -975,7 +823,6 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
         ...(file.dataset.mime ? { mime: file.dataset.mime } : {}),
         ...(file.dataset.filename ? { filename: file.dataset.filename } : {}),
         ...(file.dataset.url ? { url: file.dataset.url } : {}),
-        ...(source ? { source } : {}),
       })
       position += content.length
     }
@@ -1282,8 +1129,6 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       },
       setMode: (mode) => setStore("mode", mode),
       setPopover: (popover) => setStore("popover", popover),
-      newSessionWorktree: () => props.newSessionWorktree,
-      onNewSessionWorktreeReset: props.onNewSessionWorktreeReset,
       shouldQueue: props.shouldQueue,
       onQueue: props.onQueue,
       onAbort: props.onAbort,
@@ -1455,8 +1300,6 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     }
   }
 
-  const agentsLoading = () => props.controls.agents.loading
-  const agentsShouldFadeIn = createMemo<boolean>((prev) => prev ?? agentsLoading())
   const providersLoading = () => props.controls.model.loading
   const providersShouldFadeIn = createMemo<boolean>((prev) => prev ?? providersLoading())
 
@@ -1488,20 +1331,6 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     restoreEndOnFocus = true
     props.ref?.(el)
   }
-  // Show the agent switcher whenever there's more than one agent to switch between
-  // (independent of the customAgents visibility preference).
-  const showAgentControl = createMemo(() => props.controls.agents.options.length > 1)
-  const agentControlState = createMemo<ComposerAgentControlState>(() => ({
-    title: language.t("command.agent.cycle"),
-    keybind: command.keybindParts("agent.cycle"),
-    options: props.controls.agents.options,
-    current: props.controls.agents.current,
-    style: control(),
-    onSelect: (value) => {
-      props.controls.agents.select(value)
-      restoreFocus()
-    },
-  }))
   return (
     <div class="relative size-full flex flex-col gap-0">
       {(promptReady(), null)}
@@ -1633,9 +1462,6 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                       aria-label={language.t("prompt.action.attachFile")}
                     />
                   </TooltipV2>
-                  <Show when={showAgentControl()}>
-                    <ComposerAgentControl state={agentControlState()} />
-                  </Show>
                   {props.toolbar}
                   <ComposerModelControl state={modelControlState()} />
                   <Show when={!providersLoading() && store.mode !== "shell" && showVariantControl()}>
@@ -1884,34 +1710,6 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                     </Button>
                   </div>
                   <div class="flex items-center gap-1.5 min-w-0 flex-1 h-7">
-                    <Show when={!agentsLoading()}>
-                      <div
-                        data-component="prompt-agent-control"
-                        classList={{ "animate-in fade-in duration-300": agentsShouldFadeIn() }}
-                      >
-                        <TooltipKeybind
-                          placement="top"
-                          gutter={4}
-                          title={language.t("command.agent.cycle")}
-                          keybind={command.keybind("agent.cycle")}
-                        >
-                          <Select
-                            size="normal"
-                            options={props.controls.agents.options}
-                            current={props.controls.agents.current}
-                            onSelect={(value) => {
-                              props.controls.agents.select(value)
-                              restoreFocus()
-                            }}
-                            class="capitalize max-w-[160px] text-text-base"
-                            valueClass="truncate text-13-regular text-text-base"
-                            triggerStyle={control()}
-                            triggerProps={{ "data-action": "prompt-agent" }}
-                            variant="ghost"
-                          />
-                        </TooltipKeybind>
-                      </div>
-                    </Show>
                     <Show when={!providersLoading()}>
                       <Show when={store.mode !== "shell"}>
                         <div
@@ -1993,15 +1791,6 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   )
 }
 
-type ComposerAgentControlState = {
-  title: string
-  keybind: string[]
-  options: string[]
-  current: string
-  style: JSX.CSSProperties | undefined
-  onSelect: (value: string | undefined) => void
-}
-
 type ComposerModelControlState = {
   loading: boolean
   shouldAnimate: boolean
@@ -2012,38 +1801,6 @@ type ComposerModelControlState = {
   modelName: string
   style: JSX.CSSProperties | undefined
   onClose: () => void
-}
-
-function ComposerAgentControl(props: { state: ComposerAgentControlState }) {
-  return (
-    <div class="relative">
-      <div class="pointer-events-none absolute left-2 top-1/2 z-10 flex size-4 -translate-y-1/2 items-center justify-center text-v2-icon-icon-muted">
-        <Icon name="sliders" size="small" />
-      </div>
-      <TooltipV2
-        placement="top"
-        gutter={4}
-        value={
-          <>
-            {props.state.title}
-            <KeybindV2 keys={props.state.keybind} variant="neutral" />
-          </>
-        }
-      >
-        <Select
-          size="normal"
-          options={props.state.options}
-          current={props.state.current}
-          onSelect={props.state.onSelect}
-          class="max-w-[175px] justify-start text-v2-text-text-faint [&_[data-component=icon]]:text-v2-icon-icon-muted"
-          valueClass="truncate pl-5 text-[13px] font-[440] leading-5 text-v2-text-text-faint"
-          triggerStyle={props.state.style}
-          triggerProps={{ "data-action": "prompt-agent" }}
-          variant="ghost"
-        />
-      </TooltipV2>
-    </div>
-  )
 }
 
 function ComposerModelControl(props: { state: ComposerModelControlState }) {

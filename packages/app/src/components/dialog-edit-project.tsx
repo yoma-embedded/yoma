@@ -10,7 +10,6 @@ import { type LocalProject, getAvatarColors } from "@/context/layout"
 import { getFilename } from "@yoma-desktop/util/path"
 import { Avatar } from "@yoma-desktop/ui/avatar"
 import { useLanguage } from "@/context/language"
-import { getProjectAvatarSource } from "@/pages/layout/helpers"
 import { ServerConnection } from "@/context/server"
 import { useGlobal } from "@/context/global"
 
@@ -21,7 +20,6 @@ export function DialogEditProject(props: { project: LocalProject; server: Server
   const global = useGlobal()
   const language = useLanguage()
   const serverCtx = createMemo(() => global.ensureServerCtx(props.server))
-  const serverSDK = () => serverCtx().sdk
   const serverSync = () => serverCtx().sync
 
   const folderName = createMemo(() => getFilename(props.project.worktree))
@@ -31,7 +29,6 @@ export function DialogEditProject(props: { project: LocalProject; server: Server
     name: defaultName(),
     color: props.project.icon?.color,
     iconOverride: props.project.icon?.override,
-    startup: props.project.commands?.start ?? "",
     dragOver: false,
     iconHover: false,
   })
@@ -75,28 +72,15 @@ export function DialogEditProject(props: { project: LocalProject; server: Server
   }
 
   const saveMutation = useMutation(() => ({
+    // 内核的项目记录只有 { directory, name, lastOpened },没有 update 接口,
+    // 所以名字/图标一律落在本地 per-workspace 的 meta 里。
     mutationFn: async () => {
       const name = store.name.trim() === folderName() ? "" : store.name.trim()
-      const start = store.startup.trim()
-
-      if (props.project.id && props.project.id !== "global") {
-        await serverSDK().client.project.update({
-          projectID: props.project.id,
-          directory: props.project.worktree,
-          name,
-          icon: { color: store.color || "", override: store.iconOverride || "" },
-          commands: { start },
-        })
-        serverSync().project.icon(props.project.worktree, store.iconOverride || undefined)
-        dialog.close()
-        return
-      }
-
       serverSync().project.meta(props.project.worktree, {
         name,
         icon: { color: store.color || undefined, override: store.iconOverride || undefined },
-        commands: { start: start || undefined },
       })
+      serverSync().project.icon(props.project.worktree, store.iconOverride || undefined)
       dialog.close()
     },
   }))
@@ -147,11 +131,7 @@ export function DialogEditProject(props: { project: LocalProject; server: Server
                   }}
                 >
                   <Show
-                    when={getProjectAvatarSource(props.project.id, {
-                      color: store.color,
-                      url: props.project.icon?.url,
-                      override: store.iconOverride,
-                    })}
+                    when={store.iconOverride || undefined}
                     fallback={
                       <div class="size-full flex items-center justify-center">
                         <Avatar
@@ -224,10 +204,7 @@ export function DialogEditProject(props: { project: LocalProject; server: Server
                         "bg-transparent border border-transparent hover:bg-surface-base-hover hover:border-border-weak-base":
                           store.color !== color,
                       }}
-                      onClick={() => {
-                        if (store.color === color && !props.project.icon?.url) return
-                        setStore("color", store.color === color ? undefined : color)
-                      }}
+                      onClick={() => setStore("color", color)}
                     >
                       <Avatar
                         fallback={store.name || defaultName()}
@@ -241,16 +218,6 @@ export function DialogEditProject(props: { project: LocalProject; server: Server
             </div>
           </Show>
 
-          <TextField
-            multiline
-            label={language.t("dialog.project.edit.worktree.startup")}
-            description={language.t("dialog.project.edit.worktree.startup.description")}
-            placeholder={language.t("dialog.project.edit.worktree.startup.placeholder")}
-            value={store.startup}
-            onChange={(v) => setStore("startup", v)}
-            spellcheck={false}
-            class="max-h-14 w-full overflow-y-auto font-mono text-xs"
-          />
         </div>
 
         <div class="flex justify-end gap-2">

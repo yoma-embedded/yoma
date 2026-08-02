@@ -1,7 +1,7 @@
 import { createMemo, createSignal, For, onMount, Show, type JSX } from "solid-js"
 import { Portal } from "solid-js/web"
 import { makeEventListener } from "@solid-primitives/event-listener"
-import type { Session } from "@opencode-ai/sdk/v2/client"
+import type { Session } from "@yoma-desktop/kernel"
 import { Icon as IconV2 } from "@yoma-desktop/ui/v2/icon"
 import { ScrollView } from "@yoma-desktop/ui/scroll-view"
 import { useServer } from "@/context/server"
@@ -36,17 +36,12 @@ export function CodexSearch(props: { onClose: () => void }) {
   onMount(() => input?.focus())
 
   const projects = createMemo(() => layout.projects.list())
-  const projectByID = createMemo(
-    () => new Map(projects().flatMap((project) => (project.id ? [[project.id, project] as const] : []))),
-  )
 
   const chats = createMemo(() => {
     const now = Date.now()
     const q = query().trim().toLowerCase()
     const all = projects().flatMap((project) =>
-      [project.worktree, ...(project.sandboxes ?? [])].flatMap((dir) =>
-        sortedRootSessions(serverSync().child(dir, { bootstrap: false })[0], now),
-      ),
+      sortedRootSessions(serverSync().child(project.worktree, { bootstrap: false })[0], now),
     )
     const deduped = [...new Map(all.map((session) => [session.id, session])).values()].sort(
       (a, b) => sessionTime(b) - sessionTime(a),
@@ -62,7 +57,7 @@ export function CodexSearch(props: { onClose: () => void }) {
   }
 
   function openSession(session: Session) {
-    const directory = projectForSession(session, projects(), projectByID())?.worktree ?? session.directory
+    const directory = projectForSession(session, projects())?.worktree ?? session.directory
     layout.projects.open(directory)
     const tab = tabs.addSessionTab({ server: server.key, sessionId: session.id })
     tabs.select(tab)
@@ -158,7 +153,7 @@ export function CodexSearch(props: { onClose: () => void }) {
   })
 
   const chatMeta = (session: Session) => {
-    const project = projectForSession(session, projects(), projectByID())
+    const project = projectForSession(session, projects())
     return project ? displayName(project) : undefined
   }
 

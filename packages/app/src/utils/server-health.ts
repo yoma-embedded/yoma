@@ -1,4 +1,3 @@
-import { usePlatform } from "@/context/platform"
 import { ServerConnection } from "@/context/server"
 import { createSdkForServer } from "./server"
 import { Accessor, createEffect, onCleanup } from "solid-js"
@@ -17,10 +16,7 @@ const defaultTimeoutMs = 30_000
 const defaultRetryCount = 2
 const defaultRetryDelayMs = 100
 const cacheMs = 750
-const healthCache = new Map<
-  string,
-  { at: number; done: boolean; fetch: typeof globalThis.fetch; promise: Promise<ServerHealth> }
->()
+const healthCache = new Map<string, { at: number; done: boolean; promise: Promise<ServerHealth> }>()
 
 function cacheKey(server: ServerConnection.HttpBase) {
   return `${server.url}\n${server.username ?? ""}\n${server.password ?? ""}`
@@ -62,14 +58,18 @@ function wait(ms: number, signal?: AbortSignal) {
 function retryable(error: unknown, signal?: AbortSignal) {
   if (signal?.aborted) return false
   if (!(error instanceof Error)) return false
-  if (error.name === "AbortError" || error.name === "TimeoutError") return false
-  if (error instanceof TypeError) return true
-  return /network|fetch|econnreset|econnrefused|enotfound|timedout/i.test(error.message)
+  return error.name !== "AbortError" && error.name !== "TimeoutError"
 }
 
+/**
+ * 探活 = 问内核要一次 app.info()。
+ *
+ * 原来这里是 HTTP `/global/health` + fetch + CORS。内核跑在同进程的 utilityProcess 里,
+ * 没有 URL 也没有 fetch —— 唯一还成立的问题是"通道通了吗、跑的是哪个版本",
+ * 而重试仍然有意义:renderer 可能比 host 先起来。
+ */
 export async function checkServerHealth(
-  server: ServerConnection.HttpBase,
-  fetch: typeof globalThis.fetch,
+  _server: ServerConnection.HttpBase,
   opts?: CheckServerHealthOptions,
 ): Promise<ServerHealth> {
   const timeout = opts?.signal ? undefined : timeoutSignal(opts?.timeoutMs ?? defaultTimeoutMs)
@@ -83,13 +83,12 @@ export async function checkServerHealth(
       .catch(() => ({ healthy: false }))
   }
   const attempt = (count: number): Promise<ServerHealth> =>
-    createSdkForServer({
-      server,
-      fetch,
-      signal,
-    })
-      .global.health()
-      .then((x) => (x.error ? next(count, x.error) : { healthy: x.data?.healthy === true, version: x.data?.version }))
+    createSdkForServer()
+      .app.info()
+      .then((info) => {
+        if (signal?.aborted) return { healthy: false } as const
+        return { healthy: true, version: info.version }
+      })
       .catch((error) => next(count, error))
   return attempt(0).finally(() => timeout?.clear?.())
 }
@@ -97,21 +96,18 @@ export async function checkServerHealth(
 const pollMs = 10_000
 
 export function useCheckServerHealth() {
-  const platform = usePlatform()
-  const fetcher = platform.fetch ?? globalThis.fetch
-
   return (http: ServerConnection.HttpBase) => {
     const key = cacheKey(http)
     const hit = healthCache.get(key)
     const now = Date.now()
-    if (hit && hit.fetch === fetcher && (!hit.done || now - hit.at < cacheMs)) return hit.promise
-    const promise = checkServerHealth(http, fetcher).finally(() => {
+    if (hit && (!hit.done || now - hit.at < cacheMs)) return hit.promise
+    const promise = checkServerHealth(http).finally(() => {
       const next = healthCache.get(key)
       if (!next || next.promise !== promise) return
       next.done = true
       next.at = Date.now()
     })
-    healthCache.set(key, { at: now, done: false, fetch: fetcher, promise })
+    healthCache.set(key, { at: now, done: false, promise })
     return promise
   }
 }

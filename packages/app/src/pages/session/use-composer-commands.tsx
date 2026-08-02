@@ -20,7 +20,6 @@ export const useComposerCommands = () => {
   const { sessionKey } = useSessionLayout()
   const sessionOwnership = createSessionOwnership(sessionKey)
   const modelCommand = withCategory(language.t("command.category.model"))
-  const agentCommand = withCategory(language.t("command.category.agent"))
 
   const chooseModel = async () => {
     const owner = sessionOwnership.capture()
@@ -45,23 +44,6 @@ export const useComposerCommands = () => {
       description: language.t("command.model.variant.cycle.description"),
       keybind: "shift+mod+d",
       onSelect: () => local.model.variant.cycle(),
-    }),
-    agentCommand({
-      id: "agent.cycle",
-      title: language.t("command.agent.cycle"),
-      description: language.t("command.agent.cycle.description"),
-      keybind: "mod+.",
-      slash: "agent",
-      disabled: local.agent.list().length <= 1,
-      onSelect: () => local.agent.move(1),
-    }),
-    agentCommand({
-      id: "agent.cycle.reverse",
-      title: language.t("command.agent.cycle.reverse"),
-      description: language.t("command.agent.cycle.reverse.description"),
-      keybind: "shift+mod+.",
-      disabled: local.agent.list().length <= 1,
-      onSelect: () => local.agent.move(-1),
     }),
   ])
 }

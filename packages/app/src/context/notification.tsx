@@ -9,7 +9,6 @@ import { useLanguage } from "@/context/language"
 import { useSettings } from "@/context/settings"
 import { base64Encode } from "@yoma-desktop/util/encode"
 import { decode64 } from "@/utils/base64"
-import { EventSessionError } from "@opencode-ai/sdk/v2"
 import { Persist, persisted } from "@/utils/persist"
 import { playSoundById } from "@/utils/sound"
 import { useGlobal } from "./global"
@@ -32,7 +31,8 @@ type TurnCompleteNotification = NotificationBase & {
 
 type ErrorNotification = NotificationBase & {
   type: "error"
-  error: EventSessionError["properties"]["error"]
+  /** 内核的错误是一条带 message 的事件,没有 opencode 那种结构化的 error 对象。 */
+  error: { message?: string } | string | undefined
 }
 
 export type Notification = TurnCompleteNotification | ErrorNotification
@@ -325,12 +325,16 @@ function createServerNotificationState(input: {
     return sessionID === activeSession
   }
 
+  /** 内核事件不带 directory,从已知会话里反查。查不到就说明这个会话还没同步进来。 */
+  const sessionDirectory = (sessionID: string): string | undefined =>
+    serverSync().session.get(sessionID)?.directory
+
   const handleSessionIdle = (directory: string, event: { properties: { sessionID?: string } }, time: number) => {
     const sessionID = event.properties.sessionID
     void lookup(directory, sessionID).then((session) => {
       if (meta.disposed) return
       if (!session) return
-      if (session.parentID) return
+      // 原来这里跳过子会话(避免子代理完成也响铃)。内核里 session 之间没有父子。
 
       if (settings.sounds.agentEnabled()) {
         void playSoundById(settings.sounds.agent())
@@ -353,13 +357,12 @@ function createServerNotificationState(input: {
 
   const handleSessionError = (
     directory: string,
-    event: { properties: { sessionID?: string; error?: EventSessionError["properties"]["error"] } },
+    event: { properties: { sessionID?: string; error?: { message?: string } | string } },
     time: number,
   ) => {
     const sessionID = event.properties.sessionID
     void lookup(directory, sessionID).then((session) => {
       if (meta.disposed) return
-      if (session?.parentID) return
 
       if (settings.sounds.errorsEnabled()) {
         void playSoundById(settings.sounds.errors())
@@ -384,17 +387,21 @@ function createServerNotificationState(input: {
     })
   }
 
-  const unsub = serverSDK().event.listen((e) => {
-    const event = e.details
-    if (event.type !== "session.idle" && event.type !== "session.error") return
-
-    const directory = e.name
+  // 内核没有 session.idle / session.error 这两种事件,也不按 directory 分频道。
+  // 对应物是:一轮跑完 → session.status 变 idle;出错 → kernel.error 带 sessionID。
+  const unsub = serverSDK().event.listen((event) => {
     const time = Date.now()
-    if (event.type === "session.idle") {
-      handleSessionIdle(directory, event, time)
+    if (event.type === "session.status" && event.status.type === "idle") {
+      const directory = sessionDirectory(event.sessionID)
+      if (directory) handleSessionIdle(directory, { properties: { sessionID: event.sessionID } }, time)
       return
     }
-    handleSessionError(directory, event, time)
+    if (event.type === "kernel.error" && event.sessionID) {
+      const directory = sessionDirectory(event.sessionID)
+      if (directory) {
+        handleSessionError(directory, { properties: { sessionID: event.sessionID, error: event.message } }, time)
+      }
+    }
   })
   onCleanup(() => {
     meta.disposed = true

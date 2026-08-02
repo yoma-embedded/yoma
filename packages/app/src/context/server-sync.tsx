@@ -1,37 +1,35 @@
-import type {
-  Config,
-  McpResource,
-  OpencodeClient,
-  Path,
-  Project,
-  ProviderAuthResponse,
-} from "@opencode-ai/sdk/v2/client"
+/**
+ * 服务器级的同步上下文:全局 store(项目列表 + provider 目录)+ 每目录子 store + 事件分发。
+ *
+ * 相对 opencode 删掉的几块,以及原因:
+ *   mcp / mcpResources / lsp / references  内核完全没有这些概念,连查询都不存在
+ *   config(读+写)                          内核没有配置服务,`Config` 收窄成空对象占位
+ *   agents                                  只有一个系统提示词,没有 persona
+ *   path                                    目录前端自己知道,不必往内核要
+ *   会话分页的 roots/limit 参数              内核的 session.list 一次给全,没有游标
+ */
+
 import { showToast } from "@/utils/toast"
 import { getFilename } from "@yoma-desktop/util/path"
+import type { KernelEvent } from "@yoma-desktop/kernel"
 import { type Accessor, batch, createMemo, getOwner, onCleanup, onMount, untrack } from "solid-js"
-import { createStore, produce, reconcile } from "solid-js/store"
+import { createStore, reconcile } from "solid-js/store"
 import { useLanguage } from "@/context/language"
-import type { InitError } from "../pages/error"
 import { ServerSDK } from "./server-sdk"
 import {
   bootstrapDirectory,
   bootstrapGlobal,
   clearProviderRev,
-  loadAgentsQuery,
-  loadGlobalConfigQuery,
-  loadPathQuery,
   loadProjectsQuery,
   loadProvidersQuery,
-  loadReferencesQuery,
+  type Project,
 } from "./global-sync/bootstrap"
 import { createChildStoreManager } from "./global-sync/child-store"
 import { applyDirectoryEvent, applyGlobalEvent } from "./global-sync/event-reducer"
-import { estimateRootSessionTotal, loadRootSessionsWithFallback } from "./global-sync/session-load"
 import { trimSessions } from "./global-sync/session-trim"
-import type { ProjectMeta } from "./global-sync/types"
-import { SESSION_RECENT_LIMIT } from "./global-sync/types"
+import type { Config, Path, ProjectMeta } from "./global-sync/types"
 import { formatServerError } from "@/utils/server-errors"
-import { queryOptions, useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/solid-query"
+import { useQuery, useQueryClient } from "@tanstack/solid-query"
 import { createRefreshQueue } from "./global-sync/queue"
 import { directoryKey } from "./global-sync/utils"
 import { PathKey } from "@/utils/path-key"
@@ -41,59 +39,25 @@ import { NormalizedProviderListResponse } from "@yoma-desktop/session-ui/context
 import { createRefCountMap } from "@/utils/refcount"
 import { useGlobal } from "./global"
 import { ServerConnection, useServer } from "./server"
-import { retry } from "@yoma-desktop/util/retry"
 import type { ServerScope } from "@/utils/server-scope"
+import type { Sdk } from "@/utils/server"
 import { persisted } from "@/utils/persist"
-import { toggleMcp } from "./global-sync/mcp"
 import { createServerSession } from "./server-session"
 
 type GlobalStore = {
   ready: boolean
-  error?: InitError
   path: Path
   project: Project[]
   provider: NormalizedProviderListResponse
-  provider_auth: ProviderAuthResponse
   config: Config
   reload: undefined | "pending" | "complete"
 }
 
-export const loadMcpQuery = (scope: ServerScope, directory: string, sdk: OpencodeClient) =>
-  queryOptions({
-    queryKey: [scope, directory, "mcp"] as const,
-    queryFn: () => sdk.mcp.status().then((r) => r.data ?? {}),
-  })
-
-export const loadMcpResourcesQuery = (scope: ServerScope, directory: string, sdk: OpencodeClient) =>
-  queryOptions<Record<string, McpResource>>({
-    queryKey: [scope, directory, "mcpResources"] as const,
-    queryFn: () => sdk.experimental.resource.list().then((r) => r.data ?? {}),
-    placeholderData: {},
-  })
-
-export const loadLspQuery = (scope: ServerScope, directory: string, sdk: OpencodeClient) =>
-  queryOptions({
-    queryKey: [scope, directory, "lsp"] as const,
-    queryFn: () => sdk.lsp.status().then((r) => r.data ?? []),
-  })
-
-function makeQueryOptionsApi(
-  scope: ServerScope,
-  serverSDK: () => OpencodeClient,
-  sdkFor: (dir: PathKey) => OpencodeClient,
-) {
+function makeQueryOptionsApi(scope: ServerScope, serverSDK: () => Sdk, sdkFor: (dir: PathKey) => Sdk) {
   return {
-    globalConfig: () => loadGlobalConfigQuery(scope, serverSDK()),
     projects: () => loadProjectsQuery(scope, serverSDK()),
     providers: (directory: PathKey | null) =>
       loadProvidersQuery(scope, directory, directory === null ? serverSDK() : sdkFor(directory)),
-    path: (directory: PathKey | null) =>
-      loadPathQuery(scope, directory, directory === null ? serverSDK() : sdkFor(directory)),
-    agents: (directory: PathKey) => loadAgentsQuery(scope, directory, sdkFor(directory)),
-    references: (directory: PathKey) => loadReferencesQuery(scope, directory, sdkFor(directory)),
-    mcp: (directory: PathKey) => loadMcpQuery(scope, directory, sdkFor(directory)),
-    mcpResources: (directory: PathKey) => loadMcpResourcesQuery(scope, directory, sdkFor(directory)),
-    lsp: (directory: PathKey) => loadLspQuery(scope, directory, sdkFor(directory)),
     sessions: (directory: PathKey) => ({ queryKey: [scope, directory, "loadSessions"] as const }),
   }
 }
@@ -104,7 +68,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   const owner = getOwner()
   if (!owner) throw new Error("ServerSync must be created within owner")
 
-  const sdkCache = new Map<string, OpencodeClient>()
+  const sdkCache = new Map<string, Sdk>()
   const booting = new Map<string, Promise<void>>()
   const sessionLoads = new Map<string, Promise<void>>()
   const sessionMeta = new Map<string, { limit: number }>()
@@ -113,42 +77,29 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     const key = directoryKey(directory)
     const cached = sdkCache.get(key)
     if (cached) return cached
-    const sdk = serverSDK.createClient({
-      directory,
-      throwOnError: true,
-    })
+    const sdk = serverSDK.createClient()
     sdkCache.set(key, sdk)
     return sdk
   }
 
   const queryOptionsApi = makeQueryOptionsApi(serverSDK.scope, () => serverSDK.client, sdkFor)
 
-  const [configQuery, providerQuery, pathQuery] = useQueries(() => ({
-    queries: [queryOptionsApi.globalConfig(), queryOptionsApi.providers(null), queryOptionsApi.path(null)],
-  }))
+  const providerQuery = useQuery(() => queryOptionsApi.providers(null))
 
   const [globalStore, setGlobalStore] = createStore<GlobalStore>({
     get ready() {
       return !bootstrap.isPending
     },
     project: [],
-    provider_auth: {},
-    get path() {
-      const EMPTY = { state: "", config: "", worktree: "", directory: "", home: "" }
-      if (pathQuery.isLoading) return EMPTY
-      return pathQuery.data ?? EMPTY
-    },
+    // 内核没有 path 服务;全局层面没有"当前目录"这回事,目录由每个子 store 自己持有。
+    path: { directory: "" },
+    // 内核没有配置服务。留一个空对象是为了让 bootstrap 的 store 形状对得上。
+    config: {},
+    reload: undefined,
     get provider() {
       const EMPTY = { all: new Map(), connected: [], default: {} }
       if (providerQuery.isLoading) return EMPTY
       return providerQuery.data ?? EMPTY
-    },
-    get config() {
-      if (configQuery.isLoading) return {}
-      return configQuery.data ?? {}
-    },
-    get reload() {
-      return updateConfigMutation.isPending ? "pending" : undefined
     },
   })
 
@@ -221,19 +172,6 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     onBootstrap: (directory) => {
       void bootstrapInstance(directory)
     },
-    onMcp: (directory, setStore) => {
-      void retry(() =>
-        sdkFor(directory)
-          .command.list()
-          .then((x) => setStore("command", x.data ?? [])),
-      ).catch((err) => {
-        showToast({
-          variant: "error",
-          title: language.t("toast.project.reloadFailed.title", { project: getFilename(directory) }),
-          description: formatServerError(err, language.t),
-        })
-      })
-    },
     onDispose: (directory) => {
       const key = directoryKey(directory)
       queue.clear(key)
@@ -272,37 +210,28 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       return
     }
 
-    const limit = Math.max(retainedLimit + SESSION_RECENT_LIMIT, SESSION_RECENT_LIMIT)
     const promise = queryClient
       .fetchQuery({
         ...queryOptionsApi.sessions(key),
+        // 内核的 session.list 没有 roots / limit / 游标 —— 一个目录的会话一次给全,
+        // 于是原来的"带 limit 试一次、失败再不带 limit 试一次"的回退整块删掉。
         queryFn: () =>
-          loadRootSessionsWithFallback({
-            directory,
-            limit,
-            list: (query) => serverSDK.client.session.list(query),
-          })
-            .then((x) => {
-              const nonArchived = (x.data ?? [])
+          serverSDK.client.session
+            .list({ directory })
+            .then((list) => {
+              const nonArchived = list
                 .filter((s) => !!s?.id)
                 .filter((s) => !s.time?.archived)
                 .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
               const limit = Math.max(store.limit, options?.limit ?? 0, sessionMeta.get(key)?.limit ?? 0)
-              const childSessions = store.session.filter((s) => !!s.parentID)
-              const next = trimSessions([...nonArchived, ...childSessions], {
+              const next = trimSessions(nonArchived, {
                 limit,
                 permission: session.data.permission,
               })
               batch(() => {
                 next.forEach(session.remember)
-                setStore(
-                  "sessionTotal",
-                  estimateRootSessionTotal({
-                    count: nonArchived.length,
-                    limit: x.limit,
-                    limited: x.limited,
-                  }),
-                )
+                // 拿到的就是全部,不用再估算总数。
+                setStore("sessionTotal", nonArchived.length)
                 setStore("session", reconcile(next, { key: "id" }))
               })
               sessionMeta.set(key, { limit })
@@ -343,7 +272,6 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       await bootstrapDirectory({
         directory,
         scope: serverSDK.scope,
-        mcp: children.mcp(key),
         global: {
           config: globalStore.config,
           path: globalStore.path,
@@ -369,33 +297,60 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     return promise
   }
 
-  const unsub = serverSDK.event.listen((e) => {
-    const directory = e.name
-    const key = directoryKey(directory)
-    const event = e.details
+  /**
+   * 事件归属的目录。
+   *
+   * 内核事件不带 directory(只有 vcs.updated 带),因为一个 session 就是一个 cwd ——
+   * 目录靠 session 表反查。必须在 `session.apply` **之前**算,否则 session.deleted
+   * 会先把那条记录抹掉,查不到目录。
+   */
+  const eventDirectory = (event: KernelEvent): string | undefined => {
+    switch (event.type) {
+      case "vcs.updated":
+        return event.directory
+      case "session.created":
+      case "session.updated":
+        return event.session.directory
+      case "session.deleted":
+      case "session.status":
+      case "message.removed":
+      case "message.part.removed":
+      case "message.part.delta":
+        return session.get(event.sessionID)?.directory
+      case "message.updated":
+        return session.get(event.message.sessionID)?.directory
+      case "message.part.updated":
+        return session.get(event.part.sessionID)?.directory
+      case "permission.asked":
+        return session.get(event.request.sessionID)?.directory
+    }
+  }
+
+  const unsub = serverSDK.event.listen((event) => {
     const recent = bootingRoot || Date.now() - bootedAt < 1500
+    const directory = eventDirectory(event)
 
     session.apply(event)
 
-    if (directory === "global") {
-      applyGlobalEvent({
-        event,
-        project: globalStore.project,
-        refresh: () => {
-          if (recent) return
-          bootstrap.refetch()
-        },
-        setGlobalProject: setProjects,
-      })
-      if (event.type === "server.connected" || event.type === "global.disposed") {
+    applyGlobalEvent({
+      event,
+      refresh: () => {
         if (recent) return
-        for (const directory of Object.keys(children.children)) {
-          queue.push(directory)
-        }
+        bootstrap.refetch()
+      },
+    })
+
+    // host 重连(或首次就绪)后,已经打开的目录全部重新拉一遍。
+    if (event.type === "kernel.connected") {
+      if (recent) return
+      for (const directory of Object.keys(children.children)) {
+        queue.push(directory)
       }
       return
     }
 
+    if (!directory) return
+    const key = directoryKey(directory)
     const existing = children.children[key]
     if (!existing) return
     children.mark(key)
@@ -405,17 +360,10 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       directory,
       store,
       setStore,
-      push: queue.push,
       retainedLimit: sessionMeta.get(key)?.limit,
       sessionContent: false,
       permission: session.data.permission,
       vcsCache: children.vcsCache.get(key),
-      loadLsp: () => {
-        void queryClient.fetchQuery(queryOptionsApi.lsp(key))
-      },
-      loadReferences: () => {
-        void queryClient.fetchQuery(queryOptionsApi.references(key))
-      },
     })
   })
 
@@ -456,70 +404,24 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     },
   }
 
-  const updateConfigMutation = useMutation(() => ({
-    mutationFn: (config: Config) => serverSDK.client.global.config.update({ config }),
-    onSuccess: () => {
-      bootstrap.refetch()
-      // Invalidate all provider queries so newly configured custom providers
-      // appear immediately in the available provider list across all directories.
-      queryClient.invalidateQueries({ queryKey: [serverSDK.scope, null, "providers"] })
-      queryClient.invalidateQueries({
-        predicate: (query) => query.queryKey[0] === serverSDK.scope && query.queryKey[2] === "providers",
-      })
-    },
-  }))
-
   return {
     data: globalStore,
     set,
     get ready() {
       return globalStore.ready
     },
-    get error() {
-      return globalStore.error
-    },
     child: children.child,
     peek: children.peek,
-    disableMcp: children.disableMcp,
     queryOptions: queryOptionsApi,
-    // bootstrap,
-    updateConfig: updateConfigMutation.mutateAsync,
     project: projectApi,
     session,
-    mcp: {
-      toggle: async (directory: string, name: string) => {
-        const key = directoryKey(directory)
-        const sdk = sdkFor(key)
-        const status = children.child(key, { bootstrap: false })[0].mcp[name].status
-        await toggleMcp({
-          status,
-          connect: async () => {
-            await sdk.mcp.connect({ name })
-          },
-          disconnect: async () => {
-            await sdk.mcp.disconnect({ name })
-          },
-          authenticate: async () => {
-            await sdk.mcp.auth.authenticate({ name })
-          },
-          refresh: async () => {
-            await queryClient.refetchQueries(queryOptionsApi.mcp(key))
-            await queryClient.refetchQueries(queryOptionsApi.mcpResources(key))
-          },
-        })
-      },
-    },
   }
 }
 
 export function createServerSyncContext(serverSDK: ServerSDK) {
   const inner = createServerSyncContextInner(serverSDK)
   return Object.assign(inner, {
-    ensureDirSyncContext: createRefCountMap(
-      (dir) => createDirSyncContext(dir, inner, serverSDK),
-      (dir) => inner.disableMcp(dir),
-      directoryKey,
-    ),
+    ensureDirSyncContext: createRefCountMap((dir) => createDirSyncContext(dir, inner, serverSDK), undefined, directoryKey),
   })
 }
 

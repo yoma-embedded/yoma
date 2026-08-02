@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, For, Show, type JSX } from "solid-js"
 import { useNavigate } from "@solidjs/router"
-import type { Session } from "@opencode-ai/sdk/v2/client"
+import type { Session } from "@yoma-desktop/kernel"
 import { Icon as IconV2 } from "@yoma-desktop/ui/v2/icon"
 import { IconButtonV2 } from "@yoma-desktop/ui/v2/icon-button-v2"
 import { TooltipV2 } from "@yoma-desktop/ui/v2/tooltip-v2"
@@ -39,9 +39,6 @@ export function CodexSidebar(props: { onOpenSearch: () => void }) {
   const navigate = useNavigate()
 
   const projects = createMemo(() => layout.projects.list())
-  const projectByID = createMemo(
-    () => new Map(projects().flatMap((project) => (project.id ? [[project.id, project] as const] : []))),
-  )
 
   const activeSessionId = createMemo(() => {
     const route = layout.route()
@@ -49,7 +46,7 @@ export function CodexSidebar(props: { onOpenSearch: () => void }) {
   })
 
   function openSession(session: Session) {
-    const directory = projectForSession(session, projects(), projectByID())?.worktree ?? session.directory
+    const directory = projectForSession(session, projects())?.worktree ?? session.directory
     layout.projects.open(directory)
     const tab = tabs.addSessionTab({ server: server.key, sessionId: session.id })
     tabs.select(tab)
@@ -220,9 +217,9 @@ function ProjectItem(props: {
   const sessions = createMemo(() => {
     if (!open()) return [] as Session[]
     const now = Date.now()
-    return [props.project.worktree, ...(props.project.sandboxes ?? [])]
-      .flatMap((dir) => sortedRootSessions(serverSync().child(dir, { bootstrap: true })[0], now))
-      .sort((a, b) => sessionTime(b) - sessionTime(a))
+    return sortedRootSessions(serverSync().child(props.project.worktree, { bootstrap: true })[0], now).sort(
+      (a, b) => sessionTime(b) - sessionTime(a),
+    )
   })
 
   return (
@@ -352,7 +349,7 @@ function NewFolderDialog(props: { server: ServerConnection.Any; onCreated: (path
   const global = useGlobal()
   const pickDirectory = useDirectoryPicker()
   const { sync } = global.ensureServerCtx(props.server)
-  const [parent, setParent] = createSignal(sync.data.path.home || sync.data.path.directory || "")
+  const [parent, setParent] = createSignal(sync.data.path.directory || "")
   const [name, setName] = createSignal("")
   const [busy, setBusy] = createSignal(false)
   const [error, setError] = createSignal("")

@@ -1,25 +1,17 @@
 import { Binary } from "@yoma-desktop/util/binary"
 import { produce, reconcile, type SetStoreFunction, type Store } from "solid-js/store"
-import type {
-  Message,
-  Part,
-  PermissionRequest,
-  Project,
-  QuestionRequest,
-  Session,
-  SessionStatus,
-  SnapshotFileDiff,
-  Todo,
-} from "@opencode-ai/sdk/v2/client"
+import type { KernelEvent, Session } from "@yoma-desktop/kernel"
 import type { State, VcsCache } from "./types"
 import { trimSessions } from "./session-trim"
 import { dropSessionCaches } from "./session-cache"
-import { diffs as list, message as clean } from "@/utils/diffs"
 
-const SKIP_PARTS = new Set(["patch", "step-start", "step-finish"])
-const SESSION_CONTENT_EVENTS = new Set([
-  "session.diff",
-  "todo.updated",
+/**
+ * 只在"这个目录当前不渲染会话内容"时才跳过的事件。
+ *
+ * 相对 opencode 少了 session.diff / todo.updated / question.*,原因同 State:内核没有
+ * 文件快照、没有 todo 工具、没有问答请求。
+ */
+const SESSION_CONTENT_EVENTS = new Set<KernelEvent["type"]>([
   "session.status",
   "message.updated",
   "message.removed",
@@ -28,47 +20,21 @@ const SESSION_CONTENT_EVENTS = new Set([
   "message.part.delta",
   "permission.asked",
   "permission.replied",
-  "question.asked",
-  "question.replied",
-  "question.rejected",
 ])
 
-export function applyGlobalEvent(input: {
-  event: { type: string; properties?: unknown }
-  project: Project[]
-  setGlobalProject: (next: Project[] | ((draft: Project[]) => Project[])) => void
-  refresh: () => void
-}) {
-  if (input.event.type === "global.disposed" || input.event.type === "server.connected") {
+export function applyGlobalEvent(input: { event: KernelEvent; refresh: () => void }) {
+  // 删掉的:project.updated —— 内核不推项目事件,而且项目列表按 lastOpened 排序,
+  // 原来那套按 id 二分插入的 upsert 已经不成立。项目变更走 refresh 重新拉。
+  //
+  // 原来的 global.disposed / server.connected 合并成了 kernel.connected —— host 首次
+  // 就绪和重连成功推的是同一条事件。
+  if (input.event.type === "kernel.connected") {
     input.refresh()
-    return
   }
-
-  if (input.event.type !== "project.updated") return
-  const properties = input.event.properties as Project
-  const result = Binary.search(input.project, properties.id, (s) => s.id)
-  if (result.found) {
-    input.setGlobalProject(
-      produce((draft) => {
-        draft[result.index] = { ...draft[result.index], ...properties }
-      }),
-    )
-    return
-  }
-  input.setGlobalProject(
-    produce((draft) => {
-      draft.splice(result.index, 0, properties)
-    }),
-  )
 }
 
-function cleanupSessionCaches(
-  setStore: SetStoreFunction<State>,
-  sessionID: string,
-  setSessionTodo?: (sessionID: string, todos: Todo[] | undefined) => void,
-) {
+function cleanupSessionCaches(setStore: SetStoreFunction<State>, sessionID: string) {
   if (!sessionID) return
-  setSessionTodo?.(sessionID, undefined)
   setStore(
     produce((draft) => {
       dropSessionCaches(draft, [sessionID])
@@ -80,24 +46,17 @@ export function cleanupDroppedSessionCaches(
   store: Store<State>,
   setStore: SetStoreFunction<State>,
   next: Session[],
-  setSessionTodo?: (sessionID: string, todos: Todo[] | undefined) => void,
 ) {
   const keep = new Set(next.map((item) => item.id))
   const stale = [
     ...Object.keys(store.message),
-    ...Object.keys(store.session_diff),
-    ...Object.keys(store.todo),
     ...Object.keys(store.permission),
-    ...Object.keys(store.question),
     ...Object.keys(store.session_status),
     ...Object.values(store.part)
       .map((parts) => parts?.find((part) => !!part?.sessionID)?.sessionID)
       .filter((sessionID): sessionID is string => !!sessionID),
   ].filter((sessionID, index, list) => !keep.has(sessionID) && list.indexOf(sessionID) === index)
   if (stale.length === 0) return
-  for (const sessionID of stale) {
-    setSessionTodo?.(sessionID, undefined)
-  }
   setStore(
     produce((draft) => {
       dropSessionCaches(draft, stale)
@@ -105,16 +64,20 @@ export function cleanupDroppedSessionCaches(
   )
 }
 
+/**
+ * 把一条内核事件归约进某个目录的 store。
+ *
+ * `event` 是 KernelEvent 本身,**不是** opencode 那层 `{ type, properties }` 信封 ——
+ * 内核事件的字段是平铺的(`event.session` / `event.message` / `event.part`),而且判别
+ * 联合让 switch 自动收窄,所以这里一个 cast 都不需要。信封没了是有意的:之前那版按
+ * `event.properties.info` 取值,在内核事件上全是 undefined,静默什么都不做。
+ */
 export function applyDirectoryEvent(input: {
-  event: { type: string; properties?: unknown }
+  event: KernelEvent
   store: Store<State>
   setStore: SetStoreFunction<State>
-  push: (directory: string) => void
   directory: string
-  loadLsp: () => void
-  loadReferences?: () => void
   vcsCache?: VcsCache
-  setSessionTodo?: (sessionID: string, todos: Todo[] | undefined) => void
   retainedLimit?: number
   sessionContent?: boolean
   permission?: State["permission"]
@@ -123,12 +86,8 @@ export function applyDirectoryEvent(input: {
   if (input.sessionContent === false && SESSION_CONTENT_EVENTS.has(event.type)) return
   const limit = Math.max(input.store.limit, input.retainedLimit ?? 0)
   switch (event.type) {
-    case "server.instance.disposed": {
-      input.push(input.directory)
-      return
-    }
     case "session.created": {
-      const info = (event.properties as { info: Session }).info
+      const info = event.session
       const result = Binary.search(input.store.session, info.id, (s) => s.id)
       if (result.found) {
         input.setStore("session", result.index, reconcile(info))
@@ -138,26 +97,26 @@ export function applyDirectoryEvent(input: {
       next.splice(result.index, 0, info)
       const trimmed = trimSessions(next, { limit, permission: input.permission ?? input.store.permission })
       input.setStore("session", reconcile(trimmed, { key: "id" }))
-      cleanupDroppedSessionCaches(input.store, input.setStore, trimmed, input.setSessionTodo)
-      if (!info.parentID) input.setStore("sessionTotal", (value) => value + 1)
+      cleanupDroppedSessionCaches(input.store, input.setStore, trimmed)
+      input.setStore("sessionTotal", (value) => value + 1)
       break
     }
     case "session.updated": {
-      const info = (event.properties as { info: Session }).info
+      const info = event.session
       const result = Binary.search(input.store.session, info.id, (s) => s.id)
       if (info.time.archived) {
-        if (input.store.session[result.index]!.time.archived === info.time.archived) break
         if (result.found) {
+          // 已经归档过就什么都别做,否则 sessionTotal 会被重复减。
+          if (input.store.session[result.index]!.time.archived === info.time.archived) break
           input.setStore(
             "session",
             produce((draft) => {
               draft.splice(result.index, 1)
             }),
           )
+          input.setStore("sessionTotal", (value) => Math.max(0, value - 1))
         }
-        cleanupSessionCaches(input.setStore, info.id, input.setSessionTodo)
-        if (info.parentID) break
-        input.setStore("sessionTotal", (value) => Math.max(0, value - 1))
+        cleanupSessionCaches(input.setStore, info.id)
         break
       }
       if (result.found) {
@@ -168,12 +127,12 @@ export function applyDirectoryEvent(input: {
       next.splice(result.index, 0, info)
       const trimmed = trimSessions(next, { limit, permission: input.permission ?? input.store.permission })
       input.setStore("session", reconcile(trimmed, { key: "id" }))
-      cleanupDroppedSessionCaches(input.store, input.setStore, trimmed, input.setSessionTodo)
+      cleanupDroppedSessionCaches(input.store, input.setStore, trimmed)
       break
     }
     case "session.deleted": {
-      const info = (event.properties as { info: Session }).info
-      const result = Binary.search(input.store.session, info.id, (s) => s.id)
+      // 内核只推 id,不回带整个 Session —— 那条记录在 host 侧已经没了。
+      const result = Binary.search(input.store.session, event.sessionID, (s) => s.id)
       if (result.found) {
         input.setStore(
           "session",
@@ -181,30 +140,17 @@ export function applyDirectoryEvent(input: {
             draft.splice(result.index, 1)
           }),
         )
+        input.setStore("sessionTotal", (value) => Math.max(0, value - 1))
       }
-      cleanupSessionCaches(input.setStore, info.id, input.setSessionTodo)
-      if (info.parentID) break
-      input.setStore("sessionTotal", (value) => Math.max(0, value - 1))
-      break
-    }
-    case "session.diff": {
-      const props = event.properties as { sessionID: string; diff: SnapshotFileDiff[] }
-      input.setStore("session_diff", props.sessionID, reconcile(list(props.diff), { key: "file" }))
-      break
-    }
-    case "todo.updated": {
-      const props = event.properties as { sessionID: string; todos: Todo[] }
-      input.setStore("todo", props.sessionID, reconcile(props.todos, { key: "id" }))
-      input.setSessionTodo?.(props.sessionID, props.todos)
+      cleanupSessionCaches(input.setStore, event.sessionID)
       break
     }
     case "session.status": {
-      const props = event.properties as { sessionID: string; status: SessionStatus }
-      input.setStore("session_status", props.sessionID, reconcile(props.status))
+      input.setStore("session_status", event.sessionID, reconcile(event.status))
       break
     }
     case "message.updated": {
-      const info = clean((event.properties as { info: Message }).info)
+      const info = event.message
       const messages = input.store.message[info.sessionID]
       if (!messages) {
         input.setStore("message", info.sessionID, [info])
@@ -225,28 +171,27 @@ export function applyDirectoryEvent(input: {
       break
     }
     case "message.removed": {
-      const props = event.properties as { sessionID: string; messageID: string }
+      const { sessionID, messageID } = event
       input.setStore(
         produce((draft) => {
-          const messages = draft.message[props.sessionID]
+          const messages = draft.message[sessionID]
           if (messages) {
-            const result = Binary.search(messages, props.messageID, (m) => m.id)
+            const result = Binary.search(messages, messageID, (m) => m.id)
             if (result.found) messages.splice(result.index, 1)
           }
-          const parts = draft.part[props.messageID]
+          const parts = draft.part[messageID]
           if (parts) {
             for (const part of parts) {
               delete draft.part_text_accum_delta[part.id]
             }
           }
-          delete draft.part[props.messageID]
+          delete draft.part[messageID]
         }),
       )
       break
     }
     case "message.part.updated": {
-      const part = (event.properties as { part: Part }).part
-      if (SKIP_PARTS.has(part.type)) break
+      const part = event.part
       input.setStore(
         produce((draft) => {
           delete draft.part_text_accum_delta[part.id]
@@ -272,64 +217,65 @@ export function applyDirectoryEvent(input: {
       break
     }
     case "message.part.removed": {
-      const props = event.properties as { messageID: string; partID: string }
+      const { messageID, partID } = event
       input.setStore(
         produce((draft) => {
-          delete draft.part_text_accum_delta[props.partID]
+          delete draft.part_text_accum_delta[partID]
         }),
       )
-      const parts = input.store.part[props.messageID]
+      const parts = input.store.part[messageID]
       if (!parts) break
-      const result = Binary.search(parts, props.partID, (p) => p.id)
+      const result = Binary.search(parts, partID, (p) => p.id)
       if (result.found) {
         input.setStore(
           produce((draft) => {
-            const list = draft.part[props.messageID]
+            const list = draft.part[messageID]
             if (!list) return
-            const next = Binary.search(list, props.partID, (p) => p.id)
+            const next = Binary.search(list, partID, (p) => p.id)
             if (!next.found) return
             list.splice(next.index, 1)
-            if (list.length === 0) delete draft.part[props.messageID]
+            if (list.length === 0) delete draft.part[messageID]
           }),
         )
       }
       break
     }
     case "message.part.delta": {
-      const props = event.properties as { messageID: string; partID: string; field: string; delta: string }
-      const parts = input.store.part[props.messageID]
+      // 内核只对 text 发增量(field 的类型就是字面量 "text"),所以这里不再按任意字段名
+      // 动态索引 —— 非文本 part 收到 delta 直接丢弃。
+      const parts = input.store.part[event.messageID]
       if (!parts) break
-      const result = Binary.search(parts, props.partID, (p) => p.id)
+      const result = Binary.search(parts, event.partID, (p) => p.id)
       if (!result.found) break
-      const field = props.field as keyof (typeof parts)[number]
-      const current = parts[result.index]?.[field]
+      const target = parts[result.index]
+      if (!target || !("text" in target)) break
+      const current = target.text
       input.setStore(
         "part_text_accum_delta",
-        props.partID,
-        (existing) => (existing ?? (typeof current === "string" ? current : "")) + props.delta,
+        event.partID,
+        (existing) => (existing ?? current ?? "") + event.delta,
       )
       input.setStore(
         "part",
-        props.messageID,
+        event.messageID,
         produce((draft) => {
           const part = draft[result.index]
-          const field = props.field as keyof typeof part
-          const existing = part[field] as string | undefined
-          ;(part[field] as string) = (existing ?? "") + props.delta
+          if (!part || !("text" in part)) return
+          part.text = (part.text ?? "") + event.delta
         }),
       )
       break
     }
-    case "vcs.branch.updated": {
-      const props = event.properties as { branch?: string }
-      if (input.store.vcs?.branch === props.branch) break
-      const next = { ...input.store.vcs, branch: props.branch }
-      input.setStore("vcs", next)
-      if (input.vcsCache) input.vcsCache.setStore("value", next)
+    // 原来是 vcs.branch.updated(只带一个分支名)。内核推的是完整的 VcsInfo,
+    // 于是这里整块替换而不是打补丁 —— 不用再为缺的 dirty 字段编一个默认值。
+    case "vcs.updated": {
+      if (!event.info) break
+      input.setStore("vcs", reconcile(event.info))
+      if (input.vcsCache) input.vcsCache.setStore("value", event.info)
       break
     }
     case "permission.asked": {
-      const permission = event.properties as PermissionRequest
+      const permission = event.request
       const permissions = input.store.permission[permission.sessionID]
       if (!permissions) {
         input.setStore("permission", permission.sessionID, [permission])
@@ -350,64 +296,30 @@ export function applyDirectoryEvent(input: {
       break
     }
     case "permission.replied": {
-      const props = event.properties as { sessionID: string; requestID: string }
-      const permissions = input.store.permission[props.sessionID]
-      if (!permissions) break
-      const result = Binary.search(permissions, props.requestID, (p) => p.id)
-      if (!result.found) break
-      input.setStore(
-        "permission",
-        props.sessionID,
-        produce((draft) => {
-          draft.splice(result.index, 1)
-        }),
-      )
-      break
-    }
-    case "question.asked": {
-      const question = event.properties as QuestionRequest
-      const questions = input.store.question[question.sessionID]
-      if (!questions) {
-        input.setStore("question", question.sessionID, [question])
+      // 内核的 permission.replied 只带请求 id(host 侧全局唯一),不带 sessionID,
+      // 所以按 id 反查它挂在哪个会话下。每个会话的数组都按 id 有序,可以二分。
+      for (const sessionID of Object.keys(input.store.permission)) {
+        const permissions = input.store.permission[sessionID]
+        if (!permissions) continue
+        const result = Binary.search(permissions, event.id, (p) => p.id)
+        if (!result.found) continue
+        input.setStore(
+          "permission",
+          sessionID,
+          produce((draft) => {
+            draft.splice(result.index, 1)
+          }),
+        )
         break
       }
-      const result = Binary.search(questions, question.id, (q) => q.id)
-      if (result.found) {
-        input.setStore("question", question.sessionID, result.index, reconcile(question))
-        break
-      }
-      input.setStore(
-        "question",
-        question.sessionID,
-        produce((draft) => {
-          draft.splice(result.index, 0, question)
-        }),
-      )
-      break
-    }
-    case "question.replied":
-    case "question.rejected": {
-      const props = event.properties as { sessionID: string; requestID: string }
-      const questions = input.store.question[props.sessionID]
-      if (!questions) break
-      const result = Binary.search(questions, props.requestID, (q) => q.id)
-      if (!result.found) break
-      input.setStore(
-        "question",
-        props.sessionID,
-        produce((draft) => {
-          draft.splice(result.index, 1)
-        }),
-      )
-      break
-    }
-    case "lsp.updated": {
-      input.loadLsp()
-      break
-    }
-    case "reference.updated": {
-      input.loadReferences?.()
       break
     }
   }
+  // 删掉的 case,以及原因:
+  //   session.diff / todo.updated          内核没有文件快照,也没有 todo 工具
+  //   question.asked / replied / rejected  内核没有问答请求
+  //   lsp.updated / reference.updated      内核没有 LSP,也没有 references
+  //   server.instance.disposed             内核没有 per-directory 实例;host 重连推的是
+  //                                        kernel.connected,server-sync 收到后统一把所有
+  //                                        已打开目录重新入队,不再需要这里的 push 回调
 }

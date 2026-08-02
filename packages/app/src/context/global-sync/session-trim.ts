@@ -1,4 +1,4 @@
-import type { PermissionRequest, Session } from "@opencode-ai/sdk/v2/client"
+import type { PermissionRequest, Session } from "@yoma-desktop/kernel"
 import { cmp } from "./utils"
 import { SESSION_RECENT_LIMIT, SESSION_RECENT_WINDOW } from "./types"
 
@@ -30,6 +30,13 @@ export function takeRecentSessions(sessions: Session[], limit: number, cutoff: n
   return selected
 }
 
+/**
+ * 裁剪目录 store 里保留的会话。
+ *
+ * 内核里会话之间没有父子关系(树在单个 session 内部),所以原来的 root/child 两段逻辑
+ * 塌成一段:按最近活动取 limit 条,再补一批最近窗口内的,外加任何还挂着未决权限请求的
+ * 会话 —— 弹窗还开着的会话被裁掉会直接丢掉待回答的请求。
+ */
 export function trimSessions(
   input: Session[],
   options: { limit: number; permission: Record<string, PermissionRequest[]>; now?: number },
@@ -40,18 +47,11 @@ export function trimSessions(
     .filter((s) => !!s?.id)
     .filter((s) => !s.time?.archived)
     .sort((a, b) => cmp(a.id, b.id))
-  const roots = all.filter((s) => !s.parentID)
-  roots.sort(compareSessionRecent)
-  const children = all.filter((s) => !!s.parentID)
-  const base = roots.slice(0, limit)
-  const recent = takeRecentSessions(roots.slice(limit), SESSION_RECENT_LIMIT, cutoff)
-  const keepRoots = [...base, ...recent]
-  const keepRootIds = new Set(keepRoots.map((s) => s.id))
-  const keepChildren = children.filter((s) => {
-    if (s.parentID && keepRootIds.has(s.parentID)) return true
-    const perms = options.permission[s.id] ?? []
-    if (perms.length > 0) return true
-    return sessionUpdatedAt(s) > cutoff
-  })
-  return [...keepRoots, ...keepChildren].sort((a, b) => cmp(a.id, b.id))
+  const ordered = all.slice().sort(compareSessionRecent)
+  const base = ordered.slice(0, limit)
+  const recent = takeRecentSessions(ordered.slice(limit), SESSION_RECENT_LIMIT, cutoff)
+  const keep = [...base, ...recent]
+  const keepIds = new Set(keep.map((s) => s.id))
+  const pending = all.filter((s) => !keepIds.has(s.id) && (options.permission[s.id]?.length ?? 0) > 0)
+  return [...keep, ...pending].sort((a, b) => cmp(a.id, b.id))
 }

@@ -1,32 +1,25 @@
 import { describe, expect, test } from "bun:test"
 import type { retry } from "@yoma-desktop/util/retry"
-import type { Message, OpencodeClient, Part, Session } from "@opencode-ai/sdk/v2/client"
+import type { MessagePage, Message, Part, Session } from "@yoma-desktop/kernel"
+import type { Sdk } from "@/utils/server"
 import { createServerSession } from "./server-session"
 
-const session = (id: string, parentID?: string): Session => ({
+const session = (id: string): Session => ({
   id,
-  slug: id,
-  projectID: "project",
   directory: "/repo",
   title: id,
-  version: "1",
-  parentID,
   time: { created: 1, updated: 1 },
 })
 
 type UserMessage = Extract<Message, { role: "user" }>
 type TextPart = Extract<Part, { type: "text" }>
-type MessageResponse = {
-  data: { info: Message; parts: Part[] }[]
-  response: { headers: Headers }
-}
+type MessageResponse = MessagePage
 
 const userMessage = (id: string, input: Partial<UserMessage> = {}): UserMessage => ({
   id,
   sessionID: "child",
   role: "user",
   time: { created: 1 },
-  agent: "build",
   model: { providerID: "provider", modelID: "model" },
   ...input,
 })
@@ -40,9 +33,10 @@ const textPart = (messageID: string, input: Partial<TextPart> = {}): TextPart =>
   ...input,
 })
 
-const response = (data: MessageResponse["data"] = [], cursor?: string): MessageResponse => ({
-  data,
-  response: { headers: new Headers(cursor ? { "x-next-cursor": cursor } : undefined) },
+// 游标现在在 body 里(nextCursor),不再是 HTTP 响应头 —— 内核没有 HTTP。
+const response = (items: MessageResponse["items"] = [], cursor?: string): MessageResponse => ({
+  items,
+  nextCursor: cursor,
 })
 
 const deferredResponse = () => Promise.withResolvers<MessageResponse>()
@@ -53,7 +47,7 @@ function messageClient(...responses: Array<MessageResponse | Promise<MessageResp
   const waiting = new Map<number, () => void>()
   const client = {
     session: {
-      get: async () => ({ data: session("child", "root") }),
+      get: async () => session("child"),
       messages: (input: unknown) => {
         requests.push(input)
         waiting.get(requests.length)?.()
@@ -61,7 +55,7 @@ function messageClient(...responses: Array<MessageResponse | Promise<MessageResp
         return responses[index++]
       },
     },
-  } as unknown as OpencodeClient
+  } as unknown as Sdk
   return Object.assign(client, {
     requests,
     requested(count: number) {
@@ -87,40 +81,28 @@ function setup(sessions: Record<string, Session>) {
   const messages: unknown[] = []
   const client = {
     session: {
-      get: async (input: unknown) => {
-        get.push(input)
-        const id = (input as { sessionID: string }).sessionID
-        return { data: sessions[id] }
+      // 内核客户端签名是 get(sessionID),不再是 get({ sessionID })。
+      get: async (sessionID: string) => {
+        get.push(sessionID)
+        return sessions[sessionID]
       },
       messages: async (input: unknown) => {
         messages.push(input)
         return response()
       },
-      diff: async () => ({ data: [] }),
-      todo: async () => ({ data: [] }),
     },
-  } as unknown as OpencodeClient
+  } as unknown as Sdk
   return { get, messages, store: createServerSession(client) }
 }
 
 describe("server session", () => {
-  test("resolves lineage by session ID without directory", async () => {
-    const ctx = setup({ child: session("child", "root"), root: session("root") })
-
-    const result = await ctx.store.lineage.resolve("child")
-
-    expect(result.root.id).toBe("root")
-    expect(ctx.get).toEqual([{ sessionID: "child" }, { sessionID: "root" }])
-    expect(ctx.store.lineage.peek("child")).toEqual(result)
-  })
-
   test("loads session content through the server client", async () => {
     const ctx = setup({ root: session("root") })
 
     await ctx.store.sync("root")
 
-    expect(ctx.get).toEqual([{ sessionID: "root" }])
-    expect(ctx.messages).toEqual([{ sessionID: "root", limit: 2, before: undefined }])
+    expect(ctx.get).toEqual(["root"])
+    expect(ctx.messages).toEqual([{ sessionID: "root", limit: 2, cursor: undefined }])
     expect(ctx.store.data.message.root).toEqual([])
   })
 
@@ -132,8 +114,8 @@ describe("server session", () => {
     const store = createServerSession(messageClient(pending.promise))
     const loading = store.sync("child")
 
-    store.apply({ type: "message.updated", properties: { info: live } })
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part: livePart, time: 2 } })
+    store.apply({ type: "message.updated", message: live })
+    store.apply({ type: "message.part.updated", part: livePart })
     pending.resolve(response([{ info: user, parts: [] }]))
     await loading
 
@@ -150,8 +132,8 @@ describe("server session", () => {
     const store = createServerSession(messageClient(pending.promise))
     const loading = store.sync("child")
 
-    store.apply({ type: "message.updated", properties: { info: live } })
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part: livePart, time: 2 } })
+    store.apply({ type: "message.updated", message: live })
+    store.apply({ type: "message.part.updated", part: livePart })
     pending.resolve(response([{ info: fetched, parts: [fetchedPart] }]))
     await loading
 
@@ -167,10 +149,12 @@ describe("server session", () => {
     const store = createServerSession(messageClient(pending.promise))
     const loading = store.sync("child")
 
-    store.apply({ type: "message.removed", properties: { sessionID: "child", messageID: removed.id } })
+    store.apply({ type: "message.removed", sessionID: "child", messageID: removed.id })
     store.apply({
       type: "message.part.removed",
-      properties: { sessionID: "child", messageID: kept.id, partID: part.id },
+      sessionID: "child",
+      messageID: kept.id,
+      partID: part.id,
     })
     pending.resolve(
       response([
@@ -191,10 +175,10 @@ describe("server session", () => {
     const store = createServerSession(messageClient(firstResponse.promise, secondResponse.promise))
     const first = store.sync("child")
 
-    store.apply({ type: "message.removed", properties: { sessionID: "child", messageID: message.id } })
+    store.apply({ type: "message.removed", sessionID: "child", messageID: message.id })
     store.apply({
       type: "session.deleted",
-      properties: { sessionID: "child", info: session("child", "root") },
+      sessionID: "child",
     })
     const second = store.sync("child")
 
@@ -214,11 +198,11 @@ describe("server session", () => {
     const first = store.sync("child")
     store.apply({
       type: "session.deleted",
-      properties: { sessionID: "child", info: session("child", "root") },
+      sessionID: "child",
     })
     const second = store.sync("child")
 
-    store.apply({ type: "message.removed", properties: { sessionID: "child", messageID: message.id } })
+    store.apply({ type: "message.removed", sessionID: "child", messageID: message.id })
     firstResponse.resolve(response())
     await first
     secondResponse.resolve(response([{ info: message, parts: [] }]))
@@ -234,8 +218,8 @@ describe("server session", () => {
     await store.sync("child")
     const refreshing = store.sync("child", { force: true })
 
-    store.apply({ type: "message.removed", properties: { sessionID: "child", messageID: message.id } })
-    store.apply({ type: "message.updated", properties: { info: message } })
+    store.apply({ type: "message.removed", sessionID: "child", messageID: message.id })
+    store.apply({ type: "message.updated", message: message })
     pending.resolve(response())
     await refreshing
 
@@ -250,8 +234,8 @@ describe("server session", () => {
     await store.sync("child")
     const refreshing = store.sync("child", { force: true })
 
-    store.apply({ type: "message.removed", properties: { sessionID: "child", messageID: message.id } })
-    store.apply({ type: "message.updated", properties: { info: message } })
+    store.apply({ type: "message.removed", sessionID: "child", messageID: message.id })
+    store.apply({ type: "message.updated", message: message })
     pending.resolve(response([{ info: message, parts: [part] }]))
     await refreshing
 
@@ -270,7 +254,7 @@ describe("server session", () => {
     await store.sync("child")
     const refreshing = store.sync("child", { force: true })
 
-    store.apply({ type: "message.removed", properties: { sessionID: "child", messageID: message.id } })
+    store.apply({ type: "message.removed", sessionID: "child", messageID: message.id })
     store.optimistic.add({ sessionID: "child", message, parts: [part] })
     pending.resolve(response([{ info: message, parts: [stale] }]))
     await refreshing
@@ -286,7 +270,7 @@ describe("server session", () => {
   test("drops stale event content omitted by a complete initial page", async () => {
     const stale = userMessage("stale")
     const store = createServerSession(messageClient(response()))
-    store.apply({ type: "message.updated", properties: { info: stale } })
+    store.apply({ type: "message.updated", message: stale })
 
     await store.sync("child")
 
@@ -297,7 +281,7 @@ describe("server session", () => {
     const live = userMessage("message-1")
     const fetched = userMessage("message-2", { time: { created: 2 } })
     const store = createServerSession(messageClient(response([{ info: fetched, parts: [] }], "older")))
-    store.apply({ type: "message.updated", properties: { info: live } })
+    store.apply({ type: "message.updated", message: live })
 
     await store.sync("child")
 
@@ -313,10 +297,12 @@ describe("server session", () => {
     store.optimistic.add({ sessionID: "child", message, parts: [part] })
     store.optimistic.add({ sessionID: "child", message: kept, parts: [keptPart] })
 
-    store.apply({ type: "message.removed", properties: { sessionID: "child", messageID: message.id } })
+    store.apply({ type: "message.removed", sessionID: "child", messageID: message.id })
     store.apply({
       type: "message.part.removed",
-      properties: { sessionID: "child", messageID: kept.id, partID: keptPart.id },
+      sessionID: "child",
+      messageID: kept.id,
+      partID: keptPart.id,
     })
     await store.sync("child", { force: true })
 
@@ -396,7 +382,9 @@ describe("server session", () => {
     await store.sync("child")
     store.apply({
       type: "message.part.removed",
-      properties: { sessionID: "child", messageID: message.id, partID: confirmed.id },
+      sessionID: "child",
+      messageID: message.id,
+      partID: confirmed.id,
     })
 
     await store.sync("child", { force: true })
@@ -411,7 +399,11 @@ describe("server session", () => {
     store.optimistic.add({ sessionID: "child", message, parts: [part] })
     store.apply({
       type: "message.part.delta",
-      properties: { sessionID: "child", messageID: message.id, partID: part.id, field: "text", delta: " delta" },
+      sessionID: "child",
+      messageID: message.id,
+      partID: part.id,
+      field: "text",
+      delta: " delta",
     })
 
     store.optimistic.remove({ sessionID: "child", messageID: message.id })
@@ -425,7 +417,7 @@ describe("server session", () => {
     const part = textPart(message.id)
     const store = setup({ child: session("child") }).store
     store.optimistic.add({ sessionID: "child", message, parts: [part] })
-    store.apply({ type: "message.updated", properties: { sessionID: "child", info: message } })
+    store.apply({ type: "message.updated", message: message })
 
     store.optimistic.remove({ sessionID: "child", messageID: message.id })
 
@@ -438,8 +430,8 @@ describe("server session", () => {
     const part = textPart(message.id)
     const store = setup({ child: session("child") }).store
     store.optimistic.add({ sessionID: "child", message, parts: [part] })
-    store.apply({ type: "message.updated", properties: { sessionID: "child", info: message } })
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part, time: 2 } })
+    store.apply({ type: "message.updated", message: message })
+    store.apply({ type: "message.part.updated", part: part })
 
     store.optimistic.remove({ sessionID: "child", messageID: message.id })
 
@@ -452,7 +444,7 @@ describe("server session", () => {
     const part = textPart(message.id)
     const store = setup({ child: session("child") }).store
     store.optimistic.add({ sessionID: "child", message, parts: [part] })
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part, time: 2 } })
+    store.apply({ type: "message.part.updated", part: part })
 
     store.optimistic.remove({ sessionID: "child", messageID: message.id })
 
@@ -465,8 +457,8 @@ describe("server session", () => {
     const message = userMessage("message")
     const part = textPart(message.id, { text: "stale" })
     const store = createServerSession(messageClient(pending.promise))
-    store.apply({ type: "message.updated", properties: { info: message } })
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part, time: 1 } })
+    store.apply({ type: "message.updated", message: message })
+    store.apply({ type: "message.part.updated", part: part })
     const loading = store.sync("child")
 
     pending.resolve(response([{ info: message, parts: [] }]))
@@ -481,12 +473,16 @@ describe("server session", () => {
     const kept = textPart(message.id, { id: "part-1", text: "kept" })
     const removed: Part = { ...kept, id: "part-2", text: "removed" }
     const store = createServerSession(messageClient(pending.promise))
-    store.apply({ type: "message.updated", properties: { info: message } })
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part: kept, time: 1 } })
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part: removed, time: 1 } })
+    store.apply({ type: "message.updated", message: message })
+    store.apply({ type: "message.part.updated", part: kept })
+    store.apply({ type: "message.part.updated", part: removed })
     store.apply({
       type: "message.part.delta",
-      properties: { sessionID: "child", messageID: message.id, partID: removed.id, field: "text", delta: " delta" },
+      sessionID: "child",
+      messageID: message.id,
+      partID: removed.id,
+      field: "text",
+      delta: " delta",
     })
     const loading = store.sync("child")
 
@@ -507,7 +503,11 @@ describe("server session", () => {
     await store.sync("child")
     store.apply({
       type: "message.part.delta",
-      properties: { sessionID: "child", messageID: message.id, partID: stale.id, field: "text", delta: " delta" },
+      sessionID: "child",
+      messageID: message.id,
+      partID: stale.id,
+      field: "text",
+      delta: " delta",
     })
 
     await store.sync("child", { force: true })
@@ -525,7 +525,11 @@ describe("server session", () => {
     await store.sync("child")
     store.apply({
       type: "message.part.delta",
-      properties: { sessionID: "child", messageID: message.id, partID: part.id, field: "text", delta: " delta" },
+      sessionID: "child",
+      messageID: message.id,
+      partID: part.id,
+      field: "text",
+      delta: " delta",
     })
 
     await store.sync("child", { force: true })
@@ -544,7 +548,11 @@ describe("server session", () => {
     await store.sync("child")
     store.apply({
       type: "message.part.delta",
-      properties: { sessionID: "child", messageID: message.id, partID: part.id, field: "text", delta: "def" },
+      sessionID: "child",
+      messageID: message.id,
+      partID: part.id,
+      field: "text",
+      delta: "def",
     })
 
     await store.sync("child", { force: true })
@@ -563,7 +571,11 @@ describe("server session", () => {
     await store.sync("child")
     store.apply({
       type: "message.part.delta",
-      properties: { sessionID: "child", messageID: message.id, partID: part.id, field: "text", delta: "bc" },
+      sessionID: "child",
+      messageID: message.id,
+      partID: part.id,
+      field: "text",
+      delta: "bc",
     })
 
     await store.sync("child", { force: true })
@@ -582,7 +594,11 @@ describe("server session", () => {
     await store.sync("child")
     store.apply({
       type: "message.part.delta",
-      properties: { sessionID: "child", messageID: message.id, partID: part.id, field: "text", delta: "b" },
+      sessionID: "child",
+      messageID: message.id,
+      partID: part.id,
+      field: "text",
+      delta: "b",
     })
 
     await store.sync("child", { force: true })
@@ -600,11 +616,11 @@ describe("server session", () => {
     const fetched = { ...stale, text: "fetched" }
     const client = messageClient(failed.promise, retried.promise)
     const store = createServerSession(client, { retry: retryImmediately })
-    store.apply({ type: "message.updated", properties: { info: message } })
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part: stale, time: 1 } })
+    store.apply({ type: "message.updated", message: message })
+    store.apply({ type: "message.part.updated", part: stale })
     const loading = store.sync("child")
 
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part: intermediate, time: 2 } })
+    store.apply({ type: "message.part.updated", part: intermediate })
     failed.reject(new Error("failed to fetch"))
     await client.requested(2)
     retried.resolve(response([{ info: message, parts: [fetched] }]))
@@ -620,13 +636,17 @@ describe("server session", () => {
     const part = textPart(message.id, { text: "stale" })
     const client = messageClient(failed.promise, retried.promise)
     const store = createServerSession(client, { retry: retryImmediately })
-    store.apply({ type: "message.updated", properties: { info: message } })
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part, time: 1 } })
+    store.apply({ type: "message.updated", message: message })
+    store.apply({ type: "message.part.updated", part: part })
     const loading = store.sync("child")
 
     store.apply({
       type: "message.part.delta",
-      properties: { sessionID: "child", messageID: message.id, partID: part.id, field: "text", delta: " delta" },
+      sessionID: "child",
+      messageID: message.id,
+      partID: part.id,
+      field: "text",
+      delta: " delta",
     })
     failed.reject(new Error("failed to fetch"))
     await client.requested(2)
@@ -648,7 +668,9 @@ describe("server session", () => {
 
     store.apply({
       type: "message.part.removed",
-      properties: { sessionID: "child", messageID: message.id, partID: part.id },
+      sessionID: "child",
+      messageID: message.id,
+      partID: part.id,
     })
     failed.reject(new Error("failed to fetch"))
     await client.requested(3)
@@ -668,7 +690,7 @@ describe("server session", () => {
     await store.sync("child")
     const loading = store.sync("child", { force: true })
 
-    store.apply({ type: "message.removed", properties: { sessionID: "child", messageID: message.id } })
+    store.apply({ type: "message.removed", sessionID: "child", messageID: message.id })
     failed.reject(new Error("failed to fetch"))
     await client.requested(3)
     retried.resolve(response([{ info: message, parts: [part] }]))
@@ -689,7 +711,7 @@ describe("server session", () => {
     await store.sync("child")
     const loading = store.sync("child", { force: true })
 
-    store.apply({ type: "message.removed", properties: { sessionID: "child", messageID: message.id } })
+    store.apply({ type: "message.removed", sessionID: "child", messageID: message.id })
     store.optimistic.add({ sessionID: "child", message, parts: [optimistic] })
     failed.reject(new Error("failed to fetch"))
     await client.requested(3)
@@ -712,7 +734,11 @@ describe("server session", () => {
 
     store.apply({
       type: "message.part.delta",
-      properties: { sessionID: "child", messageID: message.id, partID: part.id, field: "text", delta: " delta" },
+      sessionID: "child",
+      messageID: message.id,
+      partID: part.id,
+      field: "text",
+      delta: " delta",
     })
     failed.reject(new Error("failed to fetch"))
     await client.requested(3)
@@ -733,7 +759,7 @@ describe("server session", () => {
     const store = createServerSession(client, { retry: retryImmediately })
     const loading = store.sync("child").catch((error) => error)
 
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part, time: 2 } })
+    store.apply({ type: "message.part.updated", part: part })
     first.reject(new Error("failed to fetch"))
     await client.requested(2)
     second.reject(new Error("failed to fetch"))
@@ -753,10 +779,14 @@ describe("server session", () => {
     const refreshing = store.sync("child", { force: true })
     const live = { ...stale, time: { created: 2 } }
 
-    store.apply({ type: "message.updated", properties: { info: live } })
+    store.apply({ type: "message.updated", message: live })
     store.apply({
       type: "message.part.delta",
-      properties: { sessionID: "child", messageID: stale.id, partID: stalePart.id, field: "text", delta: " live" },
+      sessionID: "child",
+      messageID: stale.id,
+      partID: stalePart.id,
+      field: "text",
+      delta: " live",
     })
     pending.resolve(response([{ info: stale, parts: [stalePart] }]))
     await refreshing
@@ -776,7 +806,11 @@ describe("server session", () => {
 
     store.apply({
       type: "message.part.delta",
-      properties: { sessionID: "child", messageID: stale.id, partID: part.id, field: "text", delta: " live" },
+      sessionID: "child",
+      messageID: stale.id,
+      partID: part.id,
+      field: "text",
+      delta: " live",
     })
     pending.resolve(response([{ info: fetched, parts: [part] }]))
     await refreshing
@@ -794,7 +828,7 @@ describe("server session", () => {
     await store.sync("child")
     const refreshing = store.sync("child", { force: true })
 
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part: live, time: 2 } })
+    store.apply({ type: "message.part.updated", part: live })
     pending.resolve(response())
     await refreshing
 
@@ -809,9 +843,9 @@ describe("server session", () => {
     const store = createServerSession(messageClient(pending.promise))
     const loading = store.sync("child")
 
-    store.apply({ type: "message.updated", properties: { info: message } })
-    store.apply({ type: "message.removed", properties: { sessionID: "child", messageID: message.id } })
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part, time: 2 } })
+    store.apply({ type: "message.updated", message: message })
+    store.apply({ type: "message.removed", sessionID: "child", messageID: message.id })
+    store.apply({ type: "message.part.updated", part: part })
     pending.resolve(response([{ info: message, parts: [part] }]))
     await loading
 
@@ -823,10 +857,10 @@ describe("server session", () => {
     const message = userMessage("message")
     const part = textPart(message.id)
     const store = setup({ child: session("child") }).store
-    store.apply({ type: "message.updated", properties: { info: message } })
-    store.apply({ type: "message.removed", properties: { sessionID: "child", messageID: message.id } })
+    store.apply({ type: "message.updated", message: message })
+    store.apply({ type: "message.removed", sessionID: "child", messageID: message.id })
 
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part, time: 2 } })
+    store.apply({ type: "message.part.updated", part: part })
 
     expect(store.data.part[message.id]).toBeUndefined()
   })
@@ -838,7 +872,7 @@ describe("server session", () => {
       messageClient(response([{ info: message, parts: [part] }]), response([{ info: message, parts: [part] }])),
     )
     await store.sync("child")
-    store.apply({ type: "message.removed", properties: { sessionID: "child", messageID: message.id } })
+    store.apply({ type: "message.removed", sessionID: "child", messageID: message.id })
 
     await store.sync("child", { force: true })
 
@@ -855,7 +889,9 @@ describe("server session", () => {
     await store.sync("child")
     store.apply({
       type: "message.part.removed",
-      properties: { sessionID: "child", messageID: message.id, partID: part.id },
+      sessionID: "child",
+      messageID: message.id,
+      partID: part.id,
     })
 
     await store.sync("child", { force: true })
@@ -863,15 +899,9 @@ describe("server session", () => {
     expect(store.data.part[message.id]).toBeUndefined()
   })
 
-  test("does not cache skipped optimistic parts", () => {
-    const message = userMessage("message")
-    const part = { id: "part", sessionID: "child", messageID: message.id, type: "step-start" as const }
-    const store = setup({ child: session("child") }).store
-
-    store.optimistic.add({ sessionID: "child", message, parts: [part] })
-
-    expect(store.data.part[message.id]).toEqual([])
-  })
+  // 删掉的 "does not cache skipped optimistic parts":它守的是 SKIP_PARTS
+  // (step-start / step-finish / patch)不进缓存。这三种 part 在新视图模型里根本不存在,
+  // server-session 里的过滤也随之删掉了,测试没有被测行为了。
 
   test("clears stale delta buffers when replacing optimistic parts", () => {
     const message = userMessage("message")
@@ -881,7 +911,11 @@ describe("server session", () => {
     store.optimistic.add({ sessionID: "child", message, parts: [stale] })
     store.apply({
       type: "message.part.delta",
-      properties: { sessionID: "child", messageID: message.id, partID: stale.id, field: "text", delta: " delta" },
+      sessionID: "child",
+      messageID: message.id,
+      partID: stale.id,
+      field: "text",
+      delta: " delta",
     })
 
     store.optimistic.add({ sessionID: "child", message, parts: [optimistic] })
@@ -898,7 +932,7 @@ describe("server session", () => {
     await store.sync("child")
     const loading = store.history.loadMore("child")
 
-    store.apply({ type: "message.removed", properties: { sessionID: "child", messageID: older.id } })
+    store.apply({ type: "message.removed", sessionID: "child", messageID: older.id })
     pending.resolve(response([{ info: older, parts: [] }]))
     await loading
 
@@ -996,7 +1030,7 @@ describe("server session", () => {
     await store.sync("child")
     const loading = store.history.loadMore("child")
 
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part: live, time: 2 } })
+    store.apply({ type: "message.part.updated", part: live })
     pending.resolve(response([{ info: older, parts: [stale] }]))
     await loading
 
@@ -1013,10 +1047,10 @@ describe("server session", () => {
     await store.sync("child")
     const loading = store.history.loadMore("child")
 
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part, time: 3 } })
+    store.apply({ type: "message.part.updated", part: part })
     pending.resolve(response([{ info: older, parts: [] }]))
     await loading
-    store.apply({ type: "message.updated", properties: { sessionID: "child", info: newer } })
+    store.apply({ type: "message.updated", message: newer })
 
     expect(store.data.part[newer.id]).toEqual([part])
   })
@@ -1030,7 +1064,7 @@ describe("server session", () => {
     const store = createServerSession(messageClient(pending.promise, history.promise))
     const loading = store.sync("child")
 
-    store.apply({ type: "message.part.updated", properties: { sessionID: "child", part, time: 2 } })
+    store.apply({ type: "message.part.updated", part: part })
     pending.resolve(response([{ info: latest, parts: [] }], "older"))
     await loading
 
@@ -1054,7 +1088,9 @@ describe("server session", () => {
 
     store.apply({
       type: "message.part.removed",
-      properties: { sessionID: "child", messageID: older.id, partID: part.id },
+      sessionID: "child",
+      messageID: older.id,
+      partID: part.id,
     })
     initial.resolve(response([{ info: latest, parts: [] }], "older"))
     await loading
@@ -1072,7 +1108,11 @@ describe("server session", () => {
     await store.sync("child")
     store.apply({
       type: "message.part.delta",
-      properties: { sessionID: "child", messageID: message.id, partID: part.id, field: "text", delta: " delta" },
+      sessionID: "child",
+      messageID: message.id,
+      partID: part.id,
+      field: "text",
+      delta: " delta",
     })
     await store.sync("child", { force: true })
 
@@ -1083,8 +1123,8 @@ describe("server session", () => {
 
   test("applies events without a directory store", () => {
     const ctx = setup({})
-    ctx.store.apply({ type: "session.created", properties: { sessionID: "root", info: session("root") } })
-    ctx.store.apply({ type: "session.status", properties: { sessionID: "root", status: { type: "busy" } } })
+    ctx.store.apply({ type: "session.created", session: session("root") })
+    ctx.store.apply({ type: "session.status", sessionID: "root", status: { type: "busy" } })
 
     expect(ctx.store.get("root")?.directory).toBe("/repo")
     expect(ctx.store.data.session_working("root")).toBe(true)
@@ -1104,9 +1144,6 @@ describe("server session", () => {
         parentID: "parent",
         modelID: "model",
         providerID: "provider",
-        mode: "build",
-        agent: "agent",
-        path: { cwd: "/repo", root: "/repo" },
         cost: 0,
         tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
       },
@@ -1117,7 +1154,8 @@ describe("server session", () => {
       ctx.store.remember(session(`session-${index}`))
       ctx.store.apply({
         type: "session.status",
-        properties: { sessionID: `session-${index}`, status: { type: "idle" } },
+        sessionID: `session-${index}`,
+        status: { type: "idle" },
       })
     }
 

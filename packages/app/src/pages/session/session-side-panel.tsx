@@ -9,7 +9,7 @@ import { ResizeHandle } from "@yoma-desktop/ui/resize-handle"
 import { Mark } from "@yoma-desktop/ui/logo"
 import { DragDropProvider, DragDropSensors, DragOverlay, SortableProvider, closestCenter } from "@thisbeyond/solid-dnd"
 import type { DragEvent } from "@thisbeyond/solid-dnd"
-import type { SnapshotFileDiff, VcsFileDiff } from "@opencode-ai/sdk/v2"
+import type { FileDiff, VcsFileDiff } from "@yoma-desktop/kernel"
 import { ConstrainDragYAxis, getDraggableId } from "@/utils/solid-dnd"
 import { useDialog } from "@yoma-desktop/ui/context/dialog"
 
@@ -33,14 +33,13 @@ import { setSessionHandoff } from "@/pages/session/handoff"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { DebugContent } from "@/pages/session/debug/debug-content"
 import { debug as dock, type DockMode } from "@/pages/session/debug/debug-data"
-import { CmdPanel } from "@/pages/session/cmd-panel"
 import { ExplorerPanel } from "@/pages/session/explorer/explorer-panel"
 import { explorerScope } from "@/pages/session/explorer/explorer-state"
 import { getFilenameTruncated } from "@yoma-desktop/util/path"
 
-type RenderDiff = (SnapshotFileDiff & { file: string }) | VcsFileDiff
+type RenderDiff = (FileDiff & { file: string }) | VcsFileDiff
 
-function renderDiff(value: SnapshotFileDiff | VcsFileDiff): value is RenderDiff {
+function renderDiff(value: FileDiff | VcsFileDiff): value is RenderDiff {
   return typeof value.file === "string"
 }
 
@@ -76,7 +75,7 @@ function BarButton(props: {
 
 export function SessionSidePanel(props: {
   canReview: () => boolean
-  diffs: () => (SnapshotFileDiff | VcsFileDiff)[]
+  diffs: () => (FileDiff | VcsFileDiff)[]
   diffsReady: () => boolean
   empty: () => string
   hasReview: () => boolean
@@ -130,8 +129,6 @@ export function SessionSidePanel(props: {
   const switchMode = (m: DockMode) => {
     dock.open()
     dock.setMode(m)
-    // 切到 cmd 时收起底部终端面板，避免同一 PTY 双挂载（两个连接互抢尺寸）
-    if (m === "cmd") view().terminal.close()
     if (m === "changes") {
       if (!view().reviewPanel.opened()) view().reviewPanel.open()
     } else if (view().reviewPanel.opened()) {
@@ -326,7 +323,7 @@ export function SessionSidePanel(props: {
             </div>
           </Show>
 
-          {/* 顶部图标栏：changes / 调试 / cmd / file ·· ＋ / 全屏 / 收起 */}
+          {/* 顶部图标栏：changes / 调试 / file ·· ＋ / 全屏 / 收起 */}
           <div class="h-9 shrink-0 flex items-center gap-0.5 px-1.5 border-b border-border-weaker-base">
             <BarButton
               icon="review"
@@ -335,13 +332,6 @@ export function SessionSidePanel(props: {
               onClick={() => switchMode("changes")}
             />
             <BarButton icon="debug" title="调试" on={dock.mode() === "debug"} onClick={() => switchMode("debug")} />
-            <BarButton
-              icon="terminal"
-              title="终端"
-              label="cmd"
-              on={dock.mode() === "cmd"}
-              onClick={() => switchMode("cmd")}
-            />
             <BarButton
               icon="file-tree"
               title={language.t("session.files.all")}
@@ -486,11 +476,6 @@ export function SessionSidePanel(props: {
               <div class="ydbg flex-1 min-h-0 overflow-y-auto px-3 py-3">
                 <DebugContent />
               </div>
-            </Match>
-
-            {/* -------- cmd：真实终端（workspace PTY） -------- */}
-            <Match when={dock.mode() === "cmd"}>
-              <CmdPanel />
             </Match>
           </Switch>
         </aside>

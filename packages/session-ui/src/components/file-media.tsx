@@ -1,4 +1,4 @@
-import type { FileContent } from "@opencode-ai/sdk/v2"
+import type { FileContent } from "@yoma-desktop/kernel"
 import { createEffect, createMemo, createResource, Match, on, Show, Switch, type JSX } from "solid-js"
 import { useI18n } from "@yoma-desktop/ui/context/i18n"
 import {
@@ -93,7 +93,7 @@ export function FileMedia(props: { media?: FileMediaOptions; fallback: () => JSX
         return {
           key: input.key,
           src,
-          mime: input.kind === "audio" ? normalizeMimeType(result?.mimeType) : undefined,
+          mime: input.kind === "audio" ? normalizeMimeType(result?.mime) : undefined,
         }
       },
       () => {

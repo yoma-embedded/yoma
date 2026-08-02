@@ -1,36 +1,44 @@
-import type {
-  Config,
-  OpencodeClient,
-  Path,
-  PermissionRequest,
-  Project,
-  ProviderAuthResponse,
-  QuestionRequest,
-  ReferenceInfo,
-  Session,
-} from "@opencode-ai/sdk/v2/client"
-import { showToast } from "@/utils/toast"
-import { getFilename } from "@yoma-desktop/util/path"
+/**
+ * 启动时的数据拉取。
+ *
+ * opencode 版本一口气拉十几样东西:config、providers、path、projects、agents、
+ * session.status、project.current、vcs、command.list、references、permission.list、
+ * question.list、mcp、mcp resources。my-pi 内核只有其中四样有对应物,其余要么是
+ * opencode 特有的服务端概念(agent 定义、MCP、LSP、references),要么已经变成事件推送
+ * (permission 由 host 在 resync 时重推,不需要轮询)。
+ *
+ * 所以这里剩下的很短。删掉的每一项在下面都写了原因 —— 别照着 git 历史"补回来"。
+ */
+
+import type { Session } from "@yoma-desktop/kernel"
 import { retry } from "@yoma-desktop/util/retry"
-import { batch } from "solid-js"
+import { getFilename } from "@yoma-desktop/util/path"
 import { produce, reconcile, type SetStoreFunction, type Store } from "solid-js/store"
-import type { State, VcsCache } from "./types"
-import type { ServerSession } from "../server-session"
-import { cmp, normalizeAgentList, normalizeProviderList } from "./utils"
-import { formatServerError } from "@/utils/server-errors"
 import { QueryClient, queryOptions } from "@tanstack/solid-query"
-import { loadMcpQuery, loadMcpResourcesQuery } from "../server-sync"
 import { NormalizedProviderListResponse } from "@yoma-desktop/session-ui/context"
+
+import { showToast } from "@/utils/toast"
+import { formatServerError } from "@/utils/server-errors"
+import type { Sdk } from "@/utils/server"
 import { ScopedKey, type ServerScope } from "@/utils/server-scope"
+import type { Config, Path, State, VcsCache } from "./types"
+import type { ServerSession } from "../server-session"
+import { cmp, normalizeProviderList } from "./utils"
 
 type GlobalStore = {
   ready: boolean
   path: Path
   project: Project[]
   provider: NormalizedProviderListResponse
-  provider_auth: ProviderAuthResponse
   config: Config
   reload: undefined | "pending" | "complete"
+}
+
+/** 一个"项目"就是一个最近打开过的目录 —— 没有 worktree、没有 sandbox、没有服务端 id。 */
+export type Project = {
+  directory: string
+  name: string
+  lastOpened: number
 }
 
 function waitForPaint() {
@@ -66,45 +74,31 @@ function runAll(list: Array<() => Promise<unknown>>) {
   return Promise.allSettled(list.map((item) => item()))
 }
 
-function showErrors(input: {
-  errors: unknown[]
-  title: string
-  translate: (key: string, vars?: Record<string, string | number>) => string
-  formatMoreCount: (count: number) => string
-}) {
-  if (input.errors.length === 0) return
-  const message = formatServerError(input.errors[0], input.translate)
-  const more = input.errors.length > 1 ? input.formatMoreCount(input.errors.length - 1) : ""
-  showToast({
-    variant: "error",
-    title: input.title,
-    description: message + more,
-  })
-}
-
-export const loadGlobalConfigQuery = (scope: ServerScope, sdk: OpencodeClient) =>
-  queryOptions({
-    queryKey: [scope, "config"],
-    queryFn: () => retry(() => sdk.global.config.get().then((x) => x.data!)),
-  })
-
-export const loadProjectsQuery = (scope: ServerScope, sdk: OpencodeClient) =>
+export const loadProjectsQuery = (scope: ServerScope, sdk: Sdk) =>
   queryOptions({
     queryKey: [scope, "project"],
     queryFn: () =>
       retry(() =>
-        sdk.project.list().then((x) => {
-          return (x.data ?? [])
-            .filter((p) => !!p?.id)
-            .filter((p) => !!p.worktree && !p.worktree.includes("opencode-test"))
-            .slice()
-            .sort((a, b) => cmp(a.id, b.id))
-        }),
+        sdk.project.list().then((list) =>
+          list
+            .map((item) => ({
+              directory: item.directory,
+              name: getFilename(item.directory) || item.directory,
+              lastOpened: item.lastOpened,
+            }))
+            .sort((a, b) => b.lastOpened - a.lastOpened),
+        ),
       ),
   })
 
+export const loadProvidersQuery = (scope: ServerScope, directory: string | null, sdk: Sdk) =>
+  queryOptions({
+    queryKey: [scope, directory, "providers"],
+    queryFn: () => retry(() => sdk.model.list().then((list) => normalizeProviderList(list))),
+  })
+
 export async function bootstrapGlobal(input: {
-  serverSDK: OpencodeClient
+  serverSDK: Sdk
   scope: ServerScope
   requestFailedTitle: string
   translate: (key: string, vars?: Record<string, string | number>) => string
@@ -112,22 +106,14 @@ export async function bootstrapGlobal(input: {
   setGlobalStore: SetStoreFunction<GlobalStore>
   queryClient: QueryClient
 }) {
-  const slow = [
-    () => input.queryClient.fetchQuery(loadGlobalConfigQuery(input.scope, input.serverSDK)),
+  await runAll([
     () => input.queryClient.fetchQuery(loadProvidersQuery(input.scope, null, input.serverSDK)),
-    () => input.queryClient.fetchQuery(loadPathQuery(input.scope, null, input.serverSDK)),
     () =>
       input.queryClient
         .fetchQuery(loadProjectsQuery(input.scope, input.serverSDK))
         .then((data) => input.setGlobalStore("project", data)),
-  ]
-  await runAll(slow)
-  // showErrors({
-  //   errors: errors(),
-  //   title: input.requestFailedTitle,
-  //   translate: input.translate,
-  //   formatMoreCount: input.formatMoreCount,
-  // })
+  ])
+  // 删掉的:config(内核没有配置服务)、path(目录前端自己知道,不必往内核要)。
 }
 
 function groupBySession<T extends { id: string; sessionID: string }>(input: T[]) {
@@ -138,10 +124,6 @@ function groupBySession<T extends { id: string; sessionID: string }>(input: T[])
     if (!list) acc[item.sessionID] = [item]
     return acc
   }, {})
-}
-
-function projectID(directory: string, projects: Project[]) {
-  return projects.find((project) => project.worktree === directory || project.sandboxes?.includes(directory))?.id
 }
 
 function mergeSession(setStore: SetStoreFunction<State>, session: Session) {
@@ -158,56 +140,10 @@ function mergeSession(setStore: SetStoreFunction<State>, session: Session) {
   })
 }
 
-function warmSessions(input: {
-  ids: string[]
-  store: Store<State>
-  setStore: SetStoreFunction<State>
-  sdk: OpencodeClient
-}) {
-  const known = new Set(input.store.session.map((item) => item.id))
-  const ids = [...new Set(input.ids)].filter((id) => !!id && !known.has(id))
-  if (ids.length === 0) return Promise.resolve()
-  return Promise.all(
-    ids.map((sessionID) =>
-      retry(() => input.sdk.session.get({ sessionID })).then((x) => {
-        const session = x.data
-        if (!session?.id) return
-        mergeSession(input.setStore, session)
-      }),
-    ),
-  ).then(() => undefined)
-}
-
-export const loadProvidersQuery = (scope: ServerScope, directory: string | null, sdk: OpencodeClient) =>
-  queryOptions({
-    queryKey: [scope, directory, "providers"],
-    queryFn: () => retry(() => sdk.provider.list().then((x) => normalizeProviderList(x.data!))),
-  })
-
-export const loadAgentsQuery = (scope: ServerScope, directory: string | null, sdk: OpencodeClient) =>
-  queryOptions({
-    queryKey: [scope, directory, "agents"],
-    queryFn: () => retry(() => sdk.app.agents().then((x) => normalizeAgentList(x.data))),
-  })
-
-export const loadPathQuery = (scope: ServerScope, directory: string | null, sdk: OpencodeClient) =>
-  queryOptions<Path>({
-    queryKey: [scope, directory, "path"],
-    queryFn: () => retry(() => sdk.path.get().then((x) => x.data!)),
-  })
-
-export const loadReferencesQuery = (scope: ServerScope, directory: string, sdk: OpencodeClient) =>
-  queryOptions<ReferenceInfo[]>({
-    queryKey: [scope, directory, "references"] as const,
-    queryFn: () => retry(() => sdk.v2.reference.list().then((x) => x.data?.data ?? [])).catch(() => []),
-    placeholderData: [],
-  })
-
 export async function bootstrapDirectory(input: {
   directory: string
   scope: ServerScope
-  mcp: boolean
-  sdk: OpencodeClient
+  sdk: Sdk
   store: Store<State>
   setStore: SetStoreFunction<State>
   vcsCache: VcsCache
@@ -223,151 +159,48 @@ export async function bootstrapDirectory(input: {
   session?: ServerSession
 }) {
   const loading = input.store.status !== "complete"
-  const seededProject = projectID(input.directory, input.global.project)
-  const seededPath = input.global.path.directory === input.directory ? input.global.path : undefined
-  if (seededProject) input.setStore("project", seededProject)
-  if (seededPath) input.setStore("path", seededPath)
-  if (Object.keys(input.store.config).length === 0 && Object.keys(input.global.config).length > 0) {
-    input.setStore("config", reconcile(input.global.config, { merge: false }))
-  }
+  input.setStore("path", { directory: input.directory })
+  input.setStore("project", input.directory)
   if (loading) input.setStore("status", "partial")
 
   const revKey = ScopedKey.from(input.scope, input.directory)
-  const rev = (providerRev.get(revKey) ?? 0) + 1
-  providerRev.set(revKey, rev)
+  providerRev.set(revKey, (providerRev.get(revKey) ?? 0) + 1)
   ;(async () => {
-    const slow = [
+    const slow: Array<() => Promise<unknown>> = [
       () => Promise.resolve(input.loadSessions(input.directory)),
       () =>
-        input.queryClient
-          .ensureQueryData(loadAgentsQuery(input.scope, input.directory, input.sdk))
-          .then((data) => input.setStore("agent", data)),
-      () =>
-        retry(() => input.sdk.config.get().then((x) => input.setStore("config", reconcile(x.data!, { merge: false })))),
-      () =>
         retry(() =>
-          input.sdk.session.status().then(async (x) => {
-            if (input.session) {
-              const statuses = x.data ?? {}
-              await Promise.all(
-                Object.keys(statuses).map((sessionID) => input.session!.resolve(sessionID).catch(() => undefined)),
-              )
-              input.session.set(
-                "session_status",
-                produce((draft) => {
-                  for (const sessionID of Object.keys(draft)) {
-                    if (statuses[sessionID]) continue
-                    if (input.session?.get(sessionID)?.directory === input.directory) delete draft[sessionID]
-                  }
-                }),
-              )
-              for (const [sessionID, status] of Object.entries(statuses)) {
-                input.session.set("session_status", sessionID, reconcile(status))
-              }
-            }
-            if (!input.session) input.setStore("session_status", x.data!)
-          }),
-        ),
-      !seededProject &&
-        (() => retry(() => input.sdk.project.current()).then((x) => input.setStore("project", x.data!.id))),
-      !seededPath &&
-        (() =>
-          input.queryClient.ensureQueryData(loadPathQuery(input.scope, input.directory, input.sdk)).then((data) => {
-            const next = projectID(data.directory ?? input.directory, input.global.project)
-            if (next) input.setStore("project", next)
-          })),
-      () =>
-        retry(() =>
-          input.sdk.vcs.get().then((x) => {
-            const next = x.data ?? input.store.vcs
+          input.sdk.vcs.info(input.directory).then((next) => {
             input.setStore("vcs", next)
-            if (next) input.vcsCache.setStore("value", next)
+            input.vcsCache.setStore("value", next)
           }),
         ),
-      input.mcp && (() => retry(() => input.sdk.command.list().then((x) => input.setStore("command", x.data ?? [])))),
-      () => input.queryClient.fetchQuery(loadReferencesQuery(input.scope, input.directory, input.sdk)),
-      () =>
-        retry(() =>
-          input.sdk.permission.list().then((x) => {
-            const ids = (x.data ?? []).map((perm) => perm?.sessionID).filter((id): id is string => !!id)
-            const grouped = groupBySession(
-              (x.data ?? []).filter((perm): perm is PermissionRequest => !!perm?.id && !!perm.sessionID),
-            )
-            const warm = input.session
-              ? Promise.all(ids.map((sessionID) => input.session!.resolve(sessionID))).then(() => undefined)
-              : warmSessions({ ids, store: input.store, setStore: input.setStore, sdk: input.sdk })
-            return warm.then(() =>
-              batch(() => {
-                const current = input.session?.data.permission ?? input.store.permission
-                for (const sessionID of Object.keys(current)) {
-                  if (grouped[sessionID]) continue
-                  if (input.session?.get(sessionID)?.directory !== input.directory) continue
-                  if (input.session) input.session.set("permission", sessionID, [])
-                  if (!input.session) input.setStore("permission", sessionID, [])
-                }
-                for (const [sessionID, permissions] of Object.entries(grouped)) {
-                  const value = reconcile(
-                    permissions.filter((p) => !!p?.id).sort((a, b) => cmp(a.id, b.id)),
-                    { key: "id" },
-                  )
-                  if (input.session) input.session.set("permission", sessionID, value)
-                  if (!input.session) input.setStore("permission", sessionID, value)
-                }
-              }),
-            )
-          }),
-        ),
-      () =>
-        retry(() =>
-          input.sdk.question.list().then((x) => {
-            const ids = (x.data ?? []).map((question) => question?.sessionID).filter((id): id is string => !!id)
-            const grouped = groupBySession((x.data ?? []).filter((q): q is QuestionRequest => !!q?.id && !!q.sessionID))
-            const warm = input.session
-              ? Promise.all(ids.map((sessionID) => input.session!.resolve(sessionID))).then(() => undefined)
-              : warmSessions({ ids, store: input.store, setStore: input.setStore, sdk: input.sdk })
-            return warm.then(() =>
-              batch(() => {
-                const current = input.session?.data.question ?? input.store.question
-                for (const sessionID of Object.keys(current)) {
-                  if (grouped[sessionID]) continue
-                  if (input.session?.get(sessionID)?.directory !== input.directory) continue
-                  if (input.session) input.session.set("question", sessionID, [])
-                  if (!input.session) input.setStore("question", sessionID, [])
-                }
-                for (const [sessionID, questions] of Object.entries(grouped)) {
-                  const value = reconcile(
-                    questions.filter((q) => !!q?.id).sort((a, b) => cmp(a.id, b.id)),
-                    { key: "id" },
-                  )
-                  if (input.session) input.session.set("question", sessionID, value)
-                  if (!input.session) input.setStore("question", sessionID, value)
-                }
-              }),
-            )
-          }),
-        ),
-      () => Promise.resolve(input.loadSessions(input.directory)),
-      input.mcp && (() => input.queryClient.fetchQuery(loadMcpQuery(input.scope, input.directory, input.sdk))),
-      input.mcp && (() => input.queryClient.fetchQuery(loadMcpResourcesQuery(input.scope, input.directory, input.sdk))),
       () =>
         input.queryClient.fetchQuery(loadProvidersQuery(input.scope, input.directory, input.sdk)).catch((err) => {
-          const project = getFilename(input.directory)
           showToast({
             variant: "error",
-            title: input.translate("toast.project.reloadFailed.title", { project }),
+            title: input.translate("toast.project.reloadFailed.title", { project: getFilename(input.directory) }),
             description: formatServerError(err, input.translate),
           })
         }),
-    ].filter(Boolean) as (() => Promise<any>)[]
+    ]
+
+    // 删掉的,以及原因:
+    //   agents        my-pi 只有一个由 buildSystemPrompt 出来的系统提示词,没有 persona
+    //   config        内核没有配置服务;还需要的只有权限规则,走 kernel.permission.rules()
+    //   session.status  状态由 session.status 事件推送,不再轮询
+    //   project.current 项目就是目录本身,上面已经直接 set 了
+    //   command.list  斜杠命令改由 host 读 <cwd>/.my-pi/commands/*.md(尚未接入)
+    //   references / question / mcp / mcp resources  内核完全没有这些概念
+    //   permission.list  改为 host 在 renderer 重连时重推未决请求,不需要拉
 
     await waitForPaint()
     const slowErrs = errors(await runAll(slow))
     if (slowErrs.length > 0) {
       console.error("Failed to finish bootstrap instance", slowErrs[0])
-      const project = getFilename(input.directory)
       showToast({
         variant: "error",
-        title: input.translate("toast.project.reloadFailed.title", { project }),
+        title: input.translate("toast.project.reloadFailed.title", { project: getFilename(input.directory) }),
         description: formatServerError(slowErrs[0], input.translate),
       })
     }
@@ -375,3 +208,5 @@ export async function bootstrapDirectory(input: {
     if (loading && slowErrs.length === 0) input.setStore("status", "complete")
   })()
 }
+
+export { groupBySession, mergeSession, produce, reconcile, cmp }

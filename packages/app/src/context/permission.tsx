@@ -1,7 +1,7 @@
 import { type Accessor, createEffect, createMemo, onCleanup } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { createSimpleContext } from "@yoma-desktop/ui/context"
-import type { PermissionRequest } from "@opencode-ai/sdk/v2/client"
+import type { PermissionRequest } from "@yoma-desktop/kernel"
 import { Persist, persisted } from "@/utils/persist"
 import { useServerSDK } from "@/context/server-sdk"
 import { useServerSync } from "./server-sync"
@@ -120,7 +120,7 @@ export const { use: usePermission, provider: PermissionProvider } = createSimple
 
     const respond: PermissionRespondFn = (input) => {
       serverSDK()
-        .client.permission.respond(input)
+        .client.permission.respond(input.permissionID, input.response)
         .catch(() => {
           responded.delete(input.permissionID)
         })
@@ -162,14 +162,13 @@ export const { use: usePermission, provider: PermissionProvider } = createSimple
       return next
     }
 
-    const unsubscribe = serverSDK().event.listen((e) => {
-      const event = e.details
-      if (event?.type !== "permission.asked") return
-
-      const perm = event.properties
-      if (!shouldAutoRespond(perm, e.name)) return
-
-      respondOnce(perm, e.name)
+    // 内核事件是扁平的,不再有 { name: directory, details: event } 那层包装 ——
+    // 内核也不按 directory 分频道,一个进程里只有一个内核。
+    const unsubscribe = serverSDK().event.listen((event) => {
+      if (event.type !== "permission.asked") return
+      const perm = event.request
+      if (!shouldAutoRespond(perm, perm.sessionID)) return
+      respondOnce(perm, perm.sessionID)
     })
     onCleanup(unsubscribe)
 
@@ -181,17 +180,8 @@ export const { use: usePermission, provider: PermissionProvider } = createSimple
         }),
       )
 
-      serverSDK()
-        .client.permission.list({ directory })
-        .then((x) => {
-          if (!isAutoAcceptingDirectory(directory)) return
-          for (const perm of x.data ?? []) {
-            if (!perm?.id) continue
-            if (!shouldAutoRespond(perm, directory)) continue
-            respondOnce(perm, directory)
-          }
-        })
-        .catch(() => undefined)
+      // 不再轮询未决权限:host 在 renderer 挂上 MessagePort 时会把未决请求通过
+      // permission.asked 重推一遍(见 kernel/src/host/index.ts 的 resync())。
     }
 
     function disableDirectory(directory: string) {
@@ -213,18 +203,8 @@ export const { use: usePermission, provider: PermissionProvider } = createSimple
         }),
       )
 
-      serverSDK()
-        .client.permission.list({ directory })
-        .then((x) => {
-          if (enableVersion.get(key) !== version) return
-          if (!isAutoAccepting(sessionID, directory)) return
-          for (const perm of x.data ?? []) {
-            if (!perm?.id) continue
-            if (!shouldAutoRespond(perm, directory)) continue
-            respondOnce(perm, directory)
-          }
-        })
-        .catch(() => undefined)
+      // 不再轮询未决权限:host 在 renderer 挂上 MessagePort 时会把未决请求通过
+      // permission.asked 重推一遍(见 kernel/src/host/index.ts 的 resync())。
     }
 
     function disable(sessionID: string, directory?: string) {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { Message, Part } from "@opencode-ai/sdk/v2/client"
+import type { Message, Part } from "@yoma-desktop/kernel"
 import { estimateSessionContextBreakdown } from "./session-context-breakdown"
 
 const user = (id: string) => {
@@ -30,14 +30,13 @@ describe("estimateSessionContextBreakdown", () => {
       messages,
       parts,
       input: 20,
-      systemPrompt: "system prompt",
     })
 
     const map = Object.fromEntries(output.map((segment) => [segment.key, segment.tokens]))
-    expect(map.system).toBe(4)
+    expect(map.system).toBeUndefined()
     expect(map.user).toBe(3)
     expect(map.assistant).toBe(5)
-    expect(map.other).toBe(8)
+    expect(map.other).toBe(12)
   })
 
   test("scales segments when estimates exceed input", () => {
@@ -51,7 +50,6 @@ describe("estimateSessionContextBreakdown", () => {
       messages,
       parts,
       input: 10,
-      systemPrompt: "z".repeat(200),
     })
 
     const total = output.reduce((sum, segment) => sum + segment.tokens, 0)

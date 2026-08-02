@@ -214,9 +214,9 @@ function createSessionEntries(props: {
       dirs.map((directory) => {
         const description = props.label(directory)
         return props.serverSDK.client.session
-          .list({ directory, roots: true })
-          .then((x) =>
-            (x.data ?? [])
+          .list({ directory })
+          .then((sessions) =>
+            sessions
               .filter((s) => !!s?.id)
               .map((s) => ({
                 id: s.id,
@@ -294,29 +294,19 @@ export function DialogSelectFile(props: {
   const project = createMemo(() => {
     const directory = projectDirectory()
     if (!directory) return
-    return layout.projects.list().find((p) => p.worktree === directory || p.sandboxes?.includes(directory))
+    return layout.projects.list().find((p) => p.worktree === directory)
   })
+  // 一个项目就是一个工作目录 —— 内核没有 sandbox 层级,所以这里最多一个 workspace。
   const workspaces = createMemo(() => {
     const directory = projectDirectory()
     const current = project()
     if (!current) return directory ? [directory] : []
-
-    const dirs = [current.worktree, ...(current.sandboxes ?? [])]
-    if (directory && !dirs.includes(directory)) return [...dirs, directory]
-    return dirs
+    if (directory && directory !== current.worktree) return [current.worktree, directory]
+    return [current.worktree]
   })
-  const homedir = createMemo(() => serverSync().data.path.home)
   const label = (directory: string) => {
-    const current = project()
-    const kind =
-      current && directory === current.worktree
-        ? language.t("workspace.type.local")
-        : language.t("workspace.type.sandbox")
     const [store] = serverSync().child(directory, { bootstrap: false })
-    const home = homedir()
-    const path = home ? directory.replace(home, "~") : directory
-    const name = store.vcs?.branch ?? getFilename(directory)
-    return `${kind} : ${name || path}`
+    return store.vcs?.branch ?? getFilename(directory) ?? directory
   }
 
   const { sessions } = createSessionEntries({ workspaces, label, serverSDK: serverSDK(), language })
@@ -342,12 +332,15 @@ export function DialogSelectFile(props: {
     if (!query) return [...commandEntries.picks(), ...fileEntries.recent()]
 
     if (filesOnly()) {
-      const files = await file.searchFiles(query)
+      const files: string[] = await file.searchFiles(query)
       const category = language.t("palette.group.files")
       return files.map((path) => createFileEntry(path, category))
     }
 
-    const [files, nextSessions] = await Promise.all([file.searchFiles(query), Promise.resolve(sessions(query))])
+    const [files, nextSessions] = await Promise.all([
+      file.searchFiles(query) as Promise<string[]>,
+      Promise.resolve(sessions(query)),
+    ])
     const category = language.t("palette.group.files")
     const entries = files.map((path) => createFileEntry(path, category))
     return [...commandEntries.list(), ...nextSessions, ...entries]

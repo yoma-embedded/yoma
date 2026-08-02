@@ -17,7 +17,7 @@ import {
   type ParentProps,
 } from "solid-js"
 import { Dynamic } from "solid-js/web"
-import type { FileNode } from "@opencode-ai/sdk/v2"
+import type { FileNode } from "@yoma-desktop/kernel"
 
 const MAX_DEPTH = 128
 
@@ -135,7 +135,7 @@ const FileTreeNode = (
     "classList",
   ])
   const kind = () => visibleKind(local.node, local.kinds, local.marks)
-  const active = () => !!kind() && !local.node.ignored
+  const active = () => !!kind()
   const color = () => {
     const value = kind()
     if (!value) return
@@ -167,8 +167,7 @@ const FileTreeNode = (
       <span
         classList={{
           "flex-1 min-w-0 text-12-medium whitespace-nowrap truncate": true,
-          "text-text-weaker": local.node.ignored,
-          "text-text-weak": !local.node.ignored && !active(),
+          "text-text-weak": !active(),
         }}
         style={active() ? color() : undefined}
       >
@@ -353,9 +352,7 @@ export default function FileTree(props: {
       out.push({
         name: leaf(dir),
         path: dir,
-        absolute: dir,
         type: "directory",
-        ignored: false,
       })
       seen.add(dir)
     }
@@ -366,9 +363,7 @@ export default function FileTree(props: {
       out.push({
         name: leaf(item),
         path: item,
-        absolute: item,
         type: "file",
-        ignored: false,
       })
       seen.add(item)
     }
@@ -390,7 +385,7 @@ export default function FileTree(props: {
           const expanded = () => file.tree.state(node.path)?.expanded ?? false
           const deep = () => deeps().get(node.path) ?? -1
           const kind = () => visibleKind(node, kinds(), marks())
-          const active = () => !!kind() && !node.ignored
+          const active = () => !!kind()
 
           return (
             <Switch>
@@ -465,14 +460,6 @@ export default function FileTree(props: {
                 >
                   <div class="w-4 shrink-0" />
                   <Switch>
-                    <Match when={node.ignored}>
-                      <FileIcon
-                        node={node}
-                        class="size-4 filetree-icon filetree-icon--mono"
-                        style="color: var(--icon-weak-base)"
-                        mono
-                      />
-                    </Match>
                     <Match when={active()}>
                       <FileIcon
                         node={node}
@@ -481,7 +468,7 @@ export default function FileTree(props: {
                         mono
                       />
                     </Match>
-                    <Match when={!node.ignored}>
+                    <Match when={true}>
                       <span class="filetree-iconpair size-4">
                         <FileIcon
                           node={node}

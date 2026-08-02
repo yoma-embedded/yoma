@@ -86,11 +86,12 @@ describe("isMarkdownPath", () => {
 })
 
 describe("isEditableContent", () => {
-  test("only plain text content is editable", () => {
+  test("only untruncated text content is editable", () => {
     expect(isEditableContent(undefined)).toBe(false)
-    expect(isEditableContent({ type: "text", content: "x" })).toBe(true)
-    expect(isEditableContent({ type: "binary", content: "" })).toBe(false)
-    expect(isEditableContent({ type: "text", content: "eA==", encoding: "base64" })).toBe(false)
+    expect(isEditableContent({ path: "a.ts", content: "x", mime: "text/plain", truncated: false })).toBe(true)
+    expect(isEditableContent({ path: "a.json", content: "{}", mime: "application/json", truncated: false })).toBe(true)
+    expect(isEditableContent({ path: "a.png", content: "", mime: "image/png", truncated: false })).toBe(false)
+    expect(isEditableContent({ path: "a.log", content: "x", mime: "text/plain", truncated: true })).toBe(false)
   })
 })
 

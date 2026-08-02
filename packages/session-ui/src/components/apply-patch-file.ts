@@ -1,4 +1,4 @@
-import { normalize, type ViewDiff } from "./session-diff"
+import { resolveFileDiff, type ViewDiff } from "./session-diff"
 
 type Kind = "add" | "update" | "delete" | "move"
 
@@ -60,15 +60,13 @@ export function patchFile(raw: unknown): ApplyPatchFile | undefined {
     additions,
     deletions,
     movePath,
-    view: normalize({
+    view: {
       file: relativePath,
-      patch,
-      before,
-      after,
       additions,
       deletions,
       status: status(type),
-    }),
+      fileDiff: resolveFileDiff({ file: relativePath, patch, before, after }),
+    },
   }
 }
 

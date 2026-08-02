@@ -8,6 +8,7 @@ import { createServerSyncContext } from "./server-sync"
 import { getOwner } from "solid-js/web"
 import { QueryClient } from "@tanstack/solid-query"
 import type { ServerScope } from "@/utils/server-scope"
+import type { LocalProject } from "./layout"
 
 export const { use: useGlobal, provider: GlobalProvider } = createSimpleContext({
   name: "Global",
@@ -109,20 +110,13 @@ function createServerCtx(
   const sdk = createServerSdkContext(conn, scope)
   const sync = createServerSyncContext(sdk)
 
-  function enrich(project: { worktree: string; expanded: boolean }) {
+  // 项目就是目录本身:没有服务端 id,按目录匹配。图标只有 per-workspace 的本地覆盖
+  // (childStore.icon)—— 内核的项目记录里没有图标字段。
+  function enrich(project: { worktree: string; expanded: boolean }): LocalProject {
     const [childStore] = sync.child(project.worktree, { bootstrap: false })
-    const projectID = childStore.project
-    const metadata = projectID
-      ? sync.data.project.find((x) => x.id === projectID)
-      : sync.data.project.find((x) => x.worktree === project.worktree)
-
-    // Preserve local icon override from per-workspace localStorage cache (childStore.icon).
-    // Without this, different subdirectories of the same git repo would share the same
-    // icon from the database instead of using their individual overrides.
+    const metadata = sync.data.project.find((x) => x.directory === project.worktree)
     const base = { ...metadata, ...project }
-    if (childStore.icon) {
-      return { ...base, icon: { ...base.icon, override: childStore.icon } }
-    }
+    if (childStore.icon) return { ...base, icon: { override: childStore.icon } }
     return base
   }
 

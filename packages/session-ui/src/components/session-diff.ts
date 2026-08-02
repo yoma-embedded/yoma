@@ -1,26 +1,21 @@
 import { parseDiffFromFile, parsePatchFiles, type FileDiffMetadata } from "@pierre/diffs"
 import { parsePatch } from "diff"
-import type { SnapshotFileDiff, VcsFileDiff } from "@opencode-ai/sdk/v2"
+import type { VcsFileDiff } from "@yoma-desktop/kernel"
 
-type LegacyDiff = {
+export type DiffStatus = VcsFileDiff["status"]
+
+export type DiffSource = {
   file: string
   patch?: string
   before?: string
   after?: string
-  additions: number
-  deletions: number
-  status?: "added" | "deleted" | "modified"
 }
-
-type SnapshotDiff = SnapshotFileDiff & { file: string }
-type ReviewDiff = SnapshotDiff | VcsFileDiff | LegacyDiff
-export type DiffSource = Pick<LegacyDiff, "file" | "patch" | "before" | "after">
 
 export type ViewDiff = {
   file: string
   additions: number
   deletions: number
-  status?: "added" | "deleted" | "modified"
+  status?: DiffStatus
   fileDiff: FileDiffMetadata
 }
 
@@ -36,13 +31,13 @@ export function resolveFileDiff(diff: DiffSource) {
   )
 }
 
-export function normalize(diff: ReviewDiff): ViewDiff {
+export function normalize(diff: VcsFileDiff): ViewDiff {
   return {
-    file: diff.file,
-    additions: diff.additions,
-    deletions: diff.deletions,
+    file: diff.path,
+    additions: diff.added,
+    deletions: diff.removed,
     status: diff.status,
-    fileDiff: resolveFileDiff(diff),
+    fileDiff: resolveFileDiff({ file: diff.path, patch: diff.patch }),
   }
 }
 

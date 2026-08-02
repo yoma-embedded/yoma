@@ -1,4 +1,4 @@
-import type { Session } from "@opencode-ai/sdk/v2/client"
+import type { Session } from "@yoma-desktop/kernel"
 import {
   type ComponentProps,
   createEffect,
@@ -13,7 +13,7 @@ import {
   startTransition,
 } from "solid-js"
 import { makeEventListener } from "@solid-primitives/event-listener"
-import { createStore, produce } from "solid-js/store"
+import { createStore } from "solid-js/store"
 import { useQuery } from "@tanstack/solid-query"
 import { Spinner } from "@yoma-desktop/ui/spinner"
 import { ScrollView } from "@yoma-desktop/ui/scroll-view"
@@ -23,7 +23,7 @@ import { Icon as IconV2 } from "@yoma-desktop/ui/v2/icon"
 import { IconButtonV2 } from "@yoma-desktop/ui/v2/icon-button-v2"
 import { MenuV2 } from "@yoma-desktop/ui/v2/menu-v2"
 import { TooltipV2 } from "@yoma-desktop/ui/v2/tooltip-v2"
-import { getProjectAvatarVariant, useLayout, type HomeProjectSelection, type LocalProject } from "@/context/layout"
+import { useLayout, type HomeProjectSelection, type LocalProject } from "@/context/layout"
 import { useNavigate } from "@solidjs/router"
 import { usePlatform } from "@/context/platform"
 import { DateTime } from "luxon"
@@ -40,8 +40,6 @@ import { useNotification } from "@/context/notification"
 import {
   closeHomeProject,
   displayName,
-  errorMessage,
-  getProjectAvatarSource,
   homeProjectDirectories,
   projectForSession,
   sortedRootSessions,
@@ -52,21 +50,17 @@ import { sessionTitle } from "@/utils/session-title"
 import { pathKey } from "@/utils/path-key"
 import { useGlobal } from "@/context/global"
 import { useCommand } from "@/context/command"
-import { Binary } from "@yoma-desktop/util/binary"
 import { ServerRowMenu } from "@/components/server/server-row-menu"
 import { ServerHealthIndicator } from "@/components/server/server-row"
 import { type ServerHealth } from "@/utils/server-health"
 import { Persist, persisted } from "@/utils/persist"
 import { useMarked } from "@yoma-desktop/ui/context/marked"
 import { preloadMarkdown } from "@yoma-desktop/session-ui/markdown-cache"
-import { archiveHomeSession } from "./home-session-archive"
-import { showToast } from "@/utils/toast"
 
 const HOME_SESSION_LIMIT = 64
 const HOME_SESSION_HEADER_STICKY_TOP = 12
 const HOME_SESSION_HEADER_TEXT_HEIGHT = 16
 const HOME_SESSION_HEADER_FADE_DISTANCE = 16
-const SHOW_HOME_SESSION_ARCHIVE = false
 const HOME_ROW_LAYOUT =
   "flex min-w-0 w-full shrink-0 cursor-default items-center rounded-[6px] bg-transparent text-left transition-[background-color,color,box-shadow] duration-[120ms] ease-in-out focus-visible:outline-none"
 const HOME_ROW_BASE = `${HOME_ROW_LAYOUT} border-0`
@@ -106,7 +100,6 @@ function buildHomeSessionRecords(input: {
   sync: Pick<ServerSync, "child">
   projectDirectories: () => string[]
   projects: () => LocalProject[]
-  projectByID: () => Map<string, LocalProject>
 }) {
   return [
     ...new Map(
@@ -118,7 +111,7 @@ function buildHomeSessionRecords(input: {
   ]
     .sort((a, b) => (b.time.updated ?? b.time.created) - (a.time.updated ?? a.time.created))
     .flatMap((session) => {
-      const project = projectForSession(session, input.projects(), input.projectByID())
+      const project = projectForSession(session, input.projects())
       if (!project) return []
       return {
         session,
@@ -276,11 +269,10 @@ export function NewHome() {
       projects().find((project) => project.worktree === focusedServerCtx()?.projects.last()) ??
       projects()[0],
   )
-  const directories = (project: LocalProject) => [project.worktree, ...(project.sandboxes ?? [])]
   const projectDirectories = createMemo(() => {
     const project = selectedProject()
-    if (!project) return projects().flatMap(directories)
-    return directories(project)
+    if (!project) return projects().map((item) => item.worktree)
+    return [project.worktree]
   })
   const search = createMemo(() => state.search.trim())
   const searchPlaceholder = createMemo(() => {
@@ -308,15 +300,11 @@ export function NewHome() {
     },
   }))
 
-  const projectByID = createMemo(
-    () => new Map(projects().flatMap((project) => (project.id ? [[project.id, project] as const] : []))),
-  )
   const allRecords = createMemo(() =>
     buildHomeSessionRecords({
       sync: focusedSync(),
       projectDirectories,
       projects,
-      projectByID,
     }),
   )
   const records = createMemo(() => allRecords().slice(0, HOME_SESSION_LIMIT))
@@ -449,18 +437,17 @@ export function NewHome() {
 
   function unseenCount(conn: ServerConnection.Any, project: LocalProject) {
     const state = notification.ensureServerState(ServerConnection.key(conn))
-    return directories(project).reduce((total, directory) => total + state.project.unseenCount(directory), 0)
+    return state.project.unseenCount(project.worktree)
   }
 
   function clearNotifications(conn: ServerConnection.Any, project: LocalProject) {
     const state = notification.ensureServerState(ServerConnection.key(conn))
-    directories(project)
-      .filter((directory) => state.project.unseenCount(directory) > 0)
-      .forEach((directory) => state.project.markViewed(directory))
+    if (state.project.unseenCount(project.worktree) === 0) return
+    state.project.markViewed(project.worktree)
   }
 
   function openSession(session: Session) {
-    const project = projectForSession(session, projects(), projectByID())
+    const project = projectForSession(session, projects())
     const conn = focusedServer()
     if (!conn) return
     const directory = project?.worktree ?? session.directory
@@ -470,30 +457,6 @@ export function NewHome() {
     startTransition(() => {
       const tab = tabs.addSessionTab({ server: ServerConnection.key(conn), sessionId: session.id })
       tabs.select(tab)
-    })
-  }
-
-  async function archiveSession(session: Session) {
-    const conn = focusedServer()
-    const ctx = focusedServerCtx()
-    if (!conn || !ctx) return
-    const [, setStore] = ctx.sync.child(session.directory)
-    await archiveHomeSession({
-      server: ServerConnection.key(conn),
-      session,
-      update: (value) => ctx.sdk.client.session.update(value),
-      remove: () =>
-        setStore(
-          produce((draft) => {
-            const match = Binary.search(draft.session, session.id, (s) => s.id)
-            if (match.found) draft.session.splice(match.index, 1)
-          }),
-        ),
-      onError: (error) =>
-        showToast({
-          title: language.t("common.requestFailed"),
-          description: errorMessage(error, language.t("common.requestFailed")),
-        }),
     })
   }
 
@@ -621,7 +584,6 @@ export function NewHome() {
                                 server={selection().server}
                                 activeServer={selection().server === server.key}
                                 openSession={openSession}
-                                archiveSession={archiveSession}
                               />
                             )}
                           </For>
@@ -990,13 +952,7 @@ function HomeProjectRow(props: {
 
 function HomeProjectAvatar(props: { project: LocalProject }) {
   const name = createMemo(() => displayName(props.project))
-  return (
-    <ProjectAvatar
-      fallback={name()}
-      src={getProjectAvatarSource(props.project.id, props.project.icon)}
-      variant={getProjectAvatarVariant(props.project.icon?.color)}
-    />
-  )
+  return <ProjectAvatar fallback={name()} />
 }
 
 function HomeSessionLeading(props: {
@@ -1312,9 +1268,7 @@ function HomeSessionRow(props: {
   server: ServerConnection.Key
   activeServer: boolean
   openSession: (session: Session) => void
-  archiveSession: (session: Session) => Promise<void>
 }) {
-  const language = useLanguage()
   const title = createMemo(() => sessionTitle(props.record.session.title) || props.record.session.id)
   const showProjectName = () => props.showProjectName && props.record.projectName
 
@@ -1347,24 +1301,6 @@ function HomeSessionRow(props: {
           </span>
         </Show>
       </button>
-      <Show when={SHOW_HOME_SESSION_ARCHIVE}>
-        <div class="hover-reveal absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-1 group-hover/session:opacity-100 focus-within:opacity-100">
-          <TooltipV2 class="flex shrink-0 items-center" placement="bottom" value={language.t("common.archive")}>
-            <IconButtonV2
-              data-action="home-session-archive"
-              variant="ghost-muted"
-              size="large"
-              icon={<IconV2 name="archive" />}
-              aria-label={language.t("common.archive")}
-              onClick={(event) => {
-                event.preventDefault()
-                event.stopPropagation()
-                void props.archiveSession(props.record.session)
-              }}
-            />
-          </TooltipV2>
-        </div>
-      </Show>
     </div>
   )
 }

@@ -245,6 +245,7 @@ export function nativePickerPath(path: string) {
   if (/^[A-Za-z]:\//.test(value) || value.startsWith("//")) return value.replaceAll("/", "\\")
   return value
 }
+import type { FileEntry } from "@yoma-desktop/kernel"
 import { getFilename } from "@yoma-desktop/util/path"
 import fuzzysort from "fuzzysort"
 import { ServerSDK } from "@/context/server-sdk"
@@ -343,13 +344,15 @@ export function createDirectorySearch(args: { sdk: ServerSDK; base: () => string
     const existing = cache.get(key)
     if (existing) return existing
     const request = args.sdk.client.file
-      .list({ directory: key, path: "" })
-      .then((result) => result.data ?? [])
-      .catch(() => [])
+      .list(key)
+      .catch(() => [] as FileEntry[])
       .then((nodes) =>
         nodes
           .filter((node) => node.type === "directory")
-          .map((node) => ({ name: node.name, absolute: trimPickerPath(normalizePickerDrive(node.absolute)) })),
+          .map((node) => ({
+            name: node.name,
+            absolute: trimPickerPath(joinPickerPath(key, normalizePickerDrive(node.path))),
+          })),
       )
     cache.set(key, request)
     return request
@@ -371,12 +374,11 @@ export function createDirectorySearch(args: { sdk: ServerSDK; base: () => string
     const pathInput = raw.startsWith("~") || !!pickerRoot(raw) || raw.includes("/")
     const query = normalizePickerDrive(input.path)
     if (!pathInput) {
-      const results = await args.sdk.client.find
-        .files({ directory: input.directory, query, type: "directory", limit: 50 })
-        .then((result) => result.data ?? [])
-        .catch(() => [])
+      // 内核只有 file.search(文件),没有目录搜索,所以裸名字输入直接在当前目录里
+      // 做一次模糊匹配 —— 和路径输入走同一条 match() 路径。
+      const results = await match(input.directory, query, 50)
       if (!active()) return []
-      return results.map((path) => joinPickerPath(input.directory, path)).slice(0, 50)
+      return results.slice(0, 50)
     }
     const segments = query.replace(/^\/+/, "").split("/")
     const head = segments.slice(0, -1).filter((part) => part && part !== ".")

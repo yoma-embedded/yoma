@@ -1,6 +1,5 @@
 import type { LocalProject } from "@/context/layout"
-import { getProjectAvatarVariant } from "@/context/layout"
-import { displayName, getProjectAvatarSource } from "@/pages/layout/helpers"
+import { displayName } from "@/pages/layout/helpers"
 import { useSessionTabAvatarState } from "@/pages/layout/project-avatar-state"
 import { ProjectAvatar } from "@yoma-desktop/ui/v2/project-avatar-v2"
 import { SessionProgressIndicatorV2 } from "@yoma-desktop/session-ui/v2/session-progress-indicator-v2"
@@ -17,12 +16,7 @@ export function SessionTabAvatar(props: {
   const sessionId = () => props.sessionId
   const state = useSessionTabAvatarState(directory, sessionId, () => props.activeServer)
   const projectAvatar = () => (
-    <ProjectAvatar
-      fallback={displayName(props.project ?? { worktree: props.directory })}
-      src={getProjectAvatarSource(props.project?.id, props.project?.icon)}
-      variant={getProjectAvatarVariant(props.project?.icon?.color)}
-      unread={state.unread()}
-    />
+    <ProjectAvatar fallback={displayName(props.project ?? { worktree: props.directory })} unread={state.unread()} />
   )
   return (
     <Show when={state.loading()} fallback={projectAvatar()}>

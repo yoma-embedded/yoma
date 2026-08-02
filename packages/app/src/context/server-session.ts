@@ -1,25 +1,26 @@
+/**
+ * 会话内容的**服务器级**缓存:info / status / permission / message / part。
+ *
+ * 相对 opencode 删掉的四块,以及原因:
+ *   session_diff  my-pi 没有文件快照,也就没有"这一轮改了哪些文件"的差异
+ *   todo          没有 todo 工具
+ *   question      没有 ask/question 工具
+ *   lineage       会话没有 parentID —— my-pi 里会话是平的,分支是会话内部的树,不是会话之间的
+ *
+ * 其余的结构(乐观插入的对账、分页加载期间的 touched/removed 标记、delta 前缀保护)
+ * 一律原样保留 —— 它们解决的是"流式事件和分页请求交错"的时序问题,和后端换不换无关。
+ */
+
 import { Binary } from "@yoma-desktop/util/binary"
 import { retry } from "@yoma-desktop/util/retry"
-import type {
-  Message,
-  OpencodeClient,
-  Part,
-  PermissionRequest,
-  QuestionRequest,
-  Session,
-  SessionStatus,
-  SnapshotFileDiff,
-  Todo,
-} from "@opencode-ai/sdk/v2/client"
+import type { KernelEvent, Message, Part, PermissionRequest, Session, SessionStatus } from "@yoma-desktop/kernel"
 import { batch } from "solid-js"
 import { createStore, produce, reconcile } from "solid-js/store"
-import { diffs as cleanDiffs, message as cleanMessage } from "@/utils/diffs"
-import { rootSession } from "@/utils/session-route"
+import type { Sdk } from "@/utils/server"
 import { dropSessionCaches, pickSessionCacheEvictions, SESSION_CACHE_LIMIT } from "./global-sync/session-cache"
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 const cmpMessage = (a: Message, b: Message) => a.time.created - b.time.created || cmp(a.id, b.id)
-const SKIP_PARTS = new Set(["patch", "step-start", "step-finish"])
 const initialMessagePageSize = 2
 const historyMessagePageSize = 200
 const sessionInfoLimit = 2_048
@@ -129,14 +130,11 @@ function reconcileFetched<T extends { id: string }>(
   return [...result.values()].sort((a, b) => cmp(a.id, b.id))
 }
 
-export function createServerSession(client: OpencodeClient, options?: { retry?: typeof retry }) {
+export function createServerSession(client: Sdk, options?: { retry?: typeof retry }) {
   const [data, setData] = createStore({
     info: {} as Record<string, Session | undefined>,
     session_status: {} as Record<string, SessionStatus>,
-    session_diff: {} as Record<string, SnapshotFileDiff[]>,
-    todo: {} as Record<string, Todo[]>,
     permission: {} as Record<string, PermissionRequest[]>,
-    question: {} as Record<string, QuestionRequest[]>,
     message: {} as Record<string, Message[]>,
     part: {} as Record<string, Part[]>,
     part_text_accum_delta: {} as Record<string, string>,
@@ -146,8 +144,6 @@ export function createServerSession(client: OpencodeClient, options?: { retry?: 
   })
   const requests = new Map<string, Promise<Session>>()
   const inflight = new Map<string, Promise<void>>()
-  const inflightDiff = new Map<string, Promise<void>>()
-  const inflightTodo = new Map<string, Promise<void>>()
   const optimistic = new Map<string, Map<string, OptimisticItem>>()
   const messageLoads = new Map<string, MessageLoadState>()
   const pendingParts = new Map<string, Map<string, Set<string>>>()
@@ -188,31 +184,7 @@ export function createServerSession(client: OpencodeClient, options?: { retry?: 
     infoSeen.delete(session.id)
     infoSeen.add(session.id)
     if (infoSeen.size > sessionInfoLimit) {
-      const preserve = new Set([
-        ...pinned.keys(),
-        ...requests.keys(),
-        ...inflight.keys(),
-        ...inflightDiff.keys(),
-        ...inflightTodo.keys(),
-        ...messageLoads.keys(),
-        ...optimistic.keys(),
-        ...Object.entries(data.permission)
-          .filter(([, items]) => items.length > 0)
-          .map(([sessionID]) => sessionID),
-        ...Object.entries(data.question)
-          .filter(([, items]) => items.length > 0)
-          .map(([sessionID]) => sessionID),
-        ...Object.entries(data.session_status)
-          .filter(([, status]) => status.type !== "idle")
-          .map(([sessionID]) => sessionID),
-      ])
-      for (const sessionID of preserve) {
-        let current = data.info[sessionID]
-        while (current) {
-          preserve.add(current.id)
-          current = current.parentID ? data.info[current.parentID] : undefined
-        }
-      }
+      const preserve = protectedSessions()
       const stale: string[] = []
       for (const sessionID of infoSeen) {
         if (infoSeen.size - stale.length <= sessionInfoLimit) break
@@ -234,10 +206,9 @@ export function createServerSession(client: OpencodeClient, options?: { retry?: 
     const pending = requests.get(sessionID)
     if (pending) return pending
     const active = generation(sessionID)
-    const request = client.session.get({ sessionID }).then((result) => {
-      if (!result.data) throw new Error(`Session not found: ${sessionID}`)
-      if (generations.get(sessionID) !== active) return result.data
-      return remember(result.data)
+    const request = client.session.get(sessionID).then((session) => {
+      if (generations.get(sessionID) !== active) return session
+      return remember(session)
     })
     requests.set(sessionID, request)
     const cleanup = () => {
@@ -247,29 +218,12 @@ export function createServerSession(client: OpencodeClient, options?: { retry?: 
         !data.info[sessionID] &&
         !requests.has(sessionID) &&
         !messageLoads.has(sessionID) &&
-        !inflight.has(sessionID) &&
-        !inflightDiff.has(sessionID) &&
-        !inflightTodo.has(sessionID)
+        !inflight.has(sessionID)
       )
         generations.delete(sessionID)
     }
     void request.then(cleanup, cleanup)
     return request
-  }
-
-  const peekLineage = (sessionID: string) => {
-    const session = data.info[sessionID]
-    if (!session) return
-    const seen = new Set([session.id])
-    let root = session
-    while (root.parentID) {
-      if (seen.has(root.parentID)) throw new Error(`Session parent cycle: ${root.parentID}`)
-      seen.add(root.parentID)
-      const parent = data.info[root.parentID]
-      if (!parent) return
-      root = parent
-    }
-    return { session, root }
   }
 
   const clearOptimistic = (sessionID: string, messageID?: string) => {
@@ -392,8 +346,6 @@ export function createServerSession(client: OpencodeClient, options?: { retry?: 
       clearOptimistic(sessionID)
       requests.delete(sessionID)
       inflight.delete(sessionID)
-      inflightDiff.delete(sessionID)
-      inflightTodo.delete(sessionID)
       messageLoads.delete(sessionID)
       pendingParts.delete(sessionID)
       orphanParts.delete(sessionID)
@@ -422,14 +374,9 @@ export function createServerSession(client: OpencodeClient, options?: { retry?: 
       ...pinned.keys(),
       ...requests.keys(),
       ...inflight.keys(),
-      ...inflightDiff.keys(),
-      ...inflightTodo.keys(),
       ...messageLoads.keys(),
       ...optimistic.keys(),
       ...Object.entries(data.permission)
-        .filter(([, items]) => items.length > 0)
-        .map(([sessionID]) => sessionID),
-      ...Object.entries(data.question)
         .filter(([, items]) => items.length > 0)
         .map(([sessionID]) => sessionID),
       ...Object.entries(data.session_status)
@@ -442,20 +389,21 @@ export function createServerSession(client: OpencodeClient, options?: { retry?: 
       pickSessionCacheEvictions({ seen, keep: sessionID, limit: SESSION_CACHE_LIMIT, preserve: protectedSessions() }),
     )
 
-  const fetchMessages = async (sessionID: string, limit: number, before?: string, onAttempt?: () => void) => {
-    const response = await (options?.retry ?? retry)(() => {
+  // 游标从 body 的 nextCursor 读 —— 不再是 HTTP 响应头 x-next-cursor,我们没有 HTTP 了。
+  const fetchMessages = async (sessionID: string, limit: number, cursor?: string, onAttempt?: () => void) => {
+    const page = await (options?.retry ?? retry)(() => {
       onAttempt?.()
-      return client.session.messages({ sessionID, limit, before })
+      return client.session.messages({ sessionID, limit, cursor })
     })
-    const items = (response.data ?? []).filter((item) => !!item?.info?.id)
+    const items = (page.items ?? []).filter((item) => !!item?.info?.id)
     return {
-      session: items.map((item) => cleanMessage(item.info)).sort((a, b) => cmp(a.id, b.id)),
+      session: items.map((item) => item.info).sort((a, b) => cmp(a.id, b.id)),
       part: items.map((item) => ({
         id: item.info.id,
         part: item.parts.filter((part) => !!part?.id).sort((a, b) => cmp(a.id, b.id)),
       })),
-      cursor: response.response.headers.get("x-next-cursor") ?? undefined,
-      complete: !response.response.headers.get("x-next-cursor"),
+      cursor: page.nextCursor,
+      complete: !page.nextCursor,
     }
   }
 
@@ -479,9 +427,7 @@ export function createServerSession(client: OpencodeClient, options?: { retry?: 
   ) => {
     for (const item of items) {
       if (!messageIDs.has(item.id)) continue
-      const fetched = load?.clearedMessageParts.has(item.id)
-        ? []
-        : item.part.filter((part) => !SKIP_PARTS.has(part.type))
+      const fetched = load?.clearedMessageParts.has(item.id) ? [] : item.part
       const fetchedIDs = new Set(fetched.map((part) => part.id))
       const pending = pendingParts.get(sessionID)?.get(item.id)
       const touched = new Set([...(load?.touchedParts.get(item.id) ?? []), ...(pending ?? [])])
@@ -634,29 +580,34 @@ export function createServerSession(client: OpencodeClient, options?: { retry?: 
     await runInflight(inflight, sessionID, () => loadMessages(sessionID, limit))
   }
 
-  const eventSessionID = (event: { type: string; properties?: unknown }) => {
-    const properties = event.properties
-    if (!properties || typeof properties !== "object") return
-    if ("sessionID" in properties && typeof properties.sessionID === "string") return properties.sessionID
-    if (
-      "info" in properties &&
-      properties.info &&
-      typeof properties.info === "object" &&
-      "sessionID" in properties.info &&
-      typeof properties.info.sessionID === "string"
-    )
-      return properties.info.sessionID
-    if (
-      "part" in properties &&
-      properties.part &&
-      typeof properties.part === "object" &&
-      "sessionID" in properties.part &&
-      typeof properties.part.sessionID === "string"
-    )
-      return properties.part.sessionID
+  /**
+   * 事件归属的会话。
+   *
+   * 原来是在 `properties` 上按 sessionID / info.sessionID / part.sessionID 反射着猜;
+   * 内核事件是扁平的判别联合,直接 switch 就有类型,猜不错也漏不掉。
+   * `permission.replied` 只带 requestID,故意不在这里返回 —— 它不该触发 resolve。
+   */
+  const eventSessionID = (event: KernelEvent) => {
+    switch (event.type) {
+      case "session.created":
+      case "session.updated":
+        return event.session.id
+      case "session.deleted":
+      case "session.status":
+      case "message.removed":
+      case "message.part.removed":
+      case "message.part.delta":
+        return event.sessionID
+      case "message.updated":
+        return event.message.sessionID
+      case "message.part.updated":
+        return event.part.sessionID
+      case "permission.asked":
+        return event.request.sessionID
+    }
   }
 
-  const apply = (event: { type: string; properties?: unknown }) => {
+  const apply = (event: KernelEvent) => {
     const eventID = eventSessionID(event)
     if (eventID) {
       touch(eventID)
@@ -670,16 +621,16 @@ export function createServerSession(client: OpencodeClient, options?: { retry?: 
     }
     switch (event.type) {
       case "session.created":
-        remember((event.properties as { info: Session }).info)
+        remember(event.session)
         return
       case "session.updated": {
-        const info = (event.properties as { info: Session }).info
+        const info = event.session
         remember(info)
         if (info.time.archived) evict([info.id])
         return
       }
       case "session.deleted": {
-        const sessionID = (event.properties as { info: Session }).info.id
+        const sessionID = event.sessionID
         infoSeen.delete(sessionID)
         setData(
           "info",
@@ -688,23 +639,12 @@ export function createServerSession(client: OpencodeClient, options?: { retry?: 
         evict([sessionID])
         return
       }
-      case "session.diff": {
-        const props = event.properties as { sessionID: string; diff: SnapshotFileDiff[] }
-        setData("session_diff", props.sessionID, reconcile(cleanDiffs(props.diff), { key: "file" }))
-        return
-      }
-      case "todo.updated": {
-        const props = event.properties as { sessionID: string; todos: Todo[] }
-        setData("todo", props.sessionID, reconcile(props.todos, { key: "id" }))
-        return
-      }
       case "session.status": {
-        const props = event.properties as { sessionID: string; status: SessionStatus }
-        setData("session_status", props.sessionID, reconcile(props.status))
+        setData("session_status", event.sessionID, reconcile(event.status))
         return
       }
       case "message.updated": {
-        const info = cleanMessage((event.properties as { info: Message }).info)
+        const info = event.message
         const load = messageLoads.get(info.sessionID)
         load?.touchedMessages.add(info.id)
         load?.removedMessages.delete(info.id)
@@ -736,7 +676,7 @@ export function createServerSession(client: OpencodeClient, options?: { retry?: 
         return
       }
       case "message.removed": {
-        const props = event.properties as { sessionID: string; messageID: string }
+        const props = event
         const load = messageLoads.get(props.sessionID)
         load?.touchedMessages.add(props.messageID)
         load?.removedMessages.add(props.messageID)
@@ -764,8 +704,7 @@ export function createServerSession(client: OpencodeClient, options?: { retry?: 
         return
       }
       case "message.part.updated": {
-        const part = (event.properties as { part: Part }).part
-        if (SKIP_PARTS.has(part.type)) return
+        const part = event.part
         const messages = data.message[part.sessionID]
         const load = messageLoads.get(part.sessionID)
         const missing = !messages || !Binary.search(messages, part.messageID, (message) => message.id).found
@@ -822,7 +761,7 @@ export function createServerSession(client: OpencodeClient, options?: { retry?: 
         return
       }
       case "message.part.removed": {
-        const props = event.properties as { sessionID: string; messageID: string; partID: string }
+        const props = event
         // Part removal is event-only on the server, so its tombstone lasts until a later update or eviction.
         const pending = pendingParts.get(props.sessionID) ?? new Map<string, Set<string>>()
         const parts = pending.get(props.messageID) ?? new Set<string>()
@@ -860,13 +799,7 @@ export function createServerSession(client: OpencodeClient, options?: { retry?: 
         return
       }
       case "message.part.delta": {
-        const props = event.properties as {
-          sessionID: string
-          messageID: string
-          partID: string
-          field: string
-          delta: string
-        }
+        const props = event
         const parts = data.part[props.messageID]
         if (!parts) return
         const result = Binary.search(parts, props.partID, (part) => part.id)
@@ -881,29 +814,27 @@ export function createServerSession(client: OpencodeClient, options?: { retry?: 
           carried?.delete(props.partID)
           if (carried?.size === 0) load.carriedDeltaParts.delete(props.messageID)
         }
-        const field = props.field as keyof (typeof parts)[number]
-        const current = parts[result.index]?.[field]
+        // 内核只对 text 发增量(field 恒为 "text"),不再需要按字段名动态索引。
+        // deltaBases 记下"开始流式前的文本",replaceParts 靠它判断取回的快照是不是
+        // 已画出文本的前缀扩展 —— 不是的话才丢弃流式文本,否则会看到先截断再长回来。
+        const current = "text" in parts[result.index]! ? (parts[result.index] as { text: string }).text : undefined
         if (!deltaBases.has(props.partID) && typeof current === "string")
           deltaBases.set(props.partID, { base: current, sessionID: props.sessionID })
-        setData(
-          "part_text_accum_delta",
-          props.partID,
-          (value) => (value ?? (typeof current === "string" ? current : "")) + props.delta,
-        )
+        setData("part_text_accum_delta", props.partID, (value) => (value ?? current ?? "") + props.delta)
         setData(
           "part",
           props.messageID,
           produce((draft) => {
             if (!draft) return
-            const part = draft[result.index]
-            const field = props.field as keyof typeof part
-            ;(part[field] as string) = ((part[field] as string | undefined) ?? "") + props.delta
+            const part = draft[result.index] as { text?: string } | undefined
+            if (!part) return
+            part.text = (part.text ?? "") + props.delta
           }),
         )
         return
       }
       case "permission.asked": {
-        const permission = event.properties as PermissionRequest
+        const permission = event.request
         const permissions = data.permission[permission.sessionID]
         if (!permissions) {
           setData("permission", permission.sessionID, [permission])
@@ -920,47 +851,19 @@ export function createServerSession(client: OpencodeClient, options?: { retry?: 
         return
       }
       case "permission.replied": {
-        const props = event.properties as { sessionID: string; requestID: string }
-        setData(
-          "permission",
-          props.sessionID,
-          produce((draft) => {
-            if (!draft) return
-            const result = Binary.search(draft, props.requestID, (item) => item.id)
-            if (result.found) draft.splice(result.index, 1)
-          }),
-        )
-        return
-      }
-      case "question.asked": {
-        const question = event.properties as QuestionRequest
-        const questions = data.question[question.sessionID]
-        if (!questions) {
-          setData("question", question.sessionID, [question])
+        // 内核只回请求 id(权限 id 全局唯一),不带 sessionID —— 反查它挂在哪个会话下。
+        // 未决权限最多只有个位数条,线性扫比让 host 多带一个字段更省事。
+        for (const [sessionID, requests] of Object.entries(data.permission)) {
+          const result = Binary.search(requests, event.id, (item) => item.id)
+          if (!result.found) continue
+          setData(
+            "permission",
+            sessionID,
+            produce((draft) => void draft.splice(result.index, 1)),
+          )
           return
         }
-        const result = Binary.search(questions, question.id, (item) => item.id)
-        if (result.found) setData("question", question.sessionID, result.index, reconcile(question))
-        if (!result.found)
-          setData(
-            "question",
-            question.sessionID,
-            produce((draft) => void draft.splice(result.index, 0, question)),
-          )
         return
-      }
-      case "question.replied":
-      case "question.rejected": {
-        const props = event.properties as { sessionID: string; requestID: string }
-        setData(
-          "question",
-          props.sessionID,
-          produce((draft) => {
-            if (!draft) return
-            const result = Binary.search(draft, props.requestID, (item) => item.id)
-            if (result.found) draft.splice(result.index, 1)
-          }),
-        )
       }
     }
   }
@@ -972,13 +875,7 @@ export function createServerSession(client: OpencodeClient, options?: { retry?: 
     peek: (sessionID: string) => data.info[sessionID],
     remember,
     resolve,
-    lineage: {
-      peek: peekLineage,
-      async resolve(sessionID: string) {
-        const session = await resolve(sessionID)
-        return { session, root: await rootSession(session, resolve) }
-      },
-    },
+    // 删掉的 lineage:my-pi 的会话没有 parentID,会话之间是平的(分支是会话**内部**的树)。
     sync,
     prefetch,
     shouldPrefetch(sessionID: string, limit: number) {
@@ -992,9 +889,7 @@ export function createServerSession(client: OpencodeClient, options?: { retry?: 
     },
     optimistic: {
       add(input: { sessionID: string; message: Message; parts: Part[] }) {
-        const parts = input.parts
-          .filter((part) => !!part?.id && !SKIP_PARTS.has(part.type))
-          .sort((a, b) => cmp(a.id, b.id))
+        const parts = input.parts.filter((part) => !!part?.id).sort((a, b) => cmp(a.id, b.id))
         const load = messageLoads.get(input.sessionID)
         if (load?.clearedMessageParts.has(input.message.id)) {
           const touched = load.touchedParts.get(input.message.id) ?? new Set<string>()
@@ -1049,28 +944,7 @@ export function createServerSession(client: OpencodeClient, options?: { retry?: 
         setData(produce((draft) => deleteMessageParts(draft, input.messageID)))
       },
     },
-    diff(sessionID: string, options?: { force?: boolean }) {
-      touch(sessionID)
-      if (data.session_diff[sessionID] !== undefined && !options?.force) return Promise.resolve()
-      return runInflight(inflightDiff, sessionID, () => {
-        const active = generation(sessionID)
-        return retry(() => client.session.diff({ sessionID })).then((result) => {
-          if (generations.get(sessionID) !== active) return
-          setData("session_diff", sessionID, reconcile(cleanDiffs(result.data), { key: "file" }))
-        })
-      })
-    },
-    todo(sessionID: string, options?: { force?: boolean }) {
-      touch(sessionID)
-      if (data.todo[sessionID] !== undefined && !options?.force) return Promise.resolve()
-      return runInflight(inflightTodo, sessionID, () => {
-        const active = generation(sessionID)
-        return retry(() => client.session.todo({ sessionID })).then((result) => {
-          if (generations.get(sessionID) !== active) return
-          setData("todo", sessionID, reconcile(result.data ?? [], { key: "id" }))
-        })
-      })
-    },
+    // 删掉的 diff / todo:my-pi 没有文件快照(回滚是挪 leaf 指针,不还原文件),也没有 todo 工具。
     history: {
       more: (sessionID: string) =>
         data.message[sessionID] !== undefined &&

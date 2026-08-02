@@ -1,26 +1,32 @@
+/**
+ * 上下文详情面板。
+ *
+ * 相对 opencode 少了两块:
+ *   - **system prompt 预览** —— opencode 把整段系统提示词挂在 UserMessage.system 上下发,
+ *     内核不下发(系统提示词是 host 侧拼的,不进 transcript),于是这块整个删掉,
+ *     用量拆分里的 system 段也就恒为 0。
+ *   - **revert 过滤** —— 没有 session.revert,消息不会被"回滚"隐藏。
+ */
+
 import { createMemo, createEffect, on, onCleanup, For, Show } from "solid-js"
 import type { JSX } from "solid-js"
 import { useSync } from "@/context/sync"
 import { checksum } from "@yoma-desktop/util/encode"
-import { findLast } from "@yoma-desktop/util/array"
 import { same } from "@/utils/same"
 import { Icon } from "@yoma-desktop/ui/icon"
 import { Accordion } from "@yoma-desktop/ui/accordion"
 import { StickyAccordionHeader } from "@yoma-desktop/ui/sticky-accordion-header"
 import { File } from "@yoma-desktop/session-ui/file"
-import { Markdown } from "@yoma-desktop/session-ui/markdown"
 import { ScrollView } from "@yoma-desktop/ui/scroll-view"
-import type { Message, Part, UserMessage } from "@opencode-ai/sdk/v2/client"
+import type { Message, Part } from "@yoma-desktop/kernel"
 import { useLanguage } from "@/context/language"
-import { useProviders } from "@/hooks/use-providers"
-import { useSDK } from "@/context/sdk"
+import { createProviderCatalog } from "@/components/kernel-providers"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { getSessionContext, getSessionTokenTotal } from "./session-context-metrics"
 import { estimateSessionContextBreakdown, type SessionContextBreakdownKey } from "./session-context-breakdown"
 import { createSessionContextFormatter } from "./session-context-format"
 
 const BREAKDOWN_COLOR: Record<SessionContextBreakdownKey, string> = {
-  system: "var(--syntax-info)",
   user: "var(--syntax-success)",
   assistant: "var(--syntax-property)",
   tool: "var(--syntax-warning)",
@@ -89,13 +95,11 @@ function RawMessage(props: {
 }
 
 const emptyMessages: Message[] = []
-const emptyUserMessages: UserMessage[] = []
 
 export function SessionContextTab() {
   const sync = useSync()
   const language = useLanguage()
-  const sdk = useSDK()
-  const providers = useProviders(() => sdk().directory)
+  const providers = createProviderCatalog()
   const { params, view } = useSessionLayout()
 
   const info = createMemo(() => (params.id ? sync().session.get(params.id) : undefined))
@@ -110,22 +114,6 @@ export function SessionContextTab() {
     { equals: same },
   )
 
-  const userMessages = createMemo(
-    () => messages().filter((m) => m.role === "user") as UserMessage[],
-    emptyUserMessages,
-    { equals: same },
-  )
-
-  const visibleUserMessages = createMemo(
-    () => {
-      const revert = info()?.revert?.messageID
-      if (!revert) return userMessages()
-      return userMessages().filter((m) => m.id < revert)
-    },
-    emptyUserMessages,
-    { equals: same },
-  )
-
   const usd = createMemo(
     () =>
       new Intl.NumberFormat(language.intl(), {
@@ -134,7 +122,7 @@ export function SessionContextTab() {
       }),
   )
 
-  const ctx = createMemo(() => getSessionContext(messages(), [...providers.all().values()]))
+  const ctx = createMemo(() => getSessionContext(messages(), providers()))
   const tokens = createMemo(() => info()?.tokens)
   const formatter = createMemo(() => createSessionContextFormatter(language.intl()))
 
@@ -153,15 +141,6 @@ export function SessionContextTab() {
     }
   })
 
-  const systemPrompt = createMemo(() => {
-    const msg = findLast(visibleUserMessages(), (m) => !!m.system)
-    const system = msg?.system
-    if (!system) return
-    const trimmed = system.trim()
-    if (!trimmed) return
-    return trimmed
-  })
-
   const providerLabel = createMemo(() => {
     const c = ctx()
     if (!c) return "—"
@@ -176,7 +155,7 @@ export function SessionContextTab() {
 
   const breakdown = createMemo(
     on(
-      () => [ctx()?.message.id, ctx()?.input, messages().length, systemPrompt()],
+      () => [ctx()?.message.id, ctx()?.input, messages().length],
       () => {
         const c = ctx()
         if (!c?.input) return []
@@ -184,14 +163,12 @@ export function SessionContextTab() {
           messages: messages(),
           parts: sync().data.part as Record<string, Part[] | undefined>,
           input: c.input,
-          systemPrompt: systemPrompt(),
         })
       },
     ),
   )
 
   const breakdownLabel = (key: SessionContextBreakdownKey) => {
-    if (key === "system") return language.t("context.breakdown.system")
     if (key === "user") return language.t("context.breakdown.user")
     if (key === "assistant") return language.t("context.breakdown.assistant")
     if (key === "tool") return language.t("context.breakdown.tool")
@@ -314,17 +291,6 @@ export function SessionContextTab() {
             </div>
             <div class="hidden text-11-regular text-text-weaker">{language.t("context.breakdown.note")}</div>
           </div>
-        </Show>
-
-        <Show when={systemPrompt()}>
-          {(prompt) => (
-            <div class="flex flex-col gap-2">
-              <div class="text-12-regular text-text-weak">{language.t("context.systemPrompt.title")}</div>
-              <div class="border border-border-base rounded-md bg-surface-base px-3 py-2">
-                <Markdown text={prompt()} class="text-12-regular" />
-              </div>
-            </div>
-          )}
         </Show>
 
         <div class="flex flex-col gap-2">

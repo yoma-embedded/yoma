@@ -24,6 +24,7 @@ import { usePrompt } from "@/context/prompt"
 import {
   isEditableContent,
   isMarkdownPath,
+  isTextMime,
   selectionFromOffsets,
   lineColFromIndex,
   type ExplorerScope,
@@ -425,7 +426,7 @@ function ReadonlyFile(props: { path: string; notice?: string }) {
   const state = createMemo(() => file.get(props.path))
   const contents = createMemo(() => {
     const content = state()?.content
-    if (!content || content.type !== "text" || content.encoding === "base64") return ""
+    if (!content || !isTextMime(content.mime)) return ""
     return content.content
   })
 

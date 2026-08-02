@@ -15,7 +15,7 @@ import { getDirectory, getFilename } from "@yoma-desktop/util/path"
 import { checksum } from "@yoma-desktop/util/encode"
 import { createEffect, createMemo, For, Match, onCleanup, Show, Switch, untrack, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
-import { type FileContent, type SnapshotFileDiff, type VcsFileDiff } from "@opencode-ai/sdk/v2"
+import { type FileContent, type VcsFileDiff } from "@yoma-desktop/kernel"
 import { PreloadMultiFileDiffResult } from "@pierre/diffs/ssr"
 import { type SelectedLineRange } from "@pierre/diffs"
 import { Dynamic } from "solid-js/web"
@@ -62,24 +62,24 @@ export type SessionReviewCommentActions = {
 
 export type SessionReviewFocus = { file: string; id: string }
 
-type RawReviewDiff = (SnapshotFileDiff | VcsFileDiff) & {
+type RawReviewDiff = VcsFileDiff & {
   preloaded?: PreloadMultiFileDiffResult<any>
 }
-type ReviewDiff = ((SnapshotFileDiff & { file: string }) | VcsFileDiff) & {
-  preloaded?: PreloadMultiFileDiffResult<any>
-}
-type Item = ViewDiff & { preloaded?: PreloadMultiFileDiffResult<any> }
+type ReviewDiff = RawReviewDiff
 
 function diff(value: unknown): value is ReviewDiff {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false
-  if (!("file" in value) || typeof value.file !== "string") return false
-  if (!("additions" in value) || typeof value.additions !== "number") return false
-  if (!("deletions" in value) || typeof value.deletions !== "number") return false
+  if (!("path" in value) || typeof value.path !== "string") return false
+  if (!("added" in value) || typeof value.added !== "number") return false
+  if (!("removed" in value) || typeof value.removed !== "number") return false
   if ("patch" in value && value.patch !== undefined && typeof value.patch !== "string") return false
-  if ("before" in value && value.before !== undefined && typeof value.before !== "string") return false
-  if ("after" in value && value.after !== undefined && typeof value.after !== "string") return false
-  if (!("status" in value) || value.status === undefined) return true
-  return value.status === "added" || value.status === "deleted" || value.status === "modified"
+  if (!("status" in value)) return false
+  return (
+    value.status === "added" ||
+    value.status === "deleted" ||
+    value.status === "modified" ||
+    value.status === "renamed"
+  )
 }
 
 function list(value: unknown): ReviewDiff[] {
@@ -183,9 +183,9 @@ export const SessionReview = (props: SessionReviewProps) => {
 
   const open = () => props.open ?? store.open
   const itemsMap = createMemo(() =>
-    Object.fromEntries(list(props.diffs).map((diff) => [diff.file, { ...normalize(diff), preloaded: diff.preloaded }])),
+    Object.fromEntries(list(props.diffs).map((diff) => [diff.path, { ...normalize(diff), preloaded: diff.preloaded }])),
   )
-  const files = createMemo(() => props.diffs.map((diff) => diff.file!))
+  const files = createMemo(() => props.diffs.map((diff) => diff.path))
   const grouped = createMemo(() => {
     const next = new Map<string, SessionReviewComment[]>()
     for (const comment of props.comments ?? []) {

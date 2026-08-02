@@ -43,7 +43,6 @@ import { usePlatform } from "@/context/platform"
 import { PromptProvider } from "@/context/prompt"
 import { ServerConnection, ServerProvider, serverName, useServer } from "@/context/server"
 import { SettingsProvider } from "@/context/settings"
-import { TerminalProvider } from "@/context/terminal"
 import { TabsProvider, useTabs, type DraftTab } from "@/context/tabs"
 import { SDKProvider, useSDK } from "@/context/sdk"
 import DirectoryLayout, { DirectoryDataProvider } from "@/pages/directory-layout"
@@ -116,14 +115,16 @@ function ResolvedTargetSessionRoute() {
   const tabs = useTabs()
   const sync = useServerSync()
   const serverKey = createMemo(() => requireServerKey(params.serverKey))
-  const cached = createMemo(() => sync().session.lineage.peek(params.id))
+  const cached = createMemo(() => sync().session.get(params.id))
   const [resolved] = createResource(
     () => {
       if (cached()) return
       return { id: params.id, server: serverKey(), sync: sync() }
     },
     ({ id, server, sync }) =>
-      sync.session.lineage.resolve(id).catch((error) => {
+      // 原来解析的是 lineage(沿 parentID 往上找祖先链)。内核里 session 之间没有父子,
+      // 所以退化成"把这一个会话取回来"。
+      sync.session.resolve(id).catch((error: unknown) => {
         if (isSessionNotFoundError(error, id)) tabs.removeSessionTab({ server, sessionId: id })
         throw error
       }),
@@ -355,17 +356,14 @@ function MarkSessionNotificationsViewed(props: { sessionID?: () => string | unde
 
 function SessionProviders(props: ParentProps) {
   return (
-    <TerminalProvider>
-      <FileProvider>
-        <PromptProvider>
-          <CommentsProvider>{props.children}</CommentsProvider>
-        </PromptProvider>
-      </FileProvider>
-    </TerminalProvider>
+    <FileProvider>
+      <PromptProvider>
+        <CommentsProvider>{props.children}</CommentsProvider>
+      </PromptProvider>
+    </FileProvider>
   )
 }
 
-// The draft page only renders the prompt composer, so it drops TerminalProvider.
 // FileProvider and CommentsProvider stay because PromptInput uses file search and comment context.
 function DraftProviders(props: ParentProps) {
   return (

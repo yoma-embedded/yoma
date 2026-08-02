@@ -18,26 +18,15 @@ const persist: typeof import("@/utils/persist").persisted = (_target, store) => 
 const child = () => createStore({} as State)
 const provider = { all: new Map(), connected: [], default: {} } satisfies NormalizedProviderListResponse
 
+// 内核只剩 providers 一个目录级 query —— path / mcp / mcpResources / lsp / references
+// 都随迁移一起没了。
 const queryOptionsApi = {
-  globalConfig: () => ({ queryKey: ["globalConfig"], queryFn: async () => ({}) }),
-  projects: () => ({ queryKey: ["projects"], queryFn: async () => [] }),
-  providers: (directory: string | null) => ({ queryKey: [directory, "providers"], queryFn: async () => provider }),
-  path: (directory: string | null) => ({
-    queryKey: [directory, "path"],
-    queryFn: async () => ({
-      state: "",
-      config: "",
-      worktree: "",
-      directory: directory ?? "",
-      home: "",
-    }),
+  projects: () => ({ queryKey: [ServerScope.local, "projects"], queryFn: async () => [] }),
+  providers: (directory: string | null) => ({
+    queryKey: [ServerScope.local, directory, "providers"],
+    queryFn: async () => provider,
   }),
-  agents: (directory: string) => ({ queryKey: [directory, "agents"], queryFn: async () => [] }),
-  mcp: (directory: string) => ({ queryKey: [directory, "mcp"], queryFn: async () => ({}) }),
-  mcpResources: (directory: string) => ({ queryKey: [directory, "mcpResources"], queryFn: async () => ({}) }),
-  lsp: (directory: string) => ({ queryKey: [directory, "lsp"], queryFn: async () => [] }),
-  references: (directory: string) => ({ queryKey: [directory, "references"], queryFn: async () => [] }),
-  sessions: (directory: string) => ({ queryKey: [directory, "loadSessions"] as const }),
+  sessions: (directory: string) => ({ queryKey: [ServerScope.local, directory, "loadSessions"] as const }),
 } as unknown as QueryOptionsApi
 
 function createOwner(callback: (owner: Owner) => void) {
@@ -51,18 +40,19 @@ function createOwner(callback: (owner: Owner) => void) {
 }
 
 beforeAll(async () => {
+  // mock.module 是进程级的,会漏进同一次 `bun test` 里的其它文件 —— 所以只覆盖 useQuery,
+  // 其余导出(queryOptions/QueryClient…)原样透传,否则 bootstrap.test.ts 会加载失败。
+  const actual = await import("@tanstack/solid-query")
   mock.module("@tanstack/solid-query", () => ({
+    ...actual,
     useQuery: (options: () => { queryKey?: unknown[]; enabled?: boolean }) => {
       querySingles.push(options)
       return {
         get isLoading() {
-          return options().queryKey?.[1] === "path"
+          return false
         },
         get data() {
-          if (options().queryKey?.[1] === "path") throw new Error("pending path data read")
-          if (options().queryKey?.[1] === "mcp") return options().enabled ? { demo: { status: "disabled" } } : undefined
-          if (options().queryKey?.[1] === "lsp") return []
-          if (options().queryKey?.[1] === "providers") return provider
+          if (options().queryKey?.[2] === "providers") return provider
           return undefined
         },
       }
@@ -88,7 +78,6 @@ describe("createChildStoreManager", () => {
       isBooting: () => false,
       isLoadingSessions: () => false,
       onBootstrap() {},
-      onMcp() {},
       onDispose() {},
       translate: (key) => key,
       queryOptions: queryOptionsApi,
@@ -121,7 +110,6 @@ describe("createChildStoreManager", () => {
         onBootstrap(directory) {
           bootstraps.push(directory)
         },
-        onMcp() {},
         onDispose() {},
         translate: (key) => key,
         queryOptions: queryOptionsApi,
@@ -142,7 +130,8 @@ describe("createChildStoreManager", () => {
     }
   })
 
-  test("provides the requested directory while the path query is pending", () => {
+  // 目录不再来自后端的 path 路由 —— 前端自己就知道它,直接写进 store。
+  test("uses the requested directory as the store path", () => {
     let manager: ReturnType<typeof createChildStoreManager> | undefined
 
     const dispose = createOwner((owner) => {
@@ -153,7 +142,6 @@ describe("createChildStoreManager", () => {
         isBooting: () => false,
         isLoadingSessions: () => false,
         onBootstrap() {},
-        onMcp() {},
         onDispose() {},
         translate: (key) => key,
         queryOptions: queryOptionsApi,
@@ -167,16 +155,14 @@ describe("createChildStoreManager", () => {
       const [store] = manager.child("/project", { bootstrap: false })
 
       expect(store.path.directory).toBe("/project")
-      expect(store.path.worktree).toBe("")
     } finally {
       dispose()
     }
   })
 
-  test("enables MCP only when requested for the directory", () => {
+  test("creates a single provider query per child store", () => {
     let manager: ReturnType<typeof createChildStoreManager> | undefined
     const offset = querySingles.length
-    const mcpLoads: string[] = []
 
     const dispose = createOwner((owner) => {
       manager = createChildStoreManager({
@@ -186,9 +172,6 @@ describe("createChildStoreManager", () => {
         isBooting: () => false,
         isLoadingSessions: () => false,
         onBootstrap() {},
-        onMcp(directory) {
-          mcpLoads.push(directory)
-        },
         onDispose() {},
         translate: (key) => key,
         queryOptions: queryOptionsApi,
@@ -198,25 +181,12 @@ describe("createChildStoreManager", () => {
 
     try {
       if (!manager) throw new Error("manager required")
-      const [store, setStore] = manager.child("/project", { bootstrap: false })
-      expect(querySingles.length - offset).toBe(6)
-      const query = querySingles[offset + 1]
-      const resourceQuery = querySingles[offset + 2]
-      if (!query) throw new Error("query required")
-      if (!resourceQuery) throw new Error("resource query required")
-      expect(query().enabled).toBe(false)
-      expect(resourceQuery().enabled).toBe(false)
+      const [store] = manager.child("/project", { bootstrap: false })
 
-      setStore("status", "complete")
-      manager.child("/project", { bootstrap: false, mcp: true })
-      expect(query().enabled).toBe(true)
-      expect(resourceQuery().enabled).toBe(true)
-      expect(store.mcp).toEqual({ demo: { status: "disabled" } })
-      expect(mcpLoads).toEqual(["/project"])
-
-      manager.disableMcp("/project")
-      expect(query().enabled).toBe(false)
-      expect(manager.mcp("/project")).toBe(false)
+      expect(querySingles.length - offset).toBe(1)
+      expect(querySingles[offset]?.().queryKey?.[2]).toBe("providers")
+      expect(store.provider_ready).toBe(true)
+      expect(store.provider).toBe(provider)
     } finally {
       dispose()
     }

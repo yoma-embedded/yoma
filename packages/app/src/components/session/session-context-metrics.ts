@@ -1,22 +1,18 @@
-import type { AssistantMessage, Message, Session } from "@opencode-ai/sdk/v2/client"
+/**
+ * 上下文用量。
+ *
+ * provider 目录直接吃内核的 `ProviderInfo[]`(`models` 是数组,不是 opencode 的
+ * `Record<id, Model>`),上下文上限从 `ModelInfo.contextWindow` 读 —— opencode 的
+ * `model.limit.context` 没有了。模型不在目录里(比如凭据被移除)时 limit 为 undefined,
+ * 用量退化成 null,UI 显示 "—"。
+ */
 
-type Provider = {
-  id: string
-  name?: string
-  models: Record<string, Model | undefined>
-}
-
-type Model = {
-  name?: string
-  limit: {
-    context: number
-  }
-}
+import type { AssistantMessage, Message, ModelInfo, ProviderInfo, Session } from "@yoma-desktop/kernel"
 
 type Context = {
   message: AssistantMessage
-  provider?: Provider
-  model?: Model
+  provider?: ProviderInfo
+  model?: ModelInfo
   providerLabel: string
   modelLabel: string
   limit: number | undefined
@@ -37,13 +33,13 @@ const lastAssistantWithTokens = (messages: Message[]) => {
   }
 }
 
-const build = (messages: Message[] = [], providers: Provider[] = []): Context | undefined => {
+const build = (messages: Message[] = [], providers: ProviderInfo[] = []): Context | undefined => {
   const message = lastAssistantWithTokens(messages)
   if (!message) return undefined
 
   const provider = providers.find((item) => item.id === message.providerID)
-  const model = provider?.models[message.modelID]
-  const limit = model?.limit.context
+  const model = provider?.models.find((item) => item.id === message.modelID)
+  const limit = model?.contextWindow
   const total = tokenTotal(message)
 
   return {
@@ -58,7 +54,7 @@ const build = (messages: Message[] = [], providers: Provider[] = []): Context | 
   }
 }
 
-export function getSessionContext(messages: Message[] = [], providers: Provider[] = []) {
+export function getSessionContext(messages: Message[] = [], providers: ProviderInfo[] = []) {
   return build(messages, providers)
 }
 

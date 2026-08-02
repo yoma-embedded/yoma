@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test"
-import type { Message } from "@opencode-ai/sdk/v2/client"
+import type { Message, ProviderInfo } from "@yoma-desktop/kernel"
 import { getSessionContext, getSessionTokenTotal } from "./session-context-metrics"
+
+const provider = (id: string, name: string, models: ProviderInfo["models"]): ProviderInfo => ({
+  id,
+  name,
+  authenticated: true,
+  models,
+})
 
 const assistant = (
   id: string,
@@ -45,16 +52,9 @@ describe("getSessionContext", () => {
       assistant("a2", { input: 300, output: 100, reasoning: 50, read: 25, write: 25 }, 1.25),
     ]
     const providers = [
-      {
-        id: "openai",
-        name: "OpenAI",
-        models: {
-          "gpt-4.1": {
-            name: "GPT-4.1",
-            limit: { context: 1000 },
-          },
-        },
-      },
+      provider("openai", "OpenAI", [
+        { id: "gpt-4.1", providerID: "openai", name: "GPT-4.1", thinkingLevels: [], contextWindow: 1000 },
+      ]),
     ]
 
     const ctx = getSessionContext(messages, providers)
@@ -67,7 +67,8 @@ describe("getSessionContext", () => {
 
   test("preserves fallback labels and null usage when model metadata is missing", () => {
     const messages = [assistant("a1", { input: 40, output: 10, reasoning: 0, read: 0, write: 0 }, 0.1, "p-1", "m-1")]
-    const providers = [{ id: "p-1", models: {} }]
+    // 目录里查不到这个 provider(凭据被移除 / 模型下线)—— 标签退回消息里记的原始 id。
+    const providers: ProviderInfo[] = []
 
     const ctx = getSessionContext(messages, providers)
 
@@ -79,7 +80,7 @@ describe("getSessionContext", () => {
 
   test("recomputes when message array is mutated in place", () => {
     const messages = [assistant("a1", { input: 10, output: 10, reasoning: 10, read: 10, write: 10 }, 0.25)]
-    const providers = [{ id: "openai", models: {} }]
+    const providers = [provider("openai", "OpenAI", [])]
 
     const one = getSessionContext(messages, providers)
     messages.push(assistant("a2", { input: 100, output: 20, reasoning: 0, read: 0, write: 0 }, 0.75))

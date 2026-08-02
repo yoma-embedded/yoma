@@ -1,18 +1,16 @@
 import { describe, expect, test } from "bun:test"
-import type { AssistantMessage, Message, UserMessage } from "@opencode-ai/sdk/v2"
-import { loadOlderTimeline, selectUserMessages, selectVisibleUserMessages } from "./model"
+import type { AssistantMessage, Message, UserMessage } from "@yoma-desktop/kernel"
+import { loadOlderTimeline, selectUserMessages } from "./model"
 
 const user = (id: string) => ({ id, role: "user" }) as UserMessage
 const assistant = (id: string) => ({ id, role: "assistant" }) as AssistantMessage
 
 describe("timeline model", () => {
-  test("selects users and applies the revert boundary", () => {
+  test("selects user messages", () => {
     const messages: Message[] = [user("msg_1"), assistant("msg_2"), user("msg_3"), user("msg_5")]
     const users = selectUserMessages(messages)
 
     expect(users.map((message) => message.id)).toEqual(["msg_1", "msg_3", "msg_5"])
-    expect(selectVisibleUserMessages(users, "msg_5").map((message) => message.id)).toEqual(["msg_1", "msg_3"])
-    expect(selectVisibleUserMessages(users)).toBe(users)
   })
 
   test("loads exactly one opaque cursor page", async () => {

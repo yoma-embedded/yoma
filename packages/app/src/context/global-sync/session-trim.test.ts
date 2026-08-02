@@ -1,20 +1,21 @@
 import { describe, expect, test } from "bun:test"
-import type { PermissionRequest, Session } from "@opencode-ai/sdk/v2/client"
+import type { PermissionRequest, Session } from "@yoma-desktop/kernel"
 import { trimSessions } from "./session-trim"
 
-const session = (input: { id: string; parentID?: string; created: number; updated?: number; archived?: number }) =>
+const session = (input: { id: string; created: number; updated?: number; archived?: number }) =>
   ({
     id: input.id,
-    parentID: input.parentID,
+    directory: "/tmp",
+    title: input.id,
     time: {
       created: input.created,
-      updated: input.updated,
+      updated: input.updated ?? input.created,
       archived: input.archived,
     },
-  }) as Session
+  }) satisfies Session
 
 describe("trimSessions", () => {
-  test("keeps base roots and recent roots beyond the limit", () => {
+  test("keeps the base window and recent sessions beyond the limit", () => {
     const now = 1_000_000
     const list = [
       session({ id: "a", created: now - 100_000 }),
@@ -28,32 +29,27 @@ describe("trimSessions", () => {
     expect(result.map((x) => x.id)).toEqual(["a", "b", "c", "d"])
   })
 
-  test("keeps children when root is kept, permission exists, or child is recent", () => {
+  // 内核里会话之间没有父子关系,所以这里只剩三条留存理由:在 limit 内、在最近窗口内、
+  // 或者还挂着未决权限请求(弹窗还开着的会话被裁掉会直接丢掉待回答的请求)。
+  test("keeps stale sessions that still have a pending permission request", () => {
     const now = 1_000_000
     const list = [
-      session({ id: "root-1", created: now - 1000 }),
-      session({ id: "root-2", created: now - 2000 }),
-      session({ id: "z-root", created: now - 30_000_000 }),
-      session({ id: "child-kept-by-root", parentID: "root-1", created: now - 20_000_000 }),
-      session({ id: "child-kept-by-permission", parentID: "z-root", created: now - 20_000_000 }),
-      session({ id: "child-kept-by-recency", parentID: "z-root", created: now - 500 }),
-      session({ id: "child-trimmed", parentID: "z-root", created: now - 20_000_000 }),
+      session({ id: "recent-1", created: now - 1_000 }),
+      session({ id: "recent-2", created: now - 2_000 }),
+      session({ id: "mid", created: now - 100_000 }),
+      session({ id: "old-kept-by-permission", created: now - 20_000_000 }),
+      session({ id: "old-trimmed", created: now - 20_000_000 }),
+      session({ id: "older-trimmed", created: now - 30_000_000 }),
     ]
 
     const result = trimSessions(list, {
       limit: 2,
       permission: {
-        "child-kept-by-permission": [{ id: "perm-1" } as PermissionRequest],
+        "old-kept-by-permission": [{ id: "perm-1" } as PermissionRequest],
       },
       now,
     })
 
-    expect(result.map((x) => x.id)).toEqual([
-      "child-kept-by-permission",
-      "child-kept-by-recency",
-      "child-kept-by-root",
-      "root-1",
-      "root-2",
-    ])
+    expect(result.map((x) => x.id)).toEqual(["mid", "old-kept-by-permission", "recent-1", "recent-2"])
   })
 })

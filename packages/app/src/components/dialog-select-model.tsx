@@ -1,23 +1,57 @@
+/**
+ * 模型选择器。
+ *
+ * 目录改成从 `kernel.model.list()` 读 —— 不再走 opencode 的 config/provider 下发,
+ * 也没有 `release_date` / `family` 推导出来的 "latest" 标签、没有 opencode zen 的免费标记、
+ * 没有模型可见性管理(那是为几百个模型的目录设计的,my-pi 的目录只有已配置凭据的 provider)。
+ *
+ * 新增的是 **thinking 档位**:`ModelInfo.thinkingLevels` 是内核真有而 opencode 没有的能力,
+ * 选中的档位存在 local 的 variant 通道里(同一个概念,opencode 叫 variant,内核叫 thinking),
+ * 由 composer 在发起一轮时随 `session.setModel` 一起下发。
+ */
+
 import { Popover as Kobalte } from "@kobalte/core/popover"
-import { Component, ComponentProps, createMemo, JSX, Show, ValidComponent } from "solid-js"
+import { Component, ComponentProps, createMemo, For, JSX, Show, ValidComponent } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useLocal } from "@/context/local"
 import { useDialog } from "@yoma-desktop/ui/context/dialog"
-import { popularProviders } from "@/hooks/use-providers"
 import { Button } from "@yoma-desktop/ui/button"
 import { IconButton } from "@yoma-desktop/ui/icon-button"
-import { Tag } from "@yoma-desktop/ui/tag"
 import { Dialog } from "@yoma-desktop/ui/dialog"
 import { List } from "@yoma-desktop/ui/list"
 import { Tooltip } from "@yoma-desktop/ui/tooltip"
 import { ModelTooltip } from "./model-tooltip"
 import { useLanguage } from "@/context/language"
-import { decode64 } from "@/utils/base64"
-
-const isFree = (provider: string, cost: { input: number } | undefined) =>
-  provider === "opencode" && (!cost || cost.input === 0)
+import { createProviderCatalog, flattenModels, type CatalogModel } from "./kernel-providers"
 
 type ModelState = ReturnType<typeof useLocal>["model"]
+
+/** 当前选中模型支持的 thinking 档位。没有档位的模型整块不渲染。 */
+const ThinkingLevels: Component<{ levels: string[]; model: ModelState }> = (props) => {
+  const language = useLanguage()
+  const current = () => props.model.variant.current()
+
+  return (
+    <Show when={props.levels.length > 0}>
+      <div
+        class="flex items-center gap-1 flex-wrap px-4 pt-2"
+        title={language.t("command.model.variant.cycle.description")}
+      >
+        <For each={props.levels}>
+          {(level) => (
+            <Button
+              size="small"
+              variant={current() === level ? "primary" : "ghost"}
+              onClick={() => props.model.variant.set(level)}
+            >
+              {level}
+            </Button>
+          )}
+        </For>
+      </div>
+    </Show>
+  )
+}
 
 const ModelList: Component<{
   provider?: string
@@ -28,67 +62,61 @@ const ModelList: Component<{
 }> = (props) => {
   const model = props.model ?? useLocal().model
   const language = useLanguage()
+  const providers = createProviderCatalog()
 
   const models = createMemo(() =>
-    model
-      .list()
-      .filter((m) => model.visible({ modelID: m.id, providerID: m.provider.id }))
-      .filter((m) => (props.provider ? m.provider.id === props.provider : true)),
+    flattenModels(providers()).filter((m) => (props.provider ? m.provider.id === props.provider : true)),
   )
 
+  const selected = createMemo(() => {
+    const current = model.current()
+    if (!current) return
+    return models().find((m) => m.id === current.id && m.provider.id === current.provider.id)
+  })
+
   return (
-    <List
-      class={`flex-1 px-3 min-h-0 [&_[data-slot=list-scroll]]:flex-1 [&_[data-slot=list-scroll]]:min-h-0 ${props.class ?? ""}`}
-      search={{ placeholder: language.t("dialog.model.search.placeholder"), autofocus: true, action: props.action }}
-      emptyMessage={language.t("dialog.model.empty")}
-      key={(x) => `${x.provider.id}:${x.id}`}
-      items={models}
-      current={model.current()}
-      filterKeys={["provider.name", "name", "id"]}
-      sortBy={(a, b) => a.name.localeCompare(b.name)}
-      groupBy={(x) => x.provider.name}
-      sortGroupsBy={(a, b) => {
-        const aProvider = a.items[0].provider.id
-        const bProvider = b.items[0].provider.id
-        if (popularProviders.includes(aProvider) && !popularProviders.includes(bProvider)) return -1
-        if (!popularProviders.includes(aProvider) && popularProviders.includes(bProvider)) return 1
-        return popularProviders.indexOf(aProvider) - popularProviders.indexOf(bProvider)
-      }}
-      itemWrapper={(item, node) => (
-        <Tooltip
-          class="w-full"
-          placement="right-start"
-          gutter={12}
-          openDelay={0}
-          value={<ModelTooltip model={item} latest={item.latest} free={isFree(item.provider.id, item.cost)} />}
-        >
-          {node}
-        </Tooltip>
-      )}
-      onSelect={(x) => {
-        model.set(x ? { modelID: x.id, providerID: x.provider.id } : undefined, {
-          recent: true,
-        })
-        props.onSelect()
-      }}
-    >
-      {(i) => (
-        <div class="w-full flex items-center gap-x-2 text-13-regular">
-          <span class="truncate">{i.name}</span>
-          <Show when={isFree(i.provider.id, i.cost)}>
-            <Tag>{language.t("model.tag.free")}</Tag>
-          </Show>
-          <Show when={i.latest}>
-            <Tag>{language.t("model.tag.latest")}</Tag>
-          </Show>
-        </div>
-      )}
-    </List>
+    <>
+      <List
+        class={`flex-1 px-3 min-h-0 [&_[data-slot=list-scroll]]:flex-1 [&_[data-slot=list-scroll]]:min-h-0 ${props.class ?? ""}`}
+        search={{ placeholder: language.t("dialog.model.search.placeholder"), autofocus: true, action: props.action }}
+        emptyMessage={language.t("dialog.model.empty")}
+        key={(x) => `${x.provider.id}:${x.id}`}
+        items={models}
+        current={selected()}
+        filterKeys={["provider.name", "name", "id"]}
+        sortBy={(a, b) => a.name.localeCompare(b.name)}
+        groupBy={(x) => x.provider.name}
+        itemWrapper={(item, node) => (
+          <Tooltip
+            class="w-full"
+            placement="right-start"
+            gutter={12}
+            openDelay={0}
+            value={<ModelTooltip model={item} />}
+          >
+            {node}
+          </Tooltip>
+        )}
+        onSelect={(x: CatalogModel | undefined) => {
+          model.set(x ? { modelID: x.id, providerID: x.provider.id } : undefined, {
+            recent: true,
+          })
+          props.onSelect()
+        }}
+      >
+        {(i) => (
+          <div class="w-full flex items-center gap-x-2 text-13-regular">
+            <span class="truncate">{i.name}</span>
+          </div>
+        )}
+      </List>
+      <ThinkingLevels levels={selected()?.thinkingLevels ?? []} model={model} />
+    </>
   )
 }
 
 type ModelSelectorTriggerProps = Omit<ComponentProps<typeof Kobalte.Trigger>, "as" | "ref">
-type Dismiss = "escape" | "outside" | "select" | "manage" | "provider"
+type Dismiss = "escape" | "outside" | "select" | "provider"
 
 export function ModelSelectorPopover(props: {
   provider?: string
@@ -106,25 +134,16 @@ export function ModelSelectorPopover(props: {
     dismiss: null,
   })
   const dialog = useDialog()
-  const local = useLocal()
-  const directory = () => decode64(local.slug())
 
   const close = (dismiss: Dismiss) => {
     setStore("dismiss", dismiss)
     setStore("open", false)
   }
 
-  const handleManage = () => {
-    close("manage")
-    void import("./dialog-manage-models").then((x) => {
-      dialog.show(() => <x.DialogManageModels />)
-    })
-  }
-
   const handleConnectProvider = () => {
     close("provider")
     void import("./dialog-select-provider").then((x) => {
-      dialog.show(() => <x.DialogSelectProvider directory={directory} />)
+      dialog.show(() => <x.DialogSelectProvider />)
     })
   }
   const language = useLanguage()
@@ -170,28 +189,16 @@ export function ModelSelectorPopover(props: {
             onSelect={() => close("select")}
             class="p-1"
             action={
-              <div class="flex items-center gap-1">
-                <Tooltip placement="top" value={language.t("command.provider.connect")}>
-                  <IconButton
-                    icon="plus-small"
-                    variant="ghost"
-                    iconSize="normal"
-                    class="size-6"
-                    aria-label={language.t("command.provider.connect")}
-                    onClick={handleConnectProvider}
-                  />
-                </Tooltip>
-                <Tooltip placement="top" value={language.t("dialog.model.manage")}>
-                  <IconButton
-                    icon="sliders"
-                    variant="ghost"
-                    iconSize="normal"
-                    class="size-6"
-                    aria-label={language.t("dialog.model.manage")}
-                    onClick={handleManage}
-                  />
-                </Tooltip>
-              </div>
+              <Tooltip placement="top" value={language.t("command.provider.connect")}>
+                <IconButton
+                  icon="plus-small"
+                  variant="ghost"
+                  iconSize="normal"
+                  class="size-6"
+                  aria-label={language.t("command.provider.connect")}
+                  onClick={handleConnectProvider}
+                />
+              </Tooltip>
             }
           />
         </Kobalte.Content>
@@ -203,18 +210,10 @@ export function ModelSelectorPopover(props: {
 export const DialogSelectModel: Component<{ provider?: string; model?: ModelState }> = (props) => {
   const dialog = useDialog()
   const language = useLanguage()
-  const local = useLocal()
-  const directory = () => decode64(local.slug())
 
   const provider = () => {
     void import("./dialog-select-provider").then((x) => {
-      dialog.show(() => <x.DialogSelectProvider directory={directory} />)
-    })
-  }
-
-  const manage = () => {
-    void import("./dialog-manage-models").then((x) => {
-      dialog.show(() => <x.DialogManageModels />)
+      dialog.show(() => <x.DialogSelectProvider />)
     })
   }
 
@@ -228,9 +227,6 @@ export const DialogSelectModel: Component<{ provider?: string; model?: ModelStat
       }
     >
       <ModelList provider={props.provider} model={props.model} onSelect={() => dialog.close()} />
-      <Button variant="ghost" class="ml-3 mt-5 mb-6 text-text-base self-start" onClick={manage}>
-        {language.t("dialog.model.manage")}
-      </Button>
     </Dialog>
   )
 }

@@ -1,36 +1,40 @@
 import { describe, expect, test } from "bun:test"
-import type { Agent } from "@opencode-ai/sdk/v2/client"
-import { directoryKey, normalizeAgentList } from "./utils"
+import type { ProviderInfo } from "@yoma-desktop/kernel"
+import { directoryKey, normalizeProviderList } from "./utils"
 
-const agent = (name = "build") =>
-  ({
-    name,
-    mode: "primary",
-    permission: {},
-    options: {},
-  }) as Agent
+const provider = (id: string, authenticated: boolean): ProviderInfo => ({
+  id,
+  name: id,
+  authenticated,
+  models: [],
+})
 
-describe("normalizeAgentList", () => {
-  test("keeps array payloads", () => {
-    expect(normalizeAgentList([agent("build"), agent("docs")])).toEqual([agent("build"), agent("docs")])
+describe("normalizeProviderList", () => {
+  test("indexes providers by id", () => {
+    const anthropic = provider("anthropic", true)
+    const openai = provider("openai", false)
+    const result = normalizeProviderList([anthropic, openai])
+
+    expect([...result.all.keys()]).toEqual(["anthropic", "openai"])
+    expect(result.all.get("anthropic")).toBe(anthropic)
   })
 
-  test("wraps a single agent payload", () => {
-    expect(normalizeAgentList(agent("docs"))).toEqual([agent("docs")])
+  test("lists only authenticated providers as connected", () => {
+    const result = normalizeProviderList([provider("anthropic", true), provider("openai", false)])
+
+    expect(result.connected).toEqual(["anthropic"])
   })
 
-  test("extracts agents from keyed objects", () => {
-    expect(
-      normalizeAgentList({
-        build: agent("build"),
-        docs: agent("docs"),
-      }),
-    ).toEqual([agent("build"), agent("docs")])
+  // 内核没有"每个 provider 的默认模型"这个概念 —— 默认模型由 Session.model 决定。
+  test("leaves the default model map empty", () => {
+    expect(normalizeProviderList([provider("anthropic", true)]).default).toEqual({})
   })
 
-  test("drops invalid payloads", () => {
-    expect(normalizeAgentList({ name: "AbortError" })).toEqual([])
-    expect(normalizeAgentList([{ name: "build" }, agent("docs")])).toEqual([agent("docs")])
+  test("handles an empty catalog", () => {
+    const result = normalizeProviderList([])
+
+    expect(result.all.size).toBe(0)
+    expect(result.connected).toEqual([])
   })
 })
 

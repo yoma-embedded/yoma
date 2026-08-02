@@ -11,7 +11,7 @@
  */
 import { createRoot, createSignal } from "solid-js"
 import { createStore, produce, unwrap } from "solid-js/store"
-import type { FileContent } from "@opencode-ai/sdk/v2"
+import type { FileContent } from "@yoma-desktop/kernel"
 import type { FileSelection } from "@/context/file"
 
 export type MarkdownView = "preview" | "markdown"
@@ -84,12 +84,25 @@ export function serializeEol(text: string, eol: LineEnding): string {
   return eol === "\r\n" ? text.replace(/\n/g, "\r\n") : text
 }
 
-/** 内容可用文本编辑器打开（非二进制、非 base64 媒体） */
+/**
+ * mime 是否是文本。
+ *
+ * 内核的 file.read 只有 `mime` 一个判别位（原来后端返回 type/encoding 两个字段，
+ * 现在都没有了）。text/* 之外还有一批实际上是纯文本的 application/* 。
+ */
+export function isTextMime(mime: string | undefined): boolean {
+  if (!mime) return false
+  const base = mime.split(";", 1)[0]!.trim().toLowerCase()
+  if (base.startsWith("text/")) return true
+  if (base.endsWith("+json") || base.endsWith("+xml")) return true
+  return base === "application/json" || base === "application/xml" || base === "application/javascript"
+}
+
+/** 内容可用文本编辑器打开（文本 mime，且不是被截断的片段 —— 存回去会丢数据） */
 export function isEditableContent(content: FileContent | undefined): content is FileContent {
   if (!content) return false
-  if (content.type !== "text") return false
-  if (content.encoding === "base64") return false
-  return true
+  if (content.truncated) return false
+  return isTextMime(content.mime)
 }
 
 /** index（含）之前的文本 → 1-based 行号 + 0-based 列号 */

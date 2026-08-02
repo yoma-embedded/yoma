@@ -1,4 +1,4 @@
-import type { FileContent } from "@opencode-ai/sdk/v2"
+import type { FileContent } from "@yoma-desktop/kernel"
 
 const MAX_FILE_CONTENT_ENTRIES = 40
 const MAX_FILE_CONTENT_BYTES = 20 * 1024 * 1024
@@ -7,12 +7,7 @@ const lru = new Map<string, number>()
 let total = 0
 
 export function approxBytes(content: FileContent) {
-  const patchBytes =
-    content.patch?.hunks.reduce((sum, hunk) => {
-      return sum + hunk.lines.reduce((lineSum, line) => lineSum + line.length, 0)
-    }, 0) ?? 0
-
-  return (content.content.length + (content.diff?.length ?? 0) + patchBytes) * 2
+  return content.content.length * 2
 }
 
 function setBytes(path: string, nextBytes: number) {

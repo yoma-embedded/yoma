@@ -1,30 +1,24 @@
-import { type Accessor, Component, Show } from "solid-js"
+/**
+ * 挑一个 provider 去连接。
+ *
+ * 目录来自 `kernel.model.list()`。自定义 provider(npm 包 + baseURL + 手写模型表)整条
+ * 删掉了 —— 那是 opencode config 的能力,my-pi 没有配置服务。
+ */
+
+import { Component, Show } from "solid-js"
 import { useDialog } from "@yoma-desktop/ui/context/dialog"
-import { popularProviders, useProviders } from "@/hooks/use-providers"
 import { Dialog } from "@yoma-desktop/ui/dialog"
 import { List } from "@yoma-desktop/ui/list"
 import { Tag } from "@yoma-desktop/ui/tag"
 import { ProviderIcon } from "@yoma-desktop/ui/provider-icon"
 import { DialogConnectProvider } from "./dialog-connect-provider"
 import { useLanguage } from "@/context/language"
-import { DialogCustomProvider } from "./dialog-custom-provider"
+import { createProviderCatalog } from "./kernel-providers"
 
-const CUSTOM_ID = "_custom"
-
-export const DialogSelectProvider: Component<{ directory?: Accessor<string | undefined> }> = (props) => {
+export const DialogSelectProvider: Component = () => {
   const dialog = useDialog()
-  const providers = useProviders(props.directory)
   const language = useLanguage()
-
-  const popularGroup = () => language.t("dialog.provider.group.popular")
-  const otherGroup = () => language.t("dialog.provider.group.other")
-  const customLabel = () => language.t("settings.providers.tag.custom")
-  const note = (id: string) => {
-    if (id === "anthropic") return language.t("dialog.provider.anthropic.note")
-    if (id === "openai") return language.t("dialog.provider.openai.note")
-    if (id.startsWith("github-copilot")) return language.t("dialog.provider.copilot.note")
-    if (id === "opencode-go") return language.t("dialog.provider.opencodeGo.tagline")
-  }
+  const providers = createProviderCatalog()
 
   return (
     <Dialog title={language.t("command.provider.connect")} transition>
@@ -36,48 +30,21 @@ export const DialogSelectProvider: Component<{ directory?: Accessor<string | und
         key={(x) => x?.id}
         items={() => {
           language.locale()
-          return [{ id: CUSTOM_ID, name: customLabel() }, ...providers.all().values()]
+          return providers()
         }}
         filterKeys={["id", "name"]}
-        groupBy={(x) => (popularProviders.includes(x.id) ? popularGroup() : otherGroup())}
-        sortBy={(a, b) => {
-          if (a.id === CUSTOM_ID) return -1
-          if (b.id === CUSTOM_ID) return 1
-          if (popularProviders.includes(a.id) && popularProviders.includes(b.id))
-            return popularProviders.indexOf(a.id) - popularProviders.indexOf(b.id)
-          return a.name.localeCompare(b.name)
-        }}
-        sortGroupsBy={(a, b) => {
-          const popular = popularGroup()
-          if (a.category === popular && b.category !== popular) return -1
-          if (b.category === popular && a.category !== popular) return 1
-          return 0
-        }}
+        sortBy={(a, b) => a.name.localeCompare(b.name)}
         onSelect={(x) => {
           if (!x) return
-          if (x.id === CUSTOM_ID) {
-            dialog.show(() => <DialogCustomProvider back="providers" directory={props.directory} />)
-            return
-          }
-          dialog.show(() => <DialogConnectProvider provider={x.id} directory={props.directory} />)
+          dialog.show(() => <DialogConnectProvider provider={x.id} />)
         }}
       >
         {(i) => (
           <div class="px-1.25 w-full flex items-center gap-x-3">
             <ProviderIcon data-slot="list-item-extra-icon" id={i.id} />
             <span>{i.name}</span>
-            <Show when={i.id === "opencode"}>
-              <div class="text-14-regular text-text-weak">{language.t("dialog.provider.opencode.tagline")}</div>
-            </Show>
-            <Show when={i.id === CUSTOM_ID}>
-              <Tag>{language.t("settings.providers.tag.custom")}</Tag>
-            </Show>
-            <Show when={i.id === "opencode"}>
-              <Tag>{language.t("dialog.provider.tag.recommended")}</Tag>
-            </Show>
-            <Show when={note(i.id)}>{(value) => <div class="text-14-regular text-text-weak">{value()}</div>}</Show>
-            <Show when={i.id === "opencode-go"}>
-              <Tag>{language.t("dialog.provider.tag.recommended")}</Tag>
+            <Show when={i.authenticated}>
+              <Tag>{language.t("provider.connect.method.apiKey")}</Tag>
             </Show>
           </div>
         )}

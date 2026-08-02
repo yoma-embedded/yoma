@@ -1,4 +1,4 @@
-import type { FileContent } from "@opencode-ai/sdk/v2"
+import type { FileContent } from "@yoma-desktop/kernel"
 
 export type MediaKind = "image" | "audio" | "svg"
 
@@ -12,7 +12,6 @@ function mediaRecord(value: unknown) {
   return value as Partial<FileContent> & {
     content?: unknown
     encoding?: unknown
-    mimeType?: unknown
     type?: unknown
   }
 }
@@ -64,7 +63,7 @@ export function dataUrlFromMediaValue(value: MediaValue, kind: MediaKind) {
 
   if (typeof record.content !== "string") return
 
-  const mime = normalizeMimeType(typeof record.mimeType === "string" ? record.mimeType : undefined)
+  const mime = normalizeMimeType(typeof record.mime === "string" ? record.mime : undefined)
   if (!mime) return
 
   if (kind === "svg") {
@@ -96,7 +95,7 @@ export function svgTextFromValue(value: MediaValue) {
   if (!record) return
   if (typeof record.content !== "string") return
 
-  const mime = normalizeMimeType(typeof record.mimeType === "string" ? record.mimeType : undefined)
+  const mime = normalizeMimeType(typeof record.mime === "string" ? record.mime : undefined)
   if (mime !== "image/svg+xml") return
   if (record.encoding === "base64") return decodeBase64Utf8(record.content)
   return record.content

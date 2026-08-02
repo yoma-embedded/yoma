@@ -1,5 +1,5 @@
-import { For, Show } from "solid-js"
-import type { PermissionRequest } from "@opencode-ai/sdk/v2"
+import { Show } from "solid-js"
+import type { PermissionRequest } from "@yoma-desktop/kernel"
 import { Button } from "@yoma-desktop/ui/button"
 import { DockPrompt } from "@yoma-desktop/session-ui/dock-prompt"
 import { Icon } from "@yoma-desktop/ui/icon"
@@ -13,7 +13,7 @@ export function SessionPermissionDock(props: {
   const language = useLanguage()
 
   const toolDescription = () => {
-    const key = `settings.permissions.tool.${props.request.permission}.description`
+    const key = `settings.permissions.tool.${props.request.tool}.description`
     const value = language.t(key as Parameters<typeof language.t>[0])
     if (value === key) return ""
     return value
@@ -52,21 +52,20 @@ export function SessionPermissionDock(props: {
         </>
       }
     >
+      {/* 内核给的人话描述（"运行 bash: flash download"）—— 原来的 patterns 列表没有了 */}
+      <Show when={props.request.title}>
+        <div data-slot="permission-row">
+          <span data-slot="permission-spacer" aria-hidden="true" />
+          <div data-slot="permission-patterns">
+            <code class="text-12-regular text-text-base break-all">{props.request.title}</code>
+          </div>
+        </div>
+      </Show>
+
       <Show when={toolDescription()}>
         <div data-slot="permission-row">
           <span data-slot="permission-spacer" aria-hidden="true" />
           <div data-slot="permission-hint">{toolDescription()}</div>
-        </div>
-      </Show>
-
-      <Show when={props.request.patterns.length > 0}>
-        <div data-slot="permission-row">
-          <span data-slot="permission-spacer" aria-hidden="true" />
-          <div data-slot="permission-patterns">
-            <For each={props.request.patterns}>
-              {(pattern) => <code class="text-12-regular text-text-base break-all">{pattern}</code>}
-            </For>
-          </div>
         </div>
       </Show>
     </DockPrompt>

@@ -11,12 +11,11 @@ import { usePrompt } from "@/context/prompt"
 import { useSDK } from "@/context/sdk"
 import { useSettings } from "@/context/settings"
 import { useSync } from "@/context/sync"
-import { useTerminal } from "@/context/terminal"
 import { showToast } from "@/utils/toast"
 import { findLast } from "@yoma-desktop/util/array"
 import { createSessionTabs } from "@/pages/session/helpers"
 import { extractPromptFromParts } from "@/utils/prompt"
-import { UserMessage } from "@opencode-ai/sdk/v2"
+import { UserMessage } from "@yoma-desktop/kernel"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { useTabs } from "@/context/tabs"
 import { requireServerKey } from "@/utils/session-route"
@@ -47,7 +46,6 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
   const sdk = useSDK()
   const settings = useSettings()
   const sync = useSync()
-  const terminal = useTerminal()
   const sessionTabs = useTabs()
   const layout = useLayout()
   const navigate = useNavigate()
@@ -57,23 +55,6 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     const owner = sessionOwnership.capture()
     const value = await load()
     owner.run(() => show(value))
-  }
-  const runCommand = async <T,>(input: {
-    owner: ReturnType<ReturnType<typeof createSessionOwnership>["capture"]>
-    prompt: T
-    request: () => Promise<unknown>
-    updatePrompt: (prompt: T) => void
-    updateViewport: () => void
-  }) => {
-    await input.request()
-    input.updatePrompt(input.prompt)
-    input.owner.run(input.updateViewport)
-  }
-
-  const info = () => {
-    const id = params.id
-    if (!id) return
-    return sync().session.get(id)
   }
   const hasReview = () => !!params.id
   const normalizeTab = (tab: string) => {
@@ -97,11 +78,6 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     return sync().data.message[id] ?? []
   }
   const userMessages = () => messages().filter((m) => m.role === "user") as UserMessage[]
-  const visibleUserMessages = () => {
-    const revert = info()?.revert?.messageID
-    if (!revert) return userMessages()
-    return userMessages().filter((m) => m.id < revert)
-  }
 
   const showAllFiles = () => {
     if (layout.fileTree.tab() !== "changes") return
@@ -135,8 +111,6 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
   const fileCommand = withCategory(language.t("command.category.file"))
   const contextCommand = withCategory(language.t("command.category.context"))
   const viewCommand = withCategory(language.t("command.category.view"))
-  const terminalCommand = withCategory(language.t("command.category.terminal"))
-  const mcpCommand = withCategory(language.t("command.category.mcp"))
   const permissionsCommand = withCategory(language.t("command.category.permissions"))
 
   const isAutoAcceptActive = () => {
@@ -176,17 +150,6 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     addSelectionToContext(path, selectionFromLines(range))
   }
 
-  const openTerminal = () => {
-    if (terminal.all().length > 0) terminal.new()
-    view().terminal.open()
-  }
-
-  const chooseMcp = () => {
-    void openDialog(
-      () => import("@/components/dialog-select-mcp"),
-      (x) => dialog.show(() => <x.DialogSelectMcp />),
-    )
-  }
 
   const toggleAutoAccept = () => {
     const sessionID = params.id
@@ -206,64 +169,29 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     })
   }
 
-  const undo = async () => {
+  /**
+   * 顶替 opencode 的 undo/revert。内核只能把会话树的 leaf 挪回某条用户消息(不还原文件),
+   * 并把那条消息的原文交还给 composer —— 所以这是"改上一条重发",不是回滚。
+   */
+  const rewind = async () => {
     const sessionID = params.id
     if (!sessionID) return
     const owner = sessionOwnership.capture()
     const client = sdk().client
-    const directory = sdk().directory
     const promptSession = prompt.capture()
-    const revert = info()?.revert?.messageID
     const messages = userMessages()
-    const message = findLast(messages, (x) => !revert || x.id < revert)
+    const message = messages.at(-1)
     if (!message) return
     const parts = sync().data.part[message.id]
 
     if (sync().data.session_working(sessionID)) {
-      await client.session.abort({ sessionID }).catch(() => {})
+      await client.session.abort(sessionID).catch(() => {})
     }
 
-    await runCommand({
-      owner,
-      prompt: promptSession,
-      request: () => client.session.revert({ sessionID, messageID: message.id }),
-      updatePrompt: (promptSession) => {
-        if (parts) promptSession.set(extractPromptFromParts(parts, { directory }))
-      },
-      updateViewport: () => setActiveMessage(findLast(messages, (x) => x.id < message.id)),
-    })
-  }
-
-  const redo = async () => {
-    const sessionID = params.id
-    if (!sessionID) return
-    const owner = sessionOwnership.capture()
-    const client = sdk().client
-    const messages = userMessages()
-    const promptSession = prompt.capture()
-
-    const revertMessageID = info()?.revert?.messageID
-    if (!revertMessageID) return
-
-    const next = messages.find((x) => x.id > revertMessageID)
-    if (!next) {
-      await runCommand({
-        owner,
-        prompt: promptSession,
-        request: () => client.session.unrevert({ sessionID }),
-        updatePrompt: (promptSession) => promptSession.reset(),
-        updateViewport: () => setActiveMessage(findLast(messages, (x) => x.id >= revertMessageID)),
-      })
-      return
-    }
-
-    await runCommand({
-      owner,
-      prompt: promptSession,
-      request: () => client.session.revert({ sessionID, messageID: next.id }),
-      updatePrompt: () => undefined,
-      updateViewport: () => setActiveMessage(findLast(messages, (x) => x.id < next.id)),
-    })
+    const result = await client.session.navigate(sessionID, message.id)
+    if (result.editorText) promptSession.set([{ type: "text", content: result.editorText, start: 0, end: result.editorText.length }])
+    else if (parts) promptSession.set(extractPromptFromParts(parts))
+    owner.run(() => setActiveMessage(findLast(messages, (x) => x.id < message.id)))
   }
 
   const compact = async () => {
@@ -279,18 +207,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       return
     }
 
-    await sdk().client.session.summarize({
-      sessionID,
-      modelID: model.id,
-      providerID: model.provider.id,
-    })
-  }
-
-  const fork = () => {
-    void openDialog(
-      () => import("@/components/dialog-fork"),
-      (x) => dialog.show(() => <x.DialogFork />),
-    )
+    await sdk().client.session.compact(sessionID)
   }
 
   const sessionCmds = () => [
@@ -312,32 +229,16 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       title: language.t("command.session.undo"),
       description: language.t("command.session.undo.description"),
       slash: "undo",
-      disabled: !params.id || visibleUserMessages().length === 0,
-      onSelect: undo,
-    }),
-    sessionCommand({
-      id: "session.redo",
-      title: language.t("command.session.redo"),
-      description: language.t("command.session.redo.description"),
-      slash: "redo",
-      disabled: !params.id || !info()?.revert?.messageID,
-      onSelect: redo,
+      disabled: !params.id || userMessages().length === 0,
+      onSelect: rewind,
     }),
     sessionCommand({
       id: "session.compact",
       title: language.t("command.session.compact"),
       description: language.t("command.session.compact.description"),
       slash: "compact",
-      disabled: !params.id || visibleUserMessages().length === 0,
+      disabled: !params.id || userMessages().length === 0,
       onSelect: compact,
-    }),
-    sessionCommand({
-      id: "session.fork",
-      title: language.t("command.session.fork"),
-      description: language.t("command.session.fork.description"),
-      slash: "fork",
-      disabled: !params.id || visibleUserMessages().length === 0,
-      onSelect: fork,
     }),
   ]
 
@@ -375,13 +276,6 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
 
   const viewCmds = () => [
     viewCommand({
-      id: "terminal.toggle",
-      title: language.t("command.terminal.toggle"),
-      keybind: "ctrl+`",
-      slash: "terminal",
-      onSelect: () => view().terminal.toggle(),
-    }),
-    viewCommand({
       id: "review.toggle",
       title: language.t("command.review.toggle"),
       keybind: "mod+shift+r",
@@ -405,16 +299,6 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     }),
   ]
 
-  const terminalCmds = () => [
-    terminalCommand({
-      id: "terminal.new",
-      title: language.t("command.terminal.new"),
-      description: language.t("command.terminal.new.description"),
-      keybind: "ctrl+alt+t",
-      onSelect: openTerminal,
-    }),
-  ]
-
   const messageCmds = () => [
     sessionCommand({
       id: "message.previous",
@@ -431,17 +315,6 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       keybind: "mod+alt+]",
       disabled: !params.id,
       onSelect: () => navigateMessageByOffset(1),
-    }),
-  ]
-
-  const mcpCmds = () => [
-    mcpCommand({
-      id: "mcp.toggle",
-      title: language.t("command.mcp.toggle"),
-      description: language.t("command.mcp.toggle.description"),
-      keybind: "mod+;",
-      slash: "mcp",
-      onSelect: chooseMcp,
     }),
   ]
 
@@ -462,9 +335,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     ...fileCmds(),
     ...contextCmds(),
     ...viewCmds(),
-    ...terminalCmds(),
     ...messageCmds(),
-    ...mcpCmds(),
     ...permissionsCmds(),
   ])
 }

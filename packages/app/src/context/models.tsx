@@ -1,9 +1,8 @@
 import { type Accessor, createMemo, createResource } from "solid-js"
 import { createStore } from "solid-js/store"
-import { DateTime } from "luxon"
-import { filter, firstBy, flat, groupBy, mapValues, pipe, uniqueBy, values } from "remeda"
+import { uniqueBy } from "remeda"
 import { createSimpleContext } from "@yoma-desktop/ui/context"
-import { useProviders } from "@/hooks/use-providers"
+import { kernel } from "@/utils/kernel"
 import { Persist, persisted } from "@/utils/persist"
 
 export type ModelKey = { providerID: string; modelID: string }
@@ -25,8 +24,10 @@ function modelKey(model: ModelKey) {
 export const { use: useModels, provider: ModelsProvider } = createSimpleContext({
   name: "Models",
   gate: false,
-  init: (props: { directory?: Accessor<string | undefined> } = {}) => {
-    const providers = useProviders(props.directory)
+  // directory 保留在签名里但不再使用:my-pi 的模型目录是进程级的,没有"这个工作目录用哪些
+  // provider"这一层(opencode 的 per-directory config 没有对应物)。
+  init: (_props: { directory?: Accessor<string | undefined> } = {}) => {
+    const [catalog] = createResource(() => kernel.model.list(), { initialValue: [] })
 
     const [store, setStore, _, ready] = persisted(
       Persist.global("model", ["model.v1"]),
@@ -37,55 +38,12 @@ export const { use: useModels, provider: ModelsProvider } = createSimpleContext(
       }),
     )
 
+    // 只列已配置凭据的 provider —— 顶替原来的 providers.connected()。
     const available = createMemo(() =>
-      providers.connected().flatMap((p) =>
-        Object.values(p.models).map((m) => ({
-          ...m,
-          provider: p,
-        })),
-      ),
+      catalog()
+        .filter((provider) => provider.authenticated)
+        .flatMap((provider) => provider.models.map((model) => ({ ...model, provider }))),
     )
-
-    const release = createMemo(
-      () =>
-        new Map(
-          available().map((model) => {
-            const parsed = DateTime.fromISO(model.release_date)
-            return [modelKey({ providerID: model.provider.id, modelID: model.id }), parsed] as const
-          }),
-        ),
-    )
-
-    const latest = createMemo(() =>
-      pipe(
-        available(),
-        filter(
-          (x) =>
-            Math.abs(
-              (release().get(modelKey({ providerID: x.provider.id, modelID: x.id })) ?? DateTime.invalid("invalid"))
-                .diffNow()
-                .as("months"),
-            ) < 6,
-        ),
-        groupBy((x) => x.provider.id),
-        mapValues((models) =>
-          pipe(
-            models,
-            groupBy((x) => x.family),
-            values(),
-            (groups) =>
-              groups.flatMap((g) => {
-                const first = firstBy(g, [(x) => x.release_date, "desc"])
-                return first ? [{ modelID: first.id, providerID: first.provider.id }] : []
-              }),
-          ),
-        ),
-        values(),
-        flat(),
-      ),
-    )
-
-    const latestSet = createMemo(() => new Set(latest().map((x) => modelKey(x))))
 
     const visibility = createMemo(() => {
       const map = new Map<string, Visibility>()
@@ -112,16 +70,10 @@ export const { use: useModels, provider: ModelsProvider } = createSimpleContext(
       setStore("user", store.user.length, { ...model, visibility: state })
     }
 
-    const visible = (model: ModelKey) => {
-      const key = modelKey(model)
-      const state = visibility().get(key)
-      if (state === "hide") return false
-      if (state === "show") return true
-      if (latestSet().has(key)) return true
-      const date = release().get(key)
-      if (!date?.isValid) return true
-      return false
-    }
+    // 原来的默认可见性靠 release_date + family 算"每个系列最新的、半年内发布的模型"。
+    // 内核的 ModelInfo 没有发布日期也没有系列,这个启发式没有输入了 —— 默认全显示,
+    // 用户显式隐藏的才藏起来。
+    const visible = (model: ModelKey) => visibility().get(modelKey(model)) !== "hide"
 
     const setVisibility = (model: ModelKey, state: boolean) => {
       update(model, state ? "show" : "hide")

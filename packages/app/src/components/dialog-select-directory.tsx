@@ -56,22 +56,9 @@ export function DialogSelectDirectory(props: DialogSelectDirectoryProps) {
   const [filter, setFilter] = createSignal("")
   let list: ListRef | undefined
 
-  const missingBase = createMemo(() => !(sync.data.path.home || sync.data.path.directory))
-  const [fallbackPath] = createResource(
-    () => (missingBase() ? true : undefined),
-    async () => {
-      return sdk.client.path
-        .get()
-        .then((x) => x.data)
-        .catch(() => undefined)
-    },
-    { initialValue: undefined },
-  )
-
-  const home = createMemo(() => sync.data.path.home || fallbackPath()?.home || "")
-  const start = createMemo(
-    () => sync.data.path.home || sync.data.path.directory || fallbackPath()?.home || fallbackPath()?.directory,
-  )
+  // 内核不暴露用户家目录,所以 `~` 展开/缩写一律走空串(domain 层对空 home 是 no-op)。
+  const home = () => ""
+  const start = createMemo(() => sync.data.path.directory)
 
   const directories = createDirectorySearch({
     sdk,
@@ -85,14 +72,11 @@ export function DialogSelectDirectory(props: DialogSelectDirectoryProps) {
 
     for (const project of projects) {
       let at = 0
-      const dirs = [project.worktree, ...(project.sandboxes ?? [])]
-      for (const directory of dirs) {
-        const sessions = sync.child(directory, { bootstrap: false })[0].session
-        for (const session of sessions) {
-          if (session.time.archived) continue
-          const updated = session.time.updated ?? session.time.created
-          if (updated > at) at = updated
-        }
+      const sessions = sync.child(project.worktree, { bootstrap: false })[0].session
+      for (const session of sessions) {
+        if (session.time.archived) continue
+        const updated = session.time.updated ?? session.time.created
+        if (updated > at) at = updated
       }
       byProject.set(project.worktree, at)
     }

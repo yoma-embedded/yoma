@@ -1,7 +1,6 @@
-import { UserMessage } from "@opencode-ai/sdk/v2"
+import { UserMessage } from "@yoma-desktop/kernel"
 import { HoverCard } from "@kobalte/core/hover-card"
 import { ComponentProps, For, Match, Show, createSignal, splitProps, Switch } from "solid-js"
-import { DiffChanges } from "@yoma-desktop/ui/diff-changes"
 import { useI18n } from "@yoma-desktop/ui/context/i18n"
 
 export function MessageNav(
@@ -51,16 +50,12 @@ export function MessageNav(
                 </Match>
                 <Match when={local.size === "normal"}>
                   <button data-slot="message-nav-message-button" onClick={handleClick} onKeyDown={handleKeyPress}>
-                    <DiffChanges changes={message.summary?.diffs ?? []} variant="bars" />
                     <div
                       data-slot="message-nav-title-preview"
                       data-active={message.id === local.current?.id || undefined}
                     >
-                      <Show
-                        when={local.getLabel?.(message) ?? message.summary?.title}
-                        fallback={i18n.t("ui.messageNav.newMessage")}
-                      >
-                        {local.getLabel?.(message) ?? message.summary?.title}
+                      <Show when={local.getLabel?.(message)} fallback={i18n.t("ui.messageNav.newMessage")}>
+                        {local.getLabel?.(message)}
                       </Show>
                     </div>
                   </button>

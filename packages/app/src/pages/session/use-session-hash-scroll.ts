@@ -1,4 +1,4 @@
-import type { UserMessage } from "@opencode-ai/sdk/v2"
+import type { UserMessage } from "@yoma-desktop/kernel"
 import { useLocation, useNavigate } from "@solidjs/router"
 import { createEffect, createMemo, onCleanup, onMount } from "solid-js"
 import { messageIdFromHash } from "./message-id-from-hash"
@@ -7,7 +7,7 @@ export const useSessionHashScroll = (input: {
   sessionKey: () => string
   sessionID: () => string | undefined
   messagesReady: () => boolean
-  visibleUserMessages: () => UserMessage[]
+  userMessages: () => UserMessage[]
   historyMore: () => boolean
   historyLoading: () => boolean
   loadMore: (sessionID: string) => Promise<void>
@@ -22,8 +22,8 @@ export const useSessionHashScroll = (input: {
   scheduleScrollState: (el: HTMLDivElement) => void
   consumePendingMessage: (key: string) => string | undefined
 }) => {
-  const visibleUserMessages = createMemo(() => input.visibleUserMessages())
-  const messageById = createMemo(() => new Map(visibleUserMessages().map((m) => [m.id, m])))
+  const userMessages = createMemo(() => input.userMessages())
+  const messageById = createMemo(() => new Map(userMessages().map((m) => [m.id, m])))
   let pendingKey = ""
   let clearing = false
 
@@ -141,7 +141,7 @@ export const useSessionHashScroll = (input: {
   createEffect(() => {
     if (!input.sessionID() || !input.messagesReady()) return
 
-    visibleUserMessages()
+    userMessages()
 
     let targetId = input.pendingMessage()
     if (!targetId) {
@@ -175,7 +175,7 @@ export const useSessionHashScroll = (input: {
     const sessionID = input.sessionID()
     if (!sessionID || !input.messagesReady()) return
 
-    visibleUserMessages()
+    userMessages()
 
     let targetId = input.pendingMessage()
     if (!targetId && !clearing) targetId = messageIdFromHash(location.hash)

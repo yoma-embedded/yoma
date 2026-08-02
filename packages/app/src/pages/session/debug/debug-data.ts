@@ -61,8 +61,8 @@ export interface Instrument {
   display: InstrumentDisplay
 }
 
-/** 右栏顶部四个模式：changes(审查) / debug(仪器调试) / cmd(终端) / file(文件) */
-export type DockMode = "changes" | "debug" | "cmd" | "file"
+/** 右栏顶部三个模式：changes(审查) / debug(仪器调试) / file(文件) */
+export type DockMode = "changes" | "debug" | "file"
 
 // ---------------------------------------------------------------- mock content
 
@@ -134,10 +134,9 @@ export const debug = createRoot(() => {
   const [width, setWidth] = createSignal(360)
   const [fullscreen, setFullscreen] = createSignal(false)
   const [mode, setMode] = createSignal<DockMode>("debug")
-  const [cmdList, setCmdList] = createSignal(false)
 
   return {
-    // ui state（session-side-panel / cmd-panel 依赖，勿改名）
+    // ui state（session-side-panel 依赖，勿改名）
     opened,
     open: () => setOpened(true),
     close: () => {
@@ -152,9 +151,6 @@ export const debug = createRoot(() => {
     toggleFullscreen: () => setFullscreen((v) => !v),
     mode,
     setMode,
-    /** cmd 模式：终端列表栏是否展开 */
-    cmdList,
-    toggleCmdList: () => setCmdList((v) => !v),
     // data (mock)
     instruments: INSTRUMENTS,
   }

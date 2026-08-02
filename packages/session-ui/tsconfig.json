@@ -10,6 +10,8 @@
     "isolatedModules": true,
     "module": "ESNext",
     "moduleResolution": "bundler",
+    // @yoma-desktop/kernel 直接发 raw TypeScript,内部用 "./x.ts" 形式的说明符。
+    "allowImportingTsExtensions": true,
     "noEmit": true,
     "lib": ["es2023", "dom", "dom.iterable"],
     "strict": true,

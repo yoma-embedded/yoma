@@ -1,23 +1,25 @@
-import type {
-  Agent,
-  Command,
-  Config,
-  LspStatus,
-  McpResource,
-  McpStatus,
-  Message,
-  Part,
-  Path,
-  PermissionRequest,
-  QuestionRequest,
-  ReferenceInfo,
-  Session,
-  SessionStatus,
-  SnapshotFileDiff,
-  Todo,
-  VcsInfo,
-} from "@opencode-ai/sdk/v2/client"
+import type { Message, Part, PermissionRequest, Session, SessionStatus, VcsInfo } from "@yoma-desktop/kernel"
 import { NormalizedProviderListResponse } from "@yoma-desktop/session-ui/context"
+
+/**
+ * 工作目录信息。
+ *
+ * 原来是后端 /path 路由返回的对象(带 project/worktree/state 等)。my-pi 里一个会话就是
+ * 一个 cwd,没有 project 层级,所以这里收窄成"当前目录"这一件事,并且由前端自己知道 ——
+ * 不需要往内核要。
+ */
+export type Path = {
+  directory: string
+}
+
+/**
+ * 应用配置。
+ *
+ * opencode 的 config 是后端下发的(provider 设置、agent 定义、权限规则、MCP 服务器…)。
+ * my-pi 没有配置服务;真正还需要的只有权限规则,它走 kernel.permission.rules()。
+ * 这个类型保留是为了让还在读 config 的调用点先编译过去,收尾时逐个清掉。
+ */
+export type Config = Record<string, never>
 import type { Accessor } from "solid-js"
 import type { SetStoreFunction, Store } from "solid-js/store"
 
@@ -34,9 +36,6 @@ export type ProjectMeta = {
 
 export type State = {
   status: "loading" | "partial" | "complete"
-  agent: Agent[]
-  command: Command[]
-  reference: ReferenceInfo[]
   project: string
   projectMeta: ProjectMeta | undefined
   icon: string | undefined
@@ -50,27 +49,9 @@ export type State = {
     [sessionID: string]: SessionStatus
   }
   session_working(id: string): boolean
-  session_diff: {
-    [sessionID: string]: SnapshotFileDiff[]
-  }
-  todo: {
-    [sessionID: string]: Todo[]
-  }
   permission: {
     [sessionID: string]: PermissionRequest[]
   }
-  question: {
-    [sessionID: string]: QuestionRequest[]
-  }
-  mcp_ready: boolean
-  mcp: {
-    [name: string]: McpStatus
-  }
-  mcp_resource: {
-    [key: string]: McpResource
-  }
-  lsp_ready: boolean
-  lsp: LspStatus[]
   vcs: VcsInfo | undefined
   limit: number
   message: {
@@ -104,7 +85,6 @@ export type IconCache = {
 
 export type ChildOptions = {
   bootstrap?: boolean
-  mcp?: boolean
 }
 
 export type DirState = {
@@ -126,18 +106,6 @@ export type DisposeCheck = {
   pinned: boolean
   booting: boolean
   loadingSessions: boolean
-}
-
-export type RootLoadArgs = {
-  directory: string
-  limit: number
-  list: (query: { directory: string; roots: true; limit?: number }) => Promise<{ data?: Session[] }>
-}
-
-export type RootLoadResult = {
-  data?: Session[]
-  limit: number
-  limited: boolean
 }
 
 export const MAX_DIR_STORES = 30

@@ -1,134 +1,49 @@
+/**
+ * Provider 设置页。
+ *
+ * 目录来自 `kernel.model.list()`,连接状态就是 `ProviderInfo.authenticated` 一个布尔值。
+ * opencode 那套 source 分类(env / api / config / custom)、`disabled_providers` 配置写回、
+ * 自定义 provider 全部删掉 —— my-pi 只有"有没有 API key"这一件事。
+ */
+
 import { ButtonV2 } from "@yoma-desktop/ui/v2/button-v2"
-import { Tag } from "@yoma-desktop/ui/v2/badge-v2"
 import { useDialog } from "@yoma-desktop/ui/context/dialog"
 import { ProviderIcon } from "@yoma-desktop/ui/provider-icon"
 import { showToast } from "@/utils/toast"
-import { popularProviders, useProviders } from "@/hooks/use-providers"
 import { createMemo, type Component, For, Show } from "solid-js"
 import { useLanguage } from "@/context/language"
-import { useServerSDK } from "@/context/server-sdk"
-import { useServerSync } from "@/context/server-sync"
+import { kernel } from "@/utils/kernel"
 import { DialogConnectProvider } from "../dialog-connect-provider"
-import { DialogSelectProvider } from "../dialog-select-provider"
-import { DialogCustomProvider } from "../dialog-custom-provider"
+import { createProviderCatalog, invalidateProviders } from "../kernel-providers"
 import { SettingsListV2 } from "./parts/list"
 import "./settings-v2.css"
-
-type ProviderSource = "env" | "api" | "config" | "custom"
-type ProviderItem = ReturnType<ReturnType<typeof useProviders>["connected"]>[number]
-
-const PROVIDER_NOTES = [
-  { match: (id: string) => id === "opencode", key: "dialog.provider.opencode.note" },
-  { match: (id: string) => id === "opencode-go", key: "dialog.provider.opencodeGo.tagline" },
-  { match: (id: string) => id === "anthropic", key: "dialog.provider.anthropic.note" },
-  { match: (id: string) => id.startsWith("github-copilot"), key: "dialog.provider.copilot.note" },
-  { match: (id: string) => id === "openai", key: "dialog.provider.openai.note" },
-  { match: (id: string) => id === "google", key: "dialog.provider.google.note" },
-  { match: (id: string) => id === "openrouter", key: "dialog.provider.openrouter.note" },
-  { match: (id: string) => id === "vercel", key: "dialog.provider.vercel.note" },
-] as const
 
 const PROVIDER_ICON_SIZE = 16
 
 export const SettingsProvidersV2: Component = () => {
   const dialog = useDialog()
   const language = useLanguage()
-  const serverSdk = useServerSDK()
-  const serverSync = useServerSync()
-  const providers = useProviders()
+  const providers = createProviderCatalog()
 
-  const connected = createMemo(() => {
-    return providers
-      .connected()
-      .filter((p) => p.id !== "opencode" || Object.values(p.models).find((m) => m.cost?.input))
-  })
-
-  const popular = createMemo(() => {
-    const connectedIDs = new Set(connected().map((p) => p.id))
-    const items = providers
-      .popular()
-      .filter((p) => !connectedIDs.has(p.id))
-      .slice()
-    items.sort((a, b) => popularProviders.indexOf(a.id) - popularProviders.indexOf(b.id))
-    return items
-  })
-
-  const source = (item: ProviderItem): ProviderSource | undefined => {
-    if (!("source" in item)) return
-    const value = item.source
-    if (value === "env" || value === "api" || value === "config" || value === "custom") return value
-    return
-  }
-
-  const type = (item: ProviderItem) => {
-    const current = source(item)
-    if (current === "env") return language.t("settings.providers.tag.environment")
-    if (current === "api") return language.t("provider.connect.method.apiKey")
-    if (current === "config") {
-      if (isConfigCustom(item.id)) return language.t("settings.providers.tag.custom")
-      return language.t("settings.providers.tag.config")
-    }
-    if (current === "custom") return language.t("settings.providers.tag.custom")
-    return language.t("settings.providers.tag.other")
-  }
-
-  const canDisconnect = (item: ProviderItem) => source(item) !== "env"
-
-  const note = (id: string) => PROVIDER_NOTES.find((item) => item.match(id))?.key
-
-  const isConfigCustom = (providerID: string) => {
-    const provider = serverSync().data.config.provider?.[providerID]
-    if (!provider) return false
-    if (provider.npm !== "@ai-sdk/openai-compatible") return false
-    if (!provider.models || Object.keys(provider.models).length === 0) return false
-    return true
-  }
-
-  const disableProvider = async (providerID: string, name: string) => {
-    const before = serverSync().data.config.disabled_providers ?? []
-    const next = before.includes(providerID) ? before : [...before, providerID]
-    serverSync().set("config", "disabled_providers", next)
-
-    await serverSync()
-      .updateConfig({ disabled_providers: next })
-      .then(() => {
-        showToast({
-          variant: "success",
-          icon: "circle-check",
-          title: language.t("provider.disconnect.toast.disconnected.title", { provider: name }),
-          description: language.t("provider.disconnect.toast.disconnected.description", { provider: name }),
-        })
-      })
-      .catch((err: unknown) => {
-        serverSync().set("config", "disabled_providers", before)
-        const message = err instanceof Error ? err.message : String(err)
-        showToast({ title: language.t("common.requestFailed"), description: message })
-      })
-  }
+  const connected = createMemo(() => providers().filter((item) => item.authenticated))
+  const available = createMemo(() => providers().filter((item) => !item.authenticated))
 
   const disconnect = async (providerID: string, name: string) => {
-    if (isConfigCustom(providerID)) {
-      await serverSdk()
-        .client.auth.remove({ providerID })
-        .catch(() => undefined)
-      await disableProvider(providerID, name)
-      return
+    try {
+      await kernel.model.removeAuth(providerID)
+      invalidateProviders()
+      showToast({
+        variant: "success",
+        icon: "circle-check",
+        title: language.t("provider.disconnect.toast.disconnected.title", { provider: name }),
+        description: language.t("provider.disconnect.toast.disconnected.description", { provider: name }),
+      })
+    } catch (err) {
+      showToast({
+        title: language.t("common.requestFailed"),
+        description: err instanceof Error ? err.message : String(err),
+      })
     }
-    await serverSdk()
-      .client.auth.remove({ providerID })
-      .then(async () => {
-        await serverSdk().client.global.dispose()
-        showToast({
-          variant: "success",
-          icon: "circle-check",
-          title: language.t("provider.disconnect.toast.disconnected.title", { provider: name }),
-          description: language.t("provider.disconnect.toast.disconnected.description", { provider: name }),
-        })
-      })
-      .catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err)
-        showToast({ title: language.t("common.requestFailed"), description: message })
-      })
   }
 
   return (
@@ -159,21 +74,11 @@ export const SettingsProvidersV2: Component = () => {
                       />
                       <div class="settings-v2-provider-main">
                         <span class="settings-v2-provider-name truncate">{item.name}</span>
-                        <Tag>{type(item)}</Tag>
                       </div>
                     </div>
-                    <Show
-                      when={canDisconnect(item)}
-                      fallback={
-                        <span class="settings-v2-provider-env-hint">
-                          {language.t("settings.providers.connected.environmentDescription")}
-                        </span>
-                      }
-                    >
-                      <ButtonV2 size="normal" variant="ghost-muted" onClick={() => void disconnect(item.id, item.name)}>
-                        {language.t("common.disconnect")}
-                      </ButtonV2>
-                    </Show>
+                    <ButtonV2 size="normal" variant="ghost-muted" onClick={() => void disconnect(item.id, item.name)}>
+                      {language.t("common.disconnect")}
+                    </ButtonV2>
                   </div>
                 )}
               </For>
@@ -184,7 +89,7 @@ export const SettingsProvidersV2: Component = () => {
         <div class="settings-v2-section">
           <h3 class="settings-v2-section-title">{language.t("settings.providers.section.popular")}</h3>
           <SettingsListV2>
-            <For each={popular()}>
+            <For each={available()}>
               {(item) => (
                 <div class="settings-v2-provider-row">
                   <div class="settings-v2-provider-lead">
@@ -197,13 +102,7 @@ export const SettingsProvidersV2: Component = () => {
                     <div class="settings-v2-provider-copy">
                       <div class="settings-v2-provider-main">
                         <span class="settings-v2-provider-name">{item.name}</span>
-                        <Show when={item.id === "opencode" || item.id === "opencode-go"}>
-                          <Tag>{language.t("dialog.provider.tag.recommended")}</Tag>
-                        </Show>
                       </div>
-                      <Show when={note(item.id)}>
-                        {(key) => <p class="settings-v2-provider-description">{language.t(key())}</p>}
-                      </Show>
                     </div>
                   </div>
                   <ButtonV2
@@ -219,45 +118,7 @@ export const SettingsProvidersV2: Component = () => {
                 </div>
               )}
             </For>
-
-            <div class="settings-v2-provider-row" data-component="custom-provider-section">
-              <div class="settings-v2-provider-lead">
-                <ProviderIcon
-                  id="synthetic"
-                  width={PROVIDER_ICON_SIZE}
-                  height={PROVIDER_ICON_SIZE}
-                  class="settings-v2-provider-icon shrink-0"
-                />
-                <div class="settings-v2-provider-copy">
-                  <div class="settings-v2-provider-main">
-                    <span class="settings-v2-provider-name">{language.t("provider.custom.title")}</span>
-                    <Tag>{language.t("settings.providers.tag.custom")}</Tag>
-                  </div>
-                  <p class="settings-v2-provider-description">{language.t("settings.providers.custom.description")}</p>
-                </div>
-              </div>
-              <ButtonV2
-                size="normal"
-                variant="neutral"
-                icon="plus"
-                onClick={() => {
-                  dialog.show(() => <DialogCustomProvider back="close" />)
-                }}
-              >
-                {language.t("common.connect")}
-              </ButtonV2>
-            </div>
           </SettingsListV2>
-
-          <button
-            type="button"
-            class="settings-v2-providers-view-all"
-            onClick={() => {
-              dialog.show(() => <DialogSelectProvider />)
-            }}
-          >
-            {language.t("dialog.provider.viewAll")}
-          </button>
         </div>
       </div>
     </>

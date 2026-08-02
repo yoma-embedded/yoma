@@ -1,4 +1,4 @@
-import type { Message, UserMessage } from "@opencode-ai/sdk/v2"
+import type { Message, UserMessage } from "@yoma-desktop/kernel"
 import { createMemo, createResource, onCleanup, untrack, type Accessor } from "solid-js"
 import { useServerSync } from "@/context/server-sync"
 import { useSync } from "@/context/sync"
@@ -7,10 +7,7 @@ import { same } from "@/utils/same"
 const emptyUserMessages: UserMessage[] = []
 const sessionFreshness = 15_000
 
-export function createTimelineModel(input: {
-  sessionID: Accessor<string | undefined>
-  revertMessageID: Accessor<string | undefined>
-}) {
+export function createTimelineModel(input: { sessionID: Accessor<string | undefined> }) {
   const serverSync = useServerSync()
   const sync = useSync()
   let refreshFrame: number | undefined
@@ -48,13 +45,6 @@ export function createTimelineModel(input: {
     return !id || sync().data.message[id] !== undefined
   })
   const userMessages = createMemo(() => selectUserMessages(messages()), emptyUserMessages, { equals: same })
-  const visibleUserMessages = createMemo(
-    () => {
-      return selectVisibleUserMessages(userMessages(), input.revertMessageID())
-    },
-    emptyUserMessages,
-    { equals: same },
-  )
   const more = createMemo(() => {
     const id = input.sessionID()
     return id ? sync().session.history.more(id) : false
@@ -78,12 +68,11 @@ export function createTimelineModel(input: {
 
   return {
     history: { loadOlder, loading, more },
-    lastUserMessage: createMemo(() => visibleUserMessages().at(-1)),
+    lastUserMessage: createMemo(() => userMessages().at(-1)),
     messages,
     ready,
     resource,
     userMessages,
-    visibleUserMessages,
   }
 
   function clearRefresh() {
@@ -96,11 +85,6 @@ export function createTimelineModel(input: {
 
 export function selectUserMessages(messages: Message[]) {
   return messages.filter((message): message is UserMessage => message.role === "user")
-}
-
-export function selectVisibleUserMessages(messages: UserMessage[], revertMessageID?: string) {
-  if (!revertMessageID) return messages
-  return messages.filter((message) => message.id < revertMessageID)
 }
 
 export async function loadOlderTimeline(input: {

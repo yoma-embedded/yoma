@@ -1,9 +1,8 @@
-import type { Message, Session, Part, SnapshotFileDiff, SessionStatus, Provider } from "@opencode-ai/sdk/v2"
+import type { Message, Session, Part, SessionStatus, ProviderInfo } from "@yoma-desktop/kernel"
 import { createSimpleContext } from "@yoma-desktop/ui/context"
-import { PreloadMultiFileDiffResult } from "@pierre/diffs/ssr"
 
 export type NormalizedProviderListResponse = {
-  all: Map<string, Provider>
+  all: Map<string, ProviderInfo>
   default: {
     [key: string]: string
   }
@@ -11,20 +10,10 @@ export type NormalizedProviderListResponse = {
 }
 
 type Data = {
-  agent?: {
-    name: string
-    color?: string
-  }[]
   provider?: NormalizedProviderListResponse
   session: Session[]
   session_status: {
     [sessionID: string]: SessionStatus
-  }
-  session_diff: {
-    [sessionID: string]: SnapshotFileDiff[]
-  }
-  session_diff_preload?: {
-    [sessionID: string]: PreloadMultiFileDiffResult<any>[]
   }
   message: {
     [sessionID: string]: Message[]

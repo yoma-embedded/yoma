@@ -25,7 +25,6 @@ import { createFileViewCache } from "./file/view-cache"
 import { useServerSDK } from "./server-sdk"
 import { SessionRouteKey, SessionStateKey } from "@/utils/server-scope"
 import { createFileTreeStore } from "./file/tree-store"
-import { invalidateFromWatcher } from "./file/watcher"
 import {
   selectionFromLines,
   type FileState,
@@ -79,10 +78,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
     const tree = createFileTreeStore({
       scope,
       normalizeDir: path.normalizeDir,
-      list: (dir) =>
-        sdk()
-          .client.file.list({ path: dir })
-          .then((x) => x.data ?? []),
+      list: (dir) => sdk().client.file.list(sdk().directory, dir),
       onError: (message) => {
         showToast({
           variant: "error",
@@ -181,13 +177,12 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       setLoading(file)
 
       const promise = sdk()
-        .client.file.read({ path: file })
+        .client.file.read(file)
         .then((x) => {
           if (scope() !== directory) return
-          const content = x.data
+          const content = { path: file, ...x }
           setLoaded(file, content)
 
-          if (!content) return
           touchFileContent(file, approxBytes(content))
           evictContent(new Set([file]))
         })
@@ -203,29 +198,14 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       return promise
     }
 
-    const search = (query: string, dirs: "true" | "false") =>
+    // 内核没有文件监视事件流,所以没有 watcher 失效路径 —— 打开的文件靠显式 reload。
+    const search = (query: string, _dirs: "true" | "false") =>
       sdk()
-        .client.find.files({ query, dirs })
+        .client.file.search(sdk().directory, query)
         .then(
-          (x) => (x.data ?? []).map(path.normalize),
+          (x) => x.map(path.normalize),
           () => [],
         )
-
-    const stop = sdk().event.listen((e) => {
-      invalidateFromWatcher(e.details, {
-        normalize: path.normalize,
-        hasFile: (file) => Boolean(store.file[file]),
-        isOpen: (file) => tabs.all().some((tab) => path.pathFromTab(tab) === file),
-        loadFile: (file) => {
-          void load(file, { force: true })
-        },
-        node: tree.node,
-        isDirLoaded: tree.isLoaded,
-        refreshDir: (dir) => {
-          void tree.listDir(dir, { force: true })
-        },
-      })
-    })
 
     const get = (input: string) => {
       const file = path.normalize(input)
@@ -252,7 +232,6 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       withPath(input, (file) => view().setSelectedLines(file, range))
 
     onCleanup(() => {
-      stop()
       viewCache.clear()
     })
 

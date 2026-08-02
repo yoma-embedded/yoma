@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { createStore } from "solid-js/store"
-import type { Todo } from "@opencode-ai/sdk/v2"
+import type { Todo } from "@yoma-desktop/kernel"
 import { createPromptState } from "@/context/prompt"
 import { SessionComposerRegion, createSessionComposerRegionController } from "@/pages/session/composer"
 import { createPromptInputHistory, PromptInput } from "./prompt-input"
@@ -178,13 +178,7 @@ function PromptInputWithOpenDock() {
         setDockRef: () => {},
       })}
       promptInput={
-        <PromptInput
-          controls={inputControls}
-          {...input}
-          ref={() => {}}
-          newSessionWorktree=""
-          onNewSessionWorktreeReset={() => {}}
-        />
+        <PromptInput controls={inputControls} {...input} ref={() => {}} />
       }
     />
   )

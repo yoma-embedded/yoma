@@ -6,15 +6,14 @@ import { Icon as IconV2 } from "@yoma-desktop/ui/v2/icon"
 import { ProjectAvatar } from "@yoma-desktop/ui/v2/project-avatar-v2"
 import { getProjectAvatarVariant } from "@/context/layout"
 import { useLanguage } from "@/context/language"
-import { displayName, getProjectAvatarSource } from "@/pages/layout/helpers"
+import { displayName } from "@/pages/layout/helpers"
 import { pathKey } from "@/utils/path-key"
 
 export type PromptProject = {
   name?: string
-  id?: string
   worktree: string
-  sandboxes?: string[]
-  icon?: { color?: string; url?: string; override?: string }
+  /** 只有本地覆盖:内核的项目记录里没有图标。override 是一个 data: URL。 */
+  icon?: { color?: string; override?: string }
   server?: { key: string; name: string }
 }
 
@@ -51,8 +50,7 @@ export function createPromptProjectController(input: {
       .controls()
       .available.find(
         (project) =>
-          (!project.server || project.server.key === input.controls().server) &&
-          (pathKey(project.worktree) === key || project.sandboxes?.some((sandbox) => pathKey(sandbox) === key)),
+          (!project.server || project.server.key === input.controls().server) && pathKey(project.worktree) === key,
       )
   }
   const projects = () => {
@@ -449,7 +447,7 @@ function ProjectTrigger(props: ComponentProps<"button"> & { controller: PromptPr
         {(item) => (
           <ProjectAvatar
             fallback={displayName(item())}
-            src={getProjectAvatarSource(item().id, item().icon)}
+            src={item().icon?.override}
             variant={getProjectAvatarVariant(item().icon?.color)}
           />
         )}
@@ -493,7 +491,7 @@ function ProjectItem(props: {
     >
       <ProjectAvatar
         fallback={displayName(props.project)}
-        src={getProjectAvatarSource(props.project.id, props.project.icon)}
+        src={props.project.icon?.override}
         variant={getProjectAvatarVariant(props.project.icon?.color)}
       />
       <DropdownMenu.ItemLabel class="min-w-0 truncate leading-5">{displayName(props.project)}</DropdownMenu.ItemLabel>

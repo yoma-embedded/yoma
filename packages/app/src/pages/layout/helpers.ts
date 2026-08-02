@@ -1,5 +1,5 @@
 import { getFilename } from "@yoma-desktop/util/path"
-import { type Session } from "@opencode-ai/sdk/v2/client"
+import { type Session } from "@yoma-desktop/kernel"
 import { pathKey } from "@/utils/path-key"
 import type { ServerConnection } from "@/context/server"
 import type { HomeProjectSelection } from "@/context/layout"
@@ -23,8 +23,10 @@ function sortSessions(now: number) {
   }
 }
 
+// The kernel has no session hierarchy — every session is a root — so "visible" is just
+// "lives in this directory and is not archived".
 const isRootVisibleSession = (session: Session, directory: string) =>
-  pathKey(session.directory) === pathKey(directory) && !session.parentID && !session.time?.archived
+  pathKey(session.directory) === pathKey(directory) && !session.time?.archived
 
 export const roots = (store: SessionStore) =>
   (store.session ?? []).filter((session) => isRootVisibleSession(session, store.path.directory))
@@ -39,19 +41,6 @@ export function hasProjectPermissions<T>(
   include: (item: T) => boolean = () => true,
 ) {
   return Object.values(request ?? {}).some((list) => list?.some(include))
-}
-
-export const childSessionOnPath = (sessions: Session[] | undefined, rootID: string, activeID?: string) => {
-  if (!activeID || activeID === rootID) return
-  const map = new Map((sessions ?? []).map((session) => [session.id, session]))
-  let id = activeID
-
-  while (id) {
-    const session = map.get(id)
-    if (!session?.parentID) return
-    if (session.parentID === rootID) return session
-    id = session.parentID
-  }
 }
 
 export const displayName = (project: { name?: string; worktree: string }) =>
@@ -92,27 +81,13 @@ export function homeSessionServerStatus(active: boolean, status: () => { working
   return status()
 }
 
-const OPENCODE_PROJECT_ID = "4b0ea68d7af9a6031a7ffda7ad66e0cb83315750"
-
-export function getProjectAvatarSource(id?: string, icon?: { color?: string; url?: string; override?: string }) {
-  if (id === OPENCODE_PROJECT_ID) return "https://opencode.ai/favicon.svg"
-  if (icon?.override) return icon.override
-  if (icon?.color) return undefined
-  return icon?.url
-}
-
-export function projectForSession<T extends { id?: string; worktree: string; sandboxes?: string[] }>(
-  session: Session,
-  projects: T[],
-  byID: Map<string, T> = new Map(projects.flatMap((project) => (project.id ? [[project.id, project] as const] : []))),
-) {
-  const direct = byID.get(session.projectID)
-  if (direct) return direct
+/**
+ * A session belongs to whichever open project sits on its directory. The kernel has no
+ * project registry and no sandboxes, so directory equality is the whole rule.
+ */
+export function projectForSession<T extends { worktree: string }>(session: Session, projects: T[]) {
   const directory = pathKey(session.directory)
-  return projects.find(
-    (project) =>
-      pathKey(project.worktree) === directory || project.sandboxes?.some((sandbox) => pathKey(sandbox) === directory),
-  )
+  return projects.find((project) => pathKey(project.worktree) === directory)
 }
 
 export const errorMessage = (err: unknown, fallback: string) => {

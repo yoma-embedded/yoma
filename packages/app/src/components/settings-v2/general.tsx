@@ -95,7 +95,7 @@ export const SettingsGeneralV2: Component<{
 
   const dir = createMemo(() => {
     if (!props.sessionID) return undefined
-    return serverSync().session.lineage.peek(props.sessionID)?.session.directory
+    return serverSync().session.get(props.sessionID)?.directory
   })
   const accepting = createMemo(() => {
     const value = dir()
@@ -118,14 +118,9 @@ export const SettingsGeneralV2: Component<{
 
   const themeOptions = createMemo<ThemeOption[]>(() => theme.ids().map((id) => ({ id, name: theme.name(id) })))
 
-  const [shells] = createResource(
-    () =>
-      serverSdk()
-        .client.pty.shells()
-        .then((res) => res.data ?? [])
-        .catch(() => [] as ShellOption[]),
-    { initialValue: [] as ShellOption[] },
-  )
+  // 内核没有 PTY —— my-pi 的 NodeExecutionEnv.exec 是一次性 spawn,不是伪终端。
+  // 终端面板要不要保留是个待定的产品决策,在那之前这里给空列表,UI 会退化成"自动"。
+  const [shells] = createResource(async () => [] as ShellOption[], { initialValue: [] as ShellOption[] })
 
   const [pinchZoom, { mutate: setPinchZoom }] = createResource(
     () => (desktop() && platform.getPinchZoomEnabled ? true : false),
@@ -269,7 +264,9 @@ export const SettingsGeneralV2: Component<{
             onSelect={(option) => {
               if (!option) return
               if (option.value === currentShell()) return
-              serverSync().updateConfig({ shell: option.value })
+              // 内核没有配置服务(opencode 的 config 是后端下发的)。shell 选择
+              // 随终端一起待定,这里先只更新本地选中态。
+              void option
             }}
           />
         </SettingsRowV2>

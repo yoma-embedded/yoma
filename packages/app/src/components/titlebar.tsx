@@ -261,11 +261,7 @@ export function Titlebar(props: {
                   .find((item) => ServerConnection.key(item) === (route.server ?? server.key))
                 return conn ? { route, sdk: global.ensureServerCtx(conn).sdk } : undefined
               },
-              ({ route, sdk }) =>
-                sdk.client.session
-                  .get({ sessionID: route.sessionId })
-                  .then((x) => x.data)
-                  .catch(() => {}),
+              ({ route, sdk }) => sdk.client.session.get(route.sessionId).catch(() => {}),
             )
 
             const matchRoute = (route: LayoutRoute) => {
@@ -279,14 +275,8 @@ export function Titlebar(props: {
                     item.type === "session" && item.server === route.server && item.sessionId === route.sessionId,
                 )
                 if (main) return main
-                const s = session()
-                if (s?.parentID) {
-                  const parentID = s.parentID
-                  const parent = tabsStore.find(
-                    (item) => item.type === "session" && item.server === route.server && item.sessionId === parentID,
-                  )
-                  if (parent) return parent
-                }
+                // 内核里 session 之间没有父子关系(树在单个 session 内部,节点是 entry),
+                // 所以不存在"回到父会话的标签页"这件事。
               }
             }
 
@@ -304,7 +294,7 @@ export function Titlebar(props: {
               if (route.type === "session") {
                 const s = session()
                 if (!s) return
-                const sessionId = s.parentID ?? s.id
+                const sessionId = s.id
                 const next = { server: route.server ?? server.key, sessionId }
                 tabsStoreActions.addSessionTab(next)
               }
