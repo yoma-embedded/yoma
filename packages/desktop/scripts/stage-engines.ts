@@ -24,9 +24,45 @@ const desktopDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".
 const enginesDir = path.resolve(desktopDir, "..", "..", "engines")
 const stageDir = path.join(desktopDir, ".engines-stage")
 
+/**
+ * 打包目标平台,由 package.json 的脚本传入(package:win → win32),缺省当前平台。
+ * 引擎是原生二进制,mac 的 Mach-O 装进 Windows 安装包一样"打包成功",用户点开才炸 ——
+ * 所以按魔数校验格式匹配。my-pi 的内核在 win32 上按 `${name}.exe` 找引擎
+ * (coding-agent/core/tools/engines.ts),所以 Windows 产物还必须带 .exe 后缀。
+ *
+ * YOMA_ALLOW_FOREIGN_ENGINES=1 是显式逃生口:只在"引擎还没有对应平台产物,
+ * 但想先验证安装器机械流程"时用,产出的包引擎全坏,**不能分发**。
+ */
+const TARGET = process.argv[2] ?? process.platform
+const ALLOW_FOREIGN = process.env.YOMA_ALLOW_FOREIGN_ENGINES === "1"
+const EXPECTED: Record<string, { format: BinFormat; label: string }> = {
+  darwin: { format: "macho", label: "Mach-O" },
+  win32: { format: "pe", label: "PE(.exe)" },
+  linux: { format: "elf", label: "ELF" },
+}
+const expected = EXPECTED[TARGET]
+if (!expected) {
+  console.error(`[stage-engines] 未知目标平台 ${TARGET}(认识 darwin/win32/linux)`)
+  process.exit(1)
+}
+
+type BinFormat = "macho" | "pe" | "elf" | "script" | "other"
+
+function detectFormat(head: Buffer): BinFormat {
+  if (head.length >= 2 && head[0] === 0x23 && head[1] === 0x21) return "script" // #!
+  if (head.length >= 2 && head[0] === 0x4d && head[1] === 0x5a) return "pe" // MZ
+  if (head.length >= 4 && head[0] === 0x7f && head[1] === 0x45 && head[2] === 0x4c && head[3] === 0x46) return "elf"
+  if (head.length >= 4) {
+    const magic = head.readUInt32BE(0)
+    // MH_MAGIC_64 两种字节序 + universal binary
+    if (magic === 0xcffaedfe || magic === 0xfeedfacf || magic === 0xcafebabe) return "macho"
+  }
+  return "other"
+}
+
 function fail(message: string): never {
   console.error(`\n[stage-engines] ${message}`)
-  console.error("[stage-engines] 先在 my-pi 仓库跑 `bun engines/build.ts`,再回来打包。\n")
+  console.error("[stage-engines] 先在 my-pi 仓库跑 `bun engines/build.ts`(为目标平台),再回来打包。\n")
   process.exit(1)
 }
 
@@ -35,6 +71,8 @@ if (!existsSync(enginesDir)) fail(`找不到 engines 目录:${enginesDir}`)
 // ---- 校验 --------------------------------------------------------------
 
 const nonPortable: string[] = []
+const foreign: string[] = []
+let nativeCount = 0
 for (const sub of ["bin", "data"] as const) {
   const dir = path.join(enginesDir, sub)
   let entries: string[]
@@ -56,10 +94,36 @@ for (const sub of ["bin", "data"] as const) {
     }
     if (sub !== "bin" || !stat.isFile()) continue
     const head = readFileSync(target)
-    if (head.length >= 2 && head[0] === 0x23 && head[1] === 0x21) {
+    const format = detectFormat(head)
+    if (format === "script") {
       const shebang = head.subarray(0, Math.min(head.length, 200)).toString("utf8").split("\n")[0]!
-      nonPortable.push(`${name} → ${shebang}`)
+      // 解释器脚本在 win32 上根本没有 shebang 语义,算格式不匹配;darwin/linux 上算"出机必坏"警告。
+      if (TARGET === "win32") foreign.push(`${name}(解释器脚本)`)
+      else nonPortable.push(`${name} → ${shebang}`)
+    } else if (format === expected.format) {
+      nativeCount += 1
+      // 内核在 win32 上按 `${name}.exe` 拼可执行名,不带后缀的 PE 等于不存在。
+      if (TARGET === "win32" && !name.toLowerCase().endsWith(".exe")) foreign.push(`${name}(PE 但缺 .exe 后缀)`)
+    } else {
+      foreign.push(`${name}(${format},目标要 ${expected.label})`)
     }
+  }
+}
+
+if (foreign.length > 0 || nativeCount === 0) {
+  const lines = [
+    `目标平台 ${TARGET} 需要 ${expected.label} 引擎,当前 engines/bin 不满足:`,
+    ...foreign.map((line) => `  ${line}`),
+    ...(nativeCount === 0 ? [`  (没有任何 ${expected.label} 二进制)`] : []),
+    `需要 my-pi 侧为 ${TARGET} 构建 engines(win32 命名要带 .exe,内核按 \`\${name}.exe\` 找),`,
+    `把仓库根的 engines 指到那份产物再打包。`,
+  ]
+  if (ALLOW_FOREIGN) {
+    console.warn("\n[stage-engines] ⚠⚠ YOMA_ALLOW_FOREIGN_ENGINES=1:忽略平台不匹配继续打包。")
+    for (const line of lines) console.warn(`[stage-engines] ⚠⚠ ${line}`)
+    console.warn("[stage-engines] ⚠⚠ 这个包的硬件引擎**全部是坏的**,只能用来验证安装器流程,不能分发。\n")
+  } else {
+    fail(lines.join("\n[stage-engines] "))
   }
 }
 

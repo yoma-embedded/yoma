@@ -206,7 +206,25 @@ OPENCODE_CHANNEL=prod bun --cwd packages/desktop package:mac
   venv 脚本，装到别的电脑上必坏（打包时会有响亮警告），要等 my-pi 的 `engines/build.ts`
   产出自包含产物；Windows / Linux 包同理需要对应平台的引擎产物，目前只有 mac-arm64。
 
-其他平台：`bun package:win` / `bun package:linux`（引擎产物就位后）。渠道用环境变量
+### Windows 包：现状与路线
+
+壳的构建已实测跑通：`bun package:win` 在 mac 上就能出 NSIS 安装器（`dist/yoma-win-x64.exe`），
+不需要 Windows 机器。`stage-engines.ts` 按魔数校验引擎平台——当前 engines 全是 mac-arm64 的，
+所以它会**直接拒绝**打 Windows 包。这是对的：壳能装上，硬件引擎全是坏的。
+
+真正缺的两样：
+
+1. **my-pi 为 Windows 构建 engines**：`probe-rs.exe` / `stm32kernel.exe`（Rust，官方支持 Windows）
+   + Python 三件套的自包含 exe。内核本身已是 Windows-aware（`engines.ts` 按 `${name}.exe` 找引擎、
+   进程树清理用 `taskkill`），引擎产物就位后前端零改动。
+2. **一台 Windows 机器做验证**（装上、配 key、真对话、烧录冒烟）。没验证过的包不发。
+
+引擎缺位时的逃生口：`YOMA_ALLOW_FOREIGN_ENGINES=1` 强行出包，仅用于验证安装器流程本身，
+**不能分发**。另外两点：无签名 exe 会被 SmartScreen 拦（「更多信息 → 仍要运行」），要消除
+得买 Windows 代码签名证书；CI 签名脚本位 `script/sign-windows.ps1` 目前不存在，上
+GitHub Actions 打 win 包时要补上或摘除该钩子。
+
+Linux：`bun package:linux`（AppImage/deb/rpm 配置已在，引擎产物同样未就位）。渠道用环境变量
 `OPENCODE_CHANNEL`（`dev` / `beta` / `prod`）控制。
 
 ---

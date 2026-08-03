@@ -119,7 +119,9 @@ const getBase = (appId: string): Configuration => ({
     signtoolOptions: {
       sign: signWindows,
     },
-    target: ["nsis"],
+    // 架构必须写死:不写的话 electron-builder 跟宿主机走,在 arm64 Mac 上会默默
+    // 打出 Windows ARM64 包 —— 绝大多数 PC 装不上(实测踩过)。要 win-arm64 再加。
+    target: [{ target: "nsis", arch: ["x64"] }],
     verifyUpdateCodeSignature: false,
   },
   nsis: {
