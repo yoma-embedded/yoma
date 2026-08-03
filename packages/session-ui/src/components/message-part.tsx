@@ -18,10 +18,17 @@ import stripAnsi from "strip-ansi"
 import { Dynamic } from "solid-js/web"
 import {
   AssistantMessage,
+  DatasheetSearchHit,
+  DatasheetToolDetails,
   FilePart,
+  FlashToolDetails,
+  GdbToolDetails,
+  LogToolDetails,
   Message as MessageType,
+  NetlistToolDetails,
   Part as PartType,
   ReasoningPart,
+  Stm32ConfigToolDetails,
   TextPart,
   ToolDetails,
   ToolPart,
@@ -50,7 +57,6 @@ import { TooltipV2 } from "@yoma-desktop/ui/v2/tooltip-v2"
 import { TextShimmer } from "@yoma-desktop/ui/text-shimmer"
 import { AnimatedCountList } from "./tool-count-summary"
 import { ToolStatusTitle } from "./tool-status-title"
-import { patchFiles } from "./apply-patch-file"
 import { animate } from "motion"
 import { attached, kind } from "./message-file"
 import { readPartText } from "./message-part-text"
@@ -341,18 +347,7 @@ export type ToolInfo = {
   subtitle?: string
 }
 
-function metadataProvider(metadata: ToolDetails | undefined) {
-  if (metadata && "provider" in metadata) return metadata.provider
-  return undefined
-}
-
-function webSearchProviderLabel(provider: unknown) {
-  if (provider === "parallel") return "Parallel Web Search"
-  if (provider === "exa") return "Exa Web Search"
-  return "Web Search"
-}
-
-export function getToolInfo(tool: string, input: any = {}, metadata?: ToolDetails): ToolInfo {
+export function getToolInfo(tool: string, input: any = {}, _metadata?: ToolDetails): ToolInfo {
   const i18n = useI18n()
   switch (tool) {
     case "read":
@@ -361,35 +356,11 @@ export function getToolInfo(tool: string, input: any = {}, metadata?: ToolDetail
         title: i18n.t("ui.tool.read"),
         subtitle: input.filePath ? getFilename(input.filePath) : undefined,
       }
-    case "list":
-      return {
-        icon: "bullet-list",
-        title: i18n.t("ui.tool.list"),
-        subtitle: input.path ? getFilename(input.path) : undefined,
-      }
-    case "glob":
-      return {
-        icon: "magnifying-glass-menu",
-        title: i18n.t("ui.tool.glob"),
-        subtitle: input.pattern,
-      }
     case "grep":
       return {
         icon: "magnifying-glass-menu",
         title: i18n.t("ui.tool.grep"),
         subtitle: input.pattern,
-      }
-    case "webfetch":
-      return {
-        icon: "window-cursor",
-        title: i18n.t("ui.tool.webfetch"),
-        subtitle: input.url,
-      }
-    case "websearch":
-      return {
-        icon: "window-cursor",
-        title: webSearchProviderLabel(metadataProvider(metadata)),
-        subtitle: input.query,
       }
     case "bash":
       return {
@@ -409,18 +380,41 @@ export function getToolInfo(tool: string, input: any = {}, metadata?: ToolDetail
         title: i18n.t("ui.messagePart.title.write"),
         subtitle: input.filePath ? getFilename(input.filePath) : undefined,
       }
-    case "apply_patch":
+    case "stm32config":
       return {
-        icon: "code-lines",
-        title: i18n.t("ui.tool.patch"),
-        subtitle: input.files?.length
-          ? `${input.files.length} ${i18n.t(input.files.length > 1 ? "ui.common.file.other" : "ui.common.file.one")}`
-          : undefined,
+        icon: "settings-gear",
+        title: i18n.t("ui.tool.stm32config"),
+        subtitle: input.command,
       }
-    case "skill":
+    case "netlist":
       return {
-        icon: "brain",
-        title: input.name || i18n.t("ui.tool.skill"),
+        icon: "providers",
+        title: i18n.t("ui.tool.netlist"),
+        subtitle: input.part,
+      }
+    case "flash":
+      return {
+        icon: "download",
+        title: i18n.t("ui.tool.flash"),
+        subtitle: input.chip,
+      }
+    case "datasheet":
+      return {
+        icon: "review",
+        title: i18n.t("ui.tool.datasheet"),
+        subtitle: input.chip,
+      }
+    case "log":
+      return {
+        icon: "status",
+        title: i18n.t("ui.tool.log"),
+        subtitle: input.file,
+      }
+    case "gdb":
+      return {
+        icon: "debug",
+        title: i18n.t("ui.tool.gdb"),
+        subtitle: input.connection,
       }
     default:
       return {
@@ -430,19 +424,7 @@ export function getToolInfo(tool: string, input: any = {}, metadata?: ToolDetail
   }
 }
 
-function urls(text: string | undefined) {
-  if (!text) return []
-  const seen = new Set<string>()
-  return [...text.matchAll(/https?:\/\/[^\s<>"'`)\]]+/g)]
-    .map((item) => item[0].replace(/[),.;:!?]+$/g, ""))
-    .filter((item) => {
-      if (seen.has(item)) return false
-      seen.add(item)
-      return true
-    })
-}
-
-const CONTEXT_GROUP_TOOLS = new Set(["read", "glob", "grep", "list"])
+const CONTEXT_GROUP_TOOLS = new Set(["read", "grep"])
 
 function list<T>(value: T[] | undefined | null, fallback: T[]) {
   if (Array.isArray(value)) return value
@@ -554,7 +536,7 @@ export function renderable(part: PartType, showReasoningSummaries = true) {
 
 function toolDefaultOpen(tool: string, shell = false, edit = false) {
   if (tool === "bash") return shell
-  if (tool === "edit" || tool === "write" || tool === "apply_patch") return edit
+  if (tool === "edit" || tool === "write") return edit
 }
 
 export function partDefaultOpen(part: PartType, shell = false, edit = false) {
@@ -705,17 +687,6 @@ function contextToolTrigger(part: ToolPart, i18n: ReturnType<typeof useI18n>) {
         args,
       }
     }
-    case "list":
-      return {
-        title: i18n.t("ui.tool.list"),
-        subtitle: getDirectory(path),
-      }
-    case "glob":
-      return {
-        title: i18n.t("ui.tool.glob"),
-        subtitle: getDirectory(path),
-        args: pattern ? ["pattern=" + pattern] : [],
-      }
     case "grep": {
       const args: string[] = []
       if (pattern) args.push("pattern=" + pattern)
@@ -739,35 +710,8 @@ function contextToolTrigger(part: ToolPart, i18n: ReturnType<typeof useI18n>) {
 
 function contextToolSummary(parts: ToolPart[]) {
   const read = parts.filter((part) => part.tool === "read").length
-  const search = parts.filter((part) => part.tool === "glob" || part.tool === "grep").length
-  const list = parts.filter((part) => part.tool === "list").length
-  return { read, search, list }
-}
-
-function ExaOutput(props: { output?: string }) {
-  const links = createMemo(() => urls(props.output))
-
-  return (
-    <Show when={links().length > 0}>
-      <div data-component="exa-tool-output">
-        <div data-slot="exa-tool-links">
-          <For each={links()}>
-            {(url) => (
-              <a
-                data-slot="exa-tool-link"
-                href={url}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(event) => event.stopPropagation()}
-              >
-                {url}
-              </a>
-            )}
-          </For>
-        </div>
-      </div>
-    </Show>
-  )
+  const search = parts.filter((part) => part.tool === "grep").length
+  return { read, search }
 }
 
 export function registerPartComponent(type: string, component: PartComponent) {
@@ -931,12 +875,6 @@ export function ContextToolGroup(props: { parts: ToolPart[]; busy?: boolean; onS
                     count: summary().search,
                     one: i18n.t("ui.messagePart.context.search.one"),
                     other: i18n.t("ui.messagePart.context.search.other"),
-                  },
-                  {
-                    key: "list",
-                    count: summary().list,
-                    one: i18n.t("ui.messagePart.context.list.one"),
-                    other: i18n.t("ui.messagePart.context.list.other"),
                   },
                 ]}
                 fallback=""
@@ -1153,6 +1091,8 @@ export interface ToolProps {
   sessionID?: string
   output?: string
   status?: string
+  /** 工具返回的附件(目前只有 datasheet view_figure 会带图片)。 */
+  attachments?: FilePart[]
   hideDetails?: boolean
   defaultOpen?: boolean
   open?: boolean
@@ -1264,6 +1204,8 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
               metadata={partMetadata()}
               // @ts-expect-error
               output={part().state.output}
+              // @ts-expect-error
+              attachments={part().state.attachments}
               status={part().state.status}
               hideDetails={props.hideDetails}
               defaultOpen={props.defaultOpen}
@@ -1460,50 +1402,6 @@ ToolRegistry.register({
 })
 
 ToolRegistry.register({
-  name: "list",
-  render(props) {
-    const i18n = useI18n()
-    return (
-      <BasicTool
-        {...props}
-        icon="bullet-list"
-        trigger={{ title: i18n.t("ui.tool.list"), subtitle: getDirectory(props.input.path || "/") }}
-      >
-        <Show when={props.output}>
-          <div data-component="tool-output" data-scrollable>
-            <Markdown text={props.output!} />
-          </div>
-        </Show>
-      </BasicTool>
-    )
-  },
-})
-
-ToolRegistry.register({
-  name: "glob",
-  render(props) {
-    const i18n = useI18n()
-    return (
-      <BasicTool
-        {...props}
-        icon="magnifying-glass-menu"
-        trigger={{
-          title: i18n.t("ui.tool.glob"),
-          subtitle: getDirectory(props.input.path || "/"),
-          args: props.input.pattern ? ["pattern=" + props.input.pattern] : [],
-        }}
-      >
-        <Show when={props.output}>
-          <div data-component="tool-output" data-scrollable>
-            <Markdown text={props.output!} />
-          </div>
-        </Show>
-      </BasicTool>
-    )
-  },
-})
-
-ToolRegistry.register({
   name: "grep",
   render(props) {
     const i18n = useI18n()
@@ -1525,78 +1423,6 @@ ToolRegistry.register({
             <Markdown text={props.output!} />
           </div>
         </Show>
-      </BasicTool>
-    )
-  },
-})
-
-ToolRegistry.register({
-  name: "webfetch",
-  render(props) {
-    const i18n = useI18n()
-    const pending = createMemo(() => props.status === "pending" || props.status === "running")
-    const url = createMemo(() => {
-      const value = props.input.url
-      if (typeof value !== "string") return ""
-      return value
-    })
-    return (
-      <BasicTool
-        {...props}
-        hideDetails
-        icon="window-cursor"
-        trigger={
-          <div data-slot="basic-tool-tool-info-structured">
-            <div data-slot="basic-tool-tool-info-main">
-              <span data-slot="basic-tool-tool-title">
-                <TextShimmer text={i18n.t("ui.tool.webfetch")} active={pending()} />
-              </span>
-              <Show when={!pending() && url()}>
-                <a
-                  data-slot="basic-tool-tool-subtitle"
-                  class="clickable subagent-link"
-                  href={url()}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  {url()}
-                </a>
-              </Show>
-            </div>
-            <Show when={!pending() && url()}>
-              <div data-component="tool-action">
-                <Icon name="square-arrow-top-right" size="small" />
-              </div>
-            </Show>
-          </div>
-        }
-      />
-    )
-  },
-})
-
-ToolRegistry.register({
-  name: "websearch",
-  render(props) {
-    const query = createMemo(() => {
-      const value = props.input.query
-      if (typeof value !== "string") return ""
-      return value
-    })
-    const title = createMemo(() => webSearchProviderLabel(props.metadata.provider))
-
-    return (
-      <BasicTool
-        {...props}
-        icon="window-cursor"
-        trigger={{
-          title: title(),
-          subtitle: query(),
-          subtitleClass: "exa-tool-query",
-        }}
-      >
-        <ExaOutput output={props.output} />
       </BasicTool>
     )
   },
@@ -1835,229 +1661,505 @@ ToolRegistry.register({
   },
 })
 
+
 ToolRegistry.register({
-  name: "apply_patch",
+  name: "stm32config",
   render(props) {
     const i18n = useI18n()
-    const fileComponent = useFileComponent()
-    const files = createMemo(() => patchFiles(props.metadata.files))
-    const pending = createMemo(() => props.status === "pending" || props.status === "running")
-    const single = createMemo(() => {
-      const list = files()
-      if (list.length !== 1) return
-      return list[0]
-    })
-    const [expanded, setExpanded] = createSignal<string[]>([])
-    let seeded = false
-
-    createEffect(() => {
-      const list = files()
-      if (list.length === 0) return
-      if (seeded) return
-      seeded = true
-      setExpanded(list.filter((f) => f.type !== "delete").map((f) => f.filePath))
-    })
-
-    const subtitle = createMemo(() => {
-      const count = files().length
-      if (count === 0) return ""
-      return `${count} ${i18n.t(count > 1 ? "ui.common.file.other" : "ui.common.file.one")}`
-    })
+    const metadata = () => props.metadata as Partial<Stm32ConfigToolDetails>
+    const command = createMemo(() => metadata().command || props.input.command || "")
+    const exitCode = createMemo<number | null>(() =>
+      typeof metadata().exitCode === "number" ? (metadata().exitCode as number) : null,
+    )
+    const failed = createMemo(() => exitCode() !== null && exitCode() !== 0)
 
     return (
-      <Show
-        when={single()}
-        fallback={
-          <div data-component="apply-patch-tool">
-            <BasicTool
-              {...props}
-              icon="code-lines"
-              defer={props.deferContent !== false}
-              trigger={{
-                title: i18n.t("ui.tool.patch"),
-                subtitle: subtitle(),
-              }}
-            >
-              <Show when={files().length > 0}>
-                <Accordion
-                  multiple
-                  data-scope="apply-patch"
-                  style={{ "--sticky-accordion-offset": "calc(32px + var(--tool-content-gap))" }}
-                  value={expanded()}
-                  onChange={(value) => setExpanded(Array.isArray(value) ? value : value ? [value] : [])}
-                >
-                  <For each={files()}>
-                    {(file) => {
-                      const active = createMemo(() => expanded().includes(file.filePath))
-                      const [visible, setVisible] = createSignal(false)
-
-                      createEffect(() => {
-                        if (!active()) {
-                          setVisible(false)
-                          return
-                        }
-
-                        requestAnimationFrame(() => {
-                          if (!active()) return
-                          setVisible(true)
-                        })
-                      })
-
-                      return (
-                        <Accordion.Item value={file.filePath} data-type={file.type}>
-                          <StickyAccordionHeader>
-                            <Accordion.Trigger>
-                              <div data-slot="apply-patch-trigger-content">
-                                <div data-slot="apply-patch-file-info">
-                                  <FileIcon node={{ path: file.relativePath, type: "file" }} />
-                                  <div data-slot="apply-patch-file-name-container">
-                                    <Show when={file.relativePath.includes("/")}>
-                                      <span data-slot="apply-patch-directory">{`\u202A${getDirectory(file.relativePath)}\u202C`}</span>
-                                    </Show>
-                                    <span data-slot="apply-patch-filename">{getFilename(file.relativePath)}</span>
-                                  </div>
-                                </div>
-                                <div data-slot="apply-patch-trigger-actions">
-                                  <Switch>
-                                    <Match when={file.type === "add"}>
-                                      <span data-slot="apply-patch-change" data-type="added">
-                                        {i18n.t("ui.patch.action.created")}
-                                      </span>
-                                    </Match>
-                                    <Match when={file.type === "delete"}>
-                                      <span data-slot="apply-patch-change" data-type="removed">
-                                        {i18n.t("ui.patch.action.deleted")}
-                                      </span>
-                                    </Match>
-                                    <Match when={file.type === "move"}>
-                                      <span data-slot="apply-patch-change" data-type="modified">
-                                        {i18n.t("ui.patch.action.moved")}
-                                      </span>
-                                    </Match>
-                                    <Match when={true}>
-                                      <DiffChanges changes={{ additions: file.additions, deletions: file.deletions }} />
-                                    </Match>
-                                  </Switch>
-                                  <Icon name="chevron-grabber-vertical" size="small" />
-                                </div>
-                              </div>
-                            </Accordion.Trigger>
-                          </StickyAccordionHeader>
-                          <Accordion.Content>
-                            <Show when={props.deferContent === false || visible()}>
-                              <div data-component="apply-patch-file-diff">
-                                <Dynamic
-                                  component={fileComponent}
-                                  mode="diff"
-                                  virtualize={props.virtualizeDiff}
-                                  fileDiff={file.view.fileDiff}
-                                  hunkSeparators={file.view.fileDiff.isPartial ? "simple" : "line-info-basic"}
-                                  onRendered={props.onContentRendered}
-                                />
-                              </div>
-                            </Show>
-                          </Accordion.Content>
-                        </Accordion.Item>
-                      )
-                    }}
-                  </For>
-                </Accordion>
-              </Show>
-            </BasicTool>
+      <BasicTool {...props} icon="settings-gear" trigger={{ title: i18n.t("ui.tool.stm32config"), subtitle: command() }}>
+        <Show when={exitCode() !== null}>
+          <div data-component="tool-kv">
+            <div data-slot="tool-kv-row" data-tone={failed() ? "warning" : undefined}>
+              <span data-slot="tool-kv-label">{i18n.t("ui.tool.exitCode")}</span>
+              <span data-slot="tool-kv-value">{exitCode()}</span>
+            </div>
           </div>
-        }
-      >
-        <div data-component="apply-patch-tool">
-          <BasicTool
-            {...props}
-            icon="code-lines"
-            defer={props.deferContent !== false}
-            trigger={
-              <div data-component="edit-trigger">
-                <div data-slot="message-part-title-area">
-                  <div data-slot="message-part-title">
-                    <span data-slot="message-part-title-text">
-                      <TextShimmer text={i18n.t("ui.tool.patch")} active={pending()} />
-                    </span>
-                    <Show when={!pending()}>
-                      <span data-slot="message-part-title-filename">{getFilename(single()!.relativePath)}</span>
-                    </Show>
-                  </div>
-                  <Show when={!pending() && single()!.relativePath.includes("/")}>
-                    <div data-slot="message-part-path">
-                      <span data-slot="message-part-directory">{getDirectory(single()!.relativePath)}</span>
-                    </div>
-                  </Show>
-                </div>
-                <div data-slot="message-part-actions">
-                  <Show when={!pending()}>
-                    <DiffChanges changes={{ additions: single()!.additions, deletions: single()!.deletions }} />
-                  </Show>
-                </div>
-              </div>
-            }
-          >
-            <ToolFileAccordion
-              path={single()!.relativePath}
-              actions={
-                <Switch>
-                  <Match when={single()!.type === "add"}>
-                    <span data-slot="apply-patch-change" data-type="added">
-                      {i18n.t("ui.patch.action.created")}
-                    </span>
-                  </Match>
-                  <Match when={single()!.type === "delete"}>
-                    <span data-slot="apply-patch-change" data-type="removed">
-                      {i18n.t("ui.patch.action.deleted")}
-                    </span>
-                  </Match>
-                  <Match when={single()!.type === "move"}>
-                    <span data-slot="apply-patch-change" data-type="modified">
-                      {i18n.t("ui.patch.action.moved")}
-                    </span>
-                  </Match>
-                  <Match when={true}>
-                    <DiffChanges changes={{ additions: single()!.additions, deletions: single()!.deletions }} />
-                  </Match>
-                </Switch>
-              }
-            >
-              <div data-component="apply-patch-file-diff">
-                <Dynamic
-                  component={fileComponent}
-                  mode="diff"
-                  virtualize={props.virtualizeDiff}
-                  fileDiff={single()!.view.fileDiff}
-                  onRendered={props.onContentRendered}
-                />
-              </div>
-            </ToolFileAccordion>
-          </BasicTool>
-        </div>
-      </Show>
+        </Show>
+        <Show when={props.output}>
+          <div data-component="tool-output" data-scrollable>
+            <Markdown text={props.output!} />
+          </div>
+        </Show>
+      </BasicTool>
     )
   },
 })
 
+const FLASH_DESTRUCTIVE_ACTIONS = new Set(["download", "erase"])
+const FLASH_ACTION_KEYS = {
+  list: "ui.tool.flash.action.list",
+  info: "ui.tool.flash.action.info",
+  download: "ui.tool.flash.action.download",
+  erase: "ui.tool.flash.action.erase",
+  reset: "ui.tool.flash.action.reset",
+} as const
+
 ToolRegistry.register({
-  name: "skill",
+  name: "flash",
   render(props) {
     const i18n = useI18n()
-    const title = createMemo(() => props.input.name || i18n.t("ui.tool.skill"))
-    const running = createMemo(() => props.status === "pending" || props.status === "running")
+    const metadata = () => props.metadata as Partial<FlashToolDetails>
+    const action = createMemo(() => metadata().action || (props.input.action as string | undefined) || "")
+    const chip = createMemo(() => metadata().chip || (props.input.chip as string | undefined) || "")
+    const exitCode = createMemo<number | null>(() =>
+      typeof metadata().exitCode === "number" ? (metadata().exitCode as number) : null,
+    )
+    const failed = createMemo(() => exitCode() !== null && exitCode() !== 0)
+    const destructive = createMemo(() => FLASH_DESTRUCTIVE_ACTIONS.has(action()))
+    const actionLabel = createMemo(() => {
+      const value = action()
+      const key = FLASH_ACTION_KEYS[value as keyof typeof FLASH_ACTION_KEYS]
+      return key ? i18n.t(key) : value
+    })
+    const subtitle = createMemo(() => [actionLabel(), chip()].filter(Boolean).join(" · "))
 
-    const titleContent = () => <TextShimmer text={title()} active={running()} />
-
-    const trigger = () => (
-      <div data-slot="basic-tool-tool-info-structured">
-        <div data-slot="basic-tool-tool-info-main">
-          <span data-slot="basic-tool-tool-title" class="capitalize agent-title">
-            {titleContent()}
-          </span>
-        </div>
+    return (
+      <div data-component="flash-tool" data-action={action()}>
+        <BasicTool
+          {...props}
+          icon="download"
+          trigger={{
+            title: i18n.t("ui.tool.flash"),
+            subtitle: subtitle(),
+            action: (
+              <Show when={destructive()}>
+                <span data-component="tool-badge" data-tone="danger">
+                  {actionLabel()}
+                </span>
+              </Show>
+            ),
+          }}
+        >
+          <div data-component="tool-kv">
+            <Show when={chip()}>
+              <div data-slot="tool-kv-row">
+                <span data-slot="tool-kv-label">{i18n.t("ui.tool.flash.chip")}</span>
+                <span data-slot="tool-kv-value">{chip()}</span>
+              </div>
+            </Show>
+            <Show when={exitCode() !== null}>
+              <div data-slot="tool-kv-row" data-tone={failed() ? "danger" : undefined}>
+                <span data-slot="tool-kv-label">{i18n.t("ui.tool.exitCode")}</span>
+                <span data-slot="tool-kv-value">{exitCode()}</span>
+              </div>
+            </Show>
+          </div>
+          <Show when={props.output}>
+            <div data-component="tool-output" data-scrollable>
+              <Markdown text={props.output!} />
+            </div>
+          </Show>
+        </BasicTool>
       </div>
     )
+  },
+})
 
-    return <BasicTool icon="brain" status={props.status} trigger={trigger()} hideDetails />
+const LOG_ACTION_KEYS = {
+  start: "ui.tool.log.action.start",
+  read: "ui.tool.log.action.read",
+  wait: "ui.tool.log.action.wait",
+  status: "ui.tool.log.action.status",
+  stop: "ui.tool.log.action.stop",
+} as const
+
+ToolRegistry.register({
+  name: "log",
+  render(props) {
+    const i18n = useI18n()
+    const metadata = () => props.metadata as Partial<LogToolDetails>
+    const action = createMemo(() => metadata().action || (props.input.action as string | undefined) || "")
+    const file = createMemo(() => metadata().file || (props.input.file as string | undefined) || "")
+    const running = createMemo(() => !!metadata().running)
+    const dropped = createMemo(() => metadata().dropped ?? 0)
+    const actionLabel = createMemo(() => {
+      const value = action()
+      const key = LOG_ACTION_KEYS[value as keyof typeof LOG_ACTION_KEYS]
+      return key ? i18n.t(key) : value
+    })
+    const subtitle = createMemo(() => [actionLabel(), file() ? getFilename(file()) : ""].filter(Boolean).join(" · "))
+
+    return (
+      <BasicTool
+        {...props}
+        icon="status"
+        trigger={{
+          title: i18n.t("ui.tool.log"),
+          subtitle: subtitle(),
+          action: (
+            <span data-component="tool-badge" data-tone={running() ? "positive" : undefined}>
+              {running() ? i18n.t("ui.tool.log.running") : i18n.t("ui.tool.log.stopped")}
+            </span>
+          ),
+        }}
+      >
+        <div data-component="tool-kv">
+          <div data-slot="tool-kv-row">
+            <span data-slot="tool-kv-label">{i18n.t("ui.tool.log.cursor")}</span>
+            <span data-slot="tool-kv-value">{metadata().cursor ?? 0}</span>
+          </div>
+          <div data-slot="tool-kv-row">
+            <span data-slot="tool-kv-label">{i18n.t("ui.tool.log.totalLines")}</span>
+            <span data-slot="tool-kv-value">{metadata().totalLines ?? 0}</span>
+          </div>
+          <div data-slot="tool-kv-row" data-tone={dropped() > 0 ? "warning" : undefined}>
+            <span data-slot="tool-kv-label">{i18n.t("ui.tool.log.dropped")}</span>
+            <span data-slot="tool-kv-value">{dropped()}</span>
+          </div>
+          <Show when={action() === "wait" && typeof metadata().matched === "boolean"}>
+            <div data-slot="tool-kv-row">
+              <span data-slot="tool-kv-label">{i18n.t("ui.tool.log.matched")}</span>
+              <span data-slot="tool-kv-value">
+                {metadata().matched ? i18n.t("ui.tool.log.matched") : i18n.t("ui.tool.log.notMatched")}
+              </span>
+            </div>
+          </Show>
+        </div>
+        <Show when={props.output}>
+          <div data-component="tool-output" data-scrollable>
+            <Markdown text={props.output!} />
+          </div>
+        </Show>
+      </BasicTool>
+    )
+  },
+})
+
+function ToolFileRow(props: { label: string; path: string }) {
+  const [copied, setCopied] = createSignal(false)
+
+  const handleCopy = async () => {
+    if (await writeClipboard(props.path)) {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    }
+  }
+
+  return (
+    <button type="button" data-slot="tool-file-row" onClick={() => void handleCopy()}>
+      <span data-slot="tool-file-row-label">{props.label}</span>
+      <span data-slot="tool-file-row-path">
+        <FileIcon node={{ path: props.path, type: "file" }} />
+        <Show when={props.path.includes("/")}>
+          <span data-slot="tool-file-row-dir">{`‪${getDirectory(props.path)}‬`}</span>
+        </Show>
+        <span data-slot="tool-file-row-name">{getFilename(props.path)}</span>
+      </span>
+      <span data-slot="tool-file-row-copy">
+        <Icon name={copied() ? "check" : "copy"} size="small" />
+      </span>
+    </button>
+  )
+}
+
+const NETLIST_MODE_KEYS = {
+  map: "ui.tool.netlist.mode.map",
+  board_ir: "ui.tool.netlist.mode.board_ir",
+} as const
+
+ToolRegistry.register({
+  name: "netlist",
+  render(props) {
+    const i18n = useI18n()
+    const metadata = () => props.metadata as Partial<NetlistToolDetails>
+    const mode = createMemo(() => metadata().mode || (props.input.mode as string | undefined) || "")
+    const part = createMemo(() => metadata().part || (props.input.part as string | undefined) || "")
+    const modeLabel = createMemo(() => {
+      const value = mode()
+      const key = NETLIST_MODE_KEYS[value as keyof typeof NETLIST_MODE_KEYS]
+      return key ? i18n.t(key) : value
+    })
+    const files = createMemo(() => metadata().files)
+    const subtitle = createMemo(() => part() || modeLabel())
+
+    return (
+      <BasicTool {...props} icon="providers" trigger={{ title: i18n.t("ui.tool.netlist"), subtitle: subtitle() }}>
+        <div data-component="tool-kv">
+          <div data-slot="tool-kv-row">
+            <span data-slot="tool-kv-label">{i18n.t("ui.tool.netlist")}</span>
+            <span data-slot="tool-kv-value">{modeLabel()}</span>
+          </div>
+          <Show when={part()}>
+            <div data-slot="tool-kv-row">
+              <span data-slot="tool-kv-label">{i18n.t("ui.tool.netlist.part")}</span>
+              <span data-slot="tool-kv-value">{part()}</span>
+            </div>
+          </Show>
+        </div>
+        <Show when={files()}>
+          {(value) => (
+            <div data-component="tool-file-rows">
+              <Show when={value().boardIr}>
+                <ToolFileRow label={i18n.t("ui.tool.netlist.file.boardIr")} path={value().boardIr} />
+              </Show>
+              <Show when={value().stm32Map}>
+                <ToolFileRow label={i18n.t("ui.tool.netlist.file.stm32Map")} path={value().stm32Map} />
+              </Show>
+              <Show when={value().cfgSeed}>
+                <ToolFileRow label={i18n.t("ui.tool.netlist.file.cfgSeed")} path={value().cfgSeed} />
+              </Show>
+            </div>
+          )}
+        </Show>
+      </BasicTool>
+    )
+  },
+})
+
+const GDB_ACTION_KEYS = {
+  start: "ui.tool.gdb.action.start",
+  break: "ui.tool.gdb.action.break",
+  exec: "ui.tool.gdb.action.exec",
+  eval: "ui.tool.gdb.action.eval",
+  status: "ui.tool.gdb.action.status",
+  stop: "ui.tool.gdb.action.stop",
+} as const
+
+const GDB_STATE_KEYS = {
+  halted: "ui.tool.gdb.state.halted",
+  running: "ui.tool.gdb.state.running",
+  exited: "ui.tool.gdb.state.exited",
+  "connection-lost": "ui.tool.gdb.state.connection-lost",
+  "no-session": "ui.tool.gdb.state.no-session",
+} as const
+
+const GDB_STATE_TONE: Record<string, "positive" | "warning" | "danger" | undefined> = {
+  halted: "warning",
+  running: "positive",
+  exited: undefined,
+  "connection-lost": "danger",
+  "no-session": undefined,
+}
+
+ToolRegistry.register({
+  name: "gdb",
+  render(props) {
+    const i18n = useI18n()
+    const data = useData()
+    const metadata = () => props.metadata as Partial<GdbToolDetails>
+    const action = createMemo(() => metadata().action || (props.input.action as string | undefined) || "")
+    const state = createMemo(() => metadata().state || "")
+    const connection = createMemo(() => metadata().connection || "")
+    const path = createMemo(() => metadata().path || "")
+    const line = createMemo(() => metadata().firstChangedLine)
+    const actionLabel = createMemo(() => {
+      const value = action()
+      const key = GDB_ACTION_KEYS[value as keyof typeof GDB_ACTION_KEYS]
+      return key ? i18n.t(key) : value
+    })
+    const stateLabel = createMemo(() => {
+      const value = state()
+      const key = GDB_STATE_KEYS[value as keyof typeof GDB_STATE_KEYS]
+      return key ? i18n.t(key) : value
+    })
+    const stateTone = createMemo(() => GDB_STATE_TONE[state()])
+    const subtitle = createMemo(() => [actionLabel(), connection()].filter(Boolean).join(" · "))
+    const locationLabel = createMemo(() => {
+      const value = path()
+      if (!value) return ""
+      const name = getFilename(value)
+      return line() ? `${name}:${line()}` : name
+    })
+
+    return (
+      <BasicTool
+        {...props}
+        icon="debug"
+        trigger={{
+          title: i18n.t("ui.tool.gdb"),
+          subtitle: subtitle(),
+          action: (
+            <Show when={stateLabel()}>
+              <span data-component="tool-badge" data-tone={stateTone()}>
+                {stateLabel()}
+              </span>
+            </Show>
+          ),
+        }}
+      >
+        <Show when={path()}>
+          <button
+            type="button"
+            data-component="gdb-location"
+            disabled={!data.openFile}
+            onClick={(event) => {
+              event.stopPropagation()
+              data.openFile?.(path(), line())
+            }}
+          >
+            <Icon name="open-file" size="small" />
+            <span>
+              {i18n.t("ui.tool.gdb.location")} {locationLabel()}
+            </span>
+          </button>
+        </Show>
+        <div data-component="tool-kv">
+          <Show when={connection()}>
+            <div data-slot="tool-kv-row">
+              <span data-slot="tool-kv-label">{i18n.t("ui.tool.gdb.connection")}</span>
+              <span data-slot="tool-kv-value">{connection()}</span>
+            </div>
+          </Show>
+        </div>
+        <Show when={props.output}>
+          <div data-component="tool-output" data-scrollable>
+            <Markdown text={props.output!} />
+          </div>
+        </Show>
+      </BasicTool>
+    )
+  },
+})
+
+const DATASHEET_ACTION_KEYS = {
+  search: "ui.tool.datasheet.action.search",
+  read_section: "ui.tool.datasheet.action.read_section",
+  view_figure: "ui.tool.datasheet.action.view_figure",
+} as const
+
+function DatasheetHitRow(props: { hit: DatasheetSearchHit }) {
+  return (
+    <div data-slot="datasheet-hit">
+      <div data-slot="datasheet-hit-head">
+        <span data-slot="datasheet-hit-manual">{props.hit.manual_name}</span>
+        <Show when={typeof props.hit.page === "number"}>
+          <span data-slot="datasheet-hit-page">p.{props.hit.page}</span>
+        </Show>
+      </div>
+      <Show when={props.hit.headings}>
+        <span data-slot="datasheet-hit-headings">{props.hit.headings}</span>
+      </Show>
+    </div>
+  )
+}
+
+ToolRegistry.register({
+  name: "datasheet",
+  render(props) {
+    const i18n = useI18n()
+    const dialog = useDialog()
+    const metadata = () => props.metadata as Partial<DatasheetToolDetails>
+    const action = createMemo(() => metadata().action || (props.input.action as string | undefined) || "")
+    const chip = createMemo(() => metadata().chip || (props.input.chip as string | undefined) || "")
+    const hits = createMemo(() => metadata().hits ?? [])
+    const actionLabel = createMemo(() => {
+      const value = action()
+      const key = DATASHEET_ACTION_KEYS[value as keyof typeof DATASHEET_ACTION_KEYS]
+      return key ? i18n.t(key) : value
+    })
+    const subtitle = createMemo(() => {
+      if (action() === "read_section" && metadata().heading) return metadata().heading
+      return [actionLabel(), chip()].filter(Boolean).join(" · ")
+    })
+    const attachments = createMemo(() => props.attachments ?? [])
+    const linesLabel = createMemo(() => {
+      const lines = metadata().lines
+      if (!lines || lines.length === 0) return ""
+      return lines.length > 1 ? `${lines[0]}-${lines[lines.length - 1]}` : `${lines[0]}`
+    })
+
+    const openImage = (url: string, alt?: string) => {
+      dialog.show(() => <ImagePreview src={url} alt={alt} />)
+    }
+
+    return (
+      <BasicTool {...props} icon="review" trigger={{ title: i18n.t("ui.tool.datasheet"), subtitle: subtitle() }}>
+        <Switch>
+          <Match when={action() === "search"}>
+            <div data-component="tool-kv">
+              <div data-slot="tool-kv-row">
+                <span data-slot="tool-kv-label">{i18n.t("ui.tool.datasheet")}</span>
+                <span data-slot="tool-kv-value">
+                  {hits().length > 0
+                    ? i18n.t(hits().length === 1 ? "ui.tool.datasheet.hits.one" : "ui.tool.datasheet.hits.other", {
+                        count: hits().length,
+                      })
+                    : i18n.t("ui.tool.datasheet.hits.empty")}
+                </span>
+              </div>
+            </div>
+            <Show
+              when={hits().length > 0}
+              fallback={<div data-component="datasheet-empty">{i18n.t("ui.tool.datasheet.hits.empty")}</div>}
+            >
+              <div data-component="datasheet-hits">
+                <For each={hits()}>{(hit) => <DatasheetHitRow hit={hit} />}</For>
+              </div>
+            </Show>
+          </Match>
+          <Match when={action() === "read_section"}>
+            <div data-component="tool-kv">
+              <Show when={metadata().heading}>
+                <div data-slot="tool-kv-row">
+                  <span data-slot="tool-kv-label">{i18n.t("ui.tool.datasheet.section")}</span>
+                  <span data-slot="tool-kv-value">{metadata().heading}</span>
+                </div>
+              </Show>
+              <Show when={linesLabel()}>
+                <div data-slot="tool-kv-row">
+                  <span data-slot="tool-kv-label">{i18n.t("ui.tool.datasheet.lines", { lines: linesLabel() })}</span>
+                  <span data-slot="tool-kv-value" />
+                </div>
+              </Show>
+              <Show when={typeof metadata().chars === "number"}>
+                <div data-slot="tool-kv-row">
+                  <span data-slot="tool-kv-label">{i18n.t("ui.tool.datasheet.chars", { count: metadata().chars ?? 0 })}</span>
+                  <span data-slot="tool-kv-value" />
+                </div>
+              </Show>
+              <Show when={typeof metadata().sections === "number"}>
+                <div data-slot="tool-kv-row">
+                  <span data-slot="tool-kv-label">
+                    {i18n.t("ui.tool.datasheet.sections", { count: metadata().sections ?? 0 })}
+                  </span>
+                  <span data-slot="tool-kv-value" />
+                </div>
+              </Show>
+              <Show when={metadata().truncated}>
+                <div data-slot="tool-kv-row" data-tone="warning">
+                  <span data-slot="tool-kv-label">{i18n.t("ui.tool.datasheet.truncated")}</span>
+                  <span data-slot="tool-kv-value" />
+                </div>
+              </Show>
+            </div>
+          </Match>
+          <Match when={action() === "view_figure"}>
+            <For each={attachments()}>
+              {(file) => (
+                <div data-component="datasheet-figure">
+                  <img
+                    data-slot="datasheet-figure-image"
+                    src={file.url}
+                    alt={file.filename ?? metadata().heading ?? chip()}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      openImage(file.url, file.filename)
+                    }}
+                  />
+                  <Show when={typeof metadata().bytes === "number"}>
+                    <span data-slot="datasheet-figure-caption">
+                      {file.mime} · {metadata().bytes} B
+                    </span>
+                  </Show>
+                </div>
+              )}
+            </For>
+          </Match>
+        </Switch>
+        <Show when={props.output}>
+          <div data-component="tool-output" data-scrollable>
+            <Markdown text={props.output!} />
+          </div>
+        </Show>
+      </BasicTool>
+    )
   },
 })

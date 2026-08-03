@@ -44,15 +44,16 @@ export function ToolErrorCard(props: ToolErrorCardProps) {
     if (split.title) return split.title
     const map: Record<string, string> = {
       read: "ui.tool.read",
-      list: "ui.tool.list",
-      glob: "ui.tool.glob",
       grep: "ui.tool.grep",
       task: "ui.tool.task",
-      webfetch: "ui.tool.webfetch",
-      websearch: "ui.tool.websearch",
       bash: "ui.tool.shell",
-      apply_patch: "ui.tool.patch",
       question: "ui.tool.questions",
+      stm32config: "ui.tool.stm32config",
+      netlist: "ui.tool.netlist",
+      flash: "ui.tool.flash",
+      datasheet: "ui.tool.datasheet",
+      log: "ui.tool.log",
+      gdb: "ui.tool.gdb",
     }
     const key = map[split.tool]
     if (!key) return split.tool

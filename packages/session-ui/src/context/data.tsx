@@ -30,6 +30,9 @@ export type NavigateToSessionFn = (sessionID: string) => void
 
 export type SessionHrefFn = (sessionID: string) => string
 
+/** 跳转到本机文件的某一行(目前只有 gdb 停在有源码的位置时会用到)。 */
+export type OpenFileFn = (path: string, line?: number) => void
+
 export const { use: useData, provider: DataProvider } = createSimpleContext({
   name: "Data",
   init: (props: {
@@ -37,6 +40,7 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
     directory: string
     onNavigateToSession?: NavigateToSessionFn
     onSessionHref?: SessionHrefFn
+    onOpenFile?: OpenFileFn
   }) => {
     return {
       get store() {
@@ -47,6 +51,7 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
       },
       navigateToSession: props.onNavigateToSession,
       sessionHref: props.onSessionHref,
+      openFile: props.onOpenFile,
     }
   },
 })
