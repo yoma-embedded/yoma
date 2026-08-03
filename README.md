@@ -221,6 +221,41 @@ OPENCODE_CHANNEL=prod bun --cwd packages/desktop package:mac
    安装、配 key、真对话全通 —— 内核 JS 在 Windows 上没有平台问题；烧录冒烟等引擎就位后补）。
    预览包挂在 Release `v0.1.0-win-preview.1`（硬件工具坏，其余可用）。
 
+### Windows 完整包 runbook（在 Windows 机器上从零到安装器）
+
+my-pi 的 `engines/build.ts` 本身就是 Windows-aware 的（`.exe` 后缀、venv 的 `Scripts`
+目录、符号链接失败退回复制、三个引擎源码是 git submodule 自动拉取），所以整条链在
+Windows 上就是照跑：
+
+```powershell
+# ── 一次性准备 ───────────────────────────────────────────────
+# 1) 设置 → 系统 → 开发者选项 → 打开开发者模式,然后:
+git config --global core.symlinks true
+# 2) 工具链(VS Build Tools 装的时候勾"使用 C++ 的桌面开发"):
+winget install Git.Git GitHub.cli Oven-sh.Bun Rustlang.Rustup astral-sh.uv Microsoft.VisualStudio.2022.BuildTools
+# 3) GitHub 认证(私有仓 + 私有 submodule 走 HTTPS):
+gh auth login
+git config --global url."https://github.com/".insteadOf "git@github.com:"
+
+# ── 取码(并排放,分支要对) ────────────────────────────────────
+git clone https://github.com/yoma-embedded/my-pi -b feat/gdb-tool
+git clone https://github.com/yoma-embedded/yoma-desktop -b feat/my-pi-kernel
+
+# ── 构建引擎(首次编 probe-rs 约 10-20 分钟,submodule 自动初始化) ──
+cd my-pi; bun engines/build.ts
+
+# ── 出包 ────────────────────────────────────────────────────
+cd ..\yoma-desktop; bun install
+$env:OPENCODE_CHANNEL = "prod"
+bun build:desktop
+bun --cwd packages/desktop package:win
+# → packages\desktop\dist\yoma-win-x64.exe
+```
+
+边界要知道：这个包在**构建机上全功能**；装到其他电脑时 probe-rs / stm32kernel
+照常能用，但 Python 三件套仍会坏（uv 生成的 exe 启动器内嵌 venv 绝对路径）——
+对外分发的根治依旧是 my-pi 侧产出自包含 exe。
+
 引擎缺位时的逃生口：`YOMA_ALLOW_FOREIGN_ENGINES=1` 强行出包，仅用于验证安装器流程本身，
 **不能分发**。另外两点：无签名 exe 会被 SmartScreen 拦（「更多信息 → 仍要运行」），要消除
 得买 Windows 代码签名证书；CI 签名脚本位 `script/sign-windows.ps1` 目前不存在，上
