@@ -217,7 +217,9 @@ OPENCODE_CHANNEL=prod bun --cwd packages/desktop package:mac
 1. **my-pi 为 Windows 构建 engines**：`probe-rs.exe` / `stm32kernel.exe`（Rust，官方支持 Windows）
    + Python 三件套的自包含 exe。内核本身已是 Windows-aware（`engines.ts` 按 `${name}.exe` 找引擎、
    进程树清理用 `taskkill`），引擎产物就位后前端零改动。
-2. **一台 Windows 机器做验证**（装上、配 key、真对话、烧录冒烟）。没验证过的包不发。
+2. ~~一台 Windows 机器做验证~~ **已验证**（2026-08-03，预览包在真实 Windows x64 上：
+   安装、配 key、真对话全通 —— 内核 JS 在 Windows 上没有平台问题；烧录冒烟等引擎就位后补）。
+   预览包挂在 Release `v0.1.0-win-preview.1`（硬件工具坏，其余可用）。
 
 引擎缺位时的逃生口：`YOMA_ALLOW_FOREIGN_ENGINES=1` 强行出包，仅用于验证安装器流程本身，
 **不能分发**。另外两点：无签名 exe 会被 SmartScreen 拦（「更多信息 → 仍要运行」），要消除
