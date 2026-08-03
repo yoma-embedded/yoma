@@ -158,5 +158,15 @@ export interface KernelTransport {
 /** 线上帧。故意做得又小又蠢 —— 调试时肉眼可读。 */
 export type KernelFrame =
   | { kind: "request"; id: number; method: string; params: unknown }
-  | { kind: "response"; id: number; result?: unknown; error?: { message: string; stack?: string } }
+  | {
+      kind: "response"
+      id: number
+      result?: unknown
+      /**
+       * `data` 是刻意加的:跨进程之后错误只剩一个字符串,前端就没法区分
+       * "会话不存在(把失效标签页删掉就行)"和"真出事了(该报致命错误)"。
+       * 实测踩过 —— 打开一个上个版本残留的标签页会让整个 app 崩到错误页。
+       */
+      error?: { message: string; stack?: string; data?: Record<string, unknown> }
+    }
   | { kind: "push"; events: KernelEvent[] }

@@ -124,7 +124,13 @@ function ResolvedTargetSessionRoute() {
       // 原来解析的是 lineage(沿 parentID 往上找祖先链)。内核里 session 之间没有父子,
       // 所以退化成"把这一个会话取回来"。
       sync.session.resolve(id).catch((error: unknown) => {
-        if (isSessionNotFoundError(error, id)) tabs.removeSessionTab({ server, sessionId: id })
+        // 会话不存在不是致命错误 —— 删掉失效标签页、回首页就行。
+        // 换内核之后尤其常见:上个版本残留的标签页带的是 opencode 格式的 id(ses_xxx),
+        // 而新内核的 id 是 UUID。**不能往上抛**,否则整个 app 崩到错误页。
+        if (isSessionNotFoundError(error, id)) {
+          tabs.removeSessionTab({ server, sessionId: id })
+          return undefined
+        }
         throw error
       }),
   )

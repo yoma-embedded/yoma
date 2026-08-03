@@ -34,8 +34,11 @@ export class KernelError extends Error {
     message: string,
     readonly method: string,
     readonly remoteStack?: string,
+    /** host 侧附带的结构化信息,比如 SessionNotFoundError。见 protocol.ts 的说明。 */
+    readonly data?: Record<string, unknown>,
   ) {
-    super(message)
+    // cause.body 是前端 unwrapNamedError() 认的形状,顺着它走结构化错误才识别得出来。
+    super(message, data ? { cause: { body: data, status: 404 } } : undefined)
     this.name = "KernelError"
   }
 }
@@ -99,8 +102,8 @@ export function createKernelClient(transport: KernelTransport): KernelClient {
       return (await transport.request(method, params)) as KernelResult<M>
     } catch (error) {
       if (error instanceof KernelError) throw error
-      const err = error as { message?: string; stack?: string }
-      throw new KernelError(err?.message ?? String(error), method, err?.stack)
+      const err = error as { message?: string; stack?: string; data?: Record<string, unknown> }
+      throw new KernelError(err?.message ?? String(error), method, err?.stack, err?.data)
     }
   }
 
@@ -171,7 +174,12 @@ export function createPortTransport(port: KernelPortLike): KernelTransport {
 
   port.addEventListener("message", (event) => {
     const frame = event.data as
-      | { kind: "response"; id: number; result?: unknown; error?: { message: string; stack?: string } }
+      | {
+          kind: "response"
+          id: number
+          result?: unknown
+          error?: { message: string; stack?: string; data?: Record<string, unknown> }
+        }
       | { kind: "push"; events: KernelEvent[] }
       | undefined
     if (!frame) return
@@ -183,8 +191,11 @@ export function createPortTransport(port: KernelPortLike): KernelTransport {
       const entry = pending.get(frame.id)
       if (!entry) return
       pending.delete(frame.id)
-      if (frame.error) entry.reject(new KernelError(frame.error.message, entry.method, frame.error.stack))
-      else entry.resolve(frame.result)
+      if (frame.error) {
+        entry.reject(new KernelError(frame.error.message, entry.method, frame.error.stack, frame.error.data))
+      } else {
+        entry.resolve(frame.result)
+      }
     }
   })
   port.start?.()

@@ -160,3 +160,25 @@ describe("内核宿主端到端", () => {
     await host.dispose()
   })
 })
+
+describe("会话不存在", () => {
+  test("抛的是结构化错误,前端才分得清'删掉失效标签页'和'致命错误'", async () => {
+    // 回归测试:换内核之后打开上个版本残留的标签页(opencode 的 id 是 ses_xxx,
+    // 新内核是 UUID)曾经让整个 app 崩到错误页 —— 因为错误跨进程之后只剩一个字符串,
+    // 前端的 isSessionNotFoundError() 按 _tag 匹配不上,只能当致命错误处理。
+    const { host } = makeHost([])
+    const stale = "ses_0782e21dcffeVJ7ABHrFJZUvCm"
+
+    let caught: unknown
+    try {
+      await host.handle("session.get", { sessionID: stale })
+    } catch (error) {
+      caught = error
+    }
+
+    const data = (caught as { data?: { _tag?: string; sessionID?: string } })?.data
+    expect(data?._tag).toBe("SessionNotFoundError")
+    expect(data?.sessionID).toBe(stale)
+    await host.dispose()
+  })
+})

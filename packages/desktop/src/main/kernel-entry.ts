@@ -62,7 +62,13 @@ function attach(port: MessagePortLike): void {
           port.postMessage({
             kind: "response",
             id,
-            error: { message: (error as Error)?.message ?? String(error), stack: (error as Error)?.stack },
+            error: {
+              message: (error as Error)?.message ?? String(error),
+              stack: (error as Error)?.stack,
+              // 结构化信息必须一起过去 —— 跨进程之后 Error 只剩字符串,前端就分不清
+              // "会话不存在"(删掉失效标签页即可)和真正的致命错误。
+              data: (error as { data?: Record<string, unknown> })?.data,
+            },
           } satisfies KernelFrame),
       )
   }

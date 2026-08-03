@@ -32,7 +32,7 @@ ipcRenderer.on("kernel-port", (event) => {
   kernelPort = port
   port.onmessage = (message: MessageEvent) => {
     const frame = message.data as
-      | { kind: "response"; id: number; result?: unknown; error?: { message: string } }
+      | { kind: "response"; id: number; result?: unknown; error?: { message: string; data?: unknown } }
       | { kind: "push"; events: unknown[] }
       | undefined
     if (!frame) return
@@ -43,7 +43,13 @@ ipcRenderer.on("kernel-port", (event) => {
     const entry = kernelPending.get(frame.id)
     if (!entry) return
     kernelPending.delete(frame.id)
-    if (frame.error) entry.reject(new Error(frame.error.message))
+    if (frame.error) {
+      // 必须把 data 一起带上 —— 只重建 message 的话,结构化信息(比如"会话不存在")
+      // 就在这一层丢了,前端只能把它当成致命错误。这是整条链上最容易漏掉的一环。
+      const error = new Error(frame.error.message) as Error & { data?: unknown }
+      if (frame.error.data) error.data = frame.error.data
+      entry.reject(error)
+    }
     else entry.resolve(frame.result)
   }
   port.start()

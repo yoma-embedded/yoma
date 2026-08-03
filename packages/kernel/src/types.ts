@@ -366,6 +366,32 @@ export function isTool<K extends ToolName>(
 }
 
 // ---------------------------------------------------------------------------
+// 错误
+// ---------------------------------------------------------------------------
+
+/**
+ * 会话不存在。
+ *
+ * 必须是 **结构化** 的:前端 isSessionNotFoundError() 按 `_tag` + `sessionID` 匹配,
+ * 匹配上就静静地把失效标签页删掉,匹配不上就当成致命错误弹错误页。跨进程传输会把
+ * Error 压成一个字符串,所以这个形状要顺着协议的 error.data 走。
+ *
+ * 最常见的触发场景:换内核之后打开一个上个版本残留的标签页(opencode 的 id 是
+ * `ses_xxx`,my-pi 的是 UUID)。
+ */
+export interface SessionNotFoundError {
+  _tag: "SessionNotFoundError"
+  sessionID: string
+  message: string
+}
+
+export function sessionNotFound(sessionID: string): Error & { data: SessionNotFoundError } {
+  const error = new Error(`未知会话 ${sessionID}`) as Error & { data: SessionNotFoundError }
+  error.data = { _tag: "SessionNotFoundError", sessionID, message: error.message }
+  return error
+}
+
+// ---------------------------------------------------------------------------
 // 权限
 // ---------------------------------------------------------------------------
 

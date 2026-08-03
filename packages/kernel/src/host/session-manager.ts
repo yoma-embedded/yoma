@@ -38,6 +38,7 @@ import type {
   SessionStatus,
 } from "../types.ts"
 import { Identifier } from "../ids.ts"
+import { sessionNotFound } from "../types.ts"
 import { SessionProjection } from "./projector.ts"
 import { PermissionGate } from "./permission.ts"
 import { shouldAutoCompact } from "./compaction.ts"
@@ -283,7 +284,7 @@ export class SessionManager {
 
   get(sessionID: string): ViewSession {
     const entry = this.entries.get(sessionID)
-    if (!entry) throw new Error(`未知会话 ${sessionID}`)
+    if (!entry) throw sessionNotFound(sessionID)
     return toView(entry)
   }
 
@@ -301,7 +302,7 @@ export class SessionManager {
       await this.list()
       entry = this.entries.get(sessionID)
     }
-    if (!entry) throw new Error(`未知会话 ${sessionID}`)
+    if (!entry) throw sessionNotFound(sessionID)
     entry.touched = Date.now()
     if (entry.harness) return entry
 
