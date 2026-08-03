@@ -3,7 +3,7 @@ import type { NormalizedProviderListResponse } from "@yoma-desktop/session-ui/co
 import { selectProviderCatalog } from "./provider-catalog"
 
 const catalog = (id: string): NormalizedProviderListResponse => ({
-  all: new Map([[id, { id, name: id, source: "api", env: [], options: {}, models: {} }]]),
+  all: new Map([[id, { id, name: id, authenticated: true, models: [] }]]),
   connected: [id],
   default: { [id]: `${id}-model` },
 })

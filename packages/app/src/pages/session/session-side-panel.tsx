@@ -9,7 +9,7 @@ import { ResizeHandle } from "@yoma-desktop/ui/resize-handle"
 import { Mark } from "@yoma-desktop/ui/logo"
 import { DragDropProvider, DragDropSensors, DragOverlay, SortableProvider, closestCenter } from "@thisbeyond/solid-dnd"
 import type { DragEvent } from "@thisbeyond/solid-dnd"
-import type { FileDiff, VcsFileDiff } from "@yoma-desktop/kernel"
+import type { FileDiff } from "@yoma-desktop/kernel"
 import { ConstrainDragYAxis, getDraggableId } from "@/utils/solid-dnd"
 import { useDialog } from "@yoma-desktop/ui/context/dialog"
 
@@ -36,12 +36,6 @@ import { debug as dock, type DockMode } from "@/pages/session/debug/debug-data"
 import { ExplorerPanel } from "@/pages/session/explorer/explorer-panel"
 import { explorerScope } from "@/pages/session/explorer/explorer-state"
 import { getFilenameTruncated } from "@yoma-desktop/util/path"
-
-type RenderDiff = (FileDiff & { file: string }) | VcsFileDiff
-
-function renderDiff(value: FileDiff | VcsFileDiff): value is RenderDiff {
-  return typeof value.file === "string"
-}
 
 /** 顶栏图标按钮：激活态为浅色圆角底（同参考稿），风格沿用现有 token */
 function BarButton(props: {
@@ -75,7 +69,7 @@ function BarButton(props: {
 
 export function SessionSidePanel(props: {
   canReview: () => boolean
-  diffs: () => (FileDiff | VcsFileDiff)[]
+  diffs: () => FileDiff[]
   diffsReady: () => boolean
   empty: () => string
   hasReview: () => boolean
@@ -152,8 +146,8 @@ export function SessionSidePanel(props: {
   })
 
   // ---- 原有数据管线（diff / 文件树 / 标签页）保持不变 ----------------------
-  const diffs = createMemo(() => props.diffs().filter(renderDiff))
-  const diffFiles = createMemo(() => diffs().map((d) => d.file))
+  const diffs = createMemo(() => props.diffs())
+  const diffFiles = createMemo(() => diffs().map((d) => d.path))
   const kinds = createMemo(() => {
     const merge = (a: "add" | "del" | "mix" | undefined, b: "add" | "del" | "mix") => {
       if (!a) return b
@@ -165,7 +159,7 @@ export function SessionSidePanel(props: {
 
     const out = new Map<string, "add" | "del" | "mix">()
     for (const diff of diffs()) {
-      const file = normalize(diff.file)
+      const file = normalize(diff.path)
       const kind = diff.status === "added" ? "add" : diff.status === "deleted" ? "del" : "mix"
 
       out.set(file, kind)

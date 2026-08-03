@@ -546,14 +546,6 @@ export const dict = {
   "session.header.open.menu": "Açma seçenekleri",
   "session.header.open.copyPath": "Yolu kopyala",
 
-  "status.popover.trigger": "Durum",
-  "status.popover.ariaLabel": "Sunucu yapılandırmaları",
-  "status.popover.tab.servers": "Sunucular",
-  "status.popover.tab.mcp": "MCP",
-  "status.popover.tab.lsp": "LSP",
-  "status.popover.tab.plugins": "Eklentiler",
-  "status.popover.action.manageServers": "Sunucuları yönet",
-
   "session.share.copy.copied": "Kopyalandı",
   "lsp.tooltip.none": "LSP sunucusu yok",
   "lsp.label.connected": "{{count}} LSP",

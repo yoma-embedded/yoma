@@ -588,14 +588,6 @@ export const dict = {
   "session.header.open.app.powershell": "PowerShell",
   "session.header.open.app.sublimeText": "Sublime Text",
 
-  "status.popover.trigger": "Статус",
-  "status.popover.ariaLabel": "Конфігурації серверів",
-  "status.popover.tab.servers": "Сервери",
-  "status.popover.tab.mcp": "MCP",
-  "status.popover.tab.lsp": "LSP",
-  "status.popover.tab.plugins": "Плагіни",
-  "status.popover.action.manageServers": "Керувати серверами",
-
   "session.share.copy.copied": "Скопійовано",
   "lsp.tooltip.none": "Немає серверів LSP",
   "lsp.label.connected": "{{count}} LSP",
@@ -731,8 +723,6 @@ export const dict = {
   "settings.general.row.showSearch.description": "Показувати кнопку пошуку та палітри команд у заголовку",
   "settings.general.row.showTerminal.title": "Термінал",
   "settings.general.row.showTerminal.description": "Показувати кнопку термінала в заголовку робочого столу",
-  "settings.general.row.showStatus.title": "Статус сервера",
-  "settings.general.row.showStatus.description": "Показувати кнопку статусу сервера в заголовку",
   "settings.general.row.reasoningSummaries.title": "Показувати підсумки мислення",
   "settings.general.row.reasoningSummaries.description": "Відображати підсумки мислення моделі на часовій шкалі",
   "settings.general.row.shellToolPartsExpanded.title": "Розгортати частини інструменту оболонки",

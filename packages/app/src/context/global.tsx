@@ -2,7 +2,6 @@ import { createSimpleContext } from "@yoma-desktop/ui/context"
 import { createEffect, createMemo, createRoot } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createServerProjects, ServerConnection, useServer } from "./server"
-import { useServerHealth } from "@/utils/server-health"
 import { createServerSdkContext } from "./server-sdk"
 import { createServerSyncContext } from "./server-sync"
 import { getOwner } from "solid-js/web"
@@ -14,10 +13,6 @@ export const { use: useGlobal, provider: GlobalProvider } = createSimpleContext(
   name: "Global",
   init: () => {
     const server = useServer()
-    const serverHealth = useServerHealth(
-      () => server.list,
-      () => true,
-    )
     const [store, setStore] = createStore({
       settings: {
         serverKey: undefined as ServerConnection.Key | undefined,
@@ -73,7 +68,6 @@ export const { use: useGlobal, provider: GlobalProvider } = createSimpleContext(
     return {
       servers: {
         list: () => server.list,
-        health: serverHealth,
       },
       settings: {
         server: {

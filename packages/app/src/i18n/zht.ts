@@ -594,14 +594,6 @@ export const dict = {
   "session.header.open.menu": "開啟選項",
   "session.header.open.copyPath": "複製路徑",
 
-  "status.popover.trigger": "狀態",
-  "status.popover.ariaLabel": "伺服器設定",
-  "status.popover.tab.servers": "伺服器",
-  "status.popover.tab.mcp": "MCP",
-  "status.popover.tab.lsp": "LSP",
-  "status.popover.tab.plugins": "外掛程式",
-  "status.popover.action.manageServers": "管理伺服器",
-
   "session.share.copy.copied": "已複製",
   "lsp.tooltip.none": "沒有 LSP 伺服器",
   "lsp.label.connected": "{{count}} LSP",

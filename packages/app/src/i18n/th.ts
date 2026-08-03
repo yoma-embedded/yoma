@@ -536,14 +536,6 @@ export const dict = {
   "session.header.open.menu": "ตัวเลือกการเปิด",
   "session.header.open.copyPath": "คัดลอกเส้นทาง",
 
-  "status.popover.trigger": "สถานะ",
-  "status.popover.ariaLabel": "การกำหนดค่าเซิร์ฟเวอร์",
-  "status.popover.tab.servers": "เซิร์ฟเวอร์",
-  "status.popover.tab.mcp": "MCP",
-  "status.popover.tab.lsp": "LSP",
-  "status.popover.tab.plugins": "ปลั๊กอิน",
-  "status.popover.action.manageServers": "จัดการเซิร์ฟเวอร์",
-
   "session.share.copy.copied": "คัดลอกแล้ว",
   "lsp.tooltip.none": "ไม่มีเซิร์ฟเวอร์ LSP",
   "lsp.label.connected": "{{count}} LSP",

@@ -1,6 +1,6 @@
 import { createEffect, onCleanup, type JSX } from "solid-js"
 import { makeEventListener } from "@solid-primitives/event-listener"
-import type { SnapshotFileDiff, VcsFileDiff } from "@yoma-desktop/kernel"
+import type { FileContent, VcsFileDiff } from "@yoma-desktop/kernel"
 import { SessionReview } from "@yoma-desktop/session-ui/session-review"
 import type {
   SessionReviewCommentActions,
@@ -14,7 +14,7 @@ import type { LineComment } from "@/context/comments"
 
 export type DiffStyle = "unified" | "split"
 
-type ReviewDiff = SnapshotFileDiff | VcsFileDiff
+type ReviewDiff = VcsFileDiff
 
 export interface SessionReviewTabProps {
   title?: JSX.Element
@@ -52,10 +52,10 @@ export function SessionReviewTab(props: SessionReviewTabProps) {
   const sdk = useSDK()
   const layout = useLayout()
 
-  const readFile = async (path: string) => {
+  const readFile = async (path: string): Promise<FileContent | undefined> => {
     return sdk()
       .client.file.read(path)
-      .then((x) => x.content)
+      .then((x) => ({ path, ...x }))
       .catch((error) => {
         console.debug("[session-review] failed to read file", { path, error })
         return undefined

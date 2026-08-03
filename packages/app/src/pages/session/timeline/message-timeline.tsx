@@ -25,7 +25,6 @@ import {
   MessageDivider,
   Part as MessagePart,
   partDefaultOpen,
-  type UserActions,
 } from "@yoma-desktop/session-ui/message-part"
 import { DiffChanges } from "@yoma-desktop/ui/diff-changes"
 import { FileIcon } from "@yoma-desktop/ui/file-icon"
@@ -39,7 +38,6 @@ import { Dialog } from "@yoma-desktop/ui/dialog"
 import { DialogFooter, DialogHeader, DialogTitleGroup, DialogV2 } from "@yoma-desktop/ui/v2/dialog-v2"
 import { InlineInput } from "@yoma-desktop/ui/inline-input"
 import { ButtonV2 } from "@yoma-desktop/ui/v2/button-v2"
-import { SessionRetry } from "@yoma-desktop/session-ui/session-retry"
 import { ScrollView } from "@yoma-desktop/ui/scroll-view"
 import { StickyAccordionHeader } from "@yoma-desktop/ui/sticky-accordion-header"
 import { TextReveal } from "@yoma-desktop/ui/text-reveal"
@@ -69,7 +67,7 @@ import { notifySessionTabsRemoved } from "@/components/titlebar-session-events"
 import { sessionTitle } from "@/utils/session-title"
 import { scheduleConnectedMeasure } from "./measure"
 import { createTimelineProjection } from "./projection"
-import { MessageComment, SummaryDiff, TimelineRow, TimelineRowMap } from "./rows"
+import { MessageComment, TimelineRow, TimelineRowMap } from "./rows"
 import { filterVirtualIndexes } from "./virtual-items"
 
 const emptyMessages: MessageType[] = []
@@ -83,14 +81,6 @@ type TimelineRowByTag<T extends TimelineRow.TimelineRow["_tag"]> = Extract<Timel
 
 const timelineFallbackItemSize = 60
 const timelineCache = new Map<string, { measurements: VirtualItem[]; toolOpen: Record<string, boolean | undefined> }>()
-
-const taskDescription = (part: PartType, sessionID: string) => {
-  if (part.type !== "tool" || part.tool !== "task") return
-  const metadata = "metadata" in part.state ? part.state.metadata : undefined
-  if (metadata?.sessionId !== sessionID) return
-  const value = part.state.input?.description
-  if (typeof value === "string" && value) return value
-}
 
 const boundaryTarget = (root: HTMLElement, target: EventTarget | null) => {
   const current = target instanceof Element ? target : undefined
@@ -136,102 +126,7 @@ function TimelineThinkingRow(props: { reasoningHeading?: string; showReasoningSu
   )
 }
 
-function TimelineDiffSummaryRow(props: { diffs: SummaryDiff[] }) {
-  const language = useLanguage()
-  const maxFiles = 10
-  const [state, setState] = createStore({
-    showAll: false,
-    expanded: [] as string[],
-  })
-  const showAll = () => state.showAll
-  const expanded = () => state.expanded
-  const overflow = createMemo(() => Math.max(0, props.diffs.length - maxFiles))
-  const visible = createMemo(() => (showAll() ? props.diffs : props.diffs.slice(0, maxFiles)))
-
-  return (
-    <div
-      data-slot="session-turn-diffs"
-      data-component="session-turn-diffs-group"
-      data-show-all={showAll() || undefined}
-    >
-      <div data-slot="session-turn-diffs-header">
-        <span data-slot="session-turn-diffs-label">
-          {props.diffs.length} {language.t("ui.sessionTurn.diffs.changed")}{" "}
-          {language.t(props.diffs.length === 1 ? "ui.common.file.one" : "ui.common.file.other")}
-        </span>
-        <DiffChanges changes={props.diffs} />
-        <Show when={overflow() > 0}>
-          <span data-slot="session-turn-diffs-toggle" onClick={() => setState("showAll", !showAll())}>
-            {showAll() ? language.t("ui.sessionTurn.diffs.showLess") : language.t("ui.sessionTurn.diffs.showAll")}
-          </span>
-        </Show>
-      </div>
-      <div data-component="session-turn-diffs-content">
-        <Accordion
-          multiple
-          style={{ "--sticky-accordion-offset": "44px" }}
-          value={expanded()}
-          onChange={(value) => setState("expanded", Array.isArray(value) ? value : value ? [value] : [])}
-        >
-          <For each={visible()}>
-            {(diff) => {
-              const opened = createMemo(() => expanded().includes(diff.file))
-
-              return (
-                <Accordion.Item value={diff.file}>
-                  <StickyAccordionHeader>
-                    <Accordion.Trigger>
-                      <div data-slot="session-turn-diff-trigger">
-                        <span data-slot="session-turn-diff-path">
-                          <Show when={diff.file.includes("/")}>
-                            <span data-slot="session-turn-diff-directory">{`\u202A${getDirectory(diff.file)}\u202C`}</span>
-                          </Show>
-                          <span data-slot="session-turn-diff-filename">{getFilename(diff.file)}</span>
-                        </span>
-                        <div data-slot="session-turn-diff-meta">
-                          <span data-slot="session-turn-diff-changes">
-                            <DiffChanges changes={diff} />
-                          </span>
-                          <span data-slot="session-turn-diff-chevron">
-                            <Icon name="chevron-down" size="small" />
-                          </span>
-                        </div>
-                      </div>
-                    </Accordion.Trigger>
-                  </StickyAccordionHeader>
-                  <Accordion.Content>
-                    <Show when={opened()}>
-                      <TimelineDiffView diff={diff} />
-                    </Show>
-                  </Accordion.Content>
-                </Accordion.Item>
-              )
-            }}
-          </For>
-        </Accordion>
-        <Show when={!showAll() && overflow() > 0}>
-          <div data-slot="session-turn-diffs-more" onClick={() => setState("showAll", true)}>
-            {language.t("ui.sessionTurn.diffs.more", { count: String(overflow()) })}
-          </div>
-        </Show>
-      </div>
-    </div>
-  )
-}
-
-function TimelineDiffView(props: { diff: SummaryDiff }) {
-  const fileComponent = useFileComponent()
-  const view = normalize(props.diff)
-
-  return (
-    <div data-slot="session-turn-diff-view" data-scrollable>
-      <Dynamic component={fileComponent} mode="diff" virtualize={false} fileDiff={view.fileDiff} />
-    </div>
-  )
-}
-
 export function MessageTimeline(props: {
-  actions?: UserActions
   scroll: { overflow: boolean; bottom: boolean; jump: boolean }
   onResumeScroll: () => void
   setScrollRef: (el: HTMLDivElement | undefined) => void
@@ -281,36 +176,9 @@ export function MessageTimeline(props: {
   })
   const titleValue = createMemo(() => info()?.title)
   const titleLabel = createMemo(() => sessionTitle(titleValue()))
-  const parentID = createMemo(() => info()?.parentID)
-  const parent = createMemo(() => {
-    const id = parentID()
-    if (!id) return
-    return sync().session.get(id)
-  })
-  const parentMessages = createMemo(() => {
-    const id = parentID()
-    if (!id) return emptyMessages
-    return sync().data.message[id] ?? emptyMessages
-  })
-  const parentTitle = createMemo(() => sessionTitle(parent()?.title) ?? language.t("command.session.new"))
   const getMsgParts = (msgId: string) => sync().data.part[msgId] ?? emptyParts
   const getMsgPart = (messageID: string, partID: string) => getMsgParts(messageID).find((part) => part.id === partID)
-  const childTaskDescription = createMemo(() => {
-    const id = sessionID()
-    if (!id) return
-    return parentMessages()
-      .flatMap((message) => getMsgParts(message.id))
-      .map((part) => taskDescription(part, id))
-      .findLast((value): value is string => !!value)
-  })
-  const childTitle = createMemo(() => {
-    if (!parentID()) return titleLabel() ?? ""
-    if (childTaskDescription()) return childTaskDescription()
-    const value = titleLabel()?.replace(/\s+\(@[^)]+ subagent\)$/, "")
-    if (value) return value
-    return language.t("command.session.new")
-  })
-  const showHeader = createMemo(() => !!(titleValue() || parentID()))
+  const showHeader = createMemo(() => !!titleValue())
   const projection = createTimelineProjection({
     messages: sessionMessages,
     userMessages: () => props.userMessages,
@@ -610,7 +478,7 @@ export function MessageTimeline(props: {
 
   const titleMutation = useMutation(() => ({
     mutationFn: (input: { id: string; title: string }) =>
-      sdk().client.session.update({ sessionID: input.id, title: input.title }),
+      sdk().client.session.rename(input.id, input.title),
     onSuccess: (_, input) => {
       sync().set(
         produce((draft) => {
@@ -642,20 +510,8 @@ export function MessageTimeline(props: {
     ),
   )
 
-  createEffect(
-    on(
-      () => [parentID(), childTaskDescription()] as const,
-      ([id, description]) => {
-        if (!id || description) return
-        if (sync().data.message[id] !== undefined) return
-        void sync().session.sync(id)
-      },
-      { defer: true },
-    ),
-  )
-
   const openTitleEditor = () => {
-    if (!sessionID() || parentID()) return
+    if (!sessionID()) return
     setTitle({ editing: true, draft: titleLabel() ?? "" })
     requestAnimationFrame(() => {
       if (!titleRef) return
@@ -683,14 +539,10 @@ export function MessageTimeline(props: {
     titleMutation.mutate({ id, title: next })
   }
 
-  const navigateAfterSessionRemoval = (sessionID: string, parentID?: string, nextSessionID?: string) => {
+  const navigateAfterSessionRemoval = (sessionID: string, nextSessionID?: string) => {
     if (params.id !== sessionID) return
     const href = (id: string) =>
       params.serverKey ? sessionHref(requireServerKey(params.serverKey), id) : legacySessionHref(sdk().directory, id)
-    if (parentID) {
-      navigate(href(parentID))
-      return
-    }
     if (nextSessionID) {
       navigate(href(nextSessionID))
       return
@@ -702,47 +554,18 @@ export function MessageTimeline(props: {
     navigate(`/${params.dir}/session`)
   }
 
-  const archiveSession = async (sessionID: string) => {
-    const session = sync().session.get(sessionID)
-    if (!session) return
-
-    const sessions = sync().data.session ?? []
-    const index = sessions.findIndex((s) => s.id === sessionID)
-    const nextSession = index === -1 ? undefined : (sessions[index + 1] ?? sessions[index - 1])
-
-    await sdk()
-      .client.session.update({ sessionID, time: { archived: Date.now() } })
-      .then(() => {
-        sync().set(
-          produce((draft) => {
-            const index = draft.session.findIndex((s) => s.id === sessionID)
-            if (index !== -1) draft.session.splice(index, 1)
-          }),
-        )
-        sync().session.evict(sessionID)
-        navigateAfterSessionRemoval(sessionID, session.parentID, nextSession?.id)
-        notifySessionTabsRemoved({ directory: sdk().directory, sessionIDs: [sessionID] })
-      })
-      .catch((err) => {
-        showToast({
-          title: language.t("common.requestFailed"),
-          description: errorMessage(err),
-        })
-      })
-  }
-
   const deleteSession = async (sessionID: string) => {
     const session = sync().session.get(sessionID)
     if (!session) return false
 
-    const sessions = (sync().data.session ?? []).filter((s) => !s.parentID && !s.time?.archived)
+    const sessions = (sync().data.session ?? []).filter((s) => !s.time?.archived)
     const index = sessions.findIndex((s) => s.id === sessionID)
     const nextSession = index === -1 ? undefined : (sessions[index + 1] ?? sessions[index - 1])
 
-    const result = await sdk()
-      .client.session.delete({ sessionID })
-      .then((x) => x.data)
-      .catch((err) => {
+    const ok = await sdk()
+      .client.session.delete(sessionID)
+      .then(() => true)
+      .catch((err: unknown) => {
         showToast({
           title: language.t("session.delete.failed.title"),
           description: errorMessage(err),
@@ -750,57 +573,19 @@ export function MessageTimeline(props: {
         return false
       })
 
-    if (!result) return false
+    if (!ok) return false
 
-    const removed = new Set<string>([sessionID])
-    const byParent = new Map<string, string[]>()
-    for (const item of sync().data.session) {
-      const parentID = item.parentID
-      if (!parentID) continue
-      const existing = byParent.get(parentID)
-      if (existing) {
-        existing.push(item.id)
-        continue
-      }
-      byParent.set(parentID, [item.id])
-    }
-
-    const stack = [sessionID]
-    while (stack.length) {
-      const parentID = stack.pop()
-      if (!parentID) continue
-
-      const children = byParent.get(parentID)
-      if (!children) continue
-
-      for (const child of children) {
-        if (removed.has(child)) continue
-        removed.add(child)
-        stack.push(child)
-      }
-    }
-
-    navigateAfterSessionRemoval(sessionID, session.parentID, nextSession?.id)
+    navigateAfterSessionRemoval(sessionID, nextSession?.id)
 
     sync().set(
       produce((draft) => {
-        draft.session = draft.session.filter((s) => !removed.has(s.id))
+        draft.session = draft.session.filter((s) => s.id !== sessionID)
       }),
     )
 
-    for (const id of removed) {
-      sync().session.evict(id)
-    }
-    notifySessionTabsRemoved({ directory: sdk().directory, sessionIDs: [...removed] })
+    sync().session.evict(sessionID)
+    notifySessionTabsRemoved({ directory: sdk().directory, sessionIDs: [sessionID] })
     return true
-  }
-
-  const navigateParent = () => {
-    const id = parentID()
-    if (!id) return
-    navigate(
-      params.serverKey ? sessionHref(requireServerKey(params.serverKey), id) : legacySessionHref(sdk().directory, id),
-    )
   }
 
   function DialogDeleteSession(props: { sessionID: string }) {
@@ -1043,7 +828,6 @@ export function MessageTimeline(props: {
                     <Message
                       message={message()}
                       parts={getMsgParts(userMessageRow().userMessageID)}
-                      actions={props.actions}
                       useV2Actions={settings.general.newLayoutDesigns()}
                     />
                   </div>
@@ -1093,26 +877,6 @@ export function MessageTimeline(props: {
                 reasoningHeading={thinkingRow().reasoningHeading}
                 showReasoningSummaries={settings.general.showReasoningSummaries()}
               />
-            </div>
-          </TimelineRowFrame>
-        )
-      }
-      case "Retry": {
-        const retryRow = row as Accessor<TimelineRowByTag<"Retry">>
-        return (
-          <TimelineRowFrame row={retryRow}>
-            <div data-slot="session-turn-message-container" class="w-full px-4 md:px-5">
-              <SessionRetry status={sessionStatus()} show={activeMessageID() === retryRow().userMessageID} />
-            </div>
-          </TimelineRowFrame>
-        )
-      }
-      case "DiffSummary": {
-        const diffSummaryRow = row as Accessor<TimelineRowByTag<"DiffSummary">>
-        return (
-          <TimelineRowFrame row={diffSummaryRow}>
-            <div data-slot="session-turn-message-container" class="w-full px-4 md:px-5">
-              <TimelineDiffSummaryRow diffs={diffSummaryRow().diffs} />
             </div>
           </TimelineRowFrame>
         )
@@ -1293,24 +1057,7 @@ export function MessageTimeline(props: {
                 }}
               >
                 <div class="flex items-center min-w-0 flex-1 w-full">
-                  <Show when={parentID()}>
-                    <button
-                      type="button"
-                      data-slot="session-title-parent"
-                      class="min-w-0 max-w-[40%] truncate text-14-medium text-text-weak transition-colors hover:text-text-base"
-                      onClick={navigateParent}
-                    >
-                      {parentTitle()}
-                    </button>
-                    <span
-                      data-slot="session-title-separator"
-                      class="px-2 text-14-medium text-text-weak"
-                      aria-hidden="true"
-                    >
-                      /
-                    </span>
-                  </Show>
-                  <Show when={childTitle() || title.editing}>
+                  <Show when={titleLabel() || title.editing}>
                     <Show
                       when={title.editing}
                       fallback={
@@ -1324,7 +1071,7 @@ export function MessageTimeline(props: {
                           }}
                           onClick={openTitleEditor}
                         >
-                          {childTitle()}
+                          {titleLabel()}
                         </h1>
                       }
                     >
@@ -1378,7 +1125,6 @@ export function MessageTimeline(props: {
                       placement="bottom"
                       buttonAppearance={settings.general.newLayoutDesigns() ? "v2" : "default"}
                     />
-                    <Show when={!parentID()}>
                       <Show
                         when={settings.general.newLayoutDesigns()}
                         fallback={
@@ -1417,9 +1163,6 @@ export function MessageTimeline(props: {
                                   }}
                                 >
                                   <DropdownMenu.ItemLabel>{language.t("common.rename")}</DropdownMenu.ItemLabel>
-                                </DropdownMenu.Item>
-                                <DropdownMenu.Item onSelect={() => void archiveSession(id)}>
-                                  <DropdownMenu.ItemLabel>{language.t("common.archive")}</DropdownMenu.ItemLabel>
                                 </DropdownMenu.Item>
                                 <DropdownMenu.Separator />
                                 <DropdownMenu.Item
@@ -1468,9 +1211,6 @@ export function MessageTimeline(props: {
                               >
                                 {language.t("common.rename")}
                               </MenuV2.Item>
-                              <MenuV2.Item onSelect={() => void archiveSession(id)}>
-                                {language.t("common.archive")}
-                              </MenuV2.Item>
                               <MenuV2.Separator />
                               <MenuV2.Item onSelect={() => dialog.show(() => <DialogDeleteSession sessionID={id} />)}>
                                 {language.t("common.delete")}...
@@ -1479,7 +1219,6 @@ export function MessageTimeline(props: {
                           </MenuV2.Portal>
                         </MenuV2>
                       </Show>
-                    </Show>
                   </div>
                 )}
               </Show>

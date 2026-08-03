@@ -132,12 +132,13 @@ test("scopes file autocomplete to the current browser root", () => {
 
 test("resolves directory autocomplete from the current browser root", async () => {
   const directories: string[] = []
+  // 内核没有 find.files 那条路由;目录补全走 file.list(directory) → FileEntry[]。
   const sdk = {
     client: {
-      find: {
-        files: (input: { directory: string }) => {
-          directories.push(input.directory)
-          return Promise.resolve({ data: [] })
+      file: {
+        list: (directory: string) => {
+          directories.push(directory)
+          return Promise.resolve([])
         },
       },
     },

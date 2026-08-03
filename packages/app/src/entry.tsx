@@ -7,7 +7,6 @@ import { type Platform, PlatformProvider } from "@/context/platform"
 import { dict as en } from "@/i18n/en"
 import { dict as zh } from "@/i18n/zh"
 import { handleNotificationClick } from "@/utils/notification-click"
-import { authFromToken } from "@/utils/server"
 import pkg from "../package.json"
 import { ServerConnection } from "./context/server"
 
@@ -154,14 +153,14 @@ if (import.meta.env.VITE_SENTRY_DSN) {
 }
 
 if (root instanceof HTMLElement) {
-  const auth = authFromToken(new URLSearchParams(location.search).get("auth_token"))
+  // web host 原来从 URL 的 auth_token 里取 Basic 凭据去连远程服务器。
+  // 内核是进程内的,没有凭据也没有远端,这条路整个消失。
   clearAuthToken()
   const server: ServerConnection.Http = {
     type: "http",
-    authToken: !!auth,
+    authToken: false,
     http: {
       url: getCurrentUrl(),
-      ...auth,
     },
   }
   render(
@@ -172,7 +171,6 @@ if (root instanceof HTMLElement) {
             defaultServer={ServerConnection.Key.make(getDefaultUrl())}
             canonicalLocalServer={ServerConnection.key(server)}
             servers={[server]}
-            disableHealthCheck
           />
         </AppBaseProviders>
       </PlatformProvider>

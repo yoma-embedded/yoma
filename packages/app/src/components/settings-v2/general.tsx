@@ -354,18 +354,6 @@ export const SettingsGeneralV2: Component<{
         </SettingsRowV2>
 
         <SettingsRowV2
-          title={language.t("settings.general.row.showStatus.title")}
-          description={language.t("settings.general.row.showStatus.description")}
-        >
-          <div data-action="settings-show-status">
-            <Switch
-              checked={settings.general.showStatus()}
-              onChange={(checked) => settings.general.setShowStatus(checked)}
-            />
-          </div>
-        </SettingsRowV2>
-
-        <SettingsRowV2
           title={language.t("settings.general.row.showCustomAgents.title")}
           description={language.t("settings.general.row.showCustomAgents.description")}
         >

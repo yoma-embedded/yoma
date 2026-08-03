@@ -186,7 +186,8 @@ describe("createChildStoreManager", () => {
       expect(querySingles.length - offset).toBe(1)
       expect(querySingles[offset]?.().queryKey?.[2]).toBe("providers")
       expect(store.provider_ready).toBe(true)
-      expect(store.provider).toBe(provider)
+      // 值经过 store 的 proxy 之后不再是同一个引用,比内容而不是比身份。
+      expect(store.provider).toEqual(provider)
     } finally {
       dispose()
     }

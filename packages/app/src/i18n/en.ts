@@ -673,14 +673,6 @@ export const dict = {
   "session.header.open.app.powershell": "PowerShell",
   "session.header.open.app.sublimeText": "Sublime Text",
 
-  "status.popover.trigger": "Status",
-  "status.popover.ariaLabel": "Server configurations",
-  "status.popover.tab.servers": "Servers",
-  "status.popover.tab.mcp": "MCP",
-  "status.popover.tab.lsp": "LSP",
-  "status.popover.tab.plugins": "Plugins",
-  "status.popover.action.manageServers": "Manage servers",
-
   "session.share.copy.copied": "Copied",
   "lsp.tooltip.none": "No LSP servers",
   "lsp.label.connected": "{{count}} LSP",
@@ -820,8 +812,6 @@ export const dict = {
   "settings.general.row.showSearch.description": "Show the search and command palette button in the title bar",
   "settings.general.row.showTerminal.title": "Terminal",
   "settings.general.row.showTerminal.description": "Show the terminal button in the desktop title bar",
-  "settings.general.row.showStatus.title": "Server status",
-  "settings.general.row.showStatus.description": "Show the server status button in the title bar",
   "settings.general.row.mobileTitlebarBottom.title": "Bottom navigation",
   "settings.general.row.mobileTitlebarBottom.description":
     "Place the title bar and session tabs at the bottom of the screen on mobile",

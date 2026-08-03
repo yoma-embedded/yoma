@@ -9,7 +9,6 @@ const userMessage = (id: string, sessionID: string): Message => ({
   sessionID,
   role: "user",
   time: { created: 1 },
-  agent: "assistant",
   model: { providerID: "openai", modelID: "gpt" },
 })
 

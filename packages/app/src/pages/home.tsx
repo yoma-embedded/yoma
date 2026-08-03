@@ -3,7 +3,6 @@ import {
   type ComponentProps,
   createEffect,
   createMemo,
-  createResource,
   createRoot,
   For,
   on,
@@ -17,43 +16,24 @@ import { createStore } from "solid-js/store"
 import { useQuery } from "@tanstack/solid-query"
 import { Spinner } from "@yoma-desktop/ui/spinner"
 import { ScrollView } from "@yoma-desktop/ui/scroll-view"
-import { ProjectAvatar } from "@yoma-desktop/ui/v2/project-avatar-v2"
 import { ButtonV2 } from "@yoma-desktop/ui/v2/button-v2"
 import { Icon as IconV2 } from "@yoma-desktop/ui/v2/icon"
 import { IconButtonV2 } from "@yoma-desktop/ui/v2/icon-button-v2"
-import { MenuV2 } from "@yoma-desktop/ui/v2/menu-v2"
-import { TooltipV2 } from "@yoma-desktop/ui/v2/tooltip-v2"
 import { useLayout, type HomeProjectSelection, type LocalProject } from "@/context/layout"
 import { useNavigate } from "@solidjs/router"
 import { usePlatform } from "@/context/platform"
 import { DateTime } from "luxon"
-import { useDialog } from "@yoma-desktop/ui/context/dialog"
-import { useDirectoryPicker } from "@/components/directory-picker"
 import { useSettingsCommand } from "@/components/settings-dialog"
-import { useServerManagementController } from "@/components/dialog-select-server"
-import { DialogServerV2 } from "@/components/settings-v2/dialog-server-v2"
-import { ServerConnection, serverName, useServer } from "@/context/server"
+import { ServerConnection, useServer } from "@/context/server"
 import { sessionHasOpenTab, useTabs } from "@/context/tabs"
 import { useServerSync, type ServerSync } from "@/context/server-sync"
 import { useLanguage } from "@/context/language"
-import { useNotification } from "@/context/notification"
-import {
-  closeHomeProject,
-  displayName,
-  homeProjectDirectories,
-  projectForSession,
-  sortedRootSessions,
-  toggleHomeProjectSelection,
-} from "@/pages/layout/helpers"
+import { displayName, projectForSession, sortedRootSessions } from "@/pages/layout/helpers"
 import { SessionTabAvatar } from "@/pages/layout/session-tab-avatar"
 import { sessionTitle } from "@/utils/session-title"
 import { pathKey } from "@/utils/path-key"
 import { useGlobal } from "@/context/global"
 import { useCommand } from "@/context/command"
-import { ServerRowMenu } from "@/components/server/server-row-menu"
-import { ServerHealthIndicator } from "@/components/server/server-row"
-import { type ServerHealth } from "@/utils/server-health"
-import { Persist, persisted } from "@/utils/persist"
 import { useMarked } from "@yoma-desktop/ui/context/marked"
 import { preloadMarkdown } from "@yoma-desktop/session-ui/markdown-cache"
 
@@ -68,11 +48,6 @@ const HOME_ROW = `${HOME_ROW_BASE} [font-weight:530] text-v2-text-text-muted hov
 const HOME_PROJECT_NAV_LABEL = "min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap"
 const HOME_PROJECT_NAV_ROW = `${HOME_ROW_LAYOUT} h-7 gap-2 px-1.5 [font-weight:440] text-v2-text-text-muted hover:bg-v2-background-bg-layer-01 hover:text-v2-text-text-base hover:[box-shadow:inset_0_0_0_0.5px_var(--v2-border-border-muted)] data-[selected]:bg-v2-background-bg-layer-03 data-[selected]:text-v2-text-text-base data-[selected]:[box-shadow:inset_0_0_0_0.5px_var(--v2-border-border-muted)] data-[selected]:hover:bg-v2-background-bg-layer-03 focus-visible:bg-v2-background-bg-layer-01 focus-visible:text-v2-text-text-base focus-visible:[box-shadow:inset_0_0_0_0.5px_var(--v2-border-border-muted)]`
 const HOME_SECTION_LABEL = "text-v2-text-text-muted [font-weight:440]"
-
-// The Codex-style persistent sidebar (see pages/layout/codex-sidebar.tsx) now owns
-// project navigation, so the home screen hides its own project column to avoid a
-// duplicate list. Flip to true to restore the legacy two-column home.
-const SHOW_HOME_PROJECT_COLUMN: boolean = false
 
 type HomeSessionRecord = {
   session: Session
@@ -234,15 +209,12 @@ export function NewHome() {
   const sync = useServerSync()
   const layout = useLayout()
   const platform = usePlatform()
-  const pickDirectory = useDirectoryPicker()
-  const dialog = useDialog()
   const navigate = useNavigate()
   const server = useServer()
   const language = useLanguage()
   const global = useGlobal()
   const tabs = useTabs()
   const command = useCommand()
-  const notification = useNotification()
   const marked = useMarked()
   const openSettings = useSettingsCommand()
   let focusSessionSearch: (() => void) | undefined
@@ -279,12 +251,6 @@ export function NewHome() {
     const project = selectedProject()
     if (project) {
       return language.t("home.sessions.search.placeholder.scoped", { scope: displayName(project) })
-    }
-    if (global.servers.list().length > 1) {
-      const conn = focusedServer()
-      if (conn) {
-        return language.t("home.sessions.search.placeholder.scoped", { scope: serverName(conn) })
-      }
     }
     return language.t("home.sessions.search.placeholder")
   })
@@ -389,32 +355,6 @@ export function NewHome() {
     navigate(pending.href)
   })
 
-  function focusServer(conn: ServerConnection.Any) {
-    setSelection({ server: ServerConnection.key(conn) })
-  }
-
-  function selectProject(conn: ServerConnection.Any, directory: string) {
-    const key = ServerConnection.key(conn)
-    if (global.servers.health[key]?.healthy === false) return
-    if (
-      !global
-        .ensureServerCtx(conn)
-        .projects.list()
-        .some((project) => project.worktree === directory)
-    )
-      return
-    setSelection(toggleHomeProjectSelection(selection(), key, directory))
-  }
-
-  function addProjects(conn: ServerConnection.Any, directories: string[]) {
-    const directory = directories[0]
-    if (!directory) return
-    const ctx = global.ensureServerCtx(conn)
-    directories.forEach(ctx.projects.open)
-    ctx.projects.touch(directory)
-    setSelection({ server: ServerConnection.key(conn), directory })
-  }
-
   function openNewSession() {
     const conn = focusedServer()
     const project = newSessionProject()
@@ -427,23 +367,6 @@ export function NewHome() {
     ctx.projects.open(directory)
     ctx.projects.touch(directory)
     tabs.newDraft({ server: ServerConnection.key(conn), directory })
-  }
-
-  function editProject(conn: ServerConnection.Any, project: LocalProject) {
-    void import("@/components/dialog-edit-project").then((x) => {
-      dialog.show(() => <x.DialogEditProject server={conn} project={project} />)
-    })
-  }
-
-  function unseenCount(conn: ServerConnection.Any, project: LocalProject) {
-    const state = notification.ensureServerState(ServerConnection.key(conn))
-    return state.project.unseenCount(project.worktree)
-  }
-
-  function clearNotifications(conn: ServerConnection.Any, project: LocalProject) {
-    const state = notification.ensureServerState(ServerConnection.key(conn))
-    if (state.project.unseenCount(project.worktree) === 0) return
-    state.project.markViewed(project.worktree)
   }
 
   function openSession(session: Session) {
@@ -460,56 +383,11 @@ export function NewHome() {
     })
   }
 
-  function chooseProject(conn: ServerConnection.Any) {
-    if (global.servers.health[ServerConnection.key(conn)]?.healthy === false) return
-
-    function resolve(result: string | string[] | null) {
-      addProjects(conn, homeProjectDirectories(result))
-    }
-
-    pickDirectory({
-      server: conn,
-      title: language.t("command.project.open"),
-      multiple: true,
-      onSelect: resolve,
-    })
-  }
-
   return (
     <div class="rounded-[10px] shadow-[var(--v2-elevation-raised)] m-2 min-h-0 lg:overflow-hidden bg-v2-background-bg-base self-stretch flex-1">
       <div
-        class={`mx-auto grid h-full w-full max-w-[1080px] grid-rows-[auto_minmax(0,1fr)_auto] gap-4 px-3 lg:grid-rows-1 lg:gap-8 lg:px-6 ${
-          SHOW_HOME_PROJECT_COLUMN
-            ? "lg:grid-cols-[280px_minmax(0,720px)]"
-            : "lg:grid-cols-[minmax(0,760px)] lg:justify-center"
-        }`}
+        class="mx-auto grid h-full w-full max-w-[1080px] grid-rows-[auto_minmax(0,1fr)_auto] gap-4 px-3 lg:grid-rows-1 lg:gap-8 lg:px-6 lg:grid-cols-[minmax(0,760px)] lg:justify-center"
       >
-        <Show when={SHOW_HOME_PROJECT_COLUMN}>
-          <HomeProjectColumn
-            projects={projects()}
-            selected={selection()}
-            focusServer={focusServer}
-            selectProject={selectProject}
-            openNewSession={openProjectNewSession}
-            chooseProject={(conn) => void chooseProject(conn)}
-            editProject={editProject}
-            closeProject={(conn, directory) => {
-              const next = closeHomeProject(
-                selection(),
-                ServerConnection.key(conn),
-                global.ensureServerCtx(conn).projects,
-                directory,
-              )
-              if (next) setSelection(next)
-            }}
-            clearNotifications={clearNotifications}
-            unseenCount={unseenCount}
-            openSettings={openSettings}
-            openHelp={() => platform.openLink("https://opencode.ai/desktop-feedback")}
-            language={language}
-          />
-        </Show>
-
         <section
           class="min-h-0 min-w-0 flex-1 flex flex-col pt-6 lg:pt-12 relative"
           aria-label={language.t("sidebar.project.recentSessions")}
@@ -607,109 +485,6 @@ export function NewHome() {
   )
 }
 
-function HomeProjectColumn(props: {
-  projects: LocalProject[]
-  selected: HomeProjectSelection
-  focusServer: (server: ServerConnection.Any) => void
-  selectProject: (server: ServerConnection.Any, directory: string) => void
-  openNewSession: (server: ServerConnection.Any, directory: string) => void
-  chooseProject: (server: ServerConnection.Any) => void
-  editProject: (server: ServerConnection.Any, project: LocalProject) => void
-  closeProject: (server: ServerConnection.Any, directory: string) => void
-  clearNotifications: (server: ServerConnection.Any, project: LocalProject) => void
-  unseenCount: (server: ServerConnection.Any, project: LocalProject) => number
-  openSettings: () => void
-  openHelp: () => void
-  language: ReturnType<typeof useLanguage>
-}) {
-  const global = useGlobal()
-  const dialog = useDialog()
-  const controller = useServerManagementController({ navigateOnAdd: false })
-  const [_state, setState, _, ready] = persisted(
-    Persist.global("home.servers", ["home.servers.v1"]),
-    createStore({ collapsed: {} as Record<string, boolean> }),
-  )
-  const [state] = createResource(
-    () => ready.promise ?? Promise.resolve(),
-    (p) => p.then(() => _state),
-    { initialValue: _state },
-  )
-
-  return (
-    <aside
-      class="mt-6 flex min-h-0 min-w-0 flex-col gap-4 overflow-hidden lg:mt-14 lg:pt-[52px]"
-      aria-label={props.language.t("home.projects")}
-    >
-      <div class="flex h-7 min-w-0 shrink-0 items-center justify-between pl-1.5">
-        <div class={HOME_SECTION_LABEL}>{props.language.t("home.projects")}</div>
-        <Show when={global.servers.list().length === 1}>
-          <TooltipV2 placement="bottom" value={props.language.t("home.project.add")}>
-            <IconButtonV2
-              data-action="home-add-project"
-              variant="ghost-muted"
-              size="large"
-              class="titlebar-icon [&_[data-slot=icon-svg]]:text-v2-icon-icon-muted"
-              icon={<IconV2 name="folder-add-left" />}
-              disabled={global.servers.health[ServerConnection.key(global.servers.list()[0]!)]?.healthy === false}
-              onClick={() => props.chooseProject(global.servers.list()[0]!)}
-              aria-label={props.language.t("home.project.add")}
-            />
-          </TooltipV2>
-        </Show>
-      </div>
-      <ScrollView data-slot="home-projects-scroll" class="min-h-0 min-w-0 shrink">
-        <Show
-          when={global.servers.list().length > 1}
-          fallback={
-            <div class="pr-3">
-              <HomeProjectList {...props} server={global.servers.list()[0]!} />
-            </div>
-          }
-        >
-          <div class="flex min-w-0 flex-col gap-1 pr-3">
-            <For each={global.servers.list()}>
-              {(item) => {
-                const key = ServerConnection.key(item)
-                const healthy = () => !!global.servers.health[key]?.healthy
-                const serverCtx = global.ensureServerCtx(item)
-                const projects = () => serverCtx.projects.list()
-                const hasProjects = () => projects().length > 0
-                const collapsed = () => !!state().collapsed[key]
-                return (
-                  <div class="flex min-w-0 flex-col gap-1">
-                    <HomeServerRow
-                      server={item}
-                      selected={props.selected.server === key && !props.selected.directory}
-                      collapsed={collapsed()}
-                      health={global.servers.health[key]}
-                      controller={controller}
-                      focusServer={props.focusServer}
-                      chooseProject={props.chooseProject}
-                      openEdit={(server) => dialog.show(() => <DialogServerV2 mode="edit" server={server} />)}
-                      toggleCollapsed={() => setState("collapsed", key, !state().collapsed[key])}
-                      language={props.language}
-                    />
-                    <Show when={healthy() && hasProjects() && !collapsed()}>
-                      <div class="mx-3 h-px bg-v2-border-border-base" />
-                      <HomeProjectList {...props} server={item} projects={projects()} />
-                    </Show>
-                  </div>
-                )
-              }}
-            </For>
-          </div>
-        </Show>
-      </ScrollView>
-      <HomeUtilityNav
-        class="mb-8 mt-4 hidden shrink-0 lg:flex"
-        openSettings={props.openSettings}
-        openHelp={props.openHelp}
-        language={props.language}
-      />
-    </aside>
-  )
-}
-
 function HomeUtilityNav(props: {
   class?: string
   openSettings: () => void
@@ -736,223 +511,6 @@ function HomeUtilityNav(props: {
       </button>
     </div>
   )
-}
-
-function HomeServerRow(props: {
-  server: ServerConnection.Any
-  selected: boolean
-  collapsed: boolean
-  health: ServerHealth | undefined
-  controller: ReturnType<typeof useServerManagementController>
-  focusServer: (server: ServerConnection.Any) => void
-  chooseProject: (server: ServerConnection.Any) => void
-  openEdit: (server: ServerConnection.Http) => void
-  toggleCollapsed: () => void
-  language: ReturnType<typeof useLanguage>
-}) {
-  const global = useGlobal()
-  const [state, setState] = createStore({ menuOpen: false })
-  const healthy = () => !!props.health?.healthy
-  const canToggle = () => healthy() && global.ensureServerCtx(props.server).projects.list().length > 0
-  return (
-    <div class="group/server relative flex h-7 min-w-0 items-center rounded-[6px]">
-      <button
-        type="button"
-        class={`${HOME_PROJECT_NAV_ROW} pr-16 disabled:opacity-60`}
-        data-selected={props.selected ? "" : undefined}
-        disabled={!healthy()}
-        onClick={() => props.focusServer(props.server)}
-      >
-        <span
-          data-action="home-server-collapse"
-          class="inline-flex -ml-0.5 -mr-1.5 size-5 shrink-0 items-center justify-center rounded-[4px] text-v2-icon-icon-muted"
-          classList={{
-            "hover:bg-v2-overlay-simple-overlay-hover": canToggle(),
-            "cursor-default opacity-40": !canToggle(),
-          }}
-          aria-label={
-            props.collapsed ? props.language.t("home.server.expand") : props.language.t("home.server.collapse")
-          }
-          aria-disabled={!canToggle()}
-          aria-expanded={canToggle() ? !props.collapsed : undefined}
-          onClick={(event) => {
-            event.preventDefault()
-            event.stopPropagation()
-            if (!canToggle()) return
-            props.toggleCollapsed()
-          }}
-          onPointerDown={(event) => event.preventDefault()}
-        >
-          <IconV2
-            name="chevron-down"
-            size="small"
-            class="transition-transform duration-150 ease-in-out"
-            style={{ transform: `rotate(${props.collapsed ? -90 : 0}deg)` }}
-          />
-        </span>
-        <div class="flex size-4 shrink-0 items-center justify-center -mr-0.5">
-          <ServerHealthIndicator health={props.health} />
-        </div>
-        <span class="flex min-w-0 items-center gap-1">
-          <span class={HOME_PROJECT_NAV_LABEL}>{props.server.displayName ?? new URL(props.server.http.url).host}</span>
-          <Show when={props.server.label}>
-            {(label) => (
-              <span class="shrink-0 rounded-[3px] border border-v2-border-border-base px-1 py-0.5 text-[9px] leading-none text-v2-text-text-muted">
-                {label()}
-              </span>
-            )}
-          </Show>
-        </span>
-      </button>
-      <div
-        class="hover-reveal absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-1 group-hover/server:opacity-100 focus-within:opacity-100 data-[menu=true]:opacity-100"
-        data-menu={state.menuOpen}
-      >
-        <ServerRowMenu
-          server={props.server}
-          controller={props.controller}
-          onEdit={props.openEdit}
-          open={state.menuOpen}
-          onOpenChange={(open) => setState("menuOpen", open)}
-        />
-        <TooltipV2 class="flex shrink-0 items-center" placement="bottom" value={props.language.t("home.project.add")}>
-          <IconButtonV2
-            data-action="home-add-project"
-            variant="ghost-muted"
-            size="small"
-            icon={<IconV2 name="folder-add-left" />}
-            aria-label={props.language.t("home.project.add")}
-            disabled={props.health?.healthy === false}
-            onClick={() => props.chooseProject(props.server)}
-          />
-        </TooltipV2>
-      </div>
-    </div>
-  )
-}
-
-function HomeProjectList(props: {
-  server: ServerConnection.Any
-  projects: LocalProject[]
-  selected: HomeProjectSelection
-  selectProject: (server: ServerConnection.Any, directory: string) => void
-  openNewSession: (server: ServerConnection.Any, directory: string) => void
-  editProject: (server: ServerConnection.Any, project: LocalProject) => void
-  closeProject: (server: ServerConnection.Any, directory: string) => void
-  clearNotifications: (server: ServerConnection.Any, project: LocalProject) => void
-  unseenCount: (server: ServerConnection.Any, project: LocalProject) => number
-  language: ReturnType<typeof useLanguage>
-}) {
-  return (
-    <div class="flex min-w-0 flex-col gap-1">
-      <For each={props.projects}>
-        {(project) => (
-          <HomeProjectRow
-            project={project}
-            server={props.server}
-            selected={
-              props.selected.server === ServerConnection.key(props.server) &&
-              props.selected.directory === project.worktree
-            }
-            unseenCount={props.unseenCount(props.server, project)}
-            selectProject={props.selectProject}
-            openNewSession={props.openNewSession}
-            editProject={props.editProject}
-            closeProject={props.closeProject}
-            clearNotifications={props.clearNotifications}
-            language={props.language}
-          />
-        )}
-      </For>
-    </div>
-  )
-}
-
-function HomeProjectRow(props: {
-  project: LocalProject
-  server: ServerConnection.Any
-  selected: boolean
-  unseenCount: number
-  selectProject: (server: ServerConnection.Any, directory: string) => void
-  openNewSession: (server: ServerConnection.Any, directory: string) => void
-  editProject: (server: ServerConnection.Any, project: LocalProject) => void
-  closeProject: (server: ServerConnection.Any, directory: string) => void
-  clearNotifications: (server: ServerConnection.Any, project: LocalProject) => void
-  language: ReturnType<typeof useLanguage>
-}) {
-  const global = useGlobal()
-  const serverUnreachable = () => global.servers.health[ServerConnection.key(props.server)]?.healthy === false
-  const [state, setState] = createStore({ menuOpen: false })
-  return (
-    <div class="group/project relative flex h-7 min-w-0 items-center rounded-[6px]">
-      <button
-        type="button"
-        data-component="home-project-row"
-        class={`${HOME_PROJECT_NAV_ROW} pr-16 disabled:opacity-60`}
-        data-selected={props.selected ? "" : undefined}
-        aria-current={props.selected ? "page" : undefined}
-        disabled={serverUnreachable()}
-        onClick={() => props.selectProject(props.server, props.project.worktree)}
-      >
-        <HomeProjectAvatar project={props.project} />
-        <span class={HOME_PROJECT_NAV_LABEL}>{displayName(props.project)}</span>
-      </button>
-      <div
-        class="hover-reveal absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-1 group-hover/project:opacity-100 focus-within:opacity-100 data-[menu=true]:opacity-100"
-        data-menu={state.menuOpen}
-      >
-        <MenuV2
-          gutter={6}
-          modal={false}
-          placement="bottom-end"
-          open={state.menuOpen}
-          onOpenChange={(open) => setState("menuOpen", open)}
-        >
-          <MenuV2.Trigger
-            as={IconButtonV2}
-            data-action="home-project-menu"
-            variant="ghost-muted"
-            size="small"
-            icon={<IconV2 name="outline-dots" />}
-            aria-label={props.language.t("common.moreOptions")}
-          />
-          <MenuV2.Portal>
-            <MenuV2.Content>
-              <MenuV2.Item onSelect={() => props.openNewSession(props.server, props.project.worktree)}>
-                {props.language.t("command.session.new")}
-              </MenuV2.Item>
-              <MenuV2.Item onSelect={() => props.editProject(props.server, props.project)}>
-                {props.language.t("dialog.project.edit.title")}
-              </MenuV2.Item>
-              <MenuV2.Item
-                disabled={props.unseenCount === 0}
-                onSelect={() => props.clearNotifications(props.server, props.project)}
-              >
-                {props.language.t("sidebar.project.clearNotifications")}
-              </MenuV2.Item>
-              <MenuV2.Separator />
-              <MenuV2.Item onSelect={() => props.closeProject(props.server, props.project.worktree)}>
-                {props.language.t("common.close")}
-              </MenuV2.Item>
-            </MenuV2.Content>
-          </MenuV2.Portal>
-        </MenuV2>
-        <IconButtonV2
-          data-action="home-project-new-session"
-          variant="ghost-muted"
-          size="small"
-          icon={<IconV2 name="edit" />}
-          aria-label={props.language.t("command.session.new")}
-          onClick={() => props.openNewSession(props.server, props.project.worktree)}
-        />
-      </div>
-    </div>
-  )
-}
-
-function HomeProjectAvatar(props: { project: LocalProject }) {
-  const name = createMemo(() => displayName(props.project))
-  return <ProjectAvatar fallback={name()} />
 }
 
 function HomeSessionLeading(props: {

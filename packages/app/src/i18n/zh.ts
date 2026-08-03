@@ -610,14 +610,6 @@ export const dict = {
   "session.header.open.menu": "打开选项",
   "session.header.open.copyPath": "复制路径",
 
-  "status.popover.trigger": "状态",
-  "status.popover.ariaLabel": "服务器配置",
-  "status.popover.tab.servers": "服务器",
-  "status.popover.tab.mcp": "MCP",
-  "status.popover.tab.lsp": "LSP",
-  "status.popover.tab.plugins": "插件",
-  "status.popover.action.manageServers": "管理服务器",
-
   "session.share.copy.copied": "已复制",
   "lsp.tooltip.none": "没有 LSP 服务器",
   "lsp.label.connected": "{{count}} LSP",

@@ -23,14 +23,3 @@ export function createSdkForServer(_config?: unknown) {
 
 export type Sdk = typeof kernel
 
-/**
- * 下面两个是 HTTP 时代的凭据编解码,现在没有任何调用意义(内核不走 Basic auth)。
- * 暂时留着只为让 localStorage 里的旧值还能被读懂并丢弃,收尾时删。
- */
-export function authTokenFromCredentials(input: { username?: string; password: string }) {
-  return btoa(`${input.username ?? "opencode"}:${input.password}`)
-}
-
-export function authFromToken(_token: string | null): { username: string; password: string } | undefined {
-  return undefined
-}

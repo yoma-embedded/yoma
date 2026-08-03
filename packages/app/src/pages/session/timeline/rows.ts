@@ -1,9 +1,7 @@
 import { parseCommentNote, readCommentMetadata } from "@/utils/comment-note"
-import { AssistantMessage, Part, SessionStatus, SnapshotFileDiff, UserMessage } from "@yoma-desktop/kernel"
+import { AssistantMessage, Part, SessionStatus, UserMessage } from "@yoma-desktop/kernel"
 import { groupParts, PartGroup, renderable } from "@yoma-desktop/session-ui/message-part"
 import { Data, Equal } from "effect"
-
-export type SummaryDiff = SnapshotFileDiff & { file: string }
 
 export type TimelineRowMap = {
   TurnGap: { userMessageID: string }
@@ -24,8 +22,6 @@ export type TimelineRowMap = {
     previousAssistantPart: boolean
   }
   Thinking: { userMessageID: string; reasoningHeading?: string }
-  Retry: { userMessageID: string }
-  DiffSummary: { userMessageID: string; diffs: SummaryDiff[] }
   Error: { userMessageID: string; text: string }
 }
 
@@ -53,16 +49,9 @@ export namespace TimelineRow {
     userMessageID: string
     reasoningHeading?: string
   }> {}
-  export class DiffSummary extends Data.TaggedClass("DiffSummary")<{
-    userMessageID: string
-    diffs: SummaryDiff[]
-  }> {}
   export class Error extends Data.TaggedClass("Error")<{
     userMessageID: string
     text: string
-  }> {}
-  export class Retry extends Data.TaggedClass("Retry")<{
-    userMessageID: string
   }> {}
 
   export type TimelineRow =
@@ -72,9 +61,7 @@ export namespace TimelineRow {
     | TurnDivider
     | AssistantPart
     | Thinking
-    | DiffSummary
     | Error
-    | Retry
 
   export const key = (row: TimelineRow) => {
     switch (row._tag) {
@@ -90,12 +77,8 @@ export namespace TimelineRow {
         return `assistant-part:${row.userMessageID}:${row.group.key}`
       case "Thinking":
         return `thinking:${row.userMessageID}`
-      case "DiffSummary":
-        return `diff-summary:${row.userMessageID}`
       case "Error":
         return `error:${row.userMessageID}`
-      case "Retry":
-        return `retry:${row.userMessageID}`
     }
   }
 
@@ -208,24 +191,12 @@ export namespace Timeline {
       )
     }
 
-    if (isActive && status === "retry") rows.push(new TimelineRow.Retry({ userMessageID: userMessage.id }))
+    // 内核对 provider 失败不重试 —— 失败就是一条带 error 的 assistant 消息,
+    // 所以没有 "retry" 这个中间状态,也就没有对应的时间线行。
 
-    const diffs = (userMessage.summary?.diffs ?? [])
-      .reduceRight<SummaryDiff[]>((result, diff) => {
-        if (!isSummaryDiff(diff)) return result
-        if (result.some((item) => item.file === diff.file)) return result
-        result.push(diff)
-        return result
-      }, [])
-      .reverse()
-    if (diffs.length > 0 && (status === "idle" || !isActive)) {
-      rows.push(
-        new TimelineRow.DiffSummary({
-          userMessageID: userMessage.id,
-          diffs,
-        }),
-      )
-    }
+    // 每轮的 diff 汇总原来来自 UserMessage.summary.diffs,而那是 opencode 的文件快照
+    // 产物。内核没有快照,这一行随之消失;真要显示的话得从 edit/write 工具的
+    // details.patch 重新合成,那是独立一件事。
 
     if (error) {
       const data = error.data?.message
@@ -240,10 +211,6 @@ export namespace Timeline {
     }
 
     return rows
-  }
-
-  function isSummaryDiff(value: SnapshotFileDiff): value is SummaryDiff {
-    return typeof value.file === "string"
   }
 
   function reasoningHeading(text: string) {
@@ -345,7 +312,7 @@ export namespace MessageComment {
 
   export const fromPart = (part: Part): MessageComment | undefined => {
     if (part.type !== "text" || !part.synthetic) return
-    const next = readCommentMetadata(part.metadata) ?? parseCommentNote(part.text)
+    const next = parseCommentNote(part.text)
     if (!next) return
     return {
       path: next.path,

@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import type { SessionNotFoundError } from "@yoma-desktop/kernel"
+/**
+ * 内核不发结构化错误对象 —— 会话找不到就是一个普通 Error。夹具保留 opencode 的形状,
+ * 是因为 isSessionNotFoundError() 仍按 `_tag` 匹配(它要对付历史数据和任何仍这样报错的
+ * 来源)。类型在本地定义,不再从内核包里要。
+ */
+type SessionNotFoundError = { _tag: "SessionNotFoundError"; sessionID: string; message: string }
 import type { ConfigInvalidError, ProviderModelNotFoundError } from "./server-errors"
 import { formatServerError, isSessionNotFoundError, parseReadableConfigInvalidError } from "./server-errors"
 

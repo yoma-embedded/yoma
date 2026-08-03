@@ -243,11 +243,19 @@ const baseInput = () => ({
 
 const event = () => ({ preventDefault: () => undefined }) as unknown as Event
 
+/** 让 fire-and-forget 的 promise 链跑完。 */
+async function flushMicrotasks() {
+  for (let i = 0; i < 8; i += 1) await Promise.resolve()
+}
+
 describe("prompt submit", () => {
   test("creates the new session in the sdk directory", async () => {
     const submit = createPromptSubmit({ ...baseInput(), info: () => undefined })
 
     await submit.handleSubmit(event())
+    // handleSubmit 里发 prompt 那步是 fire-and-forget(void sendFollowupDraft(...)),
+    // 它内部还有一段 await 链。不 flush 微任务就会在 prompt 真正发出前断言。
+    await flushMicrotasks()
 
     expect(createdSessions).toEqual([DIRECTORY])
     expect(promoted).toEqual([{ directory: DIRECTORY, sessionID: "session-1" }])

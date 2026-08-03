@@ -22,7 +22,6 @@ import { useSync } from "@/context/sync"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { decode64 } from "@/utils/base64"
 import { Persist, persisted } from "@/utils/persist"
-import { StatusPopover, StatusPopoverV2 } from "../status-popover"
 import { IconButtonV2 } from "@yoma-desktop/ui/v2/icon-button-v2"
 import { Icon as IconV2 } from "@yoma-desktop/ui/v2/icon"
 import { KeybindV2 } from "@yoma-desktop/ui/v2/keybind-v2"
@@ -157,7 +156,6 @@ export function SessionHeader() {
   const os = createMemo(() => detectOS(platform))
   const isV2 = settings.general.newLayoutDesigns
   const search = settings.visibility.search
-  const status = settings.visibility.status
   const isDesktop = createMediaQuery("(min-width: 768px)")
 
   const [exists, setExists] = createStore<Partial<Record<OpenApp, boolean>>>({
@@ -220,8 +218,6 @@ export function SessionHeader() {
   )
   const opening = createMemo(() => openRequest.app !== undefined)
   const v2ActionsState = createMemo<SessionHeaderV2ActionsState>(() => ({
-    statusVisible: status(),
-    statusLabel: language.t("status.popover.trigger"),
     reviewLabel: language.t("command.review.toggle"),
     reviewKeybind: reviewTooltipKeybind(command),
     reviewVisible: isDesktop(),
@@ -426,11 +422,6 @@ export function SessionHeader() {
                     </div>
                   </Show>
                   <div class="flex items-center gap-1">
-                    <Show when={status()}>
-                      <Tooltip placement="bottom" value={language.t("status.popover.trigger")}>
-                        <StatusPopover />
-                      </Tooltip>
-                    </Show>
                     <div class="hidden md:flex items-center gap-1 shrink-0">
                       <TooltipKeybind
                         title={language.t("command.review.toggle")}
@@ -487,8 +478,6 @@ export function SessionHeader() {
 }
 
 type SessionHeaderV2ActionsState = {
-  statusVisible: boolean
-  statusLabel: string
   reviewLabel: string
   reviewKeybind: string[]
   reviewVisible: boolean
@@ -501,11 +490,6 @@ function SessionHeaderV2Actions(props: { state: SessionHeaderV2ActionsState }) {
 
   return (
     <div class="flex items-center gap-2">
-      <Show when={props.state.statusVisible}>
-        <Tooltip placement="bottom" value={props.state.statusLabel}>
-          <StatusPopoverV2 />
-        </Tooltip>
-      </Show>
       <Show when={props.state.reviewVisible}>
         <TooltipV2
           placement="bottom"

@@ -542,14 +542,6 @@ export const dict = {
   "session.header.open.menu": "Åpne alternativer",
   "session.header.open.copyPath": "Kopier bane",
 
-  "status.popover.trigger": "Status",
-  "status.popover.ariaLabel": "Serverkonfigurasjoner",
-  "status.popover.tab.servers": "Servere",
-  "status.popover.tab.mcp": "MCP",
-  "status.popover.tab.lsp": "LSP",
-  "status.popover.tab.plugins": "Plugins",
-  "status.popover.action.manageServers": "Administrer servere",
-
   "session.share.copy.copied": "Kopiert",
   "lsp.tooltip.none": "Ingen LSP-servere",
   "lsp.label.connected": "{{count}} LSP",

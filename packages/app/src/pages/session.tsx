@@ -63,7 +63,6 @@ import { useComposerCommands } from "@/pages/session/use-composer-commands"
 import { useSessionCommands } from "@/pages/session/use-session-commands"
 import { useSessionHashScroll } from "@/pages/session/use-session-hash-scroll"
 import { Identifier } from "@/utils/id"
-import { diffs as list } from "@/utils/diffs"
 import { Persist, persisted } from "@/utils/persist"
 import { formatServerError } from "@/utils/server-errors"
 import { createSessionOwnership } from "./session/session-ownership"
@@ -331,7 +330,6 @@ export default function Page() {
     queryFn: () =>
       sdk()
         .client.vcs.diff(sdk().directory)
-        .then((result) => list(result))
         .catch((error) => {
           console.debug("[session-review] failed to load vcs diff", { error })
           return []
@@ -1234,8 +1232,6 @@ export default function Page() {
             ref={(el) => {
               inputRef = el
             }}
-            newSessionWorktree={newSessionWorktree()}
-            onNewSessionWorktreeReset={() => setStore("newSessionWorktree", "main")}
             onSubmit={() => {
               comments.clear()
               resumeScroll()
@@ -1388,7 +1384,7 @@ export default function Page() {
                   </Show>
                 </Match>
                 <Match when={true}>
-                  <NewSessionView worktree={newSessionWorktree()} />
+                  <NewSessionView />
                 </Match>
               </Switch>
             </div>

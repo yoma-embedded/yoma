@@ -539,14 +539,6 @@ export const dict = {
   "session.header.open.menu": "Варианты открытия",
   "session.header.open.copyPath": "Копировать путь",
 
-  "status.popover.trigger": "Статус",
-  "status.popover.ariaLabel": "Настройки серверов",
-  "status.popover.tab.servers": "Серверы",
-  "status.popover.tab.mcp": "MCP",
-  "status.popover.tab.lsp": "LSP",
-  "status.popover.tab.plugins": "Плагины",
-  "status.popover.action.manageServers": "Управлять серверами",
-
   "session.share.copy.copied": "Скопировано",
   "lsp.tooltip.none": "Нет LSP серверов",
   "lsp.label.connected": "{{count}} LSP",

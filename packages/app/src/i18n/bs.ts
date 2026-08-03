@@ -541,14 +541,6 @@ export const dict = {
   "session.header.open.menu": "Opcije otvaranja",
   "session.header.open.copyPath": "Kopiraj putanju",
 
-  "status.popover.trigger": "Status",
-  "status.popover.ariaLabel": "Konfiguracije servera",
-  "status.popover.tab.servers": "Serveri",
-  "status.popover.tab.mcp": "MCP",
-  "status.popover.tab.lsp": "LSP",
-  "status.popover.tab.plugins": "Plugini",
-  "status.popover.action.manageServers": "Upravljaj serverima",
-
   "session.share.copy.copied": "Kopirano",
   "lsp.tooltip.none": "Nema LSP servera",
   "lsp.label.connected": "{{count}} LSP",

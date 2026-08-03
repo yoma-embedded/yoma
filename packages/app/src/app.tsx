@@ -48,8 +48,7 @@ import { SDKProvider, useSDK } from "@/context/sdk"
 import DirectoryLayout, { DirectoryDataProvider } from "@/pages/directory-layout"
 import NewLayout from "@/pages/layout-new"
 import { ErrorPage } from "./pages/error"
-import { useCheckServerHealth } from "./utils/server-health"
-import { legacySessionServer, requireServerKey, selectSessionLineage, sessionHref } from "./utils/session-route"
+import { legacySessionServer, requireServerKey, sessionHref } from "./utils/session-route"
 import { isSessionNotFoundError } from "./utils/server-errors"
 
 import Session from "@/pages/session"
@@ -129,8 +128,12 @@ function ResolvedTargetSessionRoute() {
         throw error
       }),
   )
-  const current = createMemo(() => selectSessionLineage(params.id, cached(), resolved()))
-  const directory = createMemo(() => current()?.session.directory)
+  // 内核里 session 之间没有父子关系,所以路由解析的结果就是这一个会话本身。
+  const current = createMemo(() => {
+    const hit = cached() ?? resolved()
+    return hit?.id === params.id ? hit : undefined
+  })
+  const directory = createMemo(() => current()?.directory)
   const targetDirectory = () => directory()!
 
   createEffect(() => {
@@ -138,7 +141,7 @@ function ResolvedTargetSessionRoute() {
     if (!session) return
     tabs.addSessionTab({
       server: serverKey(),
-      sessionId: session.root.id,
+      sessionId: session.id,
     })
   })
 
@@ -407,113 +410,6 @@ export function AppBaseProviders(props: ParentProps<{ locale?: Locale }>) {
   )
 }
 
-function ConnectionGate(props: ParentProps<{ disableHealthCheck?: boolean }>) {
-  const server = useServer()
-  const checkServerHealth = useCheckServerHealth()
-
-  const [checkMode, setCheckMode] = createSignal<"blocking" | "background">("blocking")
-
-  // performs repeated health check with a grace period for
-  // non-http connections, otherwise fails instantly
-  const [startupHealthCheck, healthCheckActions] = createResource(() =>
-    props.disableHealthCheck
-      ? true
-      : Effect.gen(function* () {
-          if (!server.current) return true
-          const { http, type } = server.current
-
-          while (true) {
-            const res = yield* Effect.promise(() => checkServerHealth(http))
-            if (res.healthy) return true
-            if (checkMode() === "background" || type === "http") return false
-          }
-        }).pipe(
-          Effect.timeoutOrElse({ duration: "10 seconds", orElse: () => Effect.succeed(false) }),
-          Effect.ensuring(Effect.sync(() => setCheckMode("background"))),
-          Effect.runPromise,
-        ),
-  )
-  const checking = createMemo(
-    () => checkMode() === "blocking" && ["unresolved", "pending"].includes(startupHealthCheck.state),
-  )
-
-  return (
-    <Show
-      when={!checking()}
-      fallback={
-        <div class="h-dvh w-screen flex flex-col items-center justify-center bg-background-base">
-          <Splash class="w-16 h-20 opacity-50 animate-pulse" />
-        </div>
-      }
-    >
-      <Show
-        when={startupHealthCheck.latest}
-        fallback={
-          <ConnectionError
-            onRetry={() => {
-              if (checkMode() === "background") void healthCheckActions.refetch()
-            }}
-            onServerSelected={(key) => {
-              setCheckMode("blocking")
-              server.setActive(key)
-              void healthCheckActions.refetch()
-            }}
-          />
-        }
-      >
-        {props.children}
-      </Show>
-    </Show>
-  )
-}
-
-function ConnectionError(props: { onRetry?: () => void; onServerSelected?: (key: ServerConnection.Key) => void }) {
-  const language = useLanguage()
-  const server = useServer()
-  const others = () => server.list.filter((s) => ServerConnection.key(s) !== server.key)
-  const name = createMemo(() => server.name || server.key)
-  const serverToken = "\u0000server\u0000"
-  const unreachable = createMemo(() => language.t("app.server.unreachable", { server: serverToken }).split(serverToken))
-
-  const timer = setInterval(() => props.onRetry?.(), 1000)
-  onCleanup(() => clearInterval(timer))
-
-  return (
-    <div class="h-dvh w-screen flex flex-col items-center justify-center bg-background-base gap-6 p-6">
-      <div class="flex flex-col items-center max-w-md text-center">
-        <Splash class="w-12 h-15 mb-4" />
-        <p class="text-14-regular text-text-base">
-          {unreachable()[0]}
-          <span class="text-text-strong font-medium">{name()}</span>
-          {unreachable()[1]}
-        </p>
-        <p class="mt-1 text-12-regular text-text-weak">{language.t("app.server.retrying")}</p>
-      </div>
-      <Show when={others().length > 0}>
-        <div class="flex flex-col gap-2 w-full max-w-sm">
-          <span class="text-12-regular text-text-base text-center">{language.t("app.server.otherServers")}</span>
-          <div class="flex flex-col gap-1 bg-surface-base rounded-lg p-2">
-            <For each={others()}>
-              {(conn) => {
-                const key = ServerConnection.key(conn)
-                return (
-                  <button
-                    type="button"
-                    class="flex items-center gap-3 w-full px-3 py-2 rounded-md hover:bg-surface-raised-base-hover transition-colors text-left"
-                    onClick={() => props.onServerSelected?.(key)}
-                  >
-                    <span class="text-14-regular text-text-strong truncate">{serverName(conn)}</span>
-                  </button>
-                )
-              }}
-            </For>
-          </div>
-        </div>
-      </Show>
-    </div>
-  )
-}
-
 function ServerKey(props: ParentProps) {
   const server = useServer()
   return (
@@ -529,7 +425,6 @@ export function AppInterface(props: {
   canonicalLocalServer?: ServerConnection.Key
   servers?: Array<ServerConnection.Any>
   router?: Component<BaseRouterProps>
-  disableHealthCheck?: boolean
 }) {
   // The visual new layout lives in the router root so it remains mounted across
   // route changes. Draft and session routes override only their server-bound data
@@ -551,22 +446,20 @@ export function AppInterface(props: {
     >
       <GlobalProvider>
         <SettingsProvider>
-          <ConnectionGate disableHealthCheck={props.disableHealthCheck}>
-            <Dynamic
-              component={props.router ?? Router}
-              root={(routerProps) => (
-                <TabsProvider>
-                  <NotificationProvider>
-                    <ServerShell>
-                      <NewAppLayout>{routerProps.children}</NewAppLayout>
-                    </ServerShell>
-                  </NotificationProvider>
-                </TabsProvider>
-              )}
-            >
-              <Routes />
-            </Dynamic>
-          </ConnectionGate>
+          <Dynamic
+            component={props.router ?? Router}
+            root={(routerProps) => (
+              <TabsProvider>
+                <NotificationProvider>
+                  <ServerShell>
+                    <NewAppLayout>{routerProps.children}</NewAppLayout>
+                  </ServerShell>
+                </NotificationProvider>
+              </TabsProvider>
+            )}
+          >
+            <Routes />
+          </Dynamic>
         </SettingsProvider>
       </GlobalProvider>
     </ServerProvider>

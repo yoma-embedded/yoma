@@ -4,8 +4,6 @@ import {
   legacySessionHref,
   legacySessionServer,
   requireServerKey,
-  rootSession,
-  selectSessionLineage,
   sessionHref,
 } from "./session-route"
 
@@ -49,36 +47,5 @@ describe("session routes", () => {
     expect(legacySessionHref("/Users/example/project", "session-1")).toBe(
       "/L1VzZXJzL2V4YW1wbGUvcHJvamVjdA/session/session-1",
     )
-  })
-
-  test("resolves the root session", async () => {
-    const sessions: Record<string, { id: string; parentID?: string }> = {
-      child: { id: "child", parentID: "parent" },
-      parent: { id: "parent", parentID: "root" },
-      root: { id: "root" },
-    }
-
-    expect(
-      await rootSession(sessions.child, async (id) => {
-        const session = sessions[id]
-        if (!session) throw new Error(`Missing session: ${id}`)
-        return session
-      }),
-    ).toBe(sessions.root)
-  })
-
-  test("rejects a parent cycle", async () => {
-    const sessions: Record<string, { id: string; parentID?: string }> = {
-      child: { id: "child", parentID: "parent" },
-      parent: { id: "parent", parentID: "child" },
-    }
-
-    expect(rootSession(sessions.child, async (id) => sessions[id]!)).rejects.toThrow("Session parent cycle: child")
-  })
-
-  test("ignores a resolved lineage retained from the previous route", () => {
-    const previous = { session: { id: "A" }, root: { id: "A" } }
-
-    expect(selectSessionLineage("B", undefined, previous)).toBeUndefined()
   })
 })

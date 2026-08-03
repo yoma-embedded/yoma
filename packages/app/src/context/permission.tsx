@@ -142,8 +142,7 @@ export const { use: usePermission, provider: PermissionProvider } = createSimple
     }
 
     function isAutoAccepting(sessionID: string, directory?: string) {
-      const session = directory ? serverSync().child(directory, { bootstrap: false })[0].session : []
-      return autoRespondsPermission(store.autoAccept, session, { sessionID }, directory)
+      return autoRespondsPermission(store.autoAccept, { sessionID }, directory)
     }
 
     function isAutoAcceptingDirectory(directory: string) {
@@ -151,8 +150,7 @@ export const { use: usePermission, provider: PermissionProvider } = createSimple
     }
 
     function shouldAutoRespond(permission: PermissionRequest, directory?: string) {
-      const session = directory ? serverSync().child(directory, { bootstrap: false })[0].session : []
-      return autoRespondsPermission(store.autoAccept, session, permission, directory)
+      return autoRespondsPermission(store.autoAccept, permission, directory)
     }
 
     function bumpEnableVersion(sessionID: string, directory?: string) {
