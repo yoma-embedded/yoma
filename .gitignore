@@ -11,3 +11,4 @@ node_modules/.ts-dist/
 .env.*
 packages/desktop/resources/icons/
 packages/desktop/resources/*.metainfo.xml
+engines
