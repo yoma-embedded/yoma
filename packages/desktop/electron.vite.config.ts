@@ -43,7 +43,6 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: "src/main/index.ts",
-          sidecar: "src/main/sidecar.ts",
           kernel: "src/main/kernel-entry.ts",
         },
       },
@@ -55,19 +54,6 @@ export default defineConfig({
         enforce: "pre",
         resolveId(s) {
           if (s === "@lydell/node-pty") return nodePtyPkg
-        },
-      },
-      {
-        name: "opencode:virtual-server-module",
-        enforce: "pre",
-        resolveId(id) {
-          // Externalize the prebuilt server bundle as its bare package specifier instead of inlining
-          // (or copying) it. Re-bundling the 30MB bun bundle through rollup/esbuild corrupts it
-          // (v1.17.14 pulls the TS language service in, tripping an "Unterminated string literal" at
-          // renderChunk). Resolving to the package name — not a copied-out file — keeps node.js
-          // running from its own node_modules dir at runtime, where its deps (jsonc-parser,
-          // @lydell/node-pty) and its .wasm files are colocated siblings and resolve naturally.
-          if (id === "virtual:opencode-server") return { id: "@yoma-desktop/opencode-server", external: true }
         },
       },
     ],

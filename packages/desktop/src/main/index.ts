@@ -24,8 +24,6 @@ import {
   getDefaultServerUrl,
   preferAppEnv,
   setDefaultServerUrl,
-  spawnLocalServer,
-  type SidecarListener,
 } from "./server"
 import { setupAutoUpdater, showUpdaterDialog } from "./updater"
 import {
@@ -53,7 +51,6 @@ const jsCallStackFeature = "DocumentPolicyIncludeJSCallStacksInCrashReports"
 
 let logger: ReturnType<typeof initLogging>
 let mainWindow: BrowserWindow | null = null
-let server: SidecarListener | null = null
 let kernelProcess: KernelProcess | null = null
 
 const pendingDeepLinks: string[] = []
@@ -100,12 +97,8 @@ function emitDeepLinks(urls: string[]) {
   if (mainWindow) sendDeepLinks(mainWindow, urls)
 }
 
-async function killSidecar() {
-  if (!server) return
-  const current = server
-  server = null
-  await current.stop()
-}
+/** 保留只为兼容 renderer 还在调的 IPC 通道;HTTP sidecar 已经不存在了。 */
+async function killSidecar() {}
 
 function ensureLoopbackNoProxy() {
   const loopback = ["127.0.0.1", "localhost", "::1"]
@@ -164,7 +157,6 @@ const main = Effect.gen(function* () {
   initCrashReporter()
 
   const stopSidecars = async () => {
-    await killSidecar()
     const kernel = kernelProcess
     kernelProcess = null
     await kernel?.stop()
@@ -321,48 +313,20 @@ const main = Effect.gen(function* () {
 
     return yield* Deferred.await(res)
   })
-  const hostname = "127.0.0.1"
-  const url = `http://${hostname}:${port}`
-  const password = randomUUID()
+  // HTTP sidecar 整条路径已经拆除:renderer 现在通过 MessagePort 直连内核
+  // utilityProcess(见 main/kernel.ts),不再需要端口、密码、CORS 和健康探测。
+  //
+  // serverReady 这个 Deferred 还留着,是因为 renderer 的 awaitInitialization() 仍在
+  // 等它才渲染 —— 给一个占位值让启动继续。ServerConnection 这一整套概念的清除
+  // 是后续独立工作(它散在 app 的路由与标签页里)。
+  yield* Deferred.succeed(serverReady, {
+    url: "kernel://local",
+    username: null,
+    password: null,
+  })
 
-  const loadingTask = yield* Effect.gen(function* () {
-    logger.log("sidecar connection started", { url })
-
-    ensureLoopbackNoProxy()
-    useEnvProxy()
-
-    logger.log("spawning sidecar", { url })
-    const { listener, health } = yield* Effect.promise(() =>
-      spawnLocalServer(hostname, port, password, {
-        userDataPath: app.getPath("userData"),
-        onStdout: (message) => writeLog("server", "stdout", { message }),
-        onStderr: (message) => writeLog("server", "stderr", { message }, "warn"),
-        onExit: (code) => writeLog("utility", "sidecar exited", { code }, "warn"),
-      }),
-    )
-    server = listener
-    yield* Deferred.succeed(serverReady, {
-      url,
-      username: "opencode",
-      password,
-    })
-
-    yield* Effect.promise(() => health.wait).pipe(
-      Effect.timeout("30 seconds"),
-      Effect.catch((e) =>
-        Effect.sync(() => {
-          logger.error("sidecar health check failed", e.toString())
-        }),
-      ),
-    )
-
-    logger.log("loading task finished")
-  }).pipe(forwardInitializationFailure(serverReady), Effect.forkChild)
-
-  yield* Fiber.await(loadingTask)
-
-  // my-pi 内核进程。和上面那个 HTTP sidecar 暂时并存 —— renderer 的数据面还没切过来
-  // (P5),现在就拆掉 sidecar 会让整个 app 立刻不可用。切完之后 sidecar 整条路径删除。
+  // my-pi 内核进程。整个 app 只 fork 这一个 —— my-pi 的 probe 租约、gdb session 表、
+  // log capture 都是模块级全局,分片 fork 会让两个进程各自以为自己独占探针。
   kernelProcess = spawnKernel({
     sessionsRoot: join(app.getPath("userData"), "sessions"),
     stateDir: app.getPath("userData"),
