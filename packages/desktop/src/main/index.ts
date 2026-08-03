@@ -34,17 +34,19 @@ import {
   setDockIcon,
 } from "./windows"
 import { registerManualsIpcHandlers } from "./manuals"
-import { migrate } from "./migrate"
 
+// 2026-08 起运行时身份就是 Yoma(名字进钥匙串条目、appId 定 userData 目录)。
+// 旧的 ai.opencode.desktop* 目录弃在原地不迁移 —— 当时明确决定旧数据不要了,
+// 这也顺手解决了"打包版访问 dev 版创建的 OpenCode Safe Storage 要输密码"的弹窗。
 const APP_NAMES: Record<string, string> = {
-  dev: "OpenCode Dev",
-  beta: "OpenCode Beta",
-  prod: "OpenCode",
+  dev: "Yoma Dev",
+  beta: "Yoma Beta",
+  prod: "Yoma",
 }
 const APP_IDS: Record<string, string> = {
-  dev: "ai.opencode.desktop.dev",
-  beta: "ai.opencode.desktop.beta",
-  prod: "ai.opencode.desktop",
+  dev: "com.yoma.desktop.dev",
+  beta: "com.yoma.desktop.beta",
+  prod: "com.yoma.desktop",
 }
 const TEST_ONBOARDING = process.env.OPENCODE_TEST_ONBOARDING === "1"
 const jsCallStackFeature = "DocumentPolicyIncludeJSCallStacksInCrashReports"
@@ -130,7 +132,7 @@ const main = Effect.gen(function* () {
 
   process.env.OPENCODE_DISABLE_EMBEDDED_WEB_UI = "true"
 
-  const appId = app.isPackaged ? APP_IDS[CHANNEL] : "ai.opencode.desktop.dev"
+  const appId = app.isPackaged ? APP_IDS[CHANNEL] : "com.yoma.desktop.dev"
   const onboardingTestRoot = ((): string | undefined => {
     if (!TEST_ONBOARDING) return
 
@@ -146,7 +148,7 @@ const main = Effect.gen(function* () {
     process.env.XDG_STATE_HOME = join(root, "state")
     return root
   })()
-  app.setName(app.isPackaged ? APP_NAMES[CHANNEL] : "OpenCode Dev")
+  app.setName(app.isPackaged ? APP_NAMES[CHANNEL] : "Yoma Dev")
   app.setAppUserModelId(appId)
   app.setPath(
     "userData",
@@ -195,7 +197,7 @@ const main = Effect.gen(function* () {
   preferAppEnv(app.getPath("userData"))
 
   app.on("second-instance", (_event: Event, argv: string[]) => {
-    const urls = argv.filter((arg: string) => arg.startsWith("opencode://"))
+    const urls = argv.filter((arg: string) => arg.startsWith("yoma://"))
     if (urls.length) {
       logger.log("deep link received via second-instance", { urls })
       emitDeepLinks(urls)
@@ -242,8 +244,10 @@ const main = Effect.gen(function* () {
 
   yield* Effect.promise(() => app.whenReady())
 
-  if (!TEST_ONBOARDING) migrate()
-  app.setAsDefaultProtocolClient("opencode")
+  // tauri→electron 的 .dat 迁移已随运行时身份换成 Yoma 一起摘除:Yoma 从未发过 tauri 版,
+  // 那套迁移只会把 opencode 时代的陈年草稿灌进全新的 userData(实测旧目录里真有 .dat)。
+  // 深链协议与 electron-builder 配置里声明的 protocols(yoma://)一致。
+  app.setAsDefaultProtocolClient("yoma")
   registerRendererProtocol()
   setDockIcon()
   const updater = setupAutoUpdater(stopSidecars)

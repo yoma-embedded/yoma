@@ -224,9 +224,13 @@ provider 目录在无 key 时来自 `CONFIGURABLE_PROVIDERS`(my-pi `PROVIDERS` �
   "找不到钥匙串"对话框,app 几秒后安静退出。两边语义相反,假 HOME 两头都不干净。
   验证打包产物就用真实 HOME;无 key 首跑路径由 `host/auth.test.ts` 的子进程 e2e 覆盖。
 - **内核没有 HMR。** 改了 my-pi 之后必须重启 `bun dev:desktop`。
-- **这是一个 fork**:很多存储键/标题/appId 还写着 `opencode`(localStorage `opencode.*`、
-  运行时 app id `ai.opencode.desktop` vs bundle id `com.yoma.desktop`)——
-  这个不一致是刻意的(为了 userData 连续性),别盲目"修正"。
+- **这是一个 fork**:2026-08 起运行时身份已统一为 Yoma(`app.setName("Yoma")`、
+  运行时 appId = bundle id = `com.yoma.desktop`、深链 `yoma://`),旧的
+  `ai.opencode.desktop*` userData 弃在原地(当时明确决定旧数据不要,顺带消灭了
+  跨签名钥匙串弹窗;tauri→electron 的 .dat 迁移一并摘除)。**内部名字仍是 opencode**:
+  localStorage `opencode.*`、store 文件 `opencode.updater`、`OPENCODE_CHANNEL` 等
+  env、工具链共享的 `~/.config/opencode/`、shiki 主题名 —— 这些是承重标识符,
+  与品牌无关,别盲目"修正"。
 - `@tanstack/virtual-core` 的 patch 是承重的,没有它 timeline 会抛
   `getLogicalScrollOffset is not a function`。
 

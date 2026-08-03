@@ -53,8 +53,15 @@ const APP_IDS = {
   prod: "com.yoma.desktop",
 } as const
 
+// 打本机平台(mac-on-mac)的包时直接用 node_modules/electron/dist,不去网上拉
+// 同版本的 zip —— 每次打包都请求 GitHub,在这边的网络环境下会随机 TLS 断连。
+// 跨平台目标(--win/--linux)仍需下载对应平台的 dist,不能用本地这份。
+const wantsForeignPlatform = process.argv.some((arg) => ["--win", "-w", "--linux", "-l"].includes(arg))
+const localElectronDist = path.join(packageDir, "node_modules", "electron", "dist")
+
 const getBase = (appId: string): Configuration => ({
   artifactName: "yoma-${os}-${arch}.${ext}",
+  ...(wantsForeignPlatform ? {} : { electronDist: localElectronDist }),
   directories: {
     output: "dist",
     buildResources: "resources",
