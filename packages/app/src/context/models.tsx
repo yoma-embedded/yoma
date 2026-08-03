@@ -2,7 +2,7 @@ import { type Accessor, createMemo, createResource } from "solid-js"
 import { createStore } from "solid-js/store"
 import { uniqueBy } from "remeda"
 import { createSimpleContext } from "@yoma-desktop/ui/context"
-import { kernel } from "@/utils/kernel"
+import { createProviderCatalog } from "@/components/kernel-providers"
 import { Persist, persisted } from "@/utils/persist"
 
 export type ModelKey = { providerID: string; modelID: string }
@@ -27,7 +27,10 @@ export const { use: useModels, provider: ModelsProvider } = createSimpleContext(
   // directory 保留在签名里但不再使用:my-pi 的模型目录是进程级的,没有"这个工作目录用哪些
   // provider"这一层(opencode 的 per-directory config 没有对应物)。
   init: (_props: { directory?: Accessor<string | undefined> } = {}) => {
-    const [catalog] = createResource(() => kernel.model.list(), { initialValue: [] })
+    // 必须用 createProviderCatalog 而不是一次性的 createResource:后者是挂载时的快照,
+    // 首跑先挂载、后配 key,快照里 authenticated 永远是 false,模型选不中且无法自愈
+    // (实测踩过)。catalog 订阅 invalidateProviders() 总线,auth.set 之后自动重拉。
+    const catalog = createProviderCatalog()
 
     const [store, setStore, _, ready] = persisted(
       Persist.global("model", ["model.v1"]),
@@ -108,6 +111,8 @@ export const { use: useModels, provider: ModelsProvider } = createSimpleContext(
     )
     return {
       ready,
+      /** 原始 provider 目录(含未认证的),活数据 —— local.tsx 的模型校验用它,别再碰 opencode 的 useProviders 空壳。 */
+      providers: catalog,
       list,
       find,
       visible,

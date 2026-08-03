@@ -4,7 +4,6 @@ import { useParams } from "@solidjs/router"
 import { batch, createEffect, createMemo, startTransition } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useModels } from "@/context/models"
-import { useProviders } from "@/hooks/use-providers"
 import { Persist, persisted } from "@/utils/persist"
 import { cycleModelVariant, resolveModelVariant } from "./model-variant"
 import { useSDK } from "./sdk"
@@ -60,11 +59,9 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const sdk = useSDK()
     const sync = useSync()
     const serverSDK = useServerSDK()
-    const providers = useProviders(() => sdk().directory)
     const models = useModels()
 
     const id = createMemo(() => params.id || undefined)
-    const connected = createMemo(() => new Set(providers.connected().map((item) => item.id)))
 
     const [saved, setSaved] = persisted(
       {
@@ -89,10 +86,14 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       last: undefined,
     })
 
+    // 校验必须问内核目录(useModels().providers,活数据),**不能**问 opencode 时代的
+    // useProviders 空壳:那套数据来自 server-sync,my-pi 内核永远不会喂它 —— 老 userData
+    // 里有 opencode 缓存"碰巧能用",全新用户 connected 恒为空,选什么都被静默丢弃,
+    // 表现为"模型一直选不中"(实测踩过)。
     const validModel = (model: ModelKey) => {
-      const provider = providers.all().get(model.providerID)
-      if (!provider) return false
-      return provider.models.some((item) => item.id === model.modelID) && connected().has(model.providerID)
+      const provider = models.providers().find((item) => item.id === model.providerID)
+      if (!provider?.authenticated) return false
+      return provider.models.some((item) => item.id === model.modelID)
     }
 
     const firstModel = (...items: Array<() => ModelKey | undefined>) => {
@@ -134,19 +135,14 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       }
     }
 
+    // opencode 的 per-provider 默认模型来自它的 config 服务,内核没有对应物 ——
+    // 这里的 UI 默认就取第一个已认证 provider 的第一个模型(目录顺序即 my-pi
+    // PROVIDERS 表顺序);真正发请求时的内核默认(~/.pi/agent/settings.json)不受影响。
     const defaultModel = () => {
-      const defaults = providers.default()
-      for (const provider of providers.connected()) {
-        const configured = defaults[provider.id]
-        if (configured) {
-          const model = { providerID: provider.id, modelID: configured }
-          if (validModel(model)) return model
-        }
-
+      for (const provider of models.providers()) {
+        if (!provider.authenticated) continue
         const first = provider.models[0]
-        if (!first) continue
-        const model = { providerID: provider.id, modelID: first.id }
-        if (validModel(model)) return model
+        if (first) return { providerID: provider.id, modelID: first.id }
       }
     }
 
