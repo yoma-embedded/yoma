@@ -27,3 +27,4 @@ out/
 resources/opencode-cli*
 resources/icons
 resources/*.metainfo.xml
+out/main/e2e-ipc.mjs
