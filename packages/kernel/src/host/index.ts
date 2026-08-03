@@ -87,15 +87,10 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     "permission.setRules": async ({ rules }) => sessions.permissions.setRules(rules),
 
     "model.list": () => sessions.providers(),
-    // 凭据目前完全复用 my-pi 的 ~/.pi/agent/auth.json —— 用户配 pi/Zed 时已经填过。
-    // 我们自己的凭据 UI(Electron safeStorage)是后续工作,在那之前这两个方法只做
-    // 明确失败,而不是假装成功后让用户对着一个不生效的表单困惑。
-    "auth.set": async () => {
-      throw new Error("凭据请在 ~/.pi/agent/auth.json 里配置(或用 pi 命令行);应用内配置界面尚未实现")
-    },
-    "auth.remove": async () => {
-      throw new Error("凭据请在 ~/.pi/agent/auth.json 里配置(或用 pi 命令行);应用内配置界面尚未实现")
-    },
+    // 凭据落在 my-pi 读的那份 ~/.pi/agent/auth.json —— 应用内配的 key 和命令行配 pi /
+    // 配 Zed 的是同一份,互相可见。见 host/auth.ts。
+    "auth.set": ({ providerID, apiKey }) => sessions.setAuth(providerID, apiKey),
+    "auth.remove": ({ providerID }) => sessions.removeAuth(providerID),
 
     "file.list": ({ directory, path: relative }) => listFiles(directory, relative),
     "file.read": ({ path: file }) => readFile(file),

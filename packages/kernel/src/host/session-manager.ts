@@ -42,6 +42,7 @@ import { sessionNotFound } from "../types.ts"
 import { SessionProjection } from "./projector.ts"
 import { PermissionGate } from "./permission.ts"
 import { shouldAutoCompact } from "./compaction.ts"
+import { CONFIGURABLE_PROVIDERS, removeAuthKey, writeAuthKey } from "./auth.ts"
 
 /** 同时活着的 harness 上限。淘汰只是丢弃内存态,重开就是 repo.open + buildContext,很便宜。 */
 const MAX_LIVE_SESSIONS = 8
@@ -144,7 +145,9 @@ export class SessionManager {
     try {
       models = (await this.ensureModels()).models
     } catch {
-      return []
+      // 一个 key 都没配时 resolveModel() 直接抛,注册表是空的。这时必须交出
+      // 可配置目录(authenticated: false),否则连接对话框无物可列,首跑用户被锁死。
+      return CONFIGURABLE_PROVIDERS.map((spec) => ({ id: spec.id, name: spec.name, authenticated: false, models: [] }))
     }
 
     const out: ProviderInfo[] = []
@@ -179,7 +182,53 @@ export class SessionManager {
         })),
       })
     }
+    // resolveModel() 只注册 auth.json 里有 key 的 provider。没配的也要列出来
+    // (空模型表 + authenticated: false),用户才能从连接对话框里给它加 key。
+    for (const spec of CONFIGURABLE_PROVIDERS) {
+      if (!out.some((provider) => provider.id === spec.id))
+        out.push({ id: spec.id, name: spec.name, authenticated: false, models: [] })
+    }
     return out
+  }
+
+  // -------------------------------------------------------------------------
+  // 凭据
+  // -------------------------------------------------------------------------
+
+  /**
+   * 写入一个 provider 的 API key(落到 my-pi 读的那份 ~/.pi/agent/auth.json)。
+   *
+   * 写完必须丢弃已解析的模型目录:resolveModel() 只注册写入当时有 key 的 provider,
+   * 不重解析的话新 key 要等重启进程才生效。注意 **已经开着的会话拿的还是旧注册表**
+   * (AgentHarness.models 是 readonly,建好之后换不掉),新开/重开的会话才能用新 provider ——
+   * 首跑场景(一个会话都没有)不受影响。
+   *
+   * key 本身不做网络验证:my-pi 注册 provider 时不发请求,错 key 的暴露点是第一次
+   * prompt 的 API 401,那条错误会走正常的会话错误通道显示出来。
+   */
+  async setAuth(providerID: string, apiKey: string): Promise<ProviderInfo[]> {
+    const trimmed = apiKey.trim()
+    if (!trimmed) throw new Error("API key 不能为空")
+    if (!CONFIGURABLE_PROVIDERS.some((spec) => spec.id === providerID))
+      throw new Error(
+        `未知 provider ${providerID}。可配置:${CONFIGURABLE_PROVIDERS.map((spec) => spec.id).join(", ")}`,
+      )
+    writeAuthKey(providerID, trimmed)
+    this.invalidateModels()
+    return this.providers()
+  }
+
+  /** 移除一个 provider 的 key。同样丢弃模型目录缓存。 */
+  async removeAuth(providerID: string): Promise<ProviderInfo[]> {
+    removeAuthKey(providerID)
+    this.invalidateModels()
+    return this.providers()
+  }
+
+  private invalidateModels(): void {
+    this.models = undefined
+    this.defaultModel = undefined
+    this.modelError = undefined
   }
 
   /**
