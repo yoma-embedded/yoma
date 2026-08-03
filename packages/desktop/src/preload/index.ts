@@ -20,16 +20,49 @@ const updaterHandler = (_: unknown, state: UpdaterState) => {
  * 窗口 reload 之后端口会失效 —— 这里主动 invoke("kernel-attach") 让 main 重新牵一次线,
  * 内核那边会回一个 kernel.connected,前端据此重新 bootstrap。
  */
+type KernelFrameOut = { kind: "request"; id: number; method: string; params: unknown }
+
 const kernelPending = new Map<number, { resolve(value: unknown): void; reject(error: unknown): void }>()
 const kernelListeners = new Set<(events: unknown[]) => void>()
 let kernelPort: MessagePort | undefined
 let kernelNextId = 1
+
+/**
+ * 端口到达之前发出的请求。
+ *
+ * 这是一个 **真实存在的竞态**:renderer 的 provider 树一挂载就开始拉数据,而
+ * `kernel-port` 是一条 IPC 消息,到达时机不受 renderer 控制。第一版这里直接
+ * reject("内核通道尚未建立"),结果 app 启动即崩 —— 而且是随机的,取决于哪个先到。
+ *
+ * 正确做法是 **排队**:请求先攒着,端口一到全部冲出去。调用方完全感知不到这件事。
+ */
+const kernelQueue: KernelFrameOut[] = []
+/** 攒太久说明内核压根没起来,给个上限把"永远转圈"变成一条能看懂的错误。 */
+const KERNEL_ATTACH_TIMEOUT_MS = 30_000
+let kernelAttached = false
+
+function flushKernelQueue() {
+  if (!kernelPort) return
+  const queued = kernelQueue.splice(0)
+  for (const frame of queued) kernelPort.postMessage(frame)
+}
+
+setTimeout(() => {
+  if (kernelAttached) return
+  const error = new Error("内核通道 30 秒内没有建立 —— 内核进程可能启动失败,看主进程日志")
+  for (const [id, entry] of [...kernelPending]) {
+    kernelPending.delete(id)
+    entry.reject(error)
+  }
+  kernelQueue.length = 0
+}, KERNEL_ATTACH_TIMEOUT_MS)
 
 ipcRenderer.on("kernel-port", (event) => {
   const port = event.ports[0]
   if (!port) return
   kernelPort?.close()
   kernelPort = port
+  kernelAttached = true
   port.onmessage = (message: MessageEvent) => {
     const frame = message.data as
       | { kind: "response"; id: number; result?: unknown; error?: { message: string; data?: unknown } }
@@ -53,18 +86,19 @@ ipcRenderer.on("kernel-port", (event) => {
     else entry.resolve(frame.result)
   }
   port.start()
+  // 端口来了,把攒着的请求一次性冲出去。窗口 reload 之后重新 attach 也走这条路。
+  flushKernelQueue()
 })
 
 const kernel = {
   request(method: string, params: unknown) {
     return new Promise((resolve, reject) => {
-      if (!kernelPort) {
-        reject(new Error("内核通道尚未建立"))
-        return
-      }
       const id = kernelNextId++
+      const frame: KernelFrameOut = { kind: "request", id, method, params }
       kernelPending.set(id, { resolve, reject })
-      kernelPort.postMessage({ kind: "request", id, method, params })
+      // 没端口不是错误,是"还没到" —— 排队,别 reject。
+      if (kernelPort) kernelPort.postMessage(frame)
+      else kernelQueue.push(frame)
     })
   },
   subscribe(handler: (events: unknown[]) => void) {

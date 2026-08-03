@@ -49,13 +49,29 @@ function broadcast(events: KernelEvent[]): void {
   }
 }
 
+/**
+ * host 就绪的闸门。
+ *
+ * `attach` 可能早于 `start` 到达(两条独立的 postMessage,顺序不由我们决定)。
+ * 早期版本这里写的是 `host?.handle(...)` —— host 还不存在时它 **静默 resolve 成
+ * undefined**,renderer 拿到一个空结果却以为成功了,比直接报错糟得多。
+ * 现在改成等 host 起来再处理,请求最多是慢一点,不会变成假答案。
+ */
+let hostReady: (() => void) | undefined
+const whenHostReady = new Promise<void>((resolve) => {
+  hostReady = resolve
+})
+
 function attach(port: MessagePortLike): void {
   const onMessage = (event: { data: unknown }) => {
     const frame = event.data as KernelFrame | undefined
     if (!frame || frame.kind !== "request") return
     const { id, method, params } = frame
-    Promise.resolve()
-      .then(() => host?.handle(method as never, params as never))
+    whenHostReady
+      .then(() => {
+        if (!host) throw new Error("内核 host 未初始化")
+        return host.handle(method as never, params as never)
+      })
       .then(
         (result) => port.postMessage({ kind: "response", id, result } satisfies KernelFrame),
         (error: unknown) =>
@@ -96,7 +112,10 @@ if (parentPort) {
         version: command.version,
         onEvents: broadcast,
       })
+      hostReady?.()
       parentPort.postMessage({ type: "ready" })
+      // start 可能晚于 attach 到达 —— 那些先挂上的端口现在才等到 host,补一次 resync。
+      host.resync()
       return
     }
     if (data?.type === "attach") {

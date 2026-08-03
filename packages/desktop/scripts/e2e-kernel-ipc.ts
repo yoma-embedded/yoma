@@ -52,6 +52,21 @@ app.whenReady().then(async () => {
     })
   })
 
+  // **刻意在 start 之前就 attach 并发请求** —— 这是实机崩溃的那个顺序:
+  // attach 和 start 是两条独立的 postMessage,到达顺序不由我们决定。
+  // 早期版本 host 还不存在时 `host?.handle()` 会静默 resolve 成 undefined,
+  // renderer 拿到空结果却以为成功了。
+  const earlyChannel = new MessageChannelMain()
+  child.postMessage({ type: "attach" }, [earlyChannel.port1])
+  earlyChannel.port2.start()
+  const earlyAnswer = new Promise<any>((resolve) => {
+    earlyChannel.port2.on("message", (event) => {
+      const frame = event.data as { kind: string; id: number; result?: unknown; error?: { message: string } }
+      if (frame?.kind === "response" && frame.id === 999) resolve(frame)
+    })
+  })
+  earlyChannel.port2.postMessage({ kind: "request", id: 999, method: "app.info", params: undefined })
+
   child.postMessage({
     type: "start",
     sessionsRoot,
@@ -105,6 +120,18 @@ app.whenReady().then(async () => {
   }
 
   try {
+    // 先验竞态:那条抢跑的请求必须拿到真实结果,不能是 undefined 也不能报错。
+    const early = await Promise.race([
+      earlyAnswer,
+      new Promise((resolve) => setTimeout(() => resolve({ error: { message: "抢跑请求 5 秒无响应" } }), 5_000)),
+    ])
+    check(
+      "start 之前抢跑的请求也能拿到真实结果",
+      Boolean((early as any)?.result?.version === "e2e"),
+      (early as any)?.error?.message ?? JSON.stringify((early as any)?.result ?? null),
+    )
+    earlyChannel.port2.close()
+
     const info = await request("app.info", undefined)
     check("app.info 走通 MessagePort", info?.version === "e2e", `node ${info?.node}`)
 
