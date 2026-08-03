@@ -1,6 +1,7 @@
 node_modules/
 out/
 dist/
+.engines-stage/
 .turbo/
 *.tsbuildinfo
 .ts-dist/

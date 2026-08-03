@@ -32,6 +32,16 @@ const channel = (() => {
   return "dev"
 })()
 
+// 有 Apple 公证凭据(notarytool 的两种喂法之一)才开公证;没有就出"未公证包" ——
+// 本机能跑,发给别人要右键打开或 `xattr -cr`。这样没有开发者账号的机器照样能出包,
+// 凭据以后配齐了(APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID,或
+// APPLE_KEYCHAIN_PROFILE)不改一行代码自动升级成完整签名+公证。
+// 签名本身不用管:钥匙串里有 Developer ID 证书 electron-builder 自动用,
+// 没有就落到 ad-hoc(arm64 上必须至少 ad-hoc,不能真的"无签名")。
+const hasAppleNotaryCreds = Boolean(
+  (process.env.APPLE_ID && process.env.APPLE_APP_SPECIFIC_PASSWORD) || process.env.APPLE_KEYCHAIN_PROFILE,
+)
+
 // Owner of the GitHub repos the packaged app checks for auto-updates
 // (yoma-embedded/yoma-desktop, and yoma-embedded/yoma-desktop-beta for the beta channel).
 // Override the owner via env at release time if needed, e.g. YOMA_GH_OWNER=other-org.
@@ -59,26 +69,24 @@ const getBase = (appId: string): Configuration => ({
   },
   files: ["out/**/*", "resources/**/*"],
   extraResources: [
-    {
-      from: "native/",
-      to: "native/",
-      filter: ["index.js", "index.d.ts", "build/Release/mac_window.node", "swift-build/**"],
-    },
+    // opencode 时代这里还有一个 native/(mac_window.node + swift-build)条目,
+    // fork 后该目录已不存在,源码里也无引用,引用一个不存在的 from 会让打包绊倒。
     // 嵌入式引擎(stm32kernel / probe-rs / controller_map / board_ir / connections)
     // 和 stm32 数据包。**必须走 extraResources 而不是 files** —— 它们是原生可执行文件,
     // 打进 asar 之后不能直接 spawn,而 my-pi 的工具就是 argv 进 JSON 出的黑盒 CLI。
     // 运行时由 main/index.ts 的 resolveEnginesDir() 解析到 process.resourcesPath/engines。
     //
-    // 开发期仓库根的 engines 是指向 ../my-pi/engines 的软链,而 engines/bin 与
-    // engines/data 里又是指向各引擎构建产物的软链。electron-builder 会 dereference,
-    // 所以打包机上必须先跑过 `bun engines/build.ts`,否则这里会是空的 —— 而且不会报错,
-    // 只会在用户第一次点烧录时才炸。CI 里要显式校验这两个目录非空。
+    // **不能直接指向仓库根的 engines/**:那里面全是软链,而 electron-builder 对
+    // extraResources 里的软链是**原样保留**(实测:.app 里出现指向
+    // ../controller_map/.venv/bin/... 的断链,签名阶段 stat ENOENT)。所以 package:*
+    // 脚本先跑 scripts/stage-engines.ts 校验并**实体化**到 .engines-stage/,这里只认
+    // 暂存目录。空目录/悬空软链在 stage 一步就响,不会打出静默的坏包。
     {
-      from: "../../engines/bin/",
+      from: ".engines-stage/bin/",
       to: "engines/bin/",
     },
     {
-      from: "../../engines/data/",
+      from: ".engines-stage/data/",
       to: "engines/data/",
     },
   ],
@@ -89,11 +97,18 @@ const getBase = (appId: string): Configuration => ({
     gatekeeperAssess: false,
     entitlements: "resources/entitlements.plist",
     entitlementsInherit: "resources/entitlements.plist",
-    notarize: true,
+    notarize: hasAppleNotaryCreds,
+    // engines/data 是给单片机的固件包/芯片数据库/文档,不是 macOS 二进制
+    // (里面的 .elf 是 ARM Cortex-M 的,公证也不看)。不跳过的话,签名器会把
+    // 几万个数据文件逐个 codesign,一次打包跑几个小时。engines/bin 正常签。
+    // schema 只收字符串(按正则源解释),不收 RegExp 对象。
+    signIgnore: ["Resources/engines/data"],
     target: ["dmg", "zip"],
   },
   dmg: {
-    sign: true,
+    // dmg 本身不签:公证盖章打在 .app 上,dmg 签名是可选项,而它在没有
+    // Developer ID 证书的机器上会让整次打包直接失败。
+    sign: false,
   },
   protocols: {
     name: "Yoma",

@@ -176,7 +176,10 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
   `getSupportedThinkingLevels(model)` 去问,编错的后果是档位能选但发不出去。
 
 模型凭据复用 my-pi 的 `resolveModel()` → `~/.pi/agent/auth.json`,也就是配 pi/Zed 时
-已经填好的那份。桌面端零配置就能开跑。
+已经填好的那份 —— 配过的机器零配置开跑。没配过的机器走应用内表单:`host/auth.ts`
+是写入端,写的就是同一份文件(`auth.set` 后丢弃模型目录缓存,新会话即可用新 key);
+provider 目录在无 key 时来自 `CONFIGURABLE_PROVIDERS`(my-pi `PROVIDERS` 表的结构化
+复制,防漂移测试在 `host/auth.test.ts`)。
 
 ## 约定与规矩
 
@@ -204,8 +207,17 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
   "去跑 `bun engines/build.ts`",让你以为是没编译。仓库根的 `engines` 是指向
   `../my-pi/engines` 的软链。
 - **打包前必须先在 my-pi 仓库跑过 `bun engines/build.ts`**。`engines/bin` 与 `engines/data`
-  里全是软链,electron-builder 会 dereference —— 没构建过就打出一个空目录,
-  **而且不报错**,只在用户第一次点烧录时才炸。
+  里全是软链,而 electron-builder 对 extraResources 里的软链 **原样保留、不 dereference**
+  (实测:.app 里出现断链,签名阶段 stat ENOENT)。所以 `package:*` 脚本链了
+  `scripts/stage-engines.ts`:校验(空目录/悬空软链直接失败)+ 实体化到
+  `.engines-stage/`,extraResources 只认暂存目录。Python 三件套
+  (board_ir/connections/controller_map)是 venv console script,shebang 指向构建机
+  绝对路径,**拷到别人电脑必坏** —— 校验只能警告,根治要 my-pi 的 engines/build.ts
+  产出自包含产物(别在本仓修,那是内核的事)。
+- **Bun 的 `os.homedir()` 在进程启动时定死**,运行时改 `process.env.HOME` 对它无效。
+  想在测试里隔离 `~/.pi/agent/auth.json` 这类真实凭据文件,要么走函数的 dir 注入参数,
+  要么起一个出生时就带干净 HOME 的子进程(见 `host/auth.test.ts`)。实测踩过:
+  以为换了 HOME,实际把开发机真实的 auth.json 洗掉了。
 - **内核没有 HMR。** 改了 my-pi 之后必须重启 `bun dev:desktop`。
 - **这是一个 fork**:很多存储键/标题/appId 还写着 `opencode`(localStorage `opencode.*`、
   运行时 app id `ai.opencode.desktop` vs bundle id `com.yoma.desktop`)——
@@ -219,8 +231,11 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
   `serverReady` 用占位值立刻 resolve)。清除它是独立一件事。
 - **终端(PTY)没有实现** —— my-pi 的 `NodeExecutionEnv.exec` 是一次性 spawn,不是伪终端。
   相关设置行现在是退化状态而不是造假。
-- **应用内凭据界面没有做** —— `auth.set`/`auth.remove` 明确抛错并指向
-  `~/.pi/agent/auth.json`,而不是假装成功后让用户对着一个不生效的表单困惑。
+- **Python 引擎不可移植**(见"会咬人的地方"):打出的包里 board_ir/connections/
+  controller_map 出了构建机就是坏的,等 my-pi 侧做自包含构建。
+- **mac 签名/公证没配**:electron-builder 配置在没有 Apple 凭据时自动降级为
+  未公证包(用户要右键打开);配齐 `APPLE_ID`+`APPLE_APP_SPECIFIC_PASSWORD`+
+  `APPLE_TEAM_ID`(或 `APPLE_KEYCHAIN_PROFILE`)即自动恢复,无需改代码。
 - 每轮的 diff 汇总留空了。要做的话应该从 `edit`/`write` 工具的 `details.patch` 合成,
   而不是找回 opencode 的文件快照(内核没有快照)。
 - i18n 仍有 19 个 locale;非中英的那些和内核无关,可以另行瘦身。
