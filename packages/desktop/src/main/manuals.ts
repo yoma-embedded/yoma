@@ -10,6 +10,7 @@
 
 import { app, ipcMain } from "electron"
 import type { IpcMainInvokeEvent } from "electron"
+import { DEFAULT_DATASHEET_SERVER } from "./datasheet-server.ts"
 import { spawn, type ChildProcess } from "node:child_process"
 import { createHash } from "node:crypto"
 import { once } from "node:events"
@@ -78,7 +79,8 @@ function artifactsRoot(): string {
   return envVar("YOMA_DATASHEET_ARTIFACTS") ?? path.join(configHome(), "datasheet-artifacts")
 }
 function serverUrl(): string | null {
-  return envVar("YOMA_DATASHEET_SERVER")?.replace(/\/+$/, "") ?? null
+  // 团队服务器地址固定,产品要求下载即用 —— env / .env 都没配时落到内置默认。
+  return envVar("YOMA_DATASHEET_SERVER")?.replace(/\/+$/, "") ?? DEFAULT_DATASHEET_SERVER
 }
 function ragRepo(): string | null {
   return envVar("YOMA_RAG_REPO") ?? null

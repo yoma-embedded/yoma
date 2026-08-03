@@ -11,6 +11,11 @@
 
 import { createKernelHost, kernelSelfCheck, type KernelHost } from "@yoma-desktop/kernel/host"
 import type { KernelEvent, KernelFrame } from "@yoma-desktop/kernel"
+import { ensureDatasheetServerEnv } from "./datasheet-server.ts"
+
+// my-pi 的 datasheet 工具只读 process.env,而用户不该配环境变量 —— 默认值在这里兜。
+// 工具是调用时读,所以入口处设一次就覆盖内核进程的整个生命周期。
+ensureDatasheetServerEnv()
 
 type StartCommand = {
   type: "start"
