@@ -218,6 +218,11 @@ provider 目录在无 key 时来自 `CONFIGURABLE_PROVIDERS`(my-pi `PROVIDERS` �
   想在测试里隔离 `~/.pi/agent/auth.json` 这类真实凭据文件,要么走函数的 dir 注入参数,
   要么起一个出生时就带干净 HOME 的子进程(见 `host/auth.test.ts`)。实测踩过:
   以为换了 HOME,实际把开发机真实的 auth.json 洗掉了。
+- **打包 app 不能用"假 HOME"模拟新用户**(实测):Electron 主进程的 userData/crashpad
+  走系统 API 拿真实家目录(不理 `$HOME`),而 macOS 钥匙串查找**跟着 `$HOME` 走** ——
+  结果是数据落真实位置、钥匙串却"找不到",Chromium 初始化 safeStorage 时弹系统级
+  "找不到钥匙串"对话框,app 几秒后安静退出。两边语义相反,假 HOME 两头都不干净。
+  验证打包产物就用真实 HOME;无 key 首跑路径由 `host/auth.test.ts` 的子进程 e2e 覆盖。
 - **内核没有 HMR。** 改了 my-pi 之后必须重启 `bun dev:desktop`。
 - **这是一个 fork**:很多存储键/标题/appId 还写着 `opencode`(localStorage `opencode.*`、
   运行时 app id `ai.opencode.desktop` vs bundle id `com.yoma.desktop`)——

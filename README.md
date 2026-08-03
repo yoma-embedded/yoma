@@ -182,7 +182,32 @@ bun dev:desktop                # 启动桌面应用（带界面热更新）
 
 > ⚠️ 自动更新要能工作，发布用的仓库需**存在且能被应用读取**：electron-updater 的 GitHub provider 默认读**公开** Release。所以若 `yoma-embedded/yoma-desktop` 是私有仓库，自动更新会拿不到（需改用公开的发布仓库、或自建更新服务器）。用 beta 渠道前，先建好 `yoma-desktop-beta` 仓库。
 
-打包：`bun package:win`（或 `:mac` / `:linux`）。渠道用环境变量 `OPENCODE_CHANNEL`（`dev` / `beta` / `prod`）控制。
+### 出一个 mac 安装包（已实测跑通）
+
+```bash
+# 0) 前提：在 my-pi 仓库跑过 bun engines/build.ts。
+#    package 脚本会先跑 scripts/stage-engines.ts：校验 + 把 engines 实体化到
+#    .engines-stage/（空目录 / 悬空软链直接失败，不会打出静默的坏包）。
+OPENCODE_CHANNEL=prod bun build:desktop
+OPENCODE_CHANNEL=prod bun --cwd packages/desktop package:mac
+# 产物：packages/desktop/dist/yoma-mac-arm64.dmg（分发用）
+#      + yoma-mac-arm64.zip / *.blockmap / latest-mac.yml（自动更新要上传的三件）
+```
+
+- **签名/公证**：机器上没有 Apple 公证凭据时自动出**未公证包**——照常能用，但接收者第一次打开要
+  右键 →「打开」（Gatekeeper）。配齐 `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID`
+  （或 `APPLE_KEYCHAIN_PROFILE`），且钥匙串里有 **Developer ID Application** 证书，同一条命令
+  自动升级为完整签名 + 公证，用户双击即开。
+- **发布一个版本**（手动）：GitHub 建好公开仓后
+  `gh release create vX.Y.Z dist/yoma-mac-arm64.dmg dist/yoma-mac-arm64.zip dist/yoma-mac-arm64.zip.blockmap dist/latest-mac.yml`。
+  已装用户的 app 每 10 分钟查一次更新，菜单里也能手动查。发布前记得抬
+  `packages/desktop/package.json` 的 `version`。
+- **已知限制**：engines 里的 Python 三件套（board_ir / connections / controller_map）目前是
+  venv 脚本，装到别的电脑上必坏（打包时会有响亮警告），要等 my-pi 的 `engines/build.ts`
+  产出自包含产物；Windows / Linux 包同理需要对应平台的引擎产物，目前只有 mac-arm64。
+
+其他平台：`bun package:win` / `bun package:linux`（引擎产物就位后）。渠道用环境变量
+`OPENCODE_CHANNEL`（`dev` / `beta` / `prod`）控制。
 
 ---
 
