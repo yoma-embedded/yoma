@@ -13,7 +13,8 @@
     "package:mac": "bun --cwd packages/desktop package:mac",
     "package:linux": "bun --cwd packages/desktop package:linux",
     "typecheck": "bun turbo typecheck",
-    "lint": "oxlint"
+    "lint": "oxlint",
+    "use-mypi": "bun ./scripts/use-mypi.ts"
   },
   "workspaces": {
     "packages": ["packages/*"],

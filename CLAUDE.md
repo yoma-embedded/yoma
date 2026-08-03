@@ -30,11 +30,31 @@ Yoma Desktop 是一个 Electron 桌面端,UI 用 SolidJS。它 **fork 自 openco
 
 | 位置 | 谁用 |
 |---|---|
-| `packages/kernel/mypi.ts` 的 `MY_PI_ALIASES` | 打包期(electron-vite / esbuild) |
-| `tsconfig.mypi.json` 的 `paths` | typecheck(tsgo),被 kernel/desktop 继承 |
+| `tsconfig.mypi.json` 的 `paths` | typecheck(tsgo),被 kernel/desktop 继承 —— **位置的真源** |
 | `packages/kernel/tsconfig.json` 里 **内联** 的同一份 | `bun test` —— bun 不跟随数组形式的 `extends` |
+| `packages/kernel/mypi.ts` 的 `MY_PI_ALIASES` | 打包期(electron-vite / esbuild),根目录从第一份反推 |
 
 pi-ai 的 path 必须指向 **`dist/index.js` 而不是 `.d.ts`**:bun 会照着 paths 真去加载那个文件。
+
+### 换一个 my-pi 检出(worktree)
+
+```
+bun use-mypi                    # 看当前指向谁
+bun use-mypi ../my-pi/.claude/worktrees/xxx
+bun use-mypi --reset            # 回到 ../my-pi
+```
+
+它改的是两份 tsconfig,`mypi.ts` 自动跟上,`git diff` 里能一眼看见当前指向谁。
+
+**别只设 `MY_PI_DIR` 环境变量。** 它只能改到打包期那一份,结果是 **半切**:app 跑的是
+worktree 的代码,typecheck 和单测还在验旧检出,两边全绿而它们说的不是同一件事。
+
+也别试图用一条 `.mypi` 软链把三份统一(试过,退回来了):tsconfig 的 paths 走软链、而
+my-pi 内部的相对 import 走真实路径,TypeScript 会把同一个 `ProviderStreams` 当成两个
+类型(private 字段让它们名义上不兼容),typecheck 直接红。
+
+`engines` **不跟着切** —— 那是另一条软链,里面是编译产物不是源码,而 worktree 基本不会
+去跑 `bun engines/build.ts`。
 
 ## 仓库结构
 

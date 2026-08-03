@@ -9,9 +9,13 @@
  *
  * 三份不一致的后果是分裂的:构建能过但类型是错的,或者类型对但运行时找不到模块 ——
  * 都不会在改动的当下报错。所以用这个测试把它们钉死。
+ *
+ * 三份现在都穿过 `<repo>/.mypi` 软链,所以"换一个 my-pi 检出"是原子的:动软链,三份
+ * 一起走。只设 MY_PI_DIR 环境变量是半切(打包跟着走,typecheck 和本测试留在原地),
+ * 这个测试的最后一条就是专门用来在半切时炸响的。
  */
 import { describe, expect, test } from "bun:test"
-import { readFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -54,7 +58,17 @@ describe("my-pi 别名映射", () => {
   const inlined = resolvePaths(path.join(kernelDir, "tsconfig.json"))
 
   test("MY_PI_DIR 指向一个真的 my-pi 检出", () => {
-    expect(MY_PI_DIR.endsWith("my-pi")).toBe(true)
+    // 认标志文件,不认目录名 —— 换成 worktree 之后目录可能叫任何名字。
+    expect(existsSync(path.join(MY_PI_DIR, "packages/agent/src/index.ts"))).toBe(true)
+  })
+
+  test("tsconfig 里的路径在磁盘上真的存在(.mypi 悬空会在这里炸)", () => {
+    // 别的断言只比较字符串,三份可以一致地全指向一个不存在的地方 —— 软链断了、
+    // 或者指到一个不是 my-pi 的目录,typecheck 会安静地把模块解析成 any。
+    for (const [key, target] of Object.entries(shared)) {
+      if (key.includes("*")) continue
+      expect([key, existsSync(target)]).toEqual([key, true])
+    }
   })
 
   test("tsconfig.mypi.json 与 kernel/tsconfig.json 的内联副本一致", () => {
