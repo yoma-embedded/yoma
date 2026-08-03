@@ -21,7 +21,8 @@
     "package:linux": "electron-builder --linux --config electron-builder.config.ts",
     "native:build": "bun install --cwd native",
     "smoke": "bun ./scripts/kernel-smoke.ts",
-    "e2e:ipc": "bunx esbuild scripts/e2e-kernel-ipc.ts --bundle --platform=node --format=esm --external:electron --outfile=out/main/e2e-ipc.mjs --log-level=warning && YOMA_DESKTOP_DIR=\"$PWD\" ./node_modules/electron/dist/Electron.app/Contents/MacOS/Electron out/main/e2e-ipc.mjs"
+    "e2e:ipc": "bunx esbuild scripts/e2e-kernel-ipc.ts --bundle --platform=node --format=esm --external:electron --outfile=out/main/e2e-ipc.mjs --log-level=warning && YOMA_DESKTOP_DIR=\"$PWD\" ./node_modules/electron/dist/Electron.app/Contents/MacOS/Electron out/main/e2e-ipc.mjs",
+    "e2e:renderer": "bunx esbuild scripts/e2e-renderer-kernel.ts --bundle --platform=node --format=esm --external:electron --outfile=out/main/e2e-renderer.mjs --log-level=warning && YOMA_DESKTOP_DIR=\"$PWD\" ./node_modules/electron/dist/Electron.app/Contents/MacOS/Electron out/main/e2e-renderer.mjs"
   },
   "main": "./out/main/index.js",
   "dependencies": {

@@ -71,10 +71,15 @@ Bun workspace,`packages/` 下 5 个包:
 | `bun typecheck` | turbo 跑全部 6 个包 —— **必须常绿 6/6** |
 | `bun lint` | oxlint |
 | `bun --cwd packages/desktop smoke` | 内核冒烟:对 **构建产物** 验证 11 个工具 + 5 个引擎二进制 |
-| `bun --cwd packages/desktop e2e:ipc` | 生产路径:真 utilityProcess + 真 MessagePort + 真协议帧 |
+| `bun --cwd packages/desktop e2e:ipc` | 生产路径:真 utilityProcess + 真 MessagePort + 真协议帧(不开窗口) |
+| `bun --cwd packages/desktop e2e:renderer` | 最后一跳:真窗口 + 真 preload + **真 contextBridge** |
 
-后两个是 CI 里唯一能挡住"my-pi 一次重构悄悄搞死桌面端"的东西 —— 我们是把它整个 inline
+后三个是 CI 里唯一能挡住"my-pi 一次重构悄悄搞死桌面端"的东西 —— 我们是把它整个 inline
 进 bundle 的,内核的改动可以在我们这边零编译错误地把 app 弄坏,直到用户点下去才发现。
+
+`e2e:renderer` 单独存在是因为 **contextBridge 是一道序列化边界**,而它的失效是运行时行为:
+typecheck 全绿、单测全绿、`e2e:ipc` 全绿,照样可以在这一跳把结构化错误剥成一句话
+(见"会咬人的地方")。只有真起一个窗口、让值真的穿过去才看得见。
 
 ### 测试
 
@@ -101,8 +106,11 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
   log capture 都是 **模块级全局**,分片 fork 会让两个进程各自以为自己独占探针。
 - **MessagePort 不能过 contextBridge**,所以端口留在 preload world,只暴露
   `{request, subscribe, reattach}`(形状就是 `KernelTransport`)。
+- **失败也不能用 Error 过 contextBridge**,只能用普通对象 —— 见"会咬人的地方"。
 - **attach 必须挂在 `did-finish-load` 上**,不能只在建窗时调一次。每次 reload
   renderer 的端口都会失效,不重新牵线就是一个哑通道 —— 不报错,表现为"点什么都没反应"。
+- **请求可能早于端口到达**(provider 树一挂载就拉数据,而 `kernel-port` 是一条 IPC 消息)。
+  preload 里排队,不 reject —— 直接 reject 的那一版是启动即崩,而且随机。
 
 ### 投影器:my-pi 的模型 → 前端认得的形状
 
@@ -164,6 +172,13 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
 
 ## 会咬人的地方
 
+- **contextBridge 会把 Error 剥成一句话。** Electron 在 world 之间重建 Error 时只保留
+  `message` 和 `stack`,自定义属性和 `cause` **全丢**(实测 `getOwnPropertyNames` 只剩
+  `["stack","message"]`)。所以 preload 的内核请求失败时 reject 的是 **普通对象**
+  `{ message, stack, data }`,不是 Error —— 包成 Error 就等于把 `data` 扔进黑洞。
+  实机代价:host 标好的 `data._tag = "SessionNotFoundError"` 蒸发,前端把"上个版本残留的
+  标签页"当成致命错误,整个 app 崩到错误页。这一跳由 `e2e:renderer` 钉住,**类型系统永远
+  抓不到**。
 - **engines 目录必须显式传**,别依赖 my-pi 的 `enginesDir()` 向上查找 —— 它只认
   "名字叫 engines 且存在",会高高兴兴找到一个没有 `bin/` 的空壳,然后报
   "去跑 `bun engines/build.ts`",让你以为是没编译。仓库根的 `engines` 是指向

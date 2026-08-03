@@ -22,7 +22,25 @@ const updaterHandler = (_: unknown, state: UpdaterState) => {
  */
 type KernelFrameOut = { kind: "request"; id: number; method: string; params: unknown }
 
-const kernelPending = new Map<number, { resolve(value: unknown): void; reject(error: unknown): void }>()
+/**
+ * 内核请求失败时抛给 renderer 的形状。
+ *
+ * **必须是普通对象,不能是 Error** —— 这是本文件最反直觉、也最贵的一条规矩。
+ *
+ * Electron 在 world 之间重建 Error 时只保留 `message` 和 `stack`,自定义属性和 `cause`
+ * **全部丢掉**(实测 `Object.getOwnPropertyNames(err)` 只剩 `["stack","message"]`)。
+ * 于是 host 侧标好的 `data._tag === "SessionNotFoundError"` 在 contextBridge 这一层
+ * 静默蒸发,前端只能把"上个版本残留的标签页"当成致命错误,整个 app 崩到错误页。
+ *
+ * 普通对象是照原样克隆过去的,`data` 能活下来。client.ts 的 `call()` 本来就是按
+ * `{ message, stack, data }` 读的,所以这边换形状,那边一个字都不用改。
+ *
+ * 回归由 `scripts/e2e-renderer-kernel.ts` 兜住 —— 真窗口、真 preload、真内核进程。
+ * 这个失效是运行时序列化行为,类型系统永远抓不到,只能用真跑的测试钉住。
+ */
+type KernelFailure = { message: string; stack?: string; data?: unknown }
+
+const kernelPending = new Map<number, { resolve(value: unknown): void; reject(error: KernelFailure): void }>()
 const kernelListeners = new Set<(events: unknown[]) => void>()
 let kernelPort: MessagePort | undefined
 let kernelNextId = 1
@@ -49,10 +67,10 @@ function flushKernelQueue() {
 
 setTimeout(() => {
   if (kernelAttached) return
-  const error = new Error("内核通道 30 秒内没有建立 —— 内核进程可能启动失败,看主进程日志")
+  const failure: KernelFailure = { message: "内核通道 30 秒内没有建立 —— 内核进程可能启动失败,看主进程日志" }
   for (const [id, entry] of [...kernelPending]) {
     kernelPending.delete(id)
-    entry.reject(error)
+    entry.reject(failure)
   }
   kernelQueue.length = 0
 }, KERNEL_ATTACH_TIMEOUT_MS)
@@ -65,7 +83,7 @@ ipcRenderer.on("kernel-port", (event) => {
   kernelAttached = true
   port.onmessage = (message: MessageEvent) => {
     const frame = message.data as
-      | { kind: "response"; id: number; result?: unknown; error?: { message: string; data?: unknown } }
+      | { kind: "response"; id: number; result?: unknown; error?: { message: string; stack?: string; data?: unknown } }
       | { kind: "push"; events: unknown[] }
       | undefined
     if (!frame) return
@@ -76,13 +94,9 @@ ipcRenderer.on("kernel-port", (event) => {
     const entry = kernelPending.get(frame.id)
     if (!entry) return
     kernelPending.delete(frame.id)
-    if (frame.error) {
-      // 必须把 data 一起带上 —— 只重建 message 的话,结构化信息(比如"会话不存在")
-      // 就在这一层丢了,前端只能把它当成致命错误。这是整条链上最容易漏掉的一环。
-      const error = new Error(frame.error.message) as Error & { data?: unknown }
-      if (frame.error.data) error.data = frame.error.data
-      entry.reject(error)
-    }
+    // 原封不动往下传,**不要包成 Error** —— 见 KernelFailure 的说明,包了就等于把
+    // data 丢进黑洞。
+    if (frame.error) entry.reject({ message: frame.error.message, stack: frame.error.stack, data: frame.error.data })
     else entry.resolve(frame.result)
   }
   port.start()
