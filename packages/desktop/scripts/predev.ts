@@ -2,5 +2,5 @@ import { $ } from "bun"
 
 await $`bun ./scripts/copy-icons.ts ${process.env.OPENCODE_CHANNEL ?? "dev"}`
 
-// The server bundle is provided by the @yoma-desktop/opencode-server dependency
-// (built in the backend repo via `bun publish/build-server.ts`), not built here.
+// 后端内核是 ../my-pi 的源码,由 electron-vite 在构建期 inline 进 out/main/kernel.js
+// (见 packages/kernel/mypi.ts)。这里不需要准备任何后端产物。
