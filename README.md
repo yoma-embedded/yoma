@@ -256,6 +256,10 @@ bun --cwd packages/desktop package:win
 照常能用，但 Python 三件套仍会坏（uv 生成的 exe 启动器内嵌 venv 绝对路径）——
 对外分发的根治依旧是 my-pi 侧产出自包含 exe。
 
+排坑（2026-08-04 首次 Windows 实跑验证过整条链）：如果 yoma-desktop 是**以前 clone 的**，
+检查 `git config --local core.symlinks` —— 旧 clone 可能留了 `false` 覆盖全局设置，
+`git config --local --unset core.symlinks` 后 `git checkout -- engines` 才能还原根软链。
+
 引擎缺位时的逃生口：`YOMA_ALLOW_FOREIGN_ENGINES=1` 强行出包，仅用于验证安装器流程本身，
 **不能分发**。另外两点：无签名 exe 会被 SmartScreen 拦（「更多信息 → 仍要运行」），要消除
 得买 Windows 代码签名证书；CI 签名脚本位 `script/sign-windows.ps1` 目前不存在，上

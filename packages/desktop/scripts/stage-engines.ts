@@ -167,7 +167,11 @@ for (const name of staged) {
   const file = path.join(stageDir, "bin", name)
   const stat = statSync(file)
   if (!stat.isFile()) fail(`.engines-stage/bin/${name} 不是普通文件`)
-  if ((stat.mode & 0o111) === 0) fail(`.engines-stage/bin/${name} 丢了可执行位`)
+  // 可执行位断言只在 POSIX 构建机上有意义:NTFS 没有执行位,Node 在 win32 对普通
+  // 文件恒返回 100666,chmod 也改不动(Windows 打包机上实测)—— 不守卫的话这条
+  // 断言在 Windows 上永远失败,还把人误导去重跑引擎构建。
+  if (process.platform !== "win32" && (stat.mode & 0o111) === 0)
+    fail(`.engines-stage/bin/${name} 丢了可执行位`)
 }
 
 console.log(`[stage-engines] 通过:${staged.length} 个引擎(${staged.join(", ")})已实体化到 .engines-stage/`)
