@@ -32,6 +32,8 @@ export type FollowupDraft = {
   prompt: Prompt
   context: (ContextItem & { key: string })[]
   model: { providerID: string; modelID: string }
+  /** thinking 档位(存档键沿用 variant 这个名字)。null/undefined = 不设。 */
+  variant?: string | null
 }
 
 type FollowupSendInput = {
@@ -115,6 +117,16 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
       return false
     }
 
+    // 把 UI 的模型选择**真正下发**给内核 —— prompt 协议不携带模型,不下发的话内核
+    // 一直用自己的默认(~/.pi/agent/settings.json),UI 的选择只是乐观消息上的贴纸
+    // (实测踩过:选 V4 Flash 实际跑的是 V4 Pro)。setModel 幂等、纯本地 IPC,
+    // 放在每次发送前顺便覆盖排队后补发的场景。
+    await input.client.session.setModel({
+      sessionID: input.draft.sessionID,
+      providerID: input.draft.model.providerID,
+      modelID: input.draft.model.modelID,
+      thinking: input.draft.variant ?? undefined,
+    })
     await input.client.session.prompt(input.draft.sessionID, promptInput)
     return true
   } catch (err) {
@@ -304,6 +316,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       prompt: currentPrompt,
       context,
       model,
+      variant: local.model.variant.current() ?? null,
     }
 
     const clearInput = () => {

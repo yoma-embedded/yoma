@@ -7,7 +7,8 @@ const DIRECTORY = "/repo/main"
 
 const createdSessions: string[] = []
 const enabledAutoAccept: Array<{ sessionID: string; directory: string }> = []
-const sentPrompts: Array<{ sessionID: string; text: string }> = []
+const sentPrompts: Array<{ sessionID: string; text: string; setModelCallsBefore: number }> = []
+const setModelCalls: Array<{ sessionID: string; providerID: string; modelID: string; thinking?: string }> = []
 const optimistic: Array<{
   directory?: string
   sessionID?: string
@@ -56,8 +57,14 @@ const kernelClient = {
         time: { created: 0, updated: 0 },
       }
     },
+    // 发送前必须先 setModel:prompt 协议不带模型,不下发的话内核用自己的默认,
+    // UI 的选择就只是乐观消息上的贴纸。这里记录调用顺序供断言。
+    setModel: async (params: { sessionID: string; providerID: string; modelID: string; thinking?: string }) => {
+      setModelCalls.push(params)
+      return { id: params.sessionID }
+    },
     prompt: async (sessionID: string, input: { text: string }) => {
-      sentPrompts.push({ sessionID, text: input.text })
+      sentPrompts.push({ sessionID, text: input.text, setModelCallsBefore: setModelCalls.length })
       return { messageID: "message-1" }
     },
     abort: async () => undefined,
@@ -85,6 +92,9 @@ beforeAll(async () => {
     useLocal: () => ({
       model: {
         current: () => ({ id: "model", provider: { id: "provider" } }),
+        variant: {
+          current: () => "high",
+        },
       },
       session: {
         promote(directory: string, sessionID: string) {
@@ -213,6 +223,7 @@ beforeEach(() => {
   createdSessions.length = 0
   enabledAutoAccept.length = 0
   sentPrompts.length = 0
+  setModelCalls.length = 0
   optimistic.length = 0
   optimisticSeeded.length = 0
   promoted.length = 0
@@ -259,7 +270,7 @@ describe("prompt submit", () => {
 
     expect(createdSessions).toEqual([DIRECTORY])
     expect(promoted).toEqual([{ directory: DIRECTORY, sessionID: "session-1" }])
-    expect(sentPrompts).toEqual([{ sessionID: "session-1", text: "ls" }])
+    expect(sentPrompts).toEqual([{ sessionID: "session-1", text: "ls", setModelCallsBefore: 1 }])
   })
 
   test("applies auto-accept to newly created sessions", async () => {
@@ -289,6 +300,23 @@ describe("prompt submit", () => {
     expect(optimistic[0]).toMatchObject({
       message: { model: { providerID: "provider", modelID: "model" } },
     })
+  })
+
+  test("发送前把选中的模型真正下发内核(setModel 先于 prompt)", async () => {
+    // 回归钉:曾经 draft.model 只喂乐观 UI,内核一直跑自己的默认模型 ——
+    // 选 V4 Flash 实际是 V4 Pro,"选择模型如同虚设"。
+    params = { id: "session-1" }
+    const submit = createPromptSubmit({ ...baseInput(), info: () => ({ id: "session-1" }) })
+
+    await submit.handleSubmit(event())
+    await flushMicrotasks()
+
+    expect(setModelCalls).toEqual([
+      { sessionID: "session-1", providerID: "provider", modelID: "model", thinking: "high" },
+    ])
+    expect(sentPrompts).toHaveLength(1)
+    // prompt 发出时 setModel 必须已经完成
+    expect(sentPrompts[0]!.setModelCallsBefore).toBe(1)
   })
 
   test("seeds new sessions before optimistic prompts are added", async () => {
