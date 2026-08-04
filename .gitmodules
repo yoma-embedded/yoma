@@ -1,9 +1,11 @@
 [submodule "engines/stm32-config-kernel"]
 	path = engines/stm32-config-kernel
 	url = git@github.com:yoma-embedded/stm32-config-kernel.git
+	branch = main
 [submodule "engines/controller_map"]
 	path = engines/controller_map
 	url = git@github.com:yoma-embedded/controller_map.git
+	branch = main
 [submodule "engines/probe-rs"]
 	path = engines/probe-rs
 	url = https://github.com/probe-rs/probe-rs.git
