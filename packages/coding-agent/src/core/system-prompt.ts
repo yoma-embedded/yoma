@@ -94,11 +94,12 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	}
 
 	// Build tools list based on selected tools.
-	// A tool appears in Available tools only when the caller provides a one-line snippet.
+	// Every registered tool must be listed so the model never has to guess its capabilities.
 	const tools = selectedTools || ["read", "bash", "edit", "write"];
-	const visibleTools = tools.filter((name) => !!toolSnippets?.[name]);
 	const toolsList =
-		visibleTools.length > 0 ? visibleTools.map((name) => `- ${name}: ${toolSnippets![name]}`).join("\n") : "(none)";
+		tools.length > 0
+			? tools.map((name) => (toolSnippets?.[name] ? `- ${name}: ${toolSnippets[name]}` : `- ${name}`)).join("\n")
+			: "(none)";
 
 	// Build guidelines based on which tools are actually available
 	const guidelinesList: string[] = [];
@@ -135,14 +136,35 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 
 	const guidelines = guidelinesList.map((g) => `- ${g}`).join("\n");
 
-	let prompt = `You are an expert coding assistant operating inside my-pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
+	let prompt = `You are Yoma, a coding and embedded-development agent.
+
+Use only the tools listed below. Do not invent unavailable tools or claim that an action was performed unless its tool result proves it.
+
+Working principles:
+- Inspect relevant files and existing conventions before changing code.
+- Solve the requested problem at its root while keeping changes scoped.
+- Preserve unrelated user changes.
+- After changes, run the most relevant available verification.
+- If verification cannot be performed, state exactly what remains unverified.
+- Continue until the requested task is complete or a concrete blocker is found.
+
+Evidence rules:
+- A file edit does not prove that the project builds.
+- A successful build does not prove that firmware was flashed.
+- Flash download/reset only proves programming and reset.
+- Runtime behavior requires evidence from log or gdb.
+- Register-level claims require datasheet evidence with page or section citations.
+- Never present assumptions, low-confidence netlist suggestions, or optimized-out debugger values as facts.
+
+Safety:
+- Do not perform destructive hardware actions such as chip erase unless explicitly requested.
+- Verify target chip, probe, and firmware path before programming.
+- Do not overwrite unrelated work or broaden the task without a clear reason.
 
 Available tools:
 ${toolsList}
 
-In addition to the tools above, you may have access to other custom tools depending on the project.
-
-Guidelines:
+Tool-specific rules:
 ${guidelines}`;
 
 	if (appendSection) {
