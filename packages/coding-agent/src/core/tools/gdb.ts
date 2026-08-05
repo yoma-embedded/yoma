@@ -39,11 +39,13 @@ import type { ExecutionEnv } from "@yoma/my-pi";
 import { type Static, Type } from "typebox";
 import {
 	claimProbe,
+	clamp,
 	describeProbeConflict,
 	type EnginePathOptions,
 	engineBin,
 	killTree,
 	releaseProbe,
+	stamp,
 	unrefStream as unref,
 } from "./engines.ts";
 import { readFlashState, sha256File } from "./flash.ts";
@@ -127,17 +129,12 @@ const SERVER_TAIL_LINES = 20;
 export interface ServerCaps {
 	/** 观察点:hw 表示可用,none 表示这个 server 根本不支持,要当场拒绝。 */
 	watchpoints: "hw" | "none";
-	/** 软断点(RAM 里)可用吗。没有就意味着断点全走 FPB,预算极紧。 */
-	softwareBreakpoints: boolean;
-	/** monitor 允许的词汇。空数组表示不要发 monitor。 */
-	monitor: readonly string[];
 	resetHalt?: string;
 	resetRun?: string;
 	/** RTT 能不能和 gdb 并存 —— 决定 log 工具要不要先停。 */
 	rttWithGdb: boolean;
 	/** 就绪判据。probe-rs 在**绑定 socket 之前**就打印"stub 起来了",所以它只能靠 TCP 轮询。 */
 	readyRe?: RegExp;
-	defaultPort: number;
 }
 
 export const SERVER_CAPS: Record<GdbServerKind, ServerCaps> = {
@@ -145,47 +142,32 @@ export const SERVER_CAPS: Record<GdbServerKind, ServerCaps> = {
 	// 4444/6666 在适配器初始化之前就绑上了,拿它们判断会在目标没连上时误判成功。
 	openocd: {
 		watchpoints: "hw",
-		softwareBreakpoints: true,
-		monitor: ["reset", "reset halt", "reset init", "reset run", "halt", "resume", "targets"],
 		resetHalt: "monitor reset halt",
 		resetRun: "monitor reset run",
 		rttWithGdb: true,
 		readyRe: /Listening on port \d+ for gdb connections/,
-		defaultPort: 3333,
 	},
 	jlink: {
 		watchpoints: "hw",
-		softwareBreakpoints: true,
-		monitor: ["reset", "halt", "go"],
 		resetHalt: "monitor reset",
 		resetRun: "monitor go",
 		rttWithGdb: true,
 		readyRe: /Listening on TCP\/IP port \d+/,
-		defaultPort: 2331,
 	},
 	"probe-rs": {
 		watchpoints: "none",
-		softwareBreakpoints: false,
-		monitor: ["info", "reset", "reset halt"],
 		resetHalt: "monitor reset halt",
 		resetRun: "monitor reset",
 		rttWithGdb: false,
-		defaultPort: 1337,
 	},
 	// QEMU 成功时 stdout/stderr 都是空的(实测),只能轮询端口。
 	qemu: {
 		watchpoints: "none", // 实测:Z2/Z3/Z4 返回 OK,一旦命中 QEMU 100% CPU 永久空转
-		softwareBreakpoints: true,
-		monitor: ["info registers", "info mtree", "system_reset"],
 		rttWithGdb: false,
-		defaultPort: 1234,
 	},
 	external: {
 		watchpoints: "hw",
-		softwareBreakpoints: true,
-		monitor: [],
 		rttWithGdb: true,
-		defaultPort: 3333,
 	},
 };
 
@@ -197,10 +179,6 @@ export interface ServerArgvInput {
 	config?: string[];
 	machine?: string;
 	probe?: string;
-	speed?: number;
-	openocdPath?: string;
-	jlinkPath?: string;
-	qemuPath?: string;
 	probeRsPath?: string;
 }
 
@@ -217,7 +195,7 @@ export function buildServerArgv(input: ServerArgvInput): string[] {
 					'gdb start with server:"openocd" needs config, e.g. config:["interface/stlink.cfg","target/stm32g4x.cfg"]',
 				);
 			}
-			const argv = [input.openocdPath ?? "openocd"];
+			const argv = ["openocd"];
 			for (const c of cfgs) argv.push("-f", c);
 			argv.push("-c", `gdb_port ${port}`);
 			return argv;
@@ -225,13 +203,13 @@ export function buildServerArgv(input: ServerArgvInput): string[] {
 		case "jlink": {
 			if (!input.chip) throw new Error('gdb start with server:"jlink" needs chip, e.g. chip:"STM32G431CB"');
 			return [
-				input.jlinkPath ?? "JLinkGDBServer",
+				"JLinkGDBServer",
 				"-device",
 				input.chip,
 				"-if",
 				"SWD",
 				"-speed",
-				String(input.speed ?? 4000),
+				"4000",
 				"-port",
 				String(port),
 				"-nogui",
@@ -254,7 +232,7 @@ export function buildServerArgv(input: ServerArgvInput): string[] {
 			}
 			if (!input.elfPath) throw new Error('gdb start with server:"qemu" needs elfPath');
 			return [
-				input.qemuPath ?? "qemu-system-arm",
+				"qemu-system-arm",
 				"-machine",
 				input.machine,
 				"-kernel",
@@ -1327,19 +1305,6 @@ Rules:
 - A debug probe can only be held by one process. If the log tool is capturing RTT over the probe, stop it first (a UART log is fine alongside gdb).
 - Never state that a line executed, a variable held a value, or a fault occurred at a given place unless a stop report here shows it. When the report says the build is optimized, do not present locals as fact.`;
 
-function clamp(value: number | undefined, fallback: number, min: number, max: number): number {
-	if (value === undefined || !Number.isFinite(value)) return fallback;
-	return Math.min(max, Math.max(min, Math.trunc(value)));
-}
-
-function stamp(now = new Date()): string {
-	const pad = (n: number, width = 2) => String(n).padStart(width, "0");
-	return (
-		`${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
-		`-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}${pad(now.getMilliseconds(), 3)}`
-	);
-}
-
 /** 需要独占探针的 server。qemu 是纯软件,external 由对方负责。 */
 const PROBE_SERVERS = new Set<GdbServerKind>(["openocd", "jlink", "probe-rs"]);
 
@@ -1597,7 +1562,7 @@ export function createGdbToolDefinition(
 								"Pass server to launch one, or connect alone to attach to a server that is already listening.",
 						);
 					}
-					const kind: GdbServerKind = params.server ?? (params.connect ? "external" : "external");
+					const kind: GdbServerKind = params.server ?? "external";
 					if (kind === "external" && !params.connect) {
 						throw new Error(
 							'gdb start needs either connect:"host:port" (attach to a running server) or server:"openocd|jlink|probe-rs|qemu" plus its options.',

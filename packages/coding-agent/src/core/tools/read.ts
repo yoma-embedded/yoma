@@ -29,16 +29,10 @@ export interface ReadToolDetails {
 	path?: string;
 }
 
-export interface ReadToolOptions {
-	/** 预留:接上图片支持后用于关闭自动缩放。 */
-	autoResizeImages?: boolean;
-}
-
 const encoder = new TextEncoder();
 
 export function createReadToolDefinition(
 	env: FileSystem,
-	_options?: ReadToolOptions,
 ): ToolDefinition<typeof readSchema, ReadToolDetails | undefined> {
 	return {
 		name: "read",
@@ -111,6 +105,6 @@ export function createReadToolDefinition(
 	};
 }
 
-export function createReadTool(env: FileSystem, options?: ReadToolOptions) {
-	return wrapToolDefinition(createReadToolDefinition(env, options));
+export function createReadTool(env: FileSystem) {
+	return wrapToolDefinition(createReadToolDefinition(env));
 }

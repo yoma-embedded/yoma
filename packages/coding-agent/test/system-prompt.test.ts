@@ -201,7 +201,7 @@ describe("collectToolPromptData", () => {
 		const env = new NodeExecutionEnv({ cwd: process.cwd() });
 		const data = collectToolPromptData(createCodingToolDefinitions(env));
 
-		expect(data.selectedTools).toEqual(["read", "bash", "edit", "write", "grep"]);
+		expect(data.selectedTools).toEqual(["read", "bash", "edit", "write"]);
 		expect(data.toolSnippets?.read).toBe("Read file contents");
 		expect(data.promptGuidelines?.length).toBeGreaterThan(0);
 	});

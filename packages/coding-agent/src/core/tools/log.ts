@@ -35,11 +35,13 @@ import type { ExecutionEnv } from "@yoma/my-pi";
 import { type Static, Type } from "typebox";
 import {
 	claimProbe,
+	clamp,
 	describeProbeConflict,
 	type EnginePathOptions,
 	engineBin,
 	killTree,
 	releaseProbe,
+	stamp,
 	unrefStream as unref,
 } from "./engines.ts";
 import { resolveToCwd } from "./path-utils.ts";
@@ -388,7 +390,6 @@ function installCleanupHooks(): void {
 
 export interface LogCaptureOptions {
 	maxBufferLines?: number;
-	maxBufferBytes?: number;
 }
 
 export interface WaitOutcome {
@@ -414,7 +415,6 @@ export class LogCapture {
 	private pendingOut = "";
 	private pendingErr = "";
 	private readonly maxBufferLines: number;
-	private readonly maxBufferBytes: number;
 	private waiters = new Set<() => void>();
 	private finished = false;
 
@@ -434,7 +434,6 @@ export class LogCapture {
 		this.file = file;
 		this.cwd = cwd;
 		this.maxBufferLines = options?.maxBufferLines ?? DEFAULT_BUFFER_LINES;
-		this.maxBufferBytes = options?.maxBufferBytes ?? DEFAULT_BUFFER_BYTES;
 	}
 
 	get running(): boolean {
@@ -530,7 +529,7 @@ export class LogCapture {
 		let drop = 0;
 		while (
 			this.lines.length - drop > this.maxBufferLines ||
-			(this.bufferedBytes > this.maxBufferBytes && this.lines.length - drop > 1)
+			(this.bufferedBytes > DEFAULT_BUFFER_BYTES && this.lines.length - drop > 1)
 		) {
 			this.bufferedBytes -= this.lines[drop]!.text.length + 1;
 			drop++;
@@ -775,17 +774,8 @@ Rules:
 - RTT only produces output while the target is running and only if the firmware writes to it. Silence is not proof of a crash — check status and the flash/reset results too.
 - Never claim the firmware printed, booted, or crashed unless a log line here shows it.`;
 
-function clamp(value: number | undefined, fallback: number, min: number, max: number): number {
-	if (value === undefined || !Number.isFinite(value)) return fallback;
-	return Math.min(max, Math.max(min, Math.trunc(value)));
-}
-
 function logFileName(now = new Date()): string {
-	const pad = (n: number, width = 2) => String(n).padStart(width, "0");
-	const stamp =
-		`${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
-		`-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}${pad(now.getMilliseconds(), 3)}`;
-	return `hw-${stamp}.log`;
+	return `hw-${stamp(now)}.log`;
 }
 
 function sourceState(capture: LogCapture): string {

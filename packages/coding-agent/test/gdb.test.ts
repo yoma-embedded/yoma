@@ -199,7 +199,6 @@ describe("buildServerArgv", () => {
 
 describe("服务器能力表", () => {
 	it("probe-rs 没有软断点也没有观察点(读它的 gdb stub 源码确认过)", () => {
-		expect(SERVER_CAPS["probe-rs"].softwareBreakpoints).toBe(false);
 		expect(SERVER_CAPS["probe-rs"].watchpoints).toBe("none");
 		expect(SERVER_CAPS["probe-rs"].rttWithGdb).toBe(false);
 	});

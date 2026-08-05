@@ -28,11 +28,8 @@ export interface WriteToolDetails {
 	newContent: string;
 }
 
-export interface WriteToolOptions {}
-
 export function createWriteToolDefinition(
 	env: FileSystem,
-	_options?: WriteToolOptions,
 ): ToolDefinition<typeof writeSchema, WriteToolDetails> {
 	return {
 		name: "write",
@@ -86,6 +83,6 @@ export function createWriteToolDefinition(
 	};
 }
 
-export function createWriteTool(env: FileSystem, options?: WriteToolOptions) {
-	return wrapToolDefinition(createWriteToolDefinition(env, options));
+export function createWriteTool(env: FileSystem) {
+	return wrapToolDefinition(createWriteToolDefinition(env));
 }

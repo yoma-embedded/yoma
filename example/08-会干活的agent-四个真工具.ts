@@ -1,11 +1,11 @@
-// 第一次:my-pi 不只是会聊天,而是真的能**干活** —— 读文件、改文件、跑命令、搜代码。
+// 第一次:my-pi 不只是会聊天,而是真的能**干活** —— 读文件、改文件、跑命令。
 //
 // 三幕:
 //   1. 离线(faux 模型):脚本化地驱动工具,证明工具与 harness 接得上
 //   2. 工具本身:直接调用,看它们给模型返回什么文案
 //   3. 真模型(需要 DEEPSEEK_API_KEY 或 MOONSHOT_API_KEY):让它自己决定用哪个工具
 //
-// 运行: bun example/08-会干活的agent-五个真工具.ts
+// 运行: bun example/08-会干活的agent-四个真工具.ts
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,11 +20,23 @@ import {
 } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { AgentHarness, InMemorySessionStorage, NodeExecutionEnv, Session } from "@yoma/my-pi/node";
-import { createAllTools, createCodingTools } from "@yoma/my-pi-coding-agent";
+import {
+	createBashTool,
+	createCodingToolDefinitions,
+	createEditTool,
+	createReadTool,
+	createWriteTool,
+	wrapToolDefinitions,
+} from "@yoma/my-pi-coding-agent";
 
 const dir = mkdtempSync(join(tmpdir(), "my-pi-tools-demo-"));
 const env = new NodeExecutionEnv({ cwd: dir });
-const tools = createAllTools(env);
+const tools = {
+	read: createReadTool(env),
+	bash: createBashTool(env),
+	edit: createEditTool(env),
+	write: createWriteTool(env),
+};
 
 // ============================================================================
 console.log("━━━ 第 1 幕: 工具单独跑,看它们对模型说什么 ━━━\n");
@@ -42,7 +54,6 @@ console.log("edit  →", text(await tools.edit.execute("3", {
 console.log("       修好了:", JSON.stringify(text(await tools.read.execute("4", { path: "calc.ts" }))));
 
 await tools.write.execute("5", { path: "notes.md", content: "# 笔记\n\nTODO: 补测试\nTODO: 写文档\n" });
-console.log("grep  →", JSON.stringify(text(await tools.grep.execute("6", { pattern: "TODO" }))));
 console.log("bash  →", JSON.stringify(text(await tools.bash.execute("7", { command: "ls" }))));
 
 // 错误路径同样是"给模型的话",它决定模型能不能自己纠正 ——
@@ -66,7 +77,7 @@ const harness = new AgentHarness({
 	models,
 	model: faux.getModel(),
 	systemPrompt: "你是一个简洁的编码助手。",
-	tools: createCodingTools(env),
+	tools: wrapToolDefinitions(createCodingToolDefinitions(env)),
 });
 
 const trace: string[] = [];
@@ -121,7 +132,7 @@ if (!process.env.DEEPSEEK_API_KEY) {
 		models: realModels,
 		model,
 		systemPrompt: "你是一个编码助手。可以使用 read/bash/edit/write 工具。回答简短。",
-		tools: createCodingTools(env),
+		tools: wrapToolDefinitions(createCodingToolDefinitions(env)),
 	});
 	realHarness.subscribe((event) => {
 		if (event.type === "tool_execution_start") console.log(`  → ${event.toolName}(${JSON.stringify(event.args)})`);

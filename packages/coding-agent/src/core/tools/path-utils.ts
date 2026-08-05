@@ -25,9 +25,20 @@ function tryCurlyQuoteVariant(filePath: string): string {
 	return filePath.replace(/'/g, "’");
 }
 
+/**
+ * Git Bash(MSYS)风格的盘符路径,Windows 上翻译成真实盘符:"/d/foo" → "D:/foo"。
+ * 模型在 bash 工具里看到的 pwd 就是这种形状,并且会原样把它喂给 read/netlist
+ * 等其他工具;不翻译的话会被解析成 "D:\d\foo" 然后 ENOENT。导出给测试。
+ */
+export function fromMsysPath(filePath: string): string {
+	if (process.platform !== "win32") return filePath;
+	const m = /^\/([a-zA-Z])(\/.*)?$/.exec(filePath);
+	return m ? `${m[1].toUpperCase()}:${m[2] ?? "/"}` : filePath;
+}
+
 /** 解析成绝对路径,不要求存在。 */
 export async function resolveToCwd(env: FileSystem, filePath: string): Promise<string> {
-	const result = await env.absolutePath(filePath);
+	const result = await env.absolutePath(fromMsysPath(filePath));
 	return result.ok ? result.value : filePath;
 }
 

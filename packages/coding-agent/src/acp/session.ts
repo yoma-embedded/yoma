@@ -21,7 +21,6 @@ const TOOL_KINDS: Record<string, AcpToolKind> = {
 	write: "edit",
 	edit: "edit",
 	bash: "execute",
-	grep: "search",
 	log: "execute",
 	gdb: "execute",
 };
@@ -42,8 +41,6 @@ export function toolTitleOf(toolName: string, args: unknown): string {
 			return typeof input.path === "string" ? `Edit ${input.path}` : "Edit";
 		case "bash":
 			return typeof input.command === "string" ? `$ ${input.command}` : "Run command";
-		case "grep":
-			return typeof input.pattern === "string" ? `Search /${input.pattern}/` : "Search";
 		case "log": {
 			const action = typeof input.action === "string" ? input.action : "";
 			// wait 的标题带上正在等的模式,卡片折叠时也能看出它在等什么。

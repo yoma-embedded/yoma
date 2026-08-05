@@ -22,6 +22,21 @@ export function exe(name: string): string {
 	return process.platform === "win32" ? `${name}.exe` : name;
 }
 
+/** 数值参数夹取:非数给回退值,越界钳到边界。gdb/log 共用。 */
+export function clamp(value: number | undefined, fallback: number, min: number, max: number): number {
+	if (value === undefined || !Number.isFinite(value)) return fallback;
+	return Math.min(max, Math.max(min, Math.trunc(value)));
+}
+
+/** 会话产物文件名用的本地时间戳 `YYYYMMDD-HHMMSSmmm`。gdb/log 共用。 */
+export function stamp(now = new Date()): string {
+	const pad = (n: number, width = 2) => String(n).padStart(width, "0");
+	return (
+		`${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
+		`-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}${pad(now.getMilliseconds(), 3)}`
+	);
+}
+
 export interface EnginePathOptions {
 	/** engines 根目录;默认从本模块向上找到仓库的 engines/。 */
 	enginesDir?: string;
@@ -177,7 +192,6 @@ const STREAM_FLUSH_GRACE_MS = 1000;
 
 export interface EngineRunOptions {
 	cwd?: string;
-	env?: Record<string, string>;
 	signal?: AbortSignal;
 	timeoutMs?: number;
 }
@@ -226,7 +240,6 @@ export function runEngine(bin: string, args: string[], options: EngineRunOptions
 	return new Promise((resolve, reject) => {
 		const child = spawn(bin, args, {
 			cwd: options.cwd,
-			env: options.env ? { ...process.env, ...options.env } : process.env,
 			stdio: ["ignore", "pipe", "pipe"],
 			// 自成进程组,这样 killTree 才够得着孙进程。
 			detached: process.platform !== "win32",

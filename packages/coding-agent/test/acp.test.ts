@@ -9,7 +9,6 @@ describe("toolKindOf", () => {
 		expect(toolKindOf("write")).toBe("edit");
 		expect(toolKindOf("edit")).toBe("edit");
 		expect(toolKindOf("bash")).toBe("execute");
-		expect(toolKindOf("grep")).toBe("search");
 	});
 
 	it("falls back to other for unknown tools", () => {
@@ -24,9 +23,8 @@ describe("toolTitleOf", () => {
 		expect(toolTitleOf("edit", { path: "src/a.ts" })).toBe("Edit src/a.ts");
 	});
 
-	it("titles bash with the command and grep with the pattern", () => {
+	it("titles bash with the command", () => {
 		expect(toolTitleOf("bash", { command: "ls -la" })).toBe("$ ls -la");
-		expect(toolTitleOf("grep", { pattern: "TODO" })).toBe("Search /TODO/");
 	});
 
 	it("degrades gracefully when arguments are still streaming in", () => {
