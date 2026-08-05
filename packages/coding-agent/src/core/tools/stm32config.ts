@@ -13,7 +13,14 @@
 import path from "node:path";
 import type { ExecutionEnv } from "@yoma/my-pi";
 import { type Static, Type } from "typebox";
-import { type EnginePathOptions, engineBin, engineDataDir, runEngine } from "./engines.ts";
+import {
+	capEngineOutput,
+	type EnginePathOptions,
+	engineBin,
+	engineDataDir,
+	runEngine,
+	stm32Families,
+} from "./engines.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { type ToolDefinition, wrapToolDefinition } from "./types.ts";
 
@@ -72,7 +79,24 @@ export interface Stm32ConfigToolDetails {
 	exitCode: number | null;
 }
 
-const DESCRIPTION = `Deterministic STM32 configuration kernel: validates a JSON configuration document describing the hardware setup (clock tree, peripherals, pins, DMA, NVIC, middleware) and generates a complete, compilable CMake + HAL driver project from it. This is how you produce driver code for supported chips — never hand-write peripheral init/register code when this tool covers the chip (currently STM32F1 and STM32F4 families).
+/**
+ * 支持的族由数据目录生成,不写死 —— 见 engines.ts stm32Families() 的注释。
+ * 引擎没装好时退回一句中性的话:构造工具不该因为这个抛异常,把整个 agent 拖垮。
+ */
+function describeCoverage(options?: Stm32ConfigToolOptions): string {
+	try {
+		const families = stm32Families(options);
+		if (families.length === 0) return "no device data packs are installed — run `bun engines/build.ts`";
+		return `covers ${families.length} families: ${families.join(", ")}`;
+	} catch {
+		return "device coverage unknown until the engines are built";
+	}
+}
+
+const DESCRIPTION = (coverage: string) =>
+	`Deterministic STM32 configuration kernel: validates a JSON configuration document describing the hardware setup (clock tree, peripherals, pins, DMA, NVIC, middleware) and generates a complete, compilable CMake + HAL driver project from it. This is how you produce driver code for supported chips — never hand-write peripheral init/register code when this tool covers the chip (${coverage}).
+
+Part numbers: the db spells them with a wildcard package suffix (STM32G473RCTx), while schematics and BOMs carry the orderable code (STM32G473RCT6). They denote the same die — pass the db spelling, and if a part is not found, read the diagnostic's suggestion list rather than concluding the chip is unsupported.
 
 Commands and their required parameters:
 - list-mcus [family, package, minFlashKb]: enumerate supported parts
@@ -163,10 +187,16 @@ export function createStm32ConfigToolDefinition(
 	return {
 		name: "stm32config",
 		label: "stm32config",
-		description: DESCRIPTION,
+		description: DESCRIPTION(describeCoverage(options)),
 		promptSnippet: "Validate STM32 config documents and generate driver projects",
+		// No family names here. This line lands in the system prompt, which is
+		// re-read every turn and outranks a tool description — the stale
+		// "STM32F1/F4" that once sent a model off to hand-write registers for a
+		// supported G473 lived in exactly this string. The tool's own
+		// description carries the coverage list, generated from the data dir.
 		promptGuidelines: [
-			"For STM32F1/F4 driver code, never hand-write peripheral init: author a config document, then stm32config validate → fix diagnostics → generate.",
+			"For STM32 driver code, never hand-write peripheral init: author a config document, then stm32config validate → fix diagnostics → generate.",
+			"stm32config describe-mcu is authoritative for a part's pads, signals and ADC channels — do not go to the datasheet for pin/signal mapping.",
 		],
 		parameters: stm32ConfigSchema,
 		execute: async (_toolCallId, params, signal) => {
@@ -195,12 +225,20 @@ export function createStm32ConfigToolDefinition(
 				);
 			}
 			if (params.command === "generate" && result.exitCode === 0) {
+				// The toolchain file path is relative to the generated tree, and
+				// bash runs in the session cwd — without the `cd` the command
+				// only works when `out` happens to be the working directory.
 				notes.push(`Project generated at ${resolved.out}. Build it with:
-  cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake -B build
-  cmake --build build`);
+  cd ${resolved.out} && cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake -B build && cmake --build build`);
 			}
 
-			const text = [result.stdout.trim(), ...notes].filter(Boolean).join("\n\n") || "(no output)";
+			const stdout = capEngineOutput(
+				result.stdout.trim(),
+				params.command === "list-mcus"
+					? "narrow it with family / package / minFlashKb"
+					: "re-run with a narrower query, or read the written files directly",
+			);
+			const text = [stdout, ...notes].filter(Boolean).join("\n\n") || "(no output)";
 			return {
 				content: [{ type: "text", text }],
 				details: { command: params.command, exitCode: result.exitCode },

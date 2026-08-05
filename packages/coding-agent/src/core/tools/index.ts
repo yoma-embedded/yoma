@@ -129,6 +129,7 @@ export {
 	type GrepToolDetails,
 	type GrepToolInput,
 	type GrepToolOptions,
+	ripgrepAvailable,
 } from "./grep.ts";
 export {
 	buildAttachArgs,
@@ -188,7 +189,7 @@ import { createEditTool, createEditToolDefinition, type EditToolOptions } from "
 import { createDatasheetTool, createDatasheetToolDefinition } from "./datasheet.ts";
 import { createFlashTool, createFlashToolDefinition, type FlashToolOptions } from "./flash.ts";
 import { createGdbTool, createGdbToolDefinition, type GdbToolOptions } from "./gdb.ts";
-import { createGrepTool, createGrepToolDefinition, type GrepToolOptions } from "./grep.ts";
+import { createGrepTool, createGrepToolDefinition, type GrepToolOptions, ripgrepAvailable } from "./grep.ts";
 import { createLogTool, createLogToolDefinition, type LogToolOptions } from "./log.ts";
 import { createNetlistTool, createNetlistToolDefinition, type NetlistToolOptions } from "./netlist.ts";
 import { createReadTool, createReadToolDefinition, type ReadToolOptions } from "./read.ts";
@@ -295,14 +296,17 @@ export function createTool(toolName: ToolName, env: ExecutionEnv, options?: Tool
 	}
 }
 
-/** 编码用的五件套,顺序与 pi 一致。 */
+/**
+ * 编码用的五件套,顺序与 pi 一致 —— 但 grep 只在 ripgrep 真的在的时候才注册,
+ * 理由见 grep.ts 的 ripgrepAvailable()。
+ */
 export function createCodingToolDefinitions(env: ExecutionEnv, options?: ToolsOptions): ToolDef[] {
 	return [
 		createReadToolDefinition(env, options?.read),
 		createBashToolDefinition(env, options?.bash),
 		createEditToolDefinition(env, options?.edit),
 		createWriteToolDefinition(env, options?.write),
-		createGrepToolDefinition(env, options?.grep),
+		...(ripgrepAvailable(options?.grep?.rgPath) ? [createGrepToolDefinition(env, options?.grep)] : []),
 	];
 }
 
@@ -312,7 +316,7 @@ export function createCodingTools(env: ExecutionEnv, options?: ToolsOptions): To
 		createBashTool(env, options?.bash),
 		createEditTool(env, options?.edit),
 		createWriteTool(env, options?.write),
-		createGrepTool(env, options?.grep),
+		...(ripgrepAvailable(options?.grep?.rgPath) ? [createGrepTool(env, options?.grep)] : []),
 	];
 }
 

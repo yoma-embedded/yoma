@@ -11,7 +11,7 @@
  * 放真文件,这里的代码不变。测试用假引擎时通过 options 显式传 enginesDir。
  */
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -60,6 +60,21 @@ export function engineDataDir(name: string, options?: EnginePathOptions): string
 	return dir;
 }
 
+/**
+ * 内核实际装了哪些族 —— 从 data/stm32/*.irpack 的文件名读,不写死。
+ *
+ * 写死过一次,代价很具体:描述里留着"currently STM32F1 and STM32F4",而数据目录
+ * 里躺着 27 个 pack。模型照着这句话把一颗完全支持的 G473 判成不支持,掉头去手写
+ * 寄存器代码 —— 工具没坏,是工具的自述把它关在门外了。能力清单必须由能力本身生成。
+ */
+export function stm32Families(options?: EnginePathOptions): string[] {
+	const dir = engineDataDir("stm32", options);
+	return readdirSync(dir)
+		.filter((f) => f.endsWith(".irpack"))
+		.map((f) => f.slice(0, -".irpack".length).toUpperCase())
+		.sort();
+}
+
 // ─── 探针租约 ────────────────────────────────────────────────────────────────
 //
 // 一个调试探针同一时间只能被一个进程握住。这个约束以前只写在 log.ts 的注释里,
@@ -105,6 +120,28 @@ export function releaseProbe(owner: string): void {
 export function describeProbeConflict(holder: ProbeLease): string {
 	const held = Math.round((Date.now() - holder.since) / 1000);
 	return `the debug probe is held by the \`${holder.owner}\` tool (${holder.label}) since ${held}s ago — run \`${holder.owner}\` action:"stop" first`;
+}
+
+// ─── 输出预算 ────────────────────────────────────────────────────────────────
+
+/**
+ * 引擎输出进模型上下文前的上限。
+ *
+ * 引擎是给机器读的,输出没有自然长度:`list-mcus` 不加过滤会吐 659,499 个字符
+ * (约 165k token)—— 一次调用就能把会话打爆,而模型是在读到之前才知道。工具层
+ * 必须自己记这笔账;截断时要说清被截了多少、以及怎么把范围收窄,否则模型只会
+ * 原样重试一遍。与 log 工具的 MAX_EXCERPT_CHARS 同一个数量级。
+ */
+export const MAX_ENGINE_OUTPUT_CHARS = 24_000;
+
+export function capEngineOutput(text: string, narrowHint: string): string {
+	if (text.length <= MAX_ENGINE_OUTPUT_CHARS) return text;
+	const kept = text.slice(0, MAX_ENGINE_OUTPUT_CHARS);
+	// 截在最后一个换行,别把一行 JSON 劈成两半。
+	const cut = kept.lastIndexOf("\n");
+	const head = cut > MAX_ENGINE_OUTPUT_CHARS / 2 ? kept.slice(0, cut) : kept;
+	const dropped = text.length - head.length;
+    return `${head}\n\n[truncated: ${dropped} of ${text.length} characters withheld. ${narrowHint}]`;
 }
 
 // ─── 子进程运行 ──────────────────────────────────────────────────────────────

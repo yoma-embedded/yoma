@@ -19,6 +19,8 @@ import {
 	truncateHead,
 	truncateLine,
 } from "@yoma/my-pi";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { type Static, Type } from "typebox";
 import { resolveToCwd } from "./path-utils.ts";
 import { type ToolDefinition, wrapToolDefinition } from "./types.ts";
@@ -62,6 +64,27 @@ async function findRipgrep(env: ExecutionEnv, configured?: string): Promise<stri
 	if (!result.ok || result.value.exitCode !== 0) return null;
 	const found = result.value.stdout.trim().split("\n")[0];
 	return found || null;
+}
+
+/**
+ * Whether this tool can work at all here — checked at REGISTRATION, not at
+ * call time, so a machine without ripgrep simply doesn't advertise `grep`.
+ *
+ * Offering a tool that always throws is worse than offering nothing. The model
+ * spends calls on it, and `buildSystemPrompt` only emits its "use bash for ls,
+ * rg, find" fallback when grep is ABSENT — so registering a broken grep also
+ * deletes the advice that would have routed around it. Twice, then, the model
+ * pays for a capability that was never there.
+ *
+ * Synchronous on purpose: the tool factories are sync, and a PATH scan is a
+ * handful of stat calls.
+ */
+export function ripgrepAvailable(configured?: string): boolean {
+	if (configured) return existsSync(configured);
+	const exe = process.platform === "win32" ? "rg.exe" : "rg";
+	return (process.env.PATH ?? "")
+		.split(path.delimiter)
+		.some((dir) => dir && existsSync(path.join(dir, exe)));
 }
 
 function relativeFrom(searchPath: string, filePath: string): string {

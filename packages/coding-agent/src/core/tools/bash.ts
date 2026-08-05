@@ -20,9 +20,21 @@ import {
 import { type Static, Type } from "typebox";
 import { type ToolDefinition, wrapToolDefinition } from "./types.ts";
 
+/**
+ * Every other subprocess in the suite is bounded — engines 5 min, flash 2 min,
+ * gdb 20/60 s, log 120 s — and bash, the one that runs arbitrary commands, was
+ * the only unbounded one. The cost was real: a `find / -iname …` walked the
+ * whole filesystem and froze a run for twenty minutes, with nothing to kill it
+ * but a human noticing. A default that a caller can raise is strictly better
+ * than a hang no caller can escape.
+ */
+export const DEFAULT_BASH_TIMEOUT_S = 120;
+
 const bashSchema = Type.Object({
 	command: Type.String({ description: "Bash command to execute" }),
-	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (optional, no default timeout)" })),
+	timeout: Type.Optional(
+		Type.Number({ description: `Timeout in seconds (default ${DEFAULT_BASH_TIMEOUT_S}; raise it for long builds)` }),
+	),
 });
 
 export type BashToolInput = Static<typeof bashSchema>;
@@ -133,7 +145,7 @@ export function createBashToolDefinition(
 
 			try {
 				const captured = await executeShellWithCapture(env, resolvedCommand, {
-					timeout,
+					timeout: timeout ?? DEFAULT_BASH_TIMEOUT_S,
 					abortSignal: signal,
 					returnExecutionErrors: true,
 					onChunk: (_chunk, getProgress) => {

@@ -235,6 +235,7 @@ Search rules:
 - Citations are prefixed with tags that classify the hit (they may combine): \`[GENERAL]\` = cross-chip corpus; \`[SCHEMATIC]\` / \`[TUTORIAL]\` / \`[REFERENCE]\` = the chunk's kind; \`[FIGURE]\` = has an image. Treat tags as context, not as a filter.
 - Use search before answering any register-level or peripheral-behavior question — do not answer such questions from memory. Phrase queries the way the manual would: "TIM1 PWM output mode configuration" beats "how to blink motor"; if results miss, rephrase with the peripheral/register name or raise topK.
 - Exact register/bitfield/address/reset VALUES quoted in prose are contextual, not authoritative — for supported chips the stm32config tool's generated output is authoritative for configuration values.
+- Which pad carries which signal — alternate functions, ADC channel numbers, timer channels, the package pinout — is NOT a manual question for a supported chip: \`stm32config describe-mcu\` answers it authoritatively, completely and in one call. Search here only for parts that tool does not cover.
 - If the answer is not in the returned chunks, say so honestly — never fabricate manual content.
 - Requires network access to the team datasheet server (YOMA_DATASHEET_SERVER).`;
 
