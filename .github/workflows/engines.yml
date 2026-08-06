@@ -91,6 +91,12 @@ jobs:
         with:
           bun-version: "1.3.14"
 
+      # build.ts 从 @yoma/my-pi-coding-agent 取 engineBin/exe(路径解析和运行时同一套,
+      # 报告才不会和真实行为漂移)。那是 workspace 包,不装就是
+      # "Cannot find module" —— 本机不报是因为早就装过。
+      - name: 安装依赖
+        run: bun install --frozen-lockfile
+
       - uses: dtolnay/rust-toolchain@stable
 
       # probe-rs 是个大工程,不缓存的话每次 CI 都要从头编十几分钟。
