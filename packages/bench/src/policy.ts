@@ -113,9 +113,7 @@ export function createPolicyDecider(
   // 白名单按 basename 存:人写 job 时会自然地写 `./check.sh` 或 `tools/build.sh`,
   // 而匹配端拿到的是 argv[0] 的 basename。不归一化的话白名单看着写了却不生效
   // (实测:job 里写 `./check.sh`,agent 跑 `./check.sh` 照样被升级)。
-  const allowedCommands = new Set(
-    [...DEFAULT_ALLOWED_COMMANDS, ...(job.allowCommands ?? [])].map((entry) => path.basename(entry)),
-  )
+  const allowedCommands = new Set([...DEFAULT_ALLOWED_COMMANDS, ...(job.allowCommands ?? [])].map(commandName))
   const protectedPaths = job.protectedPaths ?? []
   const maxDiffLines = job.maxDiffLines ?? 400
 
@@ -212,7 +210,7 @@ export function createPolicyDecider(
       return escalate(`${ruleBase}.chained`, "命令里有 shell 串联/替换符号,白名单管不住后半段")
     }
     const argv = command.trim().split(/\s+/)
-    const head = path.basename(argv[0] ?? "")
+    const head = commandName(argv[0] ?? "")
     if (!allowedCommands.has(head)) return escalate(`${ruleBase}.not-allowed`, `${head} 不在白名单里`)
     if (head === "git") {
       const sub = argv[1] ?? ""
@@ -250,6 +248,23 @@ const READ_ONLY_COMMANDS = new Set([
 
 function isReadOnlyCommand(head: string): boolean {
   return READ_ONLY_COMMANDS.has(head)
+}
+
+/**
+ * 命令的可比较名字:去掉目录,再去掉 Windows 的可执行后缀。
+ *
+ * 两端都要过它,否则白名单在 Windows 上形同虚设 —— 那边的 agent 会写
+ * `make.exe` / `python.exe`,而白名单里是 `make`,每一条都落到"不在白名单里"
+ * 而升级给人。同理 job 里写 `tools\build.cmd` 也要能配上。
+ *
+ * **两种分隔符都自己切,不走 `path.basename`**:那个函数按宿主平台变脸,
+ * 在 macOS 上 POSIX 版本根本不认 `\`,于是 `C:\msys64\usr\bin\rm.exe` 会被
+ * 当成一整个名字。一个安全相关的匹配器不该因为跑在哪台机器上而改变判断。
+ */
+export function commandName(command: string): string {
+  const segments = command.trim().split(/[/\\]/)
+  const base = segments[segments.length - 1] ?? ""
+  return base.replace(/\.(exe|cmd|bat|com)$/i, "")
 }
 
 /** 写入规模:write 数新内容行数,edit 数所有替换段的行数之和。用来挡住"重写整个文件"。 */

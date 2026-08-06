@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
 import { parseJob, type Job } from "./job.ts"
-import { createPolicyDecider, matchGlob } from "./policy.ts"
+import { commandName, createPolicyDecider, matchGlob } from "./policy.ts"
 
 const WORKSPACE = "/tmp/ws"
 
@@ -161,6 +161,33 @@ describe("策略 · 兜底", () => {
     const decide = decider()
     expect(decide("bash", { command: "make" }).why.length).toBeGreaterThan(0)
     expect(decide("flash", { action: "erase" }).why).toContain("option bytes")
+  })
+})
+
+describe("commandName · Windows", () => {
+  test("去掉目录与可执行后缀 —— 否则白名单在 Windows 上形同虚设", () => {
+    expect(commandName("make")).toBe("make")
+    expect(commandName("./check.sh")).toBe("check.sh")
+    expect(commandName("make.exe")).toBe("make")
+    expect(commandName("C:\\msys64\\usr\\bin\\make.exe")).toBe("make")
+    expect(commandName("tools\\build.cmd")).toBe("build")
+  })
+})
+
+describe("策略 · Windows 命令名", () => {
+  test("agent 写 make.exe 也能配上白名单里的 make", () => {
+    const decide = decider()
+    expect(decide("bash", { command: "make.exe -j8" }).action).toBe("allow")
+  })
+
+  test("job 里写 tools\\build.cmd 也能生效", () => {
+    const decide = decider({ allowCommands: ["tools\\build.cmd"] })
+    expect(decide("bash", { command: "build.cmd --release" }).action).toBe("allow")
+  })
+
+  test("去后缀不会把不该放行的放进来", () => {
+    const decide = decider()
+    expect(decide("bash", { command: "rm.exe -rf build" }).action).toBe("escalate")
   })
 })
 

@@ -189,7 +189,7 @@ async function runCommandCheck(
     return {
       check,
       outcome: "error",
-      summary: `命令起不来:${outcome.spawnError} —— 这是环境问题,不是代码问题`,
+      summary: `命令起不来:${outcome.spawnError} —— 这是环境问题,不是代码问题${spawnHint(check.command)}`,
       evidence,
       elapsedMs,
     }
@@ -261,6 +261,18 @@ async function logCheck(
         elapsedMs,
       }
     : { check, outcome: "pass", summary: `${timeoutMs / 1000}s 内没有出现 /${check.pattern}/`, evidence, elapsedMs }
+}
+
+/** Windows 上 .cmd/.bat 包装器最常见的 ENOENT。判据不过 shell,所以要显式套 cmd /c。 */
+const WINDOWS_CMD_WRAPPERS = new Set(["npm", "npx", "pnpm", "yarn", "bun", "west", "idf", "platformio", "pio"])
+
+function spawnHint(command: string): string {
+  if (process.platform !== "win32") return ""
+  const head = path.basename(command.trim().split(/\s+/)[0] ?? "").replace(/\.(exe|cmd|bat)$/i, "")
+  if (!WINDOWS_CMD_WRAPPERS.has(head)) return ""
+  // 判据故意不过 shell(见文件头),而 Windows 上这些命令是 .cmd 包装器,
+  // 直接 spawn 一定 ENOENT。给出能照抄的改法,别让人对着 ENOENT 猜。
+  return `。Windows 上 \`${head}\` 是 .cmd 包装器,判据不过 shell 起不来 —— 改写成 \`cmd /c ${command}\``
 }
 
 function joinStreams(outcome: RunOutcome): string {
@@ -387,7 +399,8 @@ function rttArgv(job: Job, enginesDir?: string): string[] {
   return argv.filter((item) => item !== "")
 }
 
-function exe(name: string): string {
+/** Windows 上引擎二进制带 .exe。回刷固件那条路也要用它,所以导出。 */
+export function exe(name: string): string {
   return process.platform === "win32" ? `${name}.exe` : name
 }
 

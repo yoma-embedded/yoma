@@ -30,7 +30,7 @@ import path from "node:path"
 import type { PermissionRequest } from "@yoma-desktop/kernel"
 import type { PermissionDecision } from "@yoma-desktop/kernel/host"
 
-import { gradeRepeated, runCommandReal, type GradeResult, type RunCommand } from "./grader.ts"
+import { exe, gradeRepeated, runCommandReal, type GradeResult, type RunCommand } from "./grader.ts"
 import type { Job } from "./job.ts"
 import { blockedPrompt, firstPrompt, retryPrompt } from "./prompts.ts"
 import type { TurnResult } from "./turn.ts"
@@ -257,7 +257,9 @@ async function ensureBenchDir(benchDir: string): Promise<void> {
 
 async function restoreKnownGood(job: Job, workspace: string, options: RunnerOptions): Promise<boolean> {
   const run = options.runCommand ?? runCommandReal
-  const probeRs = options.enginesDir ? path.join(options.enginesDir, "bin", "probe-rs") : "probe-rs"
+  // 必须过 exe():Windows 上少了 .exe 就 spawn 不起来 —— 而这里是**失败兜底路径**,
+  // 它坏掉的时机正好是"别的都已经出错了",板子留在半烧状态没人回刷。
+  const probeRs = options.enginesDir ? path.join(options.enginesDir, "bin", exe("probe-rs")) : exe("probe-rs")
   const argv = [probeRs, "download", "--chip", job.bench.chip!, job.bench.knownGoodElf!]
   if (job.bench.probe) argv.push("--probe", job.bench.probe)
   const outcome = await run(argv.map(quoteIfNeeded).join(" "), { cwd: workspace, timeoutMs: 3 * 60 * 1000 })
