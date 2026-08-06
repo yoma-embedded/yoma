@@ -52,10 +52,16 @@ const stm32ConfigSchema = Type.Object({
 			description: "Kernel command: list-mcus | describe-mcu | candidates | solve-clock | validate | generate | schema",
 		},
 	),
-	part: Type.Optional(Type.String({ description: 'Sales part number for describe-mcu, e.g. "STM32F405RGTx"' })),
+	part: Type.Optional(
+		Type.String({
+			description:
+				'Sales part number, e.g. "STM32F405RGTx". For describe-mcu, and for candidates without a config document.',
+		}),
+	),
 	configPath: Type.Optional(
 		Type.String({
-			description: "Path to the JSON configuration document. Required for candidates, solve-clock, validate and generate.",
+			description:
+				"Path to the JSON configuration document. Required for solve-clock, validate and generate. For candidates give configPath (mode-aware) or part (config-free pad query).",
 		}),
 	),
 	out: Type.Optional(Type.String({ description: "Output project directory for generate. Required for generate." })),
@@ -102,7 +108,7 @@ Commands and their required parameters:
 - list-mcus [family, package, minFlashKb]: enumerate supported parts
 - describe-mcu (part): memory, pins/signals, IP instances, clock tree of one part
 - schema: print the configuration-document field reference (all fields, types, defaults) — consult it before authoring a config
-- candidates (configPath, peripheral, [signal]): list candidate pads for a peripheral's signals
+- candidates (configPath | part, peripheral, [signal]): list candidate pads for a peripheral's signals — works before any config exists (pass part) and for peripherals not yet in the config
 - solve-clock (configPath): solve the clock tree for the config's frequency targets
 - validate (configPath): full validation pipeline; returns diagnostics + summary
 - generate (configPath, out): validate, then write the complete project; writes NOTHING when error diagnostics are present
@@ -142,16 +148,13 @@ export function buildStm32ConfigArgs(params: Stm32ConfigToolInput, dataDir: stri
 		case "describe-mcu":
 			return ["describe-mcu", need("part", "<PART>"), "--data-dir", dataDir, "--pretty"];
 		case "candidates": {
-			const args = [
-				"candidates",
-				"--config",
-				need("configPath", "--config"),
-				"--peripheral",
-				need("peripheral", "--peripheral"),
-				"--data-dir",
-				dataDir,
-				"--pretty",
-			];
+			if (!params.configPath && !params.part) {
+				throw new Error("stm32config candidates requires configPath or part");
+			}
+			const args = ["candidates"];
+			if (params.configPath) args.push("--config", params.configPath);
+			else args.push("--part", need("part", "--part"));
+			args.push("--peripheral", need("peripheral", "--peripheral"), "--data-dir", dataDir, "--pretty");
 			if (params.signal) args.push("--signal", params.signal);
 			return args;
 		}

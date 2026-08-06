@@ -149,12 +149,12 @@ export function describeProbeConflict(holder: ProbeLease): string {
  */
 export const MAX_ENGINE_OUTPUT_CHARS = 24_000;
 
-export function capEngineOutput(text: string, narrowHint: string): string {
-	if (text.length <= MAX_ENGINE_OUTPUT_CHARS) return text;
-	const kept = text.slice(0, MAX_ENGINE_OUTPUT_CHARS);
+export function capEngineOutput(text: string, narrowHint: string, limit = MAX_ENGINE_OUTPUT_CHARS): string {
+	if (text.length <= limit) return text;
+	const kept = text.slice(0, limit);
 	// 截在最后一个换行,别把一行 JSON 劈成两半。
 	const cut = kept.lastIndexOf("\n");
-	const head = cut > MAX_ENGINE_OUTPUT_CHARS / 2 ? kept.slice(0, cut) : kept;
+	const head = cut > limit / 2 ? kept.slice(0, cut) : kept;
 	const dropped = text.length - head.length;
     return `${head}\n\n[truncated: ${dropped} of ${text.length} characters withheld. ${narrowHint}]`;
 }
