@@ -17,17 +17,33 @@
  *    所以要区分"取消"和"正常完成"只能自己拿 AbortController。
  */
 
+import { homedir } from "node:os"
+import path from "node:path"
+
 import { AgentHarness, JsonlSessionRepo, type AgentMessage, type Session as PiSession } from "@yoma/my-pi"
 import type { AgentHarnessEvent, JsonlSessionMetadata } from "@yoma/my-pi"
 import { NodeExecutionEnv } from "@yoma/my-pi/node"
 import {
   createCodingToolDefinitions,
-  createEmbeddedToolDefinitions,
+  createDatasheetToolDefinition,
+  createFlashToolDefinition,
+  createGdbToolDefinition,
+  createLogToolDefinition,
+  createNetlistToolDefinition,
+  createStm32ConfigToolDefinition,
   wrapToolDefinitions,
+  type ToolDef,
 } from "@yoma/my-pi-coding-agent"
 import { buildSystemPrompt, collectToolPromptData } from "@yoma/my-pi-coding-agent/system-prompt"
 import { resolveModel } from "@yoma/my-pi-coding-agent/models"
-import { clampThinkingLevel, getSupportedThinkingLevels, type Model, type Models } from "@earendil-works/pi-ai"
+import { discoverSkills, loadContextFiles } from "@yoma/my-pi-coding-agent/resources"
+import {
+  clampThinkingLevel,
+  getSupportedThinkingLevels,
+  type AssistantMessage,
+  type Model,
+  type Models,
+} from "@earendil-works/pi-ai"
 
 import type { KernelEvent, PromptInput } from "../protocol.ts"
 import type {
@@ -40,12 +56,32 @@ import type {
 import { Identifier } from "../ids.ts"
 import { sessionNotFound } from "../types.ts"
 import { SessionProjection } from "./projector.ts"
-import { PermissionGate } from "./permission.ts"
+import { PermissionGate, type PermissionDecision, type PolicyProvider } from "./permission.ts"
 import { shouldAutoCompact } from "./compaction.ts"
+import { retryDelayMs, retrySleep, shouldAutoRetry } from "./retry.ts"
 import { CONFIGURABLE_PROVIDERS, removeAuthKey, writeAuthKey } from "./auth.ts"
 
 /** 同时活着的 harness 上限。淘汰只是丢弃内存态,重开就是 repo.open + buildContext,很便宜。 */
 const MAX_LIVE_SESSIONS = 8
+
+/**
+ * 嵌入式六件套的显式装配,顺序照抄 my-pi 的流水线(netlist → datasheet → stm32config
+ * → flash → log → gdb)。my-pi 2026-08 的精简删掉了聚合 Options 的工厂参数
+ * (createEmbeddedToolDefinitions 只收 env),而 enginesDir 必须显式传
+ * (它的向上查找会认下一个没有 bin/ 的空壳)—— 所以按"单工具工厂 + options"自行装配,
+ * my-pi 的 tools/index.ts 注释明说这是特殊装配的预期用法。
+ */
+export function createEmbeddedTools(env: NodeExecutionEnv, enginesDir?: string): ToolDef[] {
+  const engines = enginesDir ? { enginesDir } : undefined
+  return [
+    createNetlistToolDefinition(env, engines),
+    createDatasheetToolDefinition(env),
+    createStm32ConfigToolDefinition(env, engines),
+    createFlashToolDefinition(env, engines),
+    createLogToolDefinition(env, engines),
+    createGdbToolDefinition(env, engines),
+  ]
+}
 
 interface Entry {
   id: string
@@ -66,6 +102,10 @@ interface Entry {
   model?: { providerID: string; modelID: string; thinking?: string }
   /** 正在自动压缩。防止 turn_end 连发时重入。 */
   compacting?: boolean
+  /** 这一轮以可重试的错误收场,idle 要压住 —— 见 project() 与 maybeAutoRetry()。 */
+  retryPending?: boolean
+  /** 本次 prompt 已经重试过几次。prompt() 开始时清零。 */
+  retryAttempt?: number
 }
 
 export interface SessionManagerOptions {
@@ -73,6 +113,16 @@ export interface SessionManagerOptions {
   enginesDir?: string
   emit(events: KernelEvent[]): void
   permissionRules?: PermissionRules
+  /**
+   * 上下文文件与技能的全局目录,默认 `~/.my-pi` —— 与 my-pi 的 ACP 适配器同一份,
+   * 于是同一份技能在 Zed 和桌面端都生效。测试用它隔离开发机上的真实目录
+   * (**注意** bun 的 homedir() 在进程启动时定死,改 process.env.HOME 无效)。
+   */
+  configDir?: string
+  /** 无人值守策略与审计出口(bench 注入);desktop 不传,行为与从前一致。 */
+  permissionPolicy?: PolicyProvider
+  onPermissionDecision?(decision: PermissionDecision): void
+  permissionTimeoutMs?: number
   /**
    * 模型目录的来源。默认复用 my-pi 的 resolveModel()(读 ~/.pi/agent/auth.json)。
    * 可注入是为了两件事:测试用 pi-ai 的 faux provider 跑完整一轮而不需要网络和 key;
@@ -99,6 +149,9 @@ export class SessionManager {
     this.permissions = new PermissionGate({
       rules: options.permissionRules,
       emit: (event) => options.emit([event]),
+      policy: options.permissionPolicy,
+      onDecision: options.onPermissionDecision,
+      timeoutMs: options.permissionTimeoutMs,
     })
   }
 
@@ -361,15 +414,26 @@ export class SessionManager {
     entry.title = (await session.getSessionName()) ?? entry.title
 
     const env = new NodeExecutionEnv({ cwd: entry.cwd })
-    const engineOptions = this.options.enginesDir
-      ? ({
-          netlist: { enginesDir: this.options.enginesDir },
-          stm32config: { enginesDir: this.options.enginesDir },
-          flash: { enginesDir: this.options.enginesDir },
-          log: { enginesDir: this.options.enginesDir },
-          gdb: { enginesDir: this.options.enginesDir },
-        } as never)
-      : undefined
+
+    // 资源发现:项目的 AGENTS.md/CLAUDE.md(全局 + 祖先链)与技能(全局 + .agents/skills)。
+    // 走 my-pi 自己的 resources.ts,不重写:"从哪些目录找"是内核那边定的产品决策,
+    // 抄一份的结果会是"Zed 读得到项目上下文、桌面端读不到"这种极难归因的差异。
+    // 全局目录与 ACP 一致(~/.my-pi),于是同一份技能在 Zed 和桌面端都生效。
+    // 快照式:会话创建时读一次,改了技能文件重开会话即生效,不做热重载。
+    const configDir = this.options.configDir ?? path.join(homedir(), ".my-pi")
+    const [contextFiles, discovered] = await Promise.all([
+      loadContextFiles(env, { cwd: entry.cwd, globalDir: configDir }),
+      discoverSkills(env, { cwd: entry.cwd, globalDir: configDir }),
+    ])
+    for (const diagnostic of discovered.diagnostics) {
+      this.options.emit([
+        {
+          type: "kernel.error",
+          sessionID: entry.id,
+          message: `技能 ${diagnostic.code} ${diagnostic.path}:${diagnostic.message}`,
+        },
+      ])
+    }
 
     // 工具定义必须过 wrapToolDefinitions 才能交给 harness;系统提示词由工具集反推
     // (collectToolPromptData 会把每个工具的使用指导拼进去)。这两步照抄 my-pi 自己的
@@ -377,7 +441,7 @@ export class SessionManager {
     // 等于产品行为分叉。
     const toolDefinitions = [
       ...createCodingToolDefinitions(env),
-      ...createEmbeddedToolDefinitions(env, engineOptions),
+      ...createEmbeddedTools(env, this.options.enginesDir),
     ]
     const harness = new AgentHarness({
       env,
@@ -385,7 +449,14 @@ export class SessionManager {
       models,
       model,
       tools: wrapToolDefinitions(toolDefinitions),
-      systemPrompt: buildSystemPrompt({ cwd: entry.cwd, ...collectToolPromptData(toolDefinitions) }),
+      systemPrompt: buildSystemPrompt({
+        cwd: entry.cwd,
+        ...collectToolPromptData(toolDefinitions),
+        contextFiles,
+        skills: discovered.skills,
+      }),
+      // harness.skill() 从 turn 快照的 resources 里查技能。
+      resources: { skills: discovered.skills },
     })
     entry.harness = harness
 
@@ -443,7 +514,12 @@ export class SessionManager {
         return projection.applyStreamEvent(event.assistantMessageEvent, event.message)
       case "message_end": {
         const message = event.message
-        if (message.role === "assistant") return projection.finalizeAssistant(message)
+        if (message.role === "assistant") {
+          // 在这里判"要不要重试",因为 agent_end 到达时已经来不及压住 idle 了
+          // (事件是同步派发的,而 prompt() 的 promise 要等到之后才 resolve)。
+          entry.retryPending = shouldAutoRetry(message, entry.harness?.getModel().contextWindow, entry.retryAttempt ?? 0)
+          return projection.finalizeAssistant(message)
+        }
         if (message.role === "user") return []
         return projection.applyMessage(message)
       }
@@ -454,6 +530,10 @@ export class SessionManager {
       case "turn_end":
       case "settled":
       case "agent_end":
+        // 要重试就压住 idle:整段重试(含 2s/4s/8s 退避)必须是一个连续的 busy,
+        // 否则退避窗口里会出现一个"看起来跑完了"的会话 —— bench 会当真去跑判据,
+        // 而 agent 正要重试,两边同时动板子。压缩也一并推迟到重试真正结束之后。
+        if (entry.retryPending) return []
         // 一轮结束后按阈值自动压缩。内核不做这件事,不补就是聊长了直接撞上下文窗口。
         void this.maybeAutoCompact(entry)
         return this.setStatus(entry, { type: "idle" })
@@ -475,6 +555,11 @@ export class SessionManager {
    */
   private async maybeAutoCompact(entry: Entry): Promise<void> {
     if (!entry.harness || !entry.session || entry.compacting) return
+    // 只有真的压过才需要把状态收回 idle。以前的写法在 finally 里无条件发 idle,
+    // 而一轮结束会连着来 turn_end / settled / agent_end 三个事件 —— 于是每轮多发三条
+    // 完全相同的 idle。UI 端幂等看不出来,但它把"状态序列"这条最有用的诊断信号冲掉了
+    // (查重试为什么不生效时,满屏 idle 让人以为是抑制没起作用)。
+    let compactionStarted = false
     try {
       const model = entry.harness.getModel()
       const context = await entry.session.buildContext()
@@ -488,6 +573,7 @@ export class SessionManager {
       if (!decision.compact) return
 
       entry.compacting = true
+      compactionStarted = true
       entry.status = { type: "compacting" }
       this.options.emit([{ type: "session.status", sessionID: entry.id, status: entry.status }])
       await entry.harness.compact()
@@ -500,9 +586,11 @@ export class SessionManager {
         },
       ])
     } finally {
-      entry.compacting = false
-      entry.status = { type: "idle" }
-      this.options.emit([{ type: "session.status", sessionID: entry.id, status: { type: "idle" } }])
+      if (compactionStarted) {
+        entry.compacting = false
+        entry.status = { type: "idle" }
+        this.options.emit([{ type: "session.status", sessionID: entry.id, status: { type: "idle" } }])
+      }
     }
   }
 
@@ -529,6 +617,8 @@ export class SessionManager {
     const messageID = input.messageID ?? Identifier.ascending("message")
     entry.pendingUserID = messageID
     entry.aborter = new AbortController()
+    entry.retryAttempt = 0
+    entry.retryPending = false
 
     const images = (input.files ?? [])
       .filter((file) => file.mime.startsWith("image/"))
@@ -541,7 +631,11 @@ export class SessionManager {
     // 不 await:一轮可能跑几分钟,请求必须立刻返回,结果全部走事件流。
     harness
       .prompt(input.text, images.length ? { images } : undefined)
+      // 失败也是数据(stopReason:"error" 的 assistant 消息),所以自动重试挂在
+      // resolve 路径上,不是 catch 里。
+      .then((message) => this.maybeAutoRetry(entry, message))
       .catch((error: unknown) => {
+        entry.retryPending = false
         this.options.emit([
           { type: "kernel.error", sessionID, message: (error as Error)?.message ?? String(error) },
           { type: "session.status", sessionID, status: { type: "idle" } },
@@ -550,6 +644,55 @@ export class SessionManager {
       })
 
     return { messageID }
+  }
+
+  /**
+   * 一轮以可重试的错误收场时自动再试。
+   *
+   * 内核对 provider 失败**永不抛异常**,所以判断点在 resolve 路径上。整段重试是一个
+   * 连续的 busy:失败那一轮的 idle 已经被 project() 压住(entry.retryPending),
+   * 这里负责在真正结束时把它补上,并把推迟掉的自动压缩跑起来。
+   *
+   * 用户中途 abort 就停:刚按了停止,不该紧接着又发起一次模型调用。
+   */
+  private async maybeAutoRetry(entry: Entry, lastMessage: AssistantMessage): Promise<void> {
+    const signal = entry.aborter?.signal
+    let message = lastMessage
+    try {
+      while (entry.retryPending && !signal?.aborted) {
+        const attempt = (entry.retryAttempt ?? 0) + 1
+        entry.retryAttempt = attempt
+        await retrySleep(retryDelayMs(attempt), signal)
+        if (signal?.aborted) return
+        try {
+          message = await entry.harness!.retryLastTurn()
+        } catch (error) {
+          this.options.emit([
+            {
+              type: "kernel.error",
+              sessionID: entry.id,
+              message: `自动重试失败:${(error as Error)?.message ?? String(error)}`,
+            },
+          ])
+          return
+        }
+        // retryLastTurn 的事件同样流经 project(),retryPending 由那里重新裁决:
+        // 还能重试就继续转,不能了就落到下面的收尾。
+        void message
+      }
+    } finally {
+      const attempted = (entry.retryAttempt ?? 0) > 0
+      const stillPending = entry.retryPending === true
+      entry.retryPending = false
+      // 只在"确实压过 idle"时补收尾:要么中途放弃(abort/重试失败)时它还挂着,
+      // 要么重试成功过 —— 成功路径上最后那一轮的 turn_end 已经把 idle 发过了,
+      // 所以只有 stillPending 才需要这里补,否则会多发一条。
+      if (stillPending || (attempted && entry.status.type !== "idle")) {
+        void this.maybeAutoCompact(entry)
+        entry.status = { type: "idle" }
+        this.options.emit([{ type: "session.status", sessionID: entry.id, status: { type: "idle" } }])
+      }
+    }
   }
 
   async abort(sessionID: string): Promise<void> {

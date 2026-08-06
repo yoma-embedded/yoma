@@ -14,6 +14,16 @@
  *   1. 超时自动拒绝(默认 10 分钟);
  *   2. 会话 abort 时拒绝该会话所有未决请求;
  *   3. renderer 重连时把未决请求重新推一遍,否则关掉窗口再打开就是一个永久卡住的会话。
+ *
+ * ## 两层裁决:policy(注入)→ rules(表)→ ask(人)
+ *
+ * bench 无人值守跑任务时拍板的不是人而是 per-job 策略:PolicyProvider 在 tool_call 时
+ * 拿到工具名 + 参数,返回 allow / deny / escalate;escalate 强制走 ask 流(即使 rules
+ * 说 allow),undefined 表示"无意见"落回 rules 表。策略函数抛错按 escalate 处理 ——
+ * 策略崩了宁可去问人,绝不静默放行。
+ *
+ * 每个最终裁决(不论谁拍的板)都经 onDecision 吐出去 —— bench 拿它写 decisions.jsonl,
+ * 这是无人值守模式的审计底线。审计出口自己抛错会被吞掉,不反噬权限门。
  */
 
 import type { AgentHarness } from "@yoma/my-pi"
@@ -39,9 +49,45 @@ export const DEFAULT_PERMISSION_RULES: PermissionRules = {
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000
 
+export type PolicyDecision =
+  | { action: "allow"; rule?: string }
+  | { action: "deny"; rule?: string; reason?: string }
+  | { action: "escalate"; rule?: string }
+
+/** 无人值守策略。返回 undefined = 无意见,落回 rules 表。**不得**依赖"抛错=拒绝":抛错按 escalate 处理。 */
+export type PolicyProvider = (call: {
+  sessionID: string
+  tool: string
+  input: Record<string, unknown>
+}) => PolicyDecision | undefined | Promise<PolicyDecision | undefined>
+
+export type PermissionDecisionOrigin = "policy" | "rule" | "human" | "timeout" | "detach"
+
+/** 决策审计记录:verdict 是最终生效的结果,by 是谁拍的板。 */
+export interface PermissionDecision {
+  time: number
+  sessionID: string
+  callID: string
+  tool: string
+  /** describe() 的人话标题 —— bash 含完整命令、flash 含 action+chip,审计够用且不会巨大。 */
+  title: string
+  verdict: "allow" | "deny"
+  by: PermissionDecisionOrigin
+  /** 命中的策略规则名或 rules 表条目;"policy-error" 表示策略函数抛错被转成 escalate。 */
+  rule?: string
+  /** 走了 ask 流时的原始应答。 */
+  response?: PermissionResponse
+  elapsedMs: number
+}
+
+interface AskOutcome {
+  response: PermissionResponse
+  by: "human" | "timeout" | "detach"
+}
+
 interface Pending {
   request: PermissionRequest
-  resolve(response: PermissionResponse): void
+  resolve(outcome: AskOutcome): void
   timer: ReturnType<typeof setTimeout>
 }
 
@@ -49,12 +95,18 @@ export interface PermissionGateOptions {
   rules?: PermissionRules
   emit(event: KernelEvent): void
   timeoutMs?: number
+  /** 注入式策略,在 rules 之前裁决。见文件头"两层裁决"。 */
+  policy?: PolicyProvider
+  /** 决策审计出口。抛错被吞。 */
+  onDecision?(decision: PermissionDecision): void
 }
 
 export class PermissionGate {
   private rules: PermissionRules
   private readonly emit: (event: KernelEvent) => void
   private readonly timeoutMs: number
+  private readonly policy?: PolicyProvider
+  private readonly onDecision?: (decision: PermissionDecision) => void
   private readonly pending = new Map<string, Pending>()
   private readonly detachers = new Map<string, () => void>()
 
@@ -62,6 +114,8 @@ export class PermissionGate {
     this.rules = { ...DEFAULT_PERMISSION_RULES, ...(options.rules ?? {}) }
     this.emit = options.emit
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+    this.policy = options.policy
+    this.onDecision = options.onDecision
   }
 
   getRules(): PermissionRules {
@@ -84,25 +138,89 @@ export class PermissionGate {
       const toolName = (event as { toolName: string }).toolName
       const input = ((event as { input?: Record<string, unknown> }).input ?? {}) as Record<string, unknown>
       const callID = (event as { toolCallId: string }).toolCallId
+      const started = Date.now()
+      const title = describe(toolName, input)
+      const record = (
+        verdict: "allow" | "deny",
+        by: PermissionDecisionOrigin,
+        extra?: { rule?: string; response?: PermissionResponse },
+      ) => {
+        try {
+          this.onDecision?.({
+            time: Date.now(),
+            sessionID,
+            callID,
+            tool: toolName,
+            title,
+            verdict,
+            by,
+            rule: extra?.rule,
+            response: extra?.response,
+            elapsedMs: Date.now() - started,
+          })
+        } catch {
+          // 审计出口的错误不反噬权限门。
+        }
+      }
 
-      if (this.actionFor(toolName) === "allow") return undefined
+      // 第一层:注入式策略。escalate 会越过 rules 直奔 ask 流。
+      let escalateRule: string | undefined
+      if (this.policy) {
+        let decision: PolicyDecision | undefined
+        try {
+          decision = await this.policy({ sessionID, tool: toolName, input })
+        } catch {
+          decision = { action: "escalate", rule: "policy-error" }
+        }
+        if (decision?.action === "allow") {
+          record("allow", "policy", { rule: decision.rule })
+          return undefined
+        }
+        if (decision?.action === "deny") {
+          record("deny", "policy", { rule: decision.rule })
+          return { block: true, reason: decision.reason ?? `权限策略禁止 ${toolName}:${title}` }
+        }
+        if (decision?.action === "escalate") escalateRule = decision.rule ?? "escalate"
+      }
 
-      const response = await this.ask({
+      // 第二层:rules 表(策略要求 escalate 时跳过,直接去问人)。
+      if (escalateRule === undefined) {
+        const action = this.actionFor(toolName)
+        if (action === "allow") {
+          record("allow", "rule", { rule: `${toolName}:allow` })
+          return undefined
+        }
+        if (action === "deny") {
+          record("deny", "rule", { rule: `${toolName}:deny` })
+          return { block: true, reason: `权限规则禁止 ${toolName}:${title}` }
+        }
+      }
+
+      // 第三层:问人。
+      const { response, by } = await this.ask({
         id: Identifier.ascending("permission"),
         sessionID,
         messageID: currentMessageID(),
         callID,
         tool: toolName,
         input,
-        title: describe(toolName, input),
+        title,
         time: { created: Date.now() },
       })
 
       if (response === "always") {
+        // 只改 rules 表 —— 策略仍是外层权威,policy 坚持 escalate 的工具下次照样会问。
         this.rules = { ...this.rules, [toolName]: "allow" }
+        record("allow", by, { rule: escalateRule, response })
         return undefined
       }
-      if (response === "once") return undefined
+      if (response === "once") {
+        record("allow", by, { rule: escalateRule, response })
+        return undefined
+      }
+      record("deny", by, { rule: escalateRule, response })
+      if (by === "timeout") return { block: true, reason: `权限请求超时,${toolName} 被拒绝` }
+      if (by === "detach") return { block: true, reason: `会话已关闭,${toolName} 被拒绝` }
       return { block: true, reason: `用户拒绝了 ${toolName}` }
     })
     this.detachers.set(sessionID, off)
@@ -119,12 +237,12 @@ export class PermissionGate {
     return this.rules[tool] ?? "ask"
   }
 
-  private ask(request: PermissionRequest): Promise<PermissionResponse> {
-    return new Promise<PermissionResponse>((resolve) => {
+  private ask(request: PermissionRequest): Promise<AskOutcome> {
+    return new Promise<AskOutcome>((resolve) => {
       const timer = setTimeout(() => {
         this.pending.delete(request.id)
         this.emit({ type: "permission.replied", id: request.id, response: "reject" })
-        resolve("reject")
+        resolve({ response: "reject", by: "timeout" })
       }, this.timeoutMs)
       ;(timer as { unref?: () => void }).unref?.()
 
@@ -139,7 +257,7 @@ export class PermissionGate {
     clearTimeout(entry.timer)
     this.pending.delete(id)
     this.emit({ type: "permission.replied", id, response })
-    entry.resolve(response)
+    entry.resolve({ response, by: "human" })
   }
 
   rejectAllFor(sessionID: string, _reason: string): void {
@@ -148,7 +266,7 @@ export class PermissionGate {
       clearTimeout(entry.timer)
       this.pending.delete(id)
       this.emit({ type: "permission.replied", id, response: "reject" })
-      entry.resolve("reject")
+      entry.resolve({ response: "reject", by: "detach" })
     }
   }
 }

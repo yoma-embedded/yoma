@@ -58,7 +58,7 @@ my-pi 内部的相对 import 走真实路径,TypeScript 会把同一个 `Provide
 
 ## 仓库结构
 
-Bun workspace,`packages/` 下 5 个包:
+Bun workspace,`packages/` 下 7 个包:
 
 | 包 | 名字 | 职责 |
 |---|---|---|
@@ -68,8 +68,10 @@ Bun workspace,`packages/` 下 5 个包:
 | `ui` | `@yoma-desktop/ui` | 领域无关的基础组件(Kobalte)、OKLCH 主题引擎、图标 |
 | `session-ui` | `@yoma-desktop/session-ui` | transcript 渲染:消息、工具卡片、流式 markdown、Pierre diff |
 | `util` | `@yoma-desktop/util` | 纯函数小工具 |
+| `bench` | `@yoma-desktop/bench` | **无人值守调试台**:job 交给内核跑到底,判据自验,产出分支与报告 |
 
-分层单向:`ui`(叶) → `session-ui` → `app` → `desktop`;`kernel` 被 `app` 和 `desktop` 消费。
+分层单向:`ui`(叶) → `session-ui` → `app` → `desktop`;`kernel` 被 `app`、`desktop`
+和 `bench` 消费(`bench` 是 host 的**第二个宿主**,不经 Electron)。
 
 `packages/kernel` 的两个入口边界必须守住:
 
@@ -88,11 +90,12 @@ Bun workspace,`packages/` 下 5 个包:
 | `bun dev:desktop` | 开发模式(renderer 有 HMR;**内核进程没有**) |
 | `bun build:desktop` | 生产构建 → `packages/desktop/out/` |
 | `bun package:mac` / `:win` / `:linux` | electron-builder 安装包 |
-| `bun typecheck` | turbo 跑全部 6 个包 —— **必须常绿 6/6** |
+| `bun typecheck` | turbo 跑全部 7 个包 —— **必须常绿 7/7** |
 | `bun lint` | oxlint |
-| `bun --cwd packages/desktop smoke` | 内核冒烟:对 **构建产物** 验证 11 个工具 + 5 个引擎二进制 |
+| `bun --cwd packages/desktop smoke` | 内核冒烟:对 **构建产物** 验证 10 个工具 + 5 个引擎二进制 |
 | `bun --cwd packages/desktop e2e:ipc` | 生产路径:真 utilityProcess + 真 MessagePort + 真协议帧(不开窗口) |
 | `bun --cwd packages/desktop e2e:renderer` | 最后一跳:真窗口 + 真 preload + **真 contextBridge** |
+| `bun packages/bench/src/cli.ts run <job.json>` | 无人值守调试台:跑完整闭环(`check` 只校验,`grade` 只跑判据) |
 
 后三个是 CI 里唯一能挡住"my-pi 一次重构悄悄搞死桌面端"的东西 —— 我们是把它整个 inline
 进 bundle 的,内核的改动可以在我们这边零编译错误地把 app 弄坏,直到用户点下去才发现。
@@ -163,23 +166,61 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
 3. `prompt()` 在 abort 后是 **resolve 而不是 reject**(中断是数据不是异常),
    要区分"取消"和"完成"只能自己拿 AbortController。
 
-### 我们补的、内核没有的三件事
+### 我们补的、内核只给了机制的四件事
 
 - **权限门**(`host/permission.ts`)。内核没有权限系统,它自己的 ACP 适配器也从不注册
   `tool_call` 钩子 —— 也就是说在 Zed 里 `flash download` 是无人值守直接擦片的。
   内核对这个钩子 **没有任何超时**,所以三个兜底一个都不能少:超时自动拒绝、
   abort 时拒绝该会话全部未决、renderer 重连时重推未决请求。
+  裁决分三层:注入的 `PolicyProvider`(bench 用)→ `rules` 表 → 问人;策略返回
+  `escalate` 会**越过** rules 直接问人,策略函数抛错也按 escalate 处理(崩了宁可问人,
+  绝不静默放行)。每个终局裁决都经 `onDecision` 吐出去 —— 那是无人值守模式的审计底线。
 - **自动压缩**(`host/compaction.ts`)。内核只提供 `compact()`,什么时候压是应用层的事。
   两个 guard 一个不能少:没有真实 usage 数据时不猜(否则新会话一开口就被压)、
   刚压完不重压(否则一路压到没东西可压)。
+- **轮级自动重试**(`host/retry.ts`)。内核把 provider 失败当**数据**(stopReason:"error"
+  的 assistant 消息),重不重试是应用层的事;`harness.retryLastTurn()` 是机制。
+  3 次 / 2s 起指数退避,与 my-pi 的 ACP 适配器同一组参数 —— 那边有自己的一份,
+  我们不 import 它(会把整个 ACP 与 `@agentclientprotocol/sdk` 拖进 bundle),
+  但**数值必须抄一致**,否则会变成"Zed 里能自愈、桌面端不能"这种极难归因的差异。
+  重试期间 **idle 必须压住**(`entry.retryPending`):退避窗口里漏出 idle,bench 会
+  当真去跑判据,而 agent 正要重试,两边同时动板子。
 - **模型目录**(`SessionManager.providers()`)。`thinkingLevels` 必须走 pi-ai 的
   `getSupportedThinkingLevels(model)` 去问,编错的后果是档位能选但发不出去。
+
+项目上下文与技能走 my-pi 的 `core/resources.ts`(`loadContextFiles` / `discoverSkills`),
+不重写:"从哪些目录找"是内核那边的产品决策,抄一份的结果是"Zed 读得到项目的 AGENTS.md、
+桌面端读不到"。全局目录默认 `~/.my-pi`,与 ACP 同一份,于是同一份技能两处都生效;
+`configDir` 可注入,**测试必须传它**(否则读的是开发机真实的 `~/.my-pi`,结果取决于
+跑测试的人装了什么技能)。快照式:建会话时读一次,改了技能文件重开会话即生效。
 
 模型凭据复用 my-pi 的 `resolveModel()` → `~/.pi/agent/auth.json`,也就是配 pi/Zed 时
 已经填好的那份 —— 配过的机器零配置开跑。没配过的机器走应用内表单:`host/auth.ts`
 是写入端,写的就是同一份文件(`auth.set` 后丢弃模型目录缓存,新会话即可用新 key);
 provider 目录在无 key 时来自 `CONFIGURABLE_PROVIDERS`(my-pi `PROVIDERS` 表的结构化
 复制,防漂移测试在 `host/auth.test.ts`)。
+
+### 调试台(`packages/bench`)
+
+host 的**第二个宿主**:`createKernelHost()` 是纯 Node 装配(零 Electron 依赖),
+bench 直接 import 它跑无人值守任务,于是权限门、投影器、自动压缩、工具装配、会话协议
+全部白得。`sessionsRoot` 默认指向 desktop 的 userData —— 跑完在桌面端直接回放。
+
+三条不变式,动这个包之前先读:
+
+1. **判据由 runner 亲自跑,agent 说"修好了"不算数**(`grader.ts`)。日志判据自己起
+   采集进程,不复用 agent 写在 `.my-pi/logs/` 的文件 —— 那是考生自己填的答题卡。
+   所有命令 argv 直接 spawn **不过 shell**(判据不该被 `&&` 拼出第二个语义)。
+2. **一轮一个子进程**(`turn-entry.ts`)。my-pi 的探针租约/gdb 会话表/log 采集器都是
+   模块级全局,进程边界 = 免费且可靠的清理,grade 时不会撞上"探针被占着"。
+3. **审计不能伪造裁决者**。无人接管时策略把 `escalate` 转成 `deny`(`turn.ts` 的
+   `effectivePolicy`),而不是发一个注定被自动拒绝的 ask —— 后者会把决策记成
+   `by: "human"`,而当时根本没有人。`TurnInput.unattended` 就是为了把这件事传进子进程。
+
+两个实测踩过的坑:`.bench/` 必须自带 `.gitignore`(否则运行产物被 `git add -A` 卷进
+提交,研发打开 diff 看到五个内部文件加一处真改动);`result.text` 只收 **assistant**
+消息的非 synthetic text part(用户消息的 part 也是 text part,不过滤的话提示词会
+原样出现在报告的"根因分析"里)。
 
 ## 约定与规矩
 

@@ -10,11 +10,11 @@ import path from "node:path"
 
 import { AgentHarness } from "@yoma/my-pi"
 import { NodeExecutionEnv } from "@yoma/my-pi/node"
-import { createCodingToolDefinitions, createEmbeddedToolDefinitions } from "@yoma/my-pi-coding-agent"
+import { createCodingToolDefinitions } from "@yoma/my-pi-coding-agent"
 
 import type { KernelEvent, KernelHandlers, KernelMethod, KernelParams, KernelResult } from "../protocol.ts"
 import type { PermissionRules } from "../types.ts"
-import { SessionManager, type SessionManagerOptions } from "./session-manager.ts"
+import { createEmbeddedTools, SessionManager, type SessionManagerOptions } from "./session-manager.ts"
 import { ProjectStore, listFiles, readFile, searchFiles, vcsDiff, vcsInfo } from "./services.ts"
 import { StreamSink } from "./stream.ts"
 
@@ -24,6 +24,7 @@ export type * from "./details-check.ts"
 export { SessionProjection } from "./projector.ts"
 export { SessionManager } from "./session-manager.ts"
 export { PermissionGate, DEFAULT_PERMISSION_RULES } from "./permission.ts"
+export type { PolicyProvider, PolicyDecision, PermissionDecision, PermissionDecisionOrigin } from "./permission.ts"
 export { StreamSink } from "./stream.ts"
 
 export interface KernelHostOptions {
@@ -34,7 +35,13 @@ export interface KernelHostOptions {
   /** 存放 projects.json / permission 规则的目录。 */
   stateDir: string
   version?: string
+  /** 技能与上下文文件的全局目录,默认 `~/.my-pi`(与 my-pi 的 ACP 适配器同一份)。 */
+  configDir?: string
   permissionRules?: PermissionRules
+  /** 无人值守策略与审计出口(bench 注入);desktop 不传,行为与从前一致。 */
+  permissionPolicy?: SessionManagerOptions["permissionPolicy"]
+  onPermissionDecision?: SessionManagerOptions["onPermissionDecision"]
+  permissionTimeoutMs?: number
   /** 模型目录的来源。默认复用 my-pi 的 resolveModel();测试注入 faux provider。 */
   resolveModels?: SessionManagerOptions["resolveModels"]
   /** 成批推事件出去。host 已经做过合并,这里拿到的就是最终批次。 */
@@ -53,7 +60,11 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
   const sessions = new SessionManager({
     sessionsRoot: options.sessionsRoot,
     enginesDir: options.enginesDir,
+    configDir: options.configDir,
     permissionRules: options.permissionRules,
+    permissionPolicy: options.permissionPolicy,
+    onPermissionDecision: options.onPermissionDecision,
+    permissionTimeoutMs: options.permissionTimeoutMs,
     resolveModels: options.resolveModels,
     emit: (events) => sink.push(events),
   })
@@ -129,17 +140,8 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
 /** 冒烟自检:确认整个 my-pi 依赖图在当前 runtime 下真的加载得起来。 */
 export function kernelSelfCheck(options: { enginesDir?: string } = {}) {
   const env = new NodeExecutionEnv({ cwd: process.cwd() })
-  const engineOptions = options.enginesDir
-    ? ({
-        netlist: { enginesDir: options.enginesDir },
-        stm32config: { enginesDir: options.enginesDir },
-        flash: { enginesDir: options.enginesDir },
-        log: { enginesDir: options.enginesDir },
-        gdb: { enginesDir: options.enginesDir },
-      } as never)
-    : undefined
   const coding = createCodingToolDefinitions(env)
-  const embedded = createEmbeddedToolDefinitions(env, engineOptions)
+  const embedded = createEmbeddedTools(env, options.enginesDir)
   return {
     node: process.versions.node,
     electron: process.versions.electron ?? null,

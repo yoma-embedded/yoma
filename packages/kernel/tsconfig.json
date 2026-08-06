@@ -26,6 +26,9 @@
       "@yoma/my-pi-coding-agent/models": [
         "../../../my-pi/packages/coding-agent/src/acp/models.ts"
       ],
+      "@yoma/my-pi-coding-agent/resources": [
+        "../../../my-pi/packages/coding-agent/src/core/resources.ts"
+      ],
       "@earendil-works/pi-ai": [
         "../../../my-pi/packages/ai/dist/index.js"
       ],

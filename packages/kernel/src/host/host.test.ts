@@ -6,7 +6,7 @@
  * 这一条如果绿,说明"能聊天"这件事在数据面上已经成立,剩下的只是前端接线。
  */
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import {
@@ -44,13 +44,16 @@ function harnessWith(steps: unknown[]) {
   return { models, model: faux.getModel() as Model<string> }
 }
 
-function makeHost(steps: unknown[], options: { enginesDir?: string } = {}) {
+function makeHost(steps: unknown[], options: { enginesDir?: string; workspace?: string } = {}) {
   const events: KernelEvent[] = []
-  const workspace = tempDir("yoma-ws-")
+  const workspace = options.workspace ?? tempDir("yoma-ws-")
   const host = createKernelHost({
     sessionsRoot: tempDir("yoma-sessions-"),
     stateDir: tempDir("yoma-state-"),
     enginesDir: options.enginesDir,
+    // 隔离掉开发机真实的 ~/.my-pi:不传的话技能与上下文文件发现会去读它,
+    // 测试结果就取决于跑测试的人机器上装了什么技能。
+    configDir: tempDir("yoma-config-"),
     version: "test",
     onEvents: (batch) => events.push(...batch),
     // 全放行,免得冒烟测试卡在权限弹窗上。权限本身有独立测试。
@@ -58,6 +61,33 @@ function makeHost(steps: unknown[], options: { enginesDir?: string } = {}) {
     resolveModels: async () => harnessWith(steps),
   })
   return { host, events, workspace }
+}
+
+/** 手搓一条可重试的失败响应 —— faux 的 step 可以直接是一条 AssistantMessage。 */
+function fauxRetryableError(errorMessage = "503 Service Unavailable") {
+  return {
+    role: "assistant",
+    content: [],
+    api: "faux",
+    provider: "faux",
+    model: "faux",
+    stopReason: "error",
+    errorMessage,
+    timestamp: Date.now(),
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+  }
+}
+
+/** 会话状态的时间序列。重试测试靠它断言"中间不能出现 idle"。 */
+function statusesOf(events: KernelEvent[]): string[] {
+  return events.flatMap((event) => (event.type === "session.status" ? [event.status.type] : []))
 }
 
 /** 等到某个条件成立或超时 —— 一轮对话是异步的,prompt() 立刻返回。 */
@@ -179,6 +209,96 @@ describe("会话不存在", () => {
     const data = (caught as { data?: { _tag?: string; sessionID?: string } })?.data
     expect(data?._tag).toBe("SessionNotFoundError")
     expect(data?.sessionID).toBe(stale)
+    await host.dispose()
+  })
+})
+
+describe("轮级自动重试", () => {
+  test("可重试的 provider 失败会自己再试一次,且整段是一个连续的 busy", async () => {
+    const { host, events, workspace } = makeHost([
+      fauxRetryableError("503 Service Unavailable"),
+      fauxAssistantMessage([fauxText("这次成了")]),
+    ])
+    const session = (await host.handle("session.create", { directory: workspace })) as Session
+
+    await host.handle("session.prompt", { sessionID: session.id, input: { text: "你好" } })
+    await waitFor(
+      () =>
+        events.some(
+          (e) => e.type === "message.part.updated" && e.part.type === "text" && e.part.text.includes("这次成了"),
+        ),
+      20_000,
+    )
+    await waitFor(() => statusesOf(events).at(-1) === "idle", 20_000)
+
+    // 关键不变式:整段重试是**一个连续的 busy**。若退避窗口里漏出 idle,重试那一轮的
+    // turn_start 会把状态推回 busy,序列里就会出现 idle→busy 的回跳 —— 而那正是
+    // bench 判"这一轮跑完了"去跑判据、同时 agent 正要重试、两边同时动板子的时刻。
+    const statuses = statusesOf(events)
+    expect(statuses).toEqual(["busy", "idle"])
+    await host.dispose()
+  }, 30_000)
+
+  test("不可重试的失败(认证错)不重试,直接落 idle", async () => {
+    const { host, events, workspace } = makeHost([fauxRetryableError("401 invalid api key")])
+    const session = (await host.handle("session.create", { directory: workspace })) as Session
+
+    await host.handle("session.prompt", { sessionID: session.id, input: { text: "你好" } })
+    await waitFor(() => statusesOf(events).at(-1) === "idle")
+
+    // 只有一次模型调用:没有被重试。
+    expect(statusesOf(events)).toEqual(["busy", "idle"])
+    await host.dispose()
+  })
+})
+
+describe("项目资源发现", () => {
+  test("工作目录的 AGENTS.md 会进系统提示词 —— 与 Zed 里看到的是同一份项目上下文", async () => {
+    const workspace = tempDir("yoma-ws-")
+    writeFileSync(path.join(workspace, "AGENTS.md"), "本项目的板子是 STM32G474,烧录前必须先 make。")
+
+    let systemPrompt = ""
+    const { host } = makeHost(
+      [
+        (context: { systemPrompt?: string }) => {
+          systemPrompt = context?.systemPrompt ?? ""
+          return fauxAssistantMessage([fauxText("好")])
+        },
+      ],
+      { workspace },
+    )
+    const session = (await host.handle("session.create", { directory: workspace })) as Session
+    await host.handle("session.prompt", { sessionID: session.id, input: { text: "你好" } })
+    await waitFor(() => systemPrompt !== "")
+
+    expect(systemPrompt).toContain("STM32G474")
+    await host.dispose()
+  })
+
+  test("<cwd>/.agents/skills 里的技能会被发现并列进系统提示词", async () => {
+    const workspace = tempDir("yoma-ws-")
+    mkdirSync(path.join(workspace, ".agents", "skills", "can-debug"), { recursive: true })
+    writeFileSync(
+      path.join(workspace, ".agents", "skills", "can-debug", "SKILL.md"),
+      "---\nname: can-debug\ndescription: CAN 总线掉帧的排查步骤\n---\n\n先看 RX FIFO 溢出计数。\n",
+    )
+
+    let systemPrompt = ""
+    const { host } = makeHost(
+      [
+        (context: { systemPrompt?: string }) => {
+          systemPrompt = context?.systemPrompt ?? ""
+          return fauxAssistantMessage([fauxText("好")])
+        },
+      ],
+      { workspace },
+    )
+    const session = (await host.handle("session.create", { directory: workspace })) as Session
+    await host.handle("session.prompt", { sessionID: session.id, input: { text: "你好" } })
+    await waitFor(() => systemPrompt !== "")
+
+    expect(systemPrompt).toContain("can-debug")
+    expect(systemPrompt).toContain("CAN 总线掉帧")
     await host.dispose()
   })
 })

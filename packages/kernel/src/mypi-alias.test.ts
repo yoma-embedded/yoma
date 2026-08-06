@@ -1,11 +1,13 @@
 /**
- * my-pi 的路径映射存在三份,这是被工具链逼出来的,不是懒:
+ * my-pi 的路径映射存在四份,这是被工具链逼出来的,不是懒:
  *
  *   1. `packages/kernel/mypi.ts` 的 MY_PI_ALIASES —— 打包期(electron-vite / esbuild)用;
  *   2. `tsconfig.mypi.json` 的 paths —— typecheck 期(tsgo)用,被 desktop/app 继承;
  *   3. `packages/kernel/tsconfig.json` 里 **内联** 的同一份 paths —— `bun test` 用。
  *      bun 不跟随数组形式的 extends,所以这份必须就地展开,否则单测直接
  *      "Cannot find module '@yoma/my-pi'"。
+ *   4. `packages/bench/tsconfig.json` 的内联副本 —— 同理:bench 直接跑源码(不打包),
+ *      `bun test` 和 CLI 都靠它解析 my-pi。
  *
  * 三份不一致的后果是分裂的:构建能过但类型是错的,或者类型对但运行时找不到模块 ——
  * 都不会在改动的当下报错。所以用这个测试把它们钉死。
@@ -56,6 +58,7 @@ function normalize(file: string): string {
 describe("my-pi 别名映射", () => {
   const shared = resolvePaths(path.join(repoRoot, "tsconfig.mypi.json"))
   const inlined = resolvePaths(path.join(kernelDir, "tsconfig.json"))
+  const benchInlined = resolvePaths(path.join(repoRoot, "packages", "bench", "tsconfig.json"))
 
   test("MY_PI_DIR 指向一个真的 my-pi 检出", () => {
     // 认标志文件,不认目录名 —— 换成 worktree 之后目录可能叫任何名字。
@@ -75,6 +78,15 @@ describe("my-pi 别名映射", () => {
     expect(Object.keys(inlined).sort()).toEqual(Object.keys(shared).sort())
     for (const key of Object.keys(shared)) {
       expect(inlined[key]).toBe(shared[key]!)
+    }
+  })
+
+  test("bench 的内联副本与共享 tsconfig 一致", () => {
+    // bench 是第二个直接跑 my-pi 源码的包(第一个是 kernel 的 bun test)。
+    // 漏钉这一份的后果与 kernel 那份相同:bench 跑的和 typecheck 验的不是同一份代码。
+    expect(Object.keys(benchInlined).sort()).toEqual(Object.keys(shared).sort())
+    for (const key of Object.keys(shared)) {
+      expect(benchInlined[key]).toBe(shared[key]!)
     }
   })
 

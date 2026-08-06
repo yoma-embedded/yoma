@@ -32,7 +32,7 @@ function fail(message: string): never {
 if (!existsSync(bundle)) fail(`没有构建产物 ${bundle} —— 先跑 bun --cwd packages/desktop run build`)
 
 // ---------------------------------------------------------------------------
-// 1. 内核在真实 runtime 下加载得起来,而且 11 个工具都构造得出来
+// 1. 内核在真实 runtime 下加载得起来,而且 10 个工具都构造得出来
 // ---------------------------------------------------------------------------
 
 const enginesDir = join(repoRoot, "engines")
@@ -47,12 +47,12 @@ try {
   fail(`内核自检失败:\n${(error as { stdout?: string; message?: string }).stdout ?? (error as Error).message}`)
 }
 
+// grep 已随 my-pi 2026-08 的装配面精简退役(视图侧仍认得它,只为重放旧会话)。
 const EXPECTED = [
   "read",
   "bash",
   "edit",
   "write",
-  "grep",
   "netlist",
   "datasheet",
   "stm32config",

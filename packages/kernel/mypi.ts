@@ -80,9 +80,10 @@ const ai = path.join(MY_PI_DIR, "packages/ai/dist")
 /**
  * 打包器用的精确别名表(键是完整说明符,不做前缀匹配)。
  *
- * 深引用的两条(`/system-prompt`、`/models`)故意绕过 my-pi 的 exports map ——
- * `buildSystemPrompt` 和 `resolveModel` 不在里面,但系统提示词编码了嵌入式工具的
- * 使用指导,重写等于产品行为分叉。走别名既拿到真实现,又保住 typecheck 可见性。
+ * 深引用的三条(`/system-prompt`、`/models`、`/resources`)故意绕过 my-pi 的 exports map ——
+ * `buildSystemPrompt`、`resolveModel`、`discoverSkills` 都不在里面,但系统提示词编码了
+ * 嵌入式工具的使用指导、资源发现编码了"技能与 AGENTS.md 从哪些目录找"这条产品决定,
+ * 重写等于产品行为分叉。走别名既拿到真实现,又保住 typecheck 可见性。
  */
 export const MY_PI_ALIASES: Record<string, string> = {
   "@yoma/my-pi": path.join(agent, "index.ts"),
@@ -90,6 +91,7 @@ export const MY_PI_ALIASES: Record<string, string> = {
   "@yoma/my-pi-coding-agent": path.join(codingAgent, "index.ts"),
   "@yoma/my-pi-coding-agent/system-prompt": path.join(codingAgent, "core/system-prompt.ts"),
   "@yoma/my-pi-coding-agent/models": path.join(codingAgent, "acp/models.ts"),
+  "@yoma/my-pi-coding-agent/resources": path.join(codingAgent, "core/resources.ts"),
   "@earendil-works/pi-ai": path.join(ai, "index.js"),
   "@earendil-works/pi-ai/providers/anthropic": path.join(ai, "providers/anthropic.js"),
   "@earendil-works/pi-ai/providers/openai": path.join(ai, "providers/openai.js"),

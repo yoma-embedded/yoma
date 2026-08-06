@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "//": "paths 内联的理由与 packages/kernel/tsconfig.json 相同:bun 不跟随数组形式的 extends,而 bench 直接跑源码(不打包),`bun test` 和 CLI 都要靠这份解析 my-pi。三份映射的一致性由 kernel/src/mypi-alias.test.ts 钉住,新增的这份由 bench/src/mypi-alias.test.ts 钉住。",
+  "extends": ["@tsconfig/bun/tsconfig.json", "../../tsconfig.mypi.json"],
+  "compilerOptions": {
+    "noEmit": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": false,
+    "moduleResolution": "bundler",
+    "skipLibCheck": true,
+    "paths": {
+      "@yoma/my-pi": ["../../../my-pi/packages/agent/src/index.ts"],
+      "@yoma/my-pi/node": ["../../../my-pi/packages/agent/src/node.ts"],
+      "@yoma/my-pi-coding-agent": ["../../../my-pi/packages/coding-agent/src/index.ts"],
+      "@yoma/my-pi-coding-agent/system-prompt": ["../../../my-pi/packages/coding-agent/src/core/system-prompt.ts"],
+      "@yoma/my-pi-coding-agent/models": ["../../../my-pi/packages/coding-agent/src/acp/models.ts"],
+      "@yoma/my-pi-coding-agent/resources": ["../../../my-pi/packages/coding-agent/src/core/resources.ts"],
+      "@earendil-works/pi-ai": ["../../../my-pi/packages/ai/dist/index.js"],
+      "@earendil-works/pi-ai/providers/*": ["../../../my-pi/packages/ai/dist/providers/*.js"]
+    },
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src"]
+}

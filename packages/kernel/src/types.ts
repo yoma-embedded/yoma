@@ -216,6 +216,13 @@ export const TOOL_NAMES = [
   "gdb",
 ] as const
 
+/**
+ * 已从内核退役、但必须留在视图词汇表里的工具:旧会话的 JSONL 里还有它们的 part,
+ * 重放时 session-ui 要认得。grep 于 my-pi 2026-08 的装配面精简中删除(依赖外部 ripgrep)。
+ * 活工具集 = TOOL_NAMES − RETIRED_TOOL_NAMES,由 host/tool-names.test.ts 钉住 my-pi 装配面。
+ */
+export const RETIRED_TOOL_NAMES = ["grep"] as const
+
 export type ToolName = (typeof TOOL_NAMES)[number]
 
 export interface TruncationInfo {
@@ -413,7 +420,8 @@ export interface PermissionRequest {
 
 export type PermissionResponse = "once" | "always" | "reject"
 
-export type PermissionAction = "ask" | "allow"
+/** deny:不问直接拦。规则表和无人值守策略共用这套动词(策略另有 escalate,见 host/permission.ts)。 */
+export type PermissionAction = "ask" | "allow" | "deny"
 
 export type PermissionRules = Partial<Record<ToolName, PermissionAction>> & Record<string, PermissionAction | undefined>
 

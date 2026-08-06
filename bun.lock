@@ -76,6 +76,22 @@
         "vite-plugin-solid": "catalog:",
       },
     },
+    "packages/bench": {
+      "name": "@yoma-desktop/bench",
+      "version": "0.0.0",
+      "bin": {
+        "yoma-bench": "./src/cli.ts",
+      },
+      "dependencies": {
+        "@yoma-desktop/kernel": "workspace:*",
+      },
+      "devDependencies": {
+        "@tsconfig/bun": "catalog:",
+        "@types/bun": "catalog:",
+        "@typescript/native-preview": "catalog:",
+        "typescript": "catalog:",
+      },
+    },
     "packages/desktop": {
       "name": "@yoma-desktop/desktop",
       "version": "0.1.0",
@@ -952,6 +968,8 @@
     "@xmldom/xmldom": ["@xmldom/xmldom@0.8.13", "https://registry.npmmirror.com/@xmldom/xmldom/-/xmldom-0.8.13.tgz", {}, "sha512-KRYzxepc14G/CEpEGc3Yn+JKaAeT63smlDr+vjB8jRfgTBBI9wRj/nkQEO+ucV8p8I9bfKLWp37uHgFrbntPvw=="],
 
     "@yoma-desktop/app": ["@yoma-desktop/app@workspace:packages/app"],
+
+    "@yoma-desktop/bench": ["@yoma-desktop/bench@workspace:packages/bench"],
 
     "@yoma-desktop/desktop": ["@yoma-desktop/desktop@workspace:packages/desktop"],
 
