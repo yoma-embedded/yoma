@@ -260,14 +260,23 @@ bench 直接 import 它跑无人值守任务,于是权限门、投影器、自�
   "名字叫 engines 且存在",会高高兴兴找到一个没有 `bin/` 的空壳,然后报
   "去跑 `bun engines/build.ts`",让你以为是没编译。仓库根的 `engines` 是指向
   `../my-pi/engines` 的软链。
-- **打包前必须先在 my-pi 仓库跑过 `bun engines/build.ts`**。`engines/bin` 与 `engines/data`
-  里全是软链,而 electron-builder 对 extraResources 里的软链 **原样保留、不 dereference**
-  (实测:.app 里出现断链,签名阶段 stat ENOENT)。所以 `package:*` 脚本链了
-  `scripts/stage-engines.ts`:校验(空目录/悬空软链直接失败)+ 实体化到
-  `.engines-stage/`,extraResources 只认暂存目录。Python 三件套
-  (board_ir/connections/controller_map)是 venv console script,shebang 指向构建机
-  绝对路径,**拷到别人电脑必坏** —— 校验只能警告,根治要 my-pi 的 engines/build.ts
-  产出自包含产物(别在本仓修,那是内核的事)。
+- **engines 有两个来源,`scripts/stage-engines.ts` 按目标平台自动选**:本地
+  `../my-pi/engines`(开发机的软链,仅当它满足目标平台)或 my-pi 的**预编译 Release
+  产物**(按 `packages/desktop/engines.lock.json` 钉住的 tag,用 `gh` 下载)。
+  后者让"在 Mac 上打 Windows 包"第一次真正成立 —— 以前只能靠
+  `YOMA_ALLOW_FOREIGN_ENGINES=1` 打出一个引擎全坏的包。
+  优先级:`YOMA_ENGINES_DIR` > `YOMA_ENGINES_BUNDLE`(显式指一个压缩包,离线打包
+  和验证用)> 满足平台的本地目录 > 下载。私有仓的 Release 要鉴权,但**下载发生在
+  打包期**(手上有凭据的机器),终端用户拿到的是包里已经躺好的文件。
+- **electron-builder 对 extraResources 里的软链原样保留、不 dereference**
+  (实测:.app 里出现断链,签名阶段 stat ENOENT),所以 stage-engines 要**实体化**
+  到 `.engines-stage/`,extraResources 只认暂存目录;预编译产物还会按 bundle 自带的
+  `manifest.json` 逐个核 sha256(挡住"文件在但内容被截断")。
+- **Python 三件套的 shebang 曾经是分发的死穴**:board_ir/connections/controller_map
+  在开发期是 venv console script,第一行写死构建机绝对路径,拷到别人电脑必坏,
+  而且报"找不到解释器",看起来像没编译。已由 my-pi 的 `bun engines/build.ts --dist`
+  用 PyInstaller 冻结解决(那边的 CI 产出的就是冻结版);本地开发跑普通 `build.ts`
+  仍是 console script,所以 stage-engines 的那条警告要留着。
 - **Bun 的 `os.homedir()` 在进程启动时定死**,运行时改 `process.env.HOME` 对它无效。
   想在测试里隔离 `~/.pi/agent/auth.json` 这类真实凭据文件,要么走函数的 dir 注入参数,
   要么起一个出生时就带干净 HOME 的子进程(见 `host/auth.test.ts`)。实测踩过:

@@ -16,13 +16,15 @@
  *      我们不改内核 → 响亮警告并列出受影响的工具。
  */
 
-import { chmodSync, cpSync, existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs"
+import { createHash } from "node:crypto"
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 const desktopDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
-const enginesDir = path.resolve(desktopDir, "..", "..", "engines")
+const localEnginesDir = path.resolve(desktopDir, "..", "..", "engines")
 const stageDir = path.join(desktopDir, ".engines-stage")
+const cacheDir = path.join(desktopDir, ".engines-cache")
 
 /**
  * 打包目标平台,由 package.json 的脚本传入(package:win → win32),缺省当前平台。
@@ -60,12 +62,164 @@ function detectFormat(head: Buffer): BinFormat {
   return "other"
 }
 
-function fail(message: string): never {
+/**
+ * 失败并给出**对得上症状**的下一步。
+ *
+ * hint 可覆盖:默认那句"去 my-pi 跑 build.ts"只适用于"本地产物缺失/悬空",
+ * 拿它去回答"校验和不符"会把人引向完全错误的方向(实测自己就差点被自己误导)。
+ */
+function fail(message: string, hint = "先在 my-pi 仓库跑 `bun engines/build.ts`(为目标平台),再回来打包。"): never {
   console.error(`\n[stage-engines] ${message}`)
-  console.error("[stage-engines] 先在 my-pi 仓库跑 `bun engines/build.ts`(为目标平台),再回来打包。\n")
+  console.error(`[stage-engines] ${hint}\n`)
   process.exit(1)
 }
 
+// ---- 引擎从哪来 --------------------------------------------------------
+//
+// 三条路,按优先级:
+//   1. YOMA_ENGINES_DIR —— 显式指定目录,一切照它;
+//   2. YOMA_ENGINES_BUNDLE —— 显式指定一个 bundle 压缩包(离线打包 / 验证用);
+//   3. 本地 ../../engines(开发机的软链)—— **仅当它满足目标平台**;
+//   4. 预编译产物 —— 按 engines.lock.json 钉住的 tag 从 my-pi 的 Release 下载。
+//
+// 第 4 条是"在 Mac 上打 Windows 包"能成立的关键:本地那份永远是 Mach-O,
+// 以前只能靠 YOMA_ALLOW_FOREIGN_ENGINES=1 打出一个引擎全坏的包。
+//
+// 私有仓的 Release 资产要鉴权,但**下载发生在打包期**(开发机或 CI,手上有凭据),
+// 终端用户拿到的是安装包里已经躺好的文件,不需要任何令牌。
+
+const TARGET_ARCH = process.argv[3] ?? (TARGET === "win32" ? "x64" : process.arch)
+
+function bundleName(target: string, arch: string): string {
+  const key = `${target}-${arch}`
+  return target === "win32" ? `engines-${key}.zip` : `engines-${key}.tar.gz`
+}
+
+function run(cmd: string[], cwd?: string): { ok: boolean; out: string } {
+  const proc = Bun.spawnSync({ cmd, cwd, stdout: "pipe", stderr: "pipe" })
+  return { ok: proc.exitCode === 0, out: `${proc.stdout.toString()}${proc.stderr.toString()}` }
+}
+
+function extract(archive: string, into: string): void {
+  mkdirSync(into, { recursive: true })
+  // .tar.gz 用 tar;.zip 优先 unzip,退回 bsdtar(macOS/Win11 的 tar 能读 zip,GNU tar 不能)。
+  const attempts = archive.endsWith(".zip")
+    ? [["unzip", "-q", archive, "-d", into], ["tar", "-xf", archive, "-C", into]]
+    : [["tar", "-xzf", archive, "-C", into]]
+  for (const cmd of attempts) {
+    const result = run(cmd)
+    if (result.ok) return
+    if (cmd === attempts[attempts.length - 1]) fail(`解压 ${path.basename(archive)} 失败:\n${result.out}`)
+  }
+}
+
+/** 校验 bundle 自带的 manifest —— 挡住下载被截断/被改这类"文件在但内容不对"。 */
+function verifyManifest(root: string): void {
+  const manifestFile = path.join(root, "manifest.json")
+  if (!existsSync(manifestFile)) {
+    console.warn("[stage-engines] ⚠ 预编译产物里没有 manifest.json,跳过完整性校验")
+    return
+  }
+  const manifest = JSON.parse(readFileSync(manifestFile, "utf8")) as {
+    bin?: Record<string, { sha256?: string }>
+  }
+  for (const [name, info] of Object.entries(manifest.bin ?? {})) {
+    const file = path.join(root, "bin", name)
+    if (!existsSync(file)) {
+      fail(`预编译产物缺 bin/${name}(manifest 里列了它)`, `这份 Release 产物不完整,重新构建对应 tag。`)
+    }
+    if (!info.sha256) continue
+    const actual = createHash("sha256").update(readFileSync(file)).digest("hex")
+    if (actual !== info.sha256) {
+      fail(
+        `bin/${name} 校验和与 manifest 不符`,
+        `产物在传输中被截断或被改动过。删掉 packages/desktop/.engines-cache 重新取一次;` +
+          `还不行就是那次 Release 的产物本身有问题,重新构建 tag。`,
+      )
+    }
+  }
+}
+
+/** 本地 engines 是否满足目标平台。不满足就该去取预编译产物,而不是打一个坏包。 */
+function localSatisfiesTarget(): boolean {
+  const binDir = path.join(localEnginesDir, "bin")
+  if (!existsSync(binDir)) return false
+  let native = 0
+  for (const name of readdirSync(binDir).filter((n) => !n.startsWith("."))) {
+    try {
+      const head = readFileSync(path.join(binDir, name))
+      if (detectFormat(head) !== expected.format) continue
+      if (TARGET === "win32" && !name.toLowerCase().endsWith(".exe")) continue
+      native += 1
+    } catch {
+      return false // 悬空软链等
+    }
+  }
+  return native > 0
+}
+
+function resolveEnginesDir(): string {
+  if (process.env.YOMA_ENGINES_DIR) return path.resolve(process.env.YOMA_ENGINES_DIR)
+  // 显式指了 bundle 就用 bundle:人明确说了要哪一份,本地那份不该抢在前面
+  // (第一版让本地优先,结果拿本地产物"验证"了预编译路径,等于什么都没验)。
+  if (!process.env.YOMA_ENGINES_BUNDLE && localSatisfiesTarget()) return localEnginesDir
+
+  const lock = JSON.parse(readFileSync(path.join(desktopDir, "engines.lock.json"), "utf8")) as {
+    repo: string
+    tag: string
+  }
+  const tag = process.env.YOMA_ENGINES_RELEASE ?? lock.tag
+  const asset = bundleName(TARGET, TARGET_ARCH)
+  const into = path.join(cacheDir, tag, `${TARGET}-${TARGET_ARCH}`)
+
+  if (existsSync(path.join(into, "bin"))) {
+    console.log(`[stage-engines] 用缓存的预编译引擎:${into}`)
+    verifyManifest(into)
+    return into
+  }
+
+  // 本地 bundle 逃生口 —— 也是这条路径的测试接缝(不联网就能验解压/校验/实体化全链)。
+  const local = process.env.YOMA_ENGINES_BUNDLE
+  console.log(
+    local
+      ? `[stage-engines] 用显式指定的 bundle:${local}`
+      : `[stage-engines] 本地 engines 不满足 ${TARGET}/${TARGET_ARCH},取预编译产物 ${lock.repo}@${tag}`,
+  )
+  const archive = local ? path.resolve(local) : path.join(cacheDir, tag, asset)
+  if (local) {
+    if (!existsSync(archive)) fail(`YOMA_ENGINES_BUNDLE 指向的文件不存在:${archive}`)
+  } else {
+    mkdirSync(path.dirname(archive), { recursive: true })
+    // gh 带着登录态,私有仓也能下;没有 gh 就明确告诉人装它,别在这儿造第二套鉴权。
+    if (!Bun.which("gh")) {
+      fail(
+        `需要下载预编译引擎,但没装 gh CLI。\n` +
+          `[stage-engines] 装 gh 并 \`gh auth login\`(私有仓 Release 要鉴权),\n` +
+          `[stage-engines] 或者自己下 ${asset} 后用 YOMA_ENGINES_BUNDLE=<路径> 指过来。`,
+      )
+    }
+    const result = run([
+      "gh", "release", "download", tag,
+      "--repo", lock.repo,
+      "--pattern", asset,
+      "--dir", path.dirname(archive),
+      "--clobber",
+    ])
+    if (!result.ok) {
+      fail(
+        `下载 ${asset} 失败(${lock.repo}@${tag}):\n${result.out}\n` +
+          `[stage-engines] 常见原因:tag 还没发布、当前账号对私有仓没权限、该平台的产物没构建。`,
+      )
+    }
+  }
+
+  extract(archive, into)
+  if (!existsSync(path.join(into, "bin"))) fail(`预编译产物解压后没有 bin/:${into}`)
+  verifyManifest(into)
+  return into
+}
+
+const enginesDir = resolveEnginesDir()
 if (!existsSync(enginesDir)) fail(`找不到 engines 目录:${enginesDir}`)
 
 // ---- 校验 --------------------------------------------------------------
