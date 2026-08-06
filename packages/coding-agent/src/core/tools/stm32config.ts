@@ -101,7 +101,7 @@ Part numbers: the db spells them with a wildcard package suffix (STM32G473RCTx),
 Commands and their required parameters:
 - list-mcus [family, package, minFlashKb]: enumerate supported parts
 - describe-mcu (part): memory, pins/signals, IP instances, clock tree of one part
-- schema: print the JSON Schema of the configuration document — consult it before authoring a config
+- schema: print the configuration-document field reference (all fields, types, defaults) — consult it before authoring a config
 - candidates (configPath, peripheral, [signal]): list candidate pads for a peripheral's signals
 - solve-clock (configPath): solve the clock tree for the config's frequency targets
 - validate (configPath): full validation pipeline; returns diagnostics + summary
