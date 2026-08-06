@@ -194,9 +194,22 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
 `configDir` 可注入,**测试必须传它**(否则读的是开发机真实的 `~/.my-pi`,结果取决于
 跑测试的人装了什么技能)。快照式:建会话时读一次,改了技能文件重开会话即生效。
 
-模型凭据复用 my-pi 的 `resolveModel()` → `~/.pi/agent/auth.json`,也就是配 pi/Zed 时
-已经填好的那份 —— 配过的机器零配置开跑。没配过的机器走应用内表单:`host/auth.ts`
-是写入端,写的就是同一份文件(`auth.set` 后丢弃模型目录缓存,新会话即可用新 key);
+模型凭据走 my-pi 的 `resolveModel(configDir)` → `<configDir>/auth.json`,默认
+`~/.my-pi/auth.json` —— **2026-08 起不再跟 pi 共用 `~/.pi/agent/auth.json`**,my-pi
+那次把凭据独立了出去,同时把 `resolveModel` 改成必须显式收目录(在我们这边是编译期
+硬失败,alias 接缝的设计目的正是如此)。配过 Zed(my-pi 的 ACP)的机器仍然零配置开跑。
+
+两个必须记住的点:
+
+- **格式带判别字段**:条目是 `{"deepseek":{"type":"api_key","key":"sk-…"}}`,少了
+  `type` 会被 pi-ai 的 `resolveProviderAuth` 静默忽略(表现是"我明明配了 key 却说没配")。
+  所以写入端直接用 my-pi 导出的 `FileCredentialStore`,不自己拼 JSON。
+- **迁移只在没注入 configDir 时做**(`host/auth.ts` 的 `migrateLegacyPiAuth`):
+  注入的调用方(测试、隔离跑的 bench)显然是在隔离,不该反手去读真实 HOME 的老凭据
+  —— 否则隔离是假的,还会把用户真实的 key 复制进临时目录(实测踩过)。
+  迁移幂等、不删旧文件(用户可能还在用 pi 命令行)。
+
+`configDir` 一处管三样:凭据、技能、上下文文件,与 my-pi ACP 的 `CONFIG_DIR` 同义。
 provider 目录在无 key 时来自 `CONFIGURABLE_PROVIDERS`(my-pi `PROVIDERS` 表的结构化
 复制,防漂移测试在 `host/auth.test.ts`)。
 

@@ -59,7 +59,7 @@ import { SessionProjection } from "./projector.ts"
 import { PermissionGate, type PermissionDecision, type PolicyProvider } from "./permission.ts"
 import { shouldAutoCompact } from "./compaction.ts"
 import { retryDelayMs, retrySleep, shouldAutoRetry } from "./retry.ts"
-import { CONFIGURABLE_PROVIDERS, removeAuthKey, writeAuthKey } from "./auth.ts"
+import { CONFIGURABLE_PROVIDERS, migrateLegacyPiAuth, myPiConfigDir, removeAuthKey, writeAuthKey } from "./auth.ts"
 
 /** 同时活着的 harness 上限。淘汰只是丢弃内存态,重开就是 repo.open + buildContext,很便宜。 */
 const MAX_LIVE_SESSIONS = 8
@@ -137,6 +137,8 @@ export class SessionManager {
   private readonly entries = new Map<string, Entry>()
   private readonly options: SessionManagerOptions
   readonly permissions: PermissionGate
+  /** 凭据、技能、上下文文件共用的一个目录,与 my-pi ACP 的 CONFIG_DIR 同义。 */
+  private readonly configDir: string
 
   private models?: Models
   private defaultModel?: Model<string>
@@ -144,6 +146,7 @@ export class SessionManager {
 
   constructor(options: SessionManagerOptions) {
     this.options = options
+    this.configDir = options.configDir ?? myPiConfigDir()
     this.env = new NodeExecutionEnv({ cwd: process.cwd() })
     this.repo = new JsonlSessionRepo({ fs: this.env, sessionsRoot: options.sessionsRoot })
     this.permissions = new PermissionGate({
@@ -169,9 +172,16 @@ export class SessionManager {
   private async ensureModels(): Promise<{ models: Models; model: Model<string> }> {
     if (this.models && this.defaultModel) return { models: this.models, model: this.defaultModel }
     try {
+      // 老用户的 key 还在 ~/.pi/agent/auth.json 里,搬一次(幂等,不删旧文件)。
+      // 放在解析之前:不搬的话升级一次 app 就是"key 不见了",而用户什么都没做。
+      //
+      // **只在没注入 configDir 时搬**:注入的调用方(测试、隔离跑的 bench)显然是在
+      // 隔离,那就不该反手去读真实 HOME 里的老凭据 —— 否则隔离是假的,而且会把用户
+      // 真实的 key 复制进一个临时目录(写这条测试时就是这么发现的)。
+      if (!this.options.resolveModels && !this.options.configDir) migrateLegacyPiAuth(this.configDir)
       const resolved = this.options.resolveModels
         ? await this.options.resolveModels()
-        : ((await resolveModel()) as { models: Models; model: Model<string> })
+        : ((await resolveModel(this.configDir)) as { models: Models; model: Model<string> })
       this.models = resolved.models
       this.defaultModel = resolved.model as Model<string>
       this.modelError = undefined
@@ -266,14 +276,14 @@ export class SessionManager {
       throw new Error(
         `未知 provider ${providerID}。可配置:${CONFIGURABLE_PROVIDERS.map((spec) => spec.id).join(", ")}`,
       )
-    writeAuthKey(providerID, trimmed)
+    await writeAuthKey(providerID, trimmed, this.configDir)
     this.invalidateModels()
     return this.providers()
   }
 
   /** 移除一个 provider 的 key。同样丢弃模型目录缓存。 */
   async removeAuth(providerID: string): Promise<ProviderInfo[]> {
-    removeAuthKey(providerID)
+    await removeAuthKey(providerID, this.configDir)
     this.invalidateModels()
     return this.providers()
   }
@@ -420,10 +430,9 @@ export class SessionManager {
     // 抄一份的结果会是"Zed 读得到项目上下文、桌面端读不到"这种极难归因的差异。
     // 全局目录与 ACP 一致(~/.my-pi),于是同一份技能在 Zed 和桌面端都生效。
     // 快照式:会话创建时读一次,改了技能文件重开会话即生效,不做热重载。
-    const configDir = this.options.configDir ?? path.join(homedir(), ".my-pi")
     const [contextFiles, discovered] = await Promise.all([
-      loadContextFiles(env, { cwd: entry.cwd, globalDir: configDir }),
-      discoverSkills(env, { cwd: entry.cwd, globalDir: configDir }),
+      loadContextFiles(env, { cwd: entry.cwd, globalDir: this.configDir }),
+      discoverSkills(env, { cwd: entry.cwd, globalDir: this.configDir }),
     ])
     for (const diagnostic of discovered.diagnostics) {
       this.options.emit([
