@@ -219,6 +219,11 @@ async function commandRun(jobFile: string, flags: Set<string>): Promise<void> {
     const pushed = await git.pushBranch(gitContext, { branch, remote: job.deliver.remote ?? "origin" })
     say(pushed.ok ? `${GREEN}✓${RESET} ${pushed.message}` : `${YELLOW}⚠${RESET} ${pushed.message}`)
   }
+  // 自动建 MR 还没做。静默忽略一个写进 job 的字段,等于让人以为 MR 已经建好了 ——
+  // 宁可每次都说一句。分支和报告都在,手动开 MR 只差一步。
+  if (job.deliver?.mr) {
+    say(`${YELLOW}⚠${RESET} deliver.mr 尚未实现:分支已就位,请手动开 MR(报告可直接贴进描述)`)
+  }
 
   process.exit(result.outcome === "passed" ? 0 : 1)
 }
