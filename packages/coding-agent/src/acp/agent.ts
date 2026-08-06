@@ -6,7 +6,14 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { RequestError } from "@agentclientprotocol/sdk";
-import { getSupportedThinkingLevels, type Model, type Models } from "@earendil-works/pi-ai";
+import {
+	type AssistantMessage,
+	getSupportedThinkingLevels,
+	isContextOverflow,
+	isRetryableAssistantError,
+	type Model,
+	type Models,
+} from "@earendil-works/pi-ai";
 import {
 	AgentHarness,
 	type AgentMessage,
@@ -16,15 +23,18 @@ import {
 	type NodeExecutionEnv,
 	type Session,
 	shouldCompact,
+	type Skill,
 	type ThinkingLevel,
 	uuidv7,
 } from "@yoma/my-pi/node";
+import { discoverSkills, loadContextFiles } from "../core/resources.ts";
 import { buildSystemPrompt, collectToolPromptData } from "../core/system-prompt.ts";
 import { createCodingToolDefinitions, createEmbeddedToolDefinitions, wrapToolDefinitions } from "../core/tools/index.ts";
 import { pipeHarnessToAcp, replayUpdatesOf, type UpdateSink } from "./session.ts";
 
-export const SESSIONS_DIR = join(homedir(), ".my-pi", "sessions");
-export const LOGS_DIR = join(homedir(), ".my-pi", "logs");
+export const CONFIG_DIR = join(homedir(), ".my-pi");
+export const SESSIONS_DIR = join(CONFIG_DIR, "sessions");
+export const LOGS_DIR = join(CONFIG_DIR, "logs");
 
 /**
  * Zed 的模型下拉框和 thinking 下拉框都由 session/new / session/load 返回的
@@ -108,15 +118,17 @@ export interface AcpAvailableCommand {
 }
 
 /**
- * 会话里可用的斜杠命令。
+ * 会话里可用的斜杠命令:内置命令 + 每个技能一条 `/skill:name`(语义同 pi)。
  *
  * 客户端收到 available_commands_update 才会把输入框提示改成
  * "@ to include context, / for commands" —— 不发这条通知,Zed 里就没有 / 菜单。
  *
  * 只登记 harness 真能执行的东西:登记了却不实现,用户敲了会石沉大海。
  * navigateTree 需要一个 entry id,没有树浏览 UI 之前不适合做成命令,所以不在列。
+ * disable-model-invocation 的技能也在列 —— 那个开关只隐藏系统提示词里的条目,
+ * 显式的 /skill: 调用恰恰是它存在的意义。
  */
-export function availableCommands(): AcpAvailableCommand[] {
+export function availableCommandsFor(skills: Skill[] = []): AcpAvailableCommand[] {
 	return [
 		{
 			name: "compact",
@@ -127,15 +139,23 @@ export function availableCommands(): AcpAvailableCommand[] {
 			name: "status",
 			description: "Show the session id, model, thinking level and working directory",
 		},
+		...skills.map((skill) => ({
+			name: `skill:${skill.name}`,
+			description: skill.description,
+			input: { hint: "optional extra instructions" },
+		})),
 	];
 }
 
-/** 把一条 prompt 文本解析成斜杠命令。不是命令则返回 undefined。 */
-export function parseSlashCommand(text: string): { name: string; argument: string } | undefined {
-	const match = /^\/([a-zA-Z][\w-]*)\s*([\s\S]*)$/.exec(text.trim());
+/** 把一条 prompt 文本解析成斜杠命令。不在 commands 清单里的不算命令(会正常发给模型)。 */
+export function parseSlashCommand(
+	text: string,
+	commands: AcpAvailableCommand[] = availableCommandsFor(),
+): { name: string; argument: string } | undefined {
+	const match = /^\/([a-zA-Z][\w:-]*)\s*([\s\S]*)$/.exec(text.trim());
 	if (!match) return undefined;
 	const name = match[1]!;
-	if (!availableCommands().some((command) => command.name === name)) return undefined;
+	if (!commands.some((command) => command.name === name)) return undefined;
 	return { name, argument: match[2]?.trim() ?? "" };
 }
 
@@ -181,11 +201,51 @@ export function clampThinkingLevel(model: Model<any>, level: ThinkingLevel): Thi
 	return supported.includes(level) ? level : (supported[0] ?? "off");
 }
 
+/** 轮级自动重试的预算与退避,取 pi 的默认值(retry.enabled=true / 3 次 / 2s 起步指数退避)。 */
+export const RETRY_MAX_ATTEMPTS = 3;
+export const RETRY_BASE_DELAY_MS = 2000;
+
+export function retryDelayMs(attempt: number, baseDelayMs: number = RETRY_BASE_DELAY_MS): number {
+	return baseDelayMs * 2 ** (attempt - 1);
+}
+
+/**
+ * 一轮以失败收场后,该不该自动重试。抽成纯函数,原因同 shouldAutoCompact。
+ *
+ * 不重试的三种情况:预算耗尽;上下文溢出(该压缩,重试同一请求只会再溢出一次 ——
+ * pi 也是这么分工的);以及 isRetryableAssistantError 判定的不可重试错误
+ * (认证失败、参数错误、用户主动中止等,重试只是浪费钱)。
+ */
+export function shouldAutoRetry(message: AssistantMessage, contextWindow: number, attempt: number): boolean {
+	if (attempt >= RETRY_MAX_ATTEMPTS) return false;
+	if (isContextOverflow(message, contextWindow)) return false;
+	return isRetryableAssistantError(message);
+}
+
+/** 可中断的退避等待:abort 时提前 resolve(不是 reject),调用方查 signal 决定去留。 */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+	return new Promise((resolve) => {
+		if (signal?.aborted) {
+			resolve();
+			return;
+		}
+		const done = () => {
+			clearTimeout(timer);
+			signal?.removeEventListener("abort", done);
+			resolve();
+		};
+		const timer = setTimeout(done, ms);
+		signal?.addEventListener("abort", done, { once: true });
+	});
+}
+
 interface AcpSession {
 	harness: AgentHarness<any, any, any>;
 	/** harness 不暴露 session,但自动压缩要读 buildContext(),所以这里留一份引用。 */
 	session: Session;
 	cwd: string;
+	/** 本会话发现的技能,/skill: 命令清单据此生成。 */
+	skills: Skill[];
 	pendingPrompt: AbortController | null;
 	/** 当前 prompt 的通知发送口;不在 prompt 中时为 undefined。 */
 	sink?: UpdateSink;
@@ -199,6 +259,8 @@ export interface MyPiAcpAgentOptions {
 	protocolVersion: number;
 	sessionsDir?: string;
 	logsDir?: string;
+	/** 上下文文件与技能的全局目录,默认 ~/.my-pi。测试用它隔离真实的用户目录。 */
+	configDir?: string;
 }
 
 export class MyPiAcpAgent {
@@ -274,11 +336,15 @@ export class MyPiAcpAgent {
 		};
 	}
 
-	/** 推送斜杠命令清单。客户端据此把输入框变成 "/ for commands"。 */
+	/** 推送斜杠命令清单(含本会话技能的 /skill: 命令)。客户端据此把输入框变成 "/ for commands"。 */
 	private async announceCommands(sessionId: string, cx: any): Promise<void> {
+		const session = this.sessions.get(sessionId);
 		await cx?.notify?.("session/update", {
 			sessionId,
-			update: { sessionUpdate: "available_commands_update", availableCommands: availableCommands() },
+			update: {
+				sessionUpdate: "available_commands_update",
+				availableCommands: availableCommandsFor(session?.skills ?? []),
+			},
 		});
 	}
 
@@ -342,8 +408,20 @@ export class MyPiAcpAgent {
 				? this.options.env
 				: new (this.options.env.constructor as typeof NodeExecutionEnv)({ cwd });
 
-		// 系统提示词按会话构建:身份 + 实际注册的工具清单与守则 + cwd,
-		// 全部来自工具定义自带的 promptSnippet / promptGuidelines,不再手写。
+		// 资源发现:AGENTS.md/CLAUDE.md(全局 + 祖先链)与技能(全局 + 项目 .agents/skills)。
+		// 会话创建时读一次快照 —— 改了技能文件,重开会话即可生效,不做热重载。
+		const configDir = this.options.configDir ?? CONFIG_DIR;
+		const [contextFiles, { skills, diagnostics }] = await Promise.all([
+			loadContextFiles(env, { cwd, globalDir: configDir }),
+			discoverSkills(env, { cwd, globalDir: configDir }),
+		]);
+		// acp.ts 把 console 重定向到了 stderr(落 ~/.my-pi/acp.log),诊断记在那里。
+		for (const diagnostic of diagnostics) {
+			console.error(`[skills] ${diagnostic.code} ${diagnostic.path}: ${diagnostic.message}`);
+		}
+
+		// 系统提示词按会话构建:身份 + 实际注册的工具清单与守则 + 项目上下文 + 技能清单 + cwd,
+		// 工具部分全部来自工具定义自带的 promptSnippet / promptGuidelines,不再手写。
 		const toolDefinitions = [...createCodingToolDefinitions(env), ...createEmbeddedToolDefinitions(env)];
 		const harness = new AgentHarness({
 			env,
@@ -354,8 +432,12 @@ export class MyPiAcpAgent {
 			systemPrompt: buildSystemPrompt({
 				cwd,
 				...collectToolPromptData(toolDefinitions),
+				contextFiles,
+				skills,
 			}),
 			tools: wrapToolDefinitions(toolDefinitions),
+			// harness.skill() 从 turn 快照的 resources 里查技能,/skill: 命令走它。
+			resources: { skills },
 		});
 
 		// 观测日志:harness 全事件逐行落 ~/.my-pi/logs/<sessionId>.jsonl,tail -f 即可旁观。
@@ -373,7 +455,7 @@ export class MyPiAcpAgent {
 			}
 		});
 
-		const acpSession: AcpSession = { harness, session, cwd, pendingPrompt: null };
+		const acpSession: AcpSession = { harness, session, cwd, skills, pendingPrompt: null };
 		this.sessions.set(sessionId, acpSession);
 		return acpSession;
 	}
@@ -475,17 +557,25 @@ export class MyPiAcpAgent {
 
 		const text = promptToText(params.prompt);
 		try {
-			// 斜杠命令在本地执行,不进模型。命令是会话级操作(压缩、查状态),
-			// 交给模型只会变成它对着一句 "/compact" 瞎猜。
-			const command = parseSlashCommand(text);
-			if (command) {
+			// 斜杠命令在本地解析。/compact /status 是会话级操作,不进模型 ——
+			// 交给模型只会变成它对着一句 "/compact" 瞎猜;/skill:name 则是真实回合
+			// (技能全文格式化成提示词),与普通 prompt 同等对待,善后逻辑共用。
+			const command = parseSlashCommand(text, availableCommandsFor(session.skills));
+			if (command && !command.name.startsWith("skill:")) {
 				await this.runCommand(params.sessionId, session, command, sink);
 				return { stopReason: "end_turn" };
 			}
-			await session.harness.prompt(text);
+			const result = command
+				? await session.harness.skill(command.name.slice("skill:".length), command.argument || undefined)
+				: await session.harness.prompt(text);
 			// 取消不会让 harness.prompt 抛错:abort 以 stopReason:"aborted" 的合成消息
 			// 正常 resolve(agent-loop 把中断当数据),所以 cancelled 必须在 resolve 路径上判,
-			// 并且跳过善后压缩 —— 用户刚按了停止,不该紧接着又发起一次压缩的模型调用。
+			// 并且跳过善后动作 —— 用户刚按了停止,不该紧接着又发起新的模型调用。
+			if (controller.signal.aborted) {
+				return { stopReason: "cancelled" };
+			}
+			// 轮级自动重试:失败也是数据(stopReason:"error"),所以同样在 resolve 路径上判。
+			await this.maybeAutoRetry(session, result, controller.signal, sink);
 			if (controller.signal.aborted) {
 				return { stopReason: "cancelled" };
 			}
@@ -543,6 +633,40 @@ export class MyPiAcpAgent {
 				content: { type: "text", text: `\n\n⚠️ 自动压缩失败:${(error as Error)?.message ?? String(error)}\n` },
 			});
 			return false;
+		}
+	}
+
+	/**
+	 * 一轮以可重试错误收场后,按指数退避自动重跑(对齐 pi 的 agent 级重试:
+	 * 3 次、2s/4s/8s)。与 maybeAutoCompact 同属"善后动作":自身失败绝不让
+	 * prompt 失败。重试轮的流式事件照常经 pipeHarnessToAcp 发给客户端。
+	 */
+	private async maybeAutoRetry(
+		session: AcpSession,
+		lastMessage: AssistantMessage,
+		signal: AbortSignal,
+		sink: UpdateSink,
+	): Promise<void> {
+		const say = (text: string) => sink({ sessionUpdate: "agent_message_chunk", content: { type: "text", text } });
+		let attempt = 0;
+		let message = lastMessage;
+		while (!signal.aborted && shouldAutoRetry(message, session.harness.getModel().contextWindow, attempt)) {
+			attempt++;
+			const delayMs = retryDelayMs(attempt);
+			await say(
+				`\n\n⚠️ 模型请求失败:${message.errorMessage ?? "unknown error"}\n${Math.round(delayMs / 1000)}s 后自动重试(${attempt}/${RETRY_MAX_ATTEMPTS})…\n`,
+			);
+			await sleep(delayMs, signal);
+			if (signal.aborted) return;
+			try {
+				message = await session.harness.retryLastTurn();
+			} catch (error) {
+				await say(`\n\n⚠️ 自动重试失败:${(error as Error)?.message ?? String(error)}\n`);
+				return;
+			}
+		}
+		if (attempt > 0 && message.stopReason === "error") {
+			await say(`\n\n⚠️ 自动重试 ${attempt} 次后仍失败。\n`);
 		}
 	}
 

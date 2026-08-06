@@ -3,6 +3,7 @@
 > **✅ 已完工(2026-07-25)**:Step 1–10 全部落地,17 个 harness 参考测试 + 20 个 compaction 测试全绿(合计 142 pass)。
 > `example/04` 已毕业:import 从 pi-minimal 改回 `@yoma/my-pi/node`,`@ts-nocheck` 与 tsconfig exclude 均已删除,三个场景跑在自己的实现上。
 > Step 10 连带把 M8(compaction 三文件)一起做了 —— 因为 `compact()`/`navigateTree()` 对它是运行时硬依赖。
+> **2026-08-06 增补**:P0 三件落地 —— M9 技能发现(loadSkills + `/skill:` 命令)、AGENTS.md 上下文文件、轮级自动重试(内核 `retryLastTurn()` + ACP 层策略)。现状见文末盘点表。
 > **下一站不再是里程碑表,而是真实负载**:见文末"M7 之后"。
 >
 > 本指南基于对 pi-minimal `agent-harness.ts`(1029 行)的逐行侦察,所有依赖结论都经过对 import 块的逐条 grep 验证。行号均指 pi-minimal。日期:2026-07-24。
@@ -81,22 +82,22 @@
 
 里程碑表到这里基本走完了(M1–M8 + M9 的资源格式化部分)。**剩下的东西不该再按表推进,而该由真实失败来排优先级。**
 
-已完成盘点:
+已完成盘点(2026-08-06 刷新):
 
 | 里程碑 | 状态 |
 |---|---|
 | M1–M4 循环 + Agent 壳 | ✅ |
-| M5 会话树 | ✅(Step 5 repos 仍推迟,harness 不需要) |
-| M6 FileSystem | ✅ / Shell·exec ❌(见下) |
-| M7 AgentHarness | ✅ 17 测试 |
-| M8 Compaction | ✅ 20 测试 |
-| M9 Skills/模板 | 格式化 ✅ / 磁盘发现 ❌ |
+| M5 会话树 | ✅ 含 Step 5 repos(ACP session/load 靠它做历史找回) |
+| M6 FileSystem + Shell·exec | ✅(exec/truncate/shell-output 随 bash 工具落地,d15c5c6) |
+| M7 AgentHarness | ✅(后补 `retryLastTurn()`:`retry` 相位启用,摘尾部失败消息 → runAgentLoopContinue) |
+| M8 Compaction | ✅(ACP 层每轮后自动压缩,带 stale-usage 防线) |
+| M9 Skills/模板 | 技能 ✅(loadSkills 移植 + `.agents/skills`/`~/.my-pi/skills` 发现 + `/skill:` 命令,2026-08-06)/ **模板发现 ❌** |
+| 上下文文件 | ✅ AGENTS.md/CLAUDE.md 全局 + 祖先链 + override 语义(coding-agent/src/core/resources.ts) |
+| 轮级自动重试 | ✅ 策略在 ACP 层(3 次、2s 指数退避、溢出与不可重试错误除外),机制在内核 |
 
 **仍然缺的**(都不阻塞,等真用到再补):
 
-- **M6 尾巴**:nodejs.ts 的 exec/Shell(~373 行,进程树 kill、shell 发现、WSL shim 等平台脏活,建议直接抄)+ `utils/truncate.ts` + `utils/shell-output.ts` + `nodejs-env.test.ts`(20 测试)。**做 bash 工具的那天就必须补**,补完就能删掉全仓库那几处 `as unknown as ExecutionEnv`。
-- **M9 发现层**:`loadSkills`(~340 行,含 ignore 规则与 frontmatter 解析)、`loadPromptTemplates`、`system-prompt.ts`。
-- **M5 Step 5**:repos(会话的列出/新建/删除/fork)—— 做 CLI 的 `--resume` 时会需要。
+- **M9 模板发现**:`loadPromptTemplates` —— 替换函数(`$1`/`$@`/`${@:N:L}`)与 `promptFromTemplate()` 都已就位,只差磁盘发现 + ACP 命令登记,照抄 skills 的接法即可。`test/harness/prompt-templates.test.ts` 与 `system-prompt.test.ts` 两个占位文件也留给它。
 - `proxy.ts`(367 行):只有"后端代理鉴权"这种部署形态才需要。
 
 **下一步建议:造一个自己每天用的 CLI agent。** 五个真工具(read/write/edit/bash/grep)+ REPL + 会话落 `~/.my-pi/sessions/` + 接真模型。它会在几小时内把上面这些"缺的东西"按真实优先级排好序 —— 比如你会立刻发现 truncate 比 repos 急迫得多。详细理由见对话记录里的三条路(dogfooding → 差分测试 → 评测套件)。

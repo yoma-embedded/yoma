@@ -351,21 +351,42 @@ describe("registered ACP methods", () => {
 });
 
 // ---- 斜杠命令 -------------------------------------------------------------
-import { availableCommands, parseSlashCommand } from "../src/acp/agent.ts";
+import { availableCommandsFor, parseSlashCommand } from "../src/acp/agent.ts";
 
-describe("availableCommands", () => {
+describe("availableCommandsFor", () => {
 	it("only advertises commands the harness can actually run", () => {
 		// 登记了却不实现的命令,用户敲下去会石沉大海。
-		expect(availableCommands().map((c) => c.name).sort()).toEqual(["compact", "status"]);
-		for (const command of availableCommands()) {
+		expect(
+			availableCommandsFor()
+				.map((c) => c.name)
+				.sort(),
+		).toEqual(["compact", "status"]);
+		for (const command of availableCommandsFor()) {
 			expect(command.description.length).toBeGreaterThan(0);
 		}
 	});
 
 	it("declares an input hint only for the command that takes an argument", () => {
-		const byName = Object.fromEntries(availableCommands().map((c) => [c.name, c]));
+		const byName = Object.fromEntries(availableCommandsFor().map((c) => [c.name, c]));
 		expect(byName.compact!.input).toEqual({ hint: "optional instructions for the summary" });
 		expect(byName.status!.input).toBeUndefined();
+	});
+
+	it("adds one /skill: command per discovered skill, including hidden-from-prompt ones", () => {
+		const skills = [
+			{ name: "flash-triage", description: "Diagnose probe-rs flash failures", content: "…", filePath: "/s/SKILL.md" },
+			{
+				name: "quiet-helper",
+				description: "Only invoked explicitly",
+				content: "…",
+				filePath: "/q/SKILL.md",
+				// 该开关只隐藏系统提示词里的条目;显式 /skill: 调用正是它存在的意义。
+				disableModelInvocation: true,
+			},
+		];
+		const names = availableCommandsFor(skills).map((c) => c.name);
+		expect(names).toContain("skill:flash-triage");
+		expect(names).toContain("skill:quiet-helper");
 	});
 });
 
@@ -398,6 +419,18 @@ describe("parseSlashCommand", () => {
 
 	it("ignores unknown commands so they reach the model as plain text", () => {
 		expect(parseSlashCommand("/deploy production")).toBeUndefined();
+	});
+
+	it("parses /skill: commands when the session advertises them", () => {
+		const commands = availableCommandsFor([
+			{ name: "flash-triage", description: "d", content: "c", filePath: "/s/SKILL.md" },
+		]);
+		expect(parseSlashCommand("/skill:flash-triage check RDP level", commands)).toEqual({
+			name: "skill:flash-triage",
+			argument: "check RDP level",
+		});
+		// 没登记的技能名不算命令,正常发给模型。
+		expect(parseSlashCommand("/skill:unknown", commands)).toBeUndefined();
 	});
 });
 
@@ -454,5 +487,56 @@ describe("shouldAutoCompact", () => {
 		const messages = [assistantWithUsage(THRESHOLD + 100, 10)];
 		expect(shouldAutoCompact(messages, WINDOW).compact).toBe(true);
 		expect(shouldAutoCompact(messages, 200000).compact).toBe(false);
+	});
+});
+
+// ---- 自动重试的判断 -------------------------------------------------------
+//
+// 三个不重试分支各有各的坏结局:预算耗尽还重试是无限烧钱;溢出重试同一请求
+// 只会再溢出一次(该走压缩);认证/参数类错误重试纯属浪费。
+import { RETRY_BASE_DELAY_MS, RETRY_MAX_ATTEMPTS, retryDelayMs, shouldAutoRetry } from "../src/acp/agent.ts";
+
+function failedAssistant(errorMessage: string): any {
+	return {
+		role: "assistant",
+		content: [],
+		stopReason: "error",
+		errorMessage,
+		timestamp: 1,
+		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: zeroCost },
+	};
+}
+
+describe("shouldAutoRetry", () => {
+	it("retries transient provider failures", () => {
+		expect(shouldAutoRetry(failedAssistant("503 Service Unavailable"), 200000, 0)).toBe(true);
+		expect(shouldAutoRetry(failedAssistant("socket hang up"), 200000, 2)).toBe(true);
+	});
+
+	it("stops when the attempt budget is spent", () => {
+		expect(shouldAutoRetry(failedAssistant("503"), 200000, RETRY_MAX_ATTEMPTS)).toBe(false);
+	});
+
+	it("does not retry non-retryable failures", () => {
+		expect(shouldAutoRetry(failedAssistant("invalid api key"), 200000, 0)).toBe(false);
+	});
+
+	it("does not touch successful or aborted turns", () => {
+		const ok = { ...failedAssistant(""), stopReason: "stop", errorMessage: undefined };
+		const aborted = { ...failedAssistant("Request was aborted"), stopReason: "aborted" };
+		expect(shouldAutoRetry(ok, 200000, 0)).toBe(false);
+		expect(shouldAutoRetry(aborted, 200000, 0)).toBe(false);
+	});
+
+	it("leaves context overflow to compaction, not retry", () => {
+		expect(shouldAutoRetry(failedAssistant("prompt is too long: 210000 tokens > 200000 maximum"), 200000, 0)).toBe(
+			false,
+		);
+	});
+
+	it("backs off exponentially from the base delay", () => {
+		expect(retryDelayMs(1)).toBe(RETRY_BASE_DELAY_MS);
+		expect(retryDelayMs(2)).toBe(RETRY_BASE_DELAY_MS * 2);
+		expect(retryDelayMs(3)).toBe(RETRY_BASE_DELAY_MS * 4);
 	});
 });

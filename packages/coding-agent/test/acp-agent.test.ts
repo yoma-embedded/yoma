@@ -8,7 +8,7 @@
 import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import { NodeExecutionEnv } from "@yoma/my-pi/node";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MyPiAcpAgent } from "../src/acp/agent.ts";
@@ -50,6 +50,8 @@ function setup() {
 		protocolVersion: 1,
 		sessionsDir: join(workdir, "sessions"),
 		logsDir: join(workdir, "logs"),
+		// 与开发机的真实 ~/.my-pi 切干净,否则那里的 AGENTS.md/skills 会渗进系统提示词。
+		configDir: join(workdir, "config"),
 	});
 	return { agent, models, first, second };
 }
@@ -244,6 +246,7 @@ describe("session/cancel", () => {
 			protocolVersion: 1,
 			sessionsDir: join(workdir, "sessions"),
 			logsDir: join(workdir, "logs"),
+			configDir: join(workdir, "config"),
 		});
 		return { agent, provider };
 	}
@@ -426,5 +429,118 @@ describe("automatic compaction after a turn", () => {
 			.updates("agent_message_chunk")
 			.filter((u: any) => u.content.text.includes("已自动压缩")).length;
 		expect(compactionsAfterFirstTurn).toBe(1);
+	});
+});
+
+// ---- 技能全链路:发现 → 命令清单 → 系统提示词 → /skill: 真回合 --------------
+
+describe("skills over ACP", () => {
+	function writeSkill(name: string, description: string): void {
+		const dir = join(workdir, ".agents", "skills", name);
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\n---\nSteps for ${name}.`);
+	}
+
+	it("announces /skill: commands and injects the skill list into the system prompt", async () => {
+		writeSkill("flash-triage", "Diagnose probe-rs flash failures");
+		const { agent, first } = setup();
+		const client = createClient();
+		const { sessionId }: any = await agent.newSession({ cwd: workdir }, client.cx);
+
+		const commands = client
+			.updates("available_commands_update")[0]!
+			.availableCommands.map((command: any) => command.name);
+		expect(commands).toContain("skill:flash-triage");
+
+		// 电线上的 systemPrompt 由 faux 工厂捕获:技能以"名字+描述"渐进披露。
+		let systemPrompt: string | undefined;
+		first.setResponses([
+			(context: any) => {
+				systemPrompt = context.systemPrompt;
+				return fauxAssistantMessage("ok");
+			},
+		]);
+		await agent.prompt({ sessionId, prompt: [{ type: "text", text: "hi" }] }, client.cx);
+		expect(systemPrompt).toContain("<available_skills>");
+		expect(systemPrompt).toContain("flash-triage");
+		expect(systemPrompt).toContain("Diagnose probe-rs flash failures");
+	});
+
+	it("runs /skill:name as a real turn with the formatted skill as the prompt", async () => {
+		writeSkill("flash-triage", "Diagnose probe-rs flash failures");
+		const { agent, first } = setup();
+		const client = createClient();
+		const { sessionId }: any = await agent.newSession({ cwd: workdir }, client.cx);
+
+		let wireUserText: string | undefined;
+		first.setResponses([
+			(context: any) => {
+				const user = [...context.messages].reverse().find((message: any) => message.role === "user");
+				wireUserText = user?.content?.[0]?.text;
+				return fauxAssistantMessage("triaged");
+			},
+		]);
+
+		const result = await agent.prompt(
+			{ sessionId, prompt: [{ type: "text", text: "/skill:flash-triage check RDP level first" }] },
+			client.cx,
+		);
+
+		expect(result.stopReason).toBe("end_turn");
+		expect(wireUserText).toContain('<skill name="flash-triage"');
+		expect(wireUserText).toContain("Steps for flash-triage.");
+		expect(wireUserText).toContain("check RDP level first");
+		const said = client
+			.updates("agent_message_chunk")
+			.map((u: any) => u.content.text)
+			.join("");
+		expect(said).toContain("triaged");
+	});
+
+});
+
+// ---- 轮级自动重试:失败轮 → 退避 → retryLastTurn → 恢复 --------------------
+
+describe("auto retry over ACP", () => {
+	it(
+		"retries a transient failure and delivers the recovered answer in the same prompt",
+		async () => {
+			const { agent, first } = setup();
+			const client = createClient();
+			const { sessionId }: any = await agent.newSession({ cwd: workdir }, client.cx);
+			first.setResponses([
+				() => fauxAssistantMessage("", { stopReason: "error", errorMessage: "503 service unavailable" }),
+				fauxAssistantMessage("recovered answer"),
+			]);
+
+			const result = await agent.prompt({ sessionId, prompt: [{ type: "text", text: "hi" }] }, client.cx);
+
+			expect(result.stopReason).toBe("end_turn");
+			const said = client
+				.updates("agent_message_chunk")
+				.map((u: any) => u.content.text)
+				.join("");
+			expect(said).toContain("自动重试");
+			expect(said).toContain("recovered answer");
+			// 剧本吃光:错误一次 + 重试一次,没有第三次请求。
+			expect(first.getPendingResponseCount()).toBe(0);
+		},
+		15000,
+	);
+
+	it("does not retry non-retryable failures", async () => {
+		const { agent, first } = setup();
+		const client = createClient();
+		const { sessionId }: any = await agent.newSession({ cwd: workdir }, client.cx);
+		first.setResponses([
+			() => fauxAssistantMessage("", { stopReason: "error", errorMessage: "invalid api key" }),
+			fauxAssistantMessage("must never be requested"),
+		]);
+
+		const result = await agent.prompt({ sessionId, prompt: [{ type: "text", text: "hi" }] }, client.cx);
+
+		expect(result.stopReason).toBe("end_turn");
+		// 第二条剧本没被吃掉 —— 没有发起重试请求。
+		expect(first.getPendingResponseCount()).toBe(1);
 	});
 });
