@@ -41,3 +41,27 @@ export type { ReportInput } from "./report.ts"
 export { firstPrompt, retryPrompt, blockedPrompt, describeChecks } from "./prompts.ts"
 
 export * as git from "./git.ts"
+
+// ─── 信箱闭环(跨机器多轮:母 agent 决策 ↔ 工位机执行,git 仓当信箱) ─────────────
+export { parseMailboxJob, loadMailboxJob } from "./mailbox/spec.ts"
+export type { MailboxJob, MailboxConfig } from "./mailbox/spec.ts"
+export { scanMailbox, roundDir, sumMotherTokens } from "./mailbox/store.ts"
+export type {
+  MailboxState,
+  MailboxSnapshot,
+  MailboxVerdict,
+  RoundInstruction,
+  RoundResultFile,
+  RoundDecision,
+  RoundFiles,
+  DecisionKind,
+} from "./mailbox/store.ts"
+export { initBareMailbox, cloneMailbox, pullReset, commitPush } from "./mailbox/sync.ts"
+export { initMailbox, serializeMailboxJob } from "./mailbox/init.ts"
+export { runnerStep, runMailboxRunner } from "./mailbox/runner.ts"
+export type { MailboxRunnerOptions, RunnerStepOutcome } from "./mailbox/runner.ts"
+export { motherStep, runMailboxMother, parseMotherDecision } from "./mailbox/mother.ts"
+export type { MailboxMotherOptions, MotherStepOutcome, MotherDecisionPayload } from "./mailbox/mother.ts"
+export { renderMailboxReport } from "./mailbox/report.ts"
+export { runSim } from "./mailbox/sim.ts"
+export type { SimOptions, SimResult } from "./mailbox/sim.ts"

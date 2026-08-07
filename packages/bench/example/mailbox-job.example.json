@@ -1,0 +1,37 @@
+{
+  "id": "m-20260807-01",
+  "title": "修复 CAN 掉帧(信箱闭环)",
+  "repo": {
+    "directory": "/Users/you/projects/motor-fw",
+    "branch": "agent/m-20260807-01"
+  },
+  "bench": {
+    "board": "nucleo-g474re",
+    "chip": "STM32G474RE",
+    "elf": "build/motor-fw.elf",
+    "knownGoodElf": "artifacts/main-ci.elf"
+  },
+  "task": "上电约 30 秒后 CAN 开始掉帧。复现方法:烧录后用 100kbps 满载发送。期望:RX 计数与 TX 一致,自检打印 SELFTEST PASS。",
+  "success": {
+    "build": "make -j8",
+    "checks": [
+      { "type": "log_wait", "pattern": "SELFTEST PASS", "timeoutS": 90 },
+      { "type": "log_absent", "pattern": "HardFault|RX overrun", "windowS": 60 }
+    ],
+    "repeat": 1
+  },
+  "budget": {
+    "maxTokens": 2000000,
+    "wallClockMin": 120
+  },
+  "policy": "unattended",
+  "maxDiffLines": 400,
+  "mailbox": {
+    "maxRounds": 6,
+    "pollSeconds": 15,
+    "mother": {
+      "model": { "providerID": "deepseek", "modelID": "deepseek-chat" },
+      "maxTokensPerAnalysis": 200000
+    }
+  }
+}

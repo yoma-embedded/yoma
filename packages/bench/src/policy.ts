@@ -124,11 +124,19 @@ export function createPolicyDecider(
   return (tool, input) => {
     const str = (key: string): string => (typeof input[key] === "string" ? (input[key] as string) : "")
 
-    // 只读工具:三档全放行。log 的 command 模式能起任意进程,单独判。
+    // 只读工具:放行 —— 但 log 的 command 模式能起任意进程,必须单独判,而且要在
+    // readonly 早退**之前**判掉:白名单里的 python/node 足以执行任意代码,让它从
+    // "只读工具"这个口子溜进 readonly 档,只读承诺就只剩提示词约束(补审逮住过:
+    // 三档里最严的 readonly 反而是唯一全放行的)。
     if (READONLY_TOOLS.has(tool)) {
       if (tool === "log") {
         const command = str("command")
-        if (command) return commandVerdict(command, "log.command")
+        if (command) {
+          if (level === "readonly") {
+            return deny("readonly-policy:log.command", "只读档不允许 command 模式采日志 —— 它能起任意进程")
+          }
+          return commandVerdict(command, "log.command")
+        }
       }
       return allow(`readonly:${tool}`, "只读工具")
     }

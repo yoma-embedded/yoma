@@ -122,6 +122,21 @@ export async function logSince(context: GitContext, baseCommit: string): Promise
   return out.ok && out.stdout ? out.stdout.split("\n") : []
 }
 
+/** 相对基线的完整补丁(unified diff)。信箱模式用它把改动搬给看不到工作树的母 agent。 */
+export async function diffPatch(context: GitContext, baseCommit: string): Promise<string> {
+  const out = await git(context, "diff", `${baseCommit}..HEAD`)
+  return out.ok ? out.stdout : ""
+}
+
+export async function headCommit(context: GitContext): Promise<string> {
+  return (await git(context, "rev-parse", "HEAD")).stdout
+}
+
+/** 提交是否存在于本仓。信箱模式换机续跑的防线:信箱记录的头提交,本地必须真的有。 */
+export async function hasCommit(context: GitContext, sha: string): Promise<boolean> {
+  return (await git(context, "cat-file", "-e", `${sha}^{commit}`)).ok
+}
+
 /** 只推 job 声明的那条分支,绝不 --force。 */
 export async function pushBranch(
   context: GitContext,

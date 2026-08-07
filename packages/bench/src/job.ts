@@ -15,6 +15,8 @@
  *   变砖的组合。
  */
 
+import { readTextFile } from "./fsx.ts"
+
 export interface JobRepo {
   /** 仓库工作树所在目录(P0 用已检出的目录;P2 起支持 url 由工位机自 clone)。 */
   directory: string
@@ -294,7 +296,7 @@ function safeRegex(pattern: string): boolean {
 }
 
 export async function loadJob(file: string): Promise<Job> {
-  const raw = await Bun.file(file).text()
+  const raw = await readTextFile(file)
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)

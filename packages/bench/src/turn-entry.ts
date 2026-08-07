@@ -19,6 +19,7 @@ import { writeFile } from "node:fs/promises"
 
 import type { PermissionRequest } from "@yoma-desktop/kernel"
 
+import { readJsonFile } from "./fsx.ts"
 import type { TurnInput } from "./runner.ts"
 import { runTurn, type TurnResult } from "./turn.ts"
 
@@ -28,7 +29,7 @@ if (!inputFile || !outputFile) {
   process.exit(2)
 }
 
-const input = (await Bun.file(inputFile).json()) as TurnInput
+const input = await readJsonFile<TurnInput>(inputFile)
 
 /** 未决的人工裁决请求。父进程按 id 回话。 */
 const waiting = new Map<string, (response: "once" | "always" | "reject") => void>()

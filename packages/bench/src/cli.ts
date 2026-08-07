@@ -19,11 +19,19 @@ import path from "node:path"
 import type { PermissionRequest } from "@yoma-desktop/kernel"
 import { kernelSelfCheck } from "@yoma-desktop/kernel/host"
 
+import { fileExists } from "./fsx.ts"
 import { gradeRepeated } from "./grader.ts"
 import * as git from "./git.ts"
 import { JobSpecError, loadJob, type Job } from "./job.ts"
 import { renderReport } from "./report.ts"
 import { runJob } from "./runner.ts"
+import { initMailbox } from "./mailbox/init.ts"
+import { runMailboxMother } from "./mailbox/mother.ts"
+import { runMailboxRunner } from "./mailbox/runner.ts"
+import { runSim } from "./mailbox/sim.ts"
+import { loadMailboxJob } from "./mailbox/spec.ts"
+import { scanMailbox } from "./mailbox/store.ts"
+import { pullReset } from "./mailbox/sync.ts"
 
 const RESET = "[0m"
 const DIM = "[2m"
@@ -76,8 +84,8 @@ async function checkEnvironment(job: Job, enginesDir?: string): Promise<string[]
   const issues: string[] = []
   const workspace = path.resolve(job.repo.directory)
 
-  if (!(await Bun.file(path.join(workspace, ".git/HEAD")).exists())) {
-    const isWorktree = await Bun.file(path.join(workspace, ".git")).exists()
+  if (!(await fileExists(path.join(workspace, ".git/HEAD")))) {
+    const isWorktree = await fileExists(path.join(workspace, ".git"))
     if (!isWorktree) issues.push(`${workspace} 不是 git 仓库(交付要开分支提交)`)
   }
 
@@ -86,14 +94,14 @@ async function checkEnvironment(job: Job, enginesDir?: string): Promise<string[]
   )
   if (needsProbe && enginesDir) {
     const probeRs = path.join(enginesDir, "bin", process.platform === "win32" ? "probe-rs.exe" : "probe-rs")
-    if (!(await Bun.file(probeRs).exists())) {
+    if (!(await fileExists(probeRs))) {
       issues.push(`判据要用 RTT 采日志,但 ${probeRs} 不在 —— 先跑 \`bun engines/build.ts\``)
     }
   }
 
   if (job.bench.knownGoodElf) {
     const elf = path.resolve(workspace, job.bench.knownGoodElf)
-    if (!(await Bun.file(elf).exists())) issues.push(`known-good 固件不存在:${elf}(失败时无法回刷)`)
+    if (!(await fileExists(elf))) issues.push(`known-good 固件不存在:${elf}(失败时无法回刷)`)
   }
 
   try {
@@ -236,18 +244,190 @@ function indent(text: string): string {
     .join("\n")
 }
 
+// ─── mailbox:跨机器多轮闭环 ────────────────────────────────────────────────────
+
+/** mailbox 子命令的旗标:值旗标(--interval 5)与开关旗标(--once)混合。 */
+interface MailboxFlags {
+  interval?: number
+  branch?: string
+  remote?: string
+  root?: string
+  timeoutMin?: number
+  once: boolean
+  ask: boolean
+  fresh: boolean
+}
+
+function parseMailboxArgs(args: string[]): { positionals: string[]; flags: MailboxFlags } {
+  const flags: MailboxFlags = { once: false, ask: false, fresh: false }
+  const positionals: string[] = []
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]!
+    const value = () => {
+      const next = args[index + 1]
+      if (next === undefined || next.startsWith("--")) fail(`${arg} 需要一个值`)
+      index += 1
+      return next!
+    }
+    if (arg === "--interval") flags.interval = Number(value())
+    else if (arg === "--branch") flags.branch = value()
+    else if (arg === "--remote") flags.remote = value()
+    else if (arg === "--root") flags.root = value()
+    else if (arg === "--timeout-min") flags.timeoutMin = Number(value())
+    else if (arg === "--once") flags.once = true
+    else if (arg === "--ask") flags.ask = true
+    else if (arg === "--fresh") flags.fresh = true
+    else if (arg.startsWith("--")) fail(`不认识的旗标 ${arg}`)
+    else positionals.push(arg)
+  }
+  if (flags.interval !== undefined && !(flags.interval >= 1)) fail("--interval 至少 1 秒")
+  return { positionals, flags }
+}
+
+/** 轮询间隔:命令行 > 信箱里 job 声明 > 15s。克隆里还没有 job 时用兜底值,重启后自然收敛。 */
+async function pollSecondsOf(clone: string, flags: MailboxFlags): Promise<number> {
+  if (flags.interval !== undefined) return flags.interval
+  try {
+    const snapshot = await scanMailbox(clone)
+    if (snapshot.job) return snapshot.job.mailbox.pollSeconds
+  } catch {
+    // 信箱损坏的报错留给守护进程去说,这里只管兜底。
+  }
+  return 15
+}
+
+async function commandMailbox(sub: string | undefined, rest: string[]): Promise<void> {
+  const { positionals, flags } = parseMailboxArgs(rest)
+  const target = positionals[0]
+  if (!sub || !target) fail("用法:yoma-bench mailbox <init|runner|mother|status|sim> <目标> [旗标](不带参数看总用法)")
+
+  if (sub === "init") {
+    const clone = positionals[1]
+    if (!clone) fail("用法:yoma-bench mailbox init <mailbox-job.json> <信箱克隆目录>(先 git clone 你的信箱仓)")
+    const mailboxJob = await loadMailboxJob(target!)
+    const outcome = await initMailbox({ clone: path.resolve(clone!), branch: flags.branch, mailboxJob })
+    if (!outcome.initialized) fail(outcome.detail)
+    say(`${GREEN}✓${RESET} ${outcome.detail}`)
+    return
+  }
+
+  if (sub === "runner") {
+    const clone = path.resolve(target)
+    const outcome = await runMailboxRunner({
+      clone,
+      branch: flags.branch,
+      sessionsRoot: defaultSessionsRoot(),
+      enginesDir: defaultEnginesDir(),
+      onProgress: (message) => say(`${DIM}${message}${RESET}`),
+      onEscalation: flags.ask ? askHuman : undefined,
+      pollSeconds: await pollSecondsOf(clone, flags),
+      once: flags.once,
+    })
+    if (outcome.kind === "finalized") {
+      say(`${GREEN}✓${RESET} 闭环终局:${outcome.verdict.outcome} —— ${outcome.verdict.reason}`)
+      process.exit(outcome.verdict.outcome === "passed" ? 0 : 1)
+    }
+    process.exit(outcome.kind === "blocked" ? 1 : 0)
+  }
+
+  if (sub === "mother") {
+    const clone = path.resolve(target)
+    const outcome = await runMailboxMother({
+      clone,
+      branch: flags.branch,
+      sessionsRoot: defaultSessionsRoot(),
+      onProgress: (message) => say(`${DIM}${message}${RESET}`),
+      pollSeconds: await pollSecondsOf(clone, flags),
+      once: flags.once,
+    })
+    if (outcome.kind === "done") {
+      say(`${GREEN}✓${RESET} 闭环终局:${outcome.verdict.outcome} —— ${outcome.verdict.reason}`)
+      process.exit(outcome.verdict.outcome === "passed" ? 0 : 1)
+    }
+    process.exit(outcome.kind === "blocked" ? 1 : 0)
+  }
+
+  if (sub === "status") {
+    const clone = path.resolve(target)
+    await pullReset({ clone, branch: flags.branch, author: { name: "yoma-bench", email: "bench@yoma.local" } })
+    const snapshot = await scanMailbox(clone)
+    if (snapshot.job) {
+      const job = snapshot.job.job
+      say(`${BOLD}${job.title}${RESET} ${DIM}(${job.id})${RESET}`)
+      say(`${DIM}轮数上限 ${snapshot.job.mailbox.maxRounds} · token 预算 ${job.budget.maxTokens.toLocaleString()}${RESET}`)
+    }
+    for (const round of snapshot.rounds) {
+      const grade = round.result?.error
+        ? `⚠ ${round.result.error.slice(0, 50)}`
+        : round.result?.grade
+          ? round.result.grade.passed
+            ? "判据全过"
+            : "判据未过"
+          : round.result
+            ? "无判据"
+            : "执行中/待执行"
+      const decision = round.decision ? `${round.decision.decision}(${round.decision.by})` : "—"
+      say(`  轮 ${round.round} · 指令 ${round.instruction?.issuedBy ?? "?"} · ${grade} · 裁决 ${decision}`)
+    }
+    const state = snapshot.state
+    if (state.kind === "done") say(`${GREEN}${BOLD}终局 ${state.verdict.outcome}${RESET} —— ${state.verdict.reason}`)
+    else if (state.kind === "awaiting-runner") say(`${YELLOW}等工位机执行第 ${state.round} 轮${RESET}`)
+    else if (state.kind === "awaiting-mother") say(`${YELLOW}等母 agent 裁决第 ${state.round} 轮${RESET}`)
+    else if (state.kind === "empty") say(`${DIM}信箱是空的(等 init)${RESET}`)
+    else say(`${RED}信箱损坏:${state.detail}${RESET}`)
+    return
+  }
+
+  if (sub === "sim") {
+    const result = await runSim({
+      jobFile: target,
+      root: flags.root,
+      remote: flags.remote,
+      branch: flags.branch,
+      pollSeconds: flags.interval,
+      timeoutMin: flags.timeoutMin,
+      fresh: flags.fresh,
+      onOutput: (line) => say(line),
+    })
+    say("")
+    if (result.verdict) {
+      const color = result.verdict.outcome === "passed" ? GREEN : result.verdict.outcome === "parked" ? YELLOW : RED
+      say(`${color}${BOLD}${result.detail}${RESET}`)
+    } else {
+      say(`${RED}${BOLD}${result.detail}${RESET}`)
+    }
+    say(`${DIM}信箱  ${result.mailboxDir}${RESET}`)
+    if (result.reportFile) say(`${DIM}终报  ${result.reportFile}${RESET}`)
+    process.exit(result.exitCode)
+  }
+
+  fail(`不认识的 mailbox 子命令 ${sub}`)
+}
+
 const [command, jobFile, ...rest] = process.argv.slice(2)
 const flags = new Set(rest.filter((arg) => arg.startsWith("--")))
 
 if (!command || !jobFile) {
   say(`用法:
-  yoma-bench run   <job.json> [--yes] [--force] [--dry-run]   跑完整闭环
+  yoma-bench run   <job.json> [--yes] [--force] [--dry-run]   跑完整闭环(单机)
   yoma-bench grade <job.json>                                  只跑判据(研发复核用)
   yoma-bench check <job.json>                                  只校验 job spec 与环境
 
   --yes      不问人:所有需要裁决的动作一律拒绝,任务继续(夜间无人值守)
   --force    环境自检没过也开跑
-  --dry-run  只做校验与准备,不真的跑`)
+  --dry-run  只做校验与准备,不真的跑
+
+跨机器多轮闭环(母 agent 决策 ↔ 工位机执行,私有 git 仓当信箱):
+  yoma-bench mailbox init   <mailbox-job.json> <信箱克隆>      任务入箱 + 下发第 1 轮
+  yoma-bench mailbox runner <信箱克隆> [--interval S] [--ask]  工位机常驻执行者
+  yoma-bench mailbox mother <信箱克隆> [--interval S]          母 agent 决策者
+  yoma-bench mailbox status <信箱克隆>                          看进度
+  yoma-bench mailbox sim    <mailbox-job.json> [--remote url] [--fresh]
+                                                               单机模拟整个闭环(两个真子进程,
+                                                               只通过 git 通信;默认本地裸仓)
+  --once     runner/mother 只走一步就退(cron 场景)
+  --ask      runner 侧有人守着:权限升级问终端(缺省无人值守,升级即拒绝)
+  --fresh    sim 清掉上次模拟从头来(外部远端不受影响)`)
   process.exit(2)
 }
 
@@ -255,6 +435,7 @@ try {
   if (command === "run") await commandRun(jobFile, flags)
   else if (command === "grade") await commandGrade(jobFile)
   else if (command === "check") await commandCheck(jobFile)
+  else if (command === "mailbox") await commandMailbox(jobFile, rest)
   else fail(`不认识的命令 ${command}`)
 } catch (error) {
   if (error instanceof JobSpecError) fail(error.message)

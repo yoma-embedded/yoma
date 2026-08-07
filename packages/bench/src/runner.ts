@@ -24,12 +24,13 @@
  */
 
 import { spawn } from "node:child_process"
-import { appendFile, mkdir, writeFile } from "node:fs/promises"
+import { appendFile, mkdir, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 
 import type { PermissionRequest } from "@yoma-desktop/kernel"
 import type { PermissionDecision } from "@yoma-desktop/kernel/host"
 
+import { fileExists, readJsonFile } from "./fsx.ts"
 import { exe, gradeRepeated, runCommandReal, type GradeResult, type RunCommand } from "./grader.ts"
 import type { Job } from "./job.ts"
 import { blockedPrompt, firstPrompt, retryPrompt } from "./prompts.ts"
@@ -109,6 +110,7 @@ export async function runJob(options: RunnerOptions): Promise<RunnerResult> {
   const decisionsLog = path.join(benchDir, "decisions.jsonl")
   await ensureBenchDir(benchDir)
 
+  await ensureMyPiIgnore(workspace)
   const iterations: Iteration[] = []
   const decisions: PermissionDecision[] = []
   let sessionID: string | undefined
@@ -247,15 +249,37 @@ export async function runJob(options: RunnerOptions): Promise<RunnerResult> {
  * 看到的是五个 bench 内部文件加一处真改动,审阅体验直接毁掉(实测第一次真跑就中了)。
  * 忽略文件放在目录内部而不是改仓库的 .gitignore:那是用户的文件,调试台不该动它。
  */
-async function ensureBenchDir(benchDir: string): Promise<void> {
+export async function ensureBenchDir(benchDir: string): Promise<void> {
   await mkdir(benchDir, { recursive: true })
   const ignore = path.join(benchDir, ".gitignore")
-  if (!(await Bun.file(ignore).exists())) {
+  if (!(await fileExists(ignore))) {
     await writeFile(ignore, "# 调试台的运行产物,不进版本库(含自身)\n*\n")
   }
 }
 
-async function restoreKnownGood(job: Job, workspace: string, options: RunnerOptions): Promise<boolean> {
+/**
+ * 让 my-pi 工具的运行产物(gdb 会话日志、烧录状态、采集日志)不进版本库。
+ *
+ * 与 `.bench` 同一个教训的第二次上演:第一次真跑信箱闭环,agent 分支的 diff 里
+ * 17 个文件有 16 个是 `.my-pi/gdb/*.mi` 这类工具日志,真正的代码改动只有 1 个文件。
+ * 只忽略**运行产物**而不是整个目录 —— `.my-pi/` 里还可能住着用户自己提交的
+ * 项目技能与上下文;已有 .gitignore 时不动它(那是用户的文件)。
+ */
+export async function ensureMyPiIgnore(workspace: string): Promise<void> {
+  const dir = path.join(workspace, ".my-pi")
+  await mkdir(dir, { recursive: true })
+  const ignore = path.join(dir, ".gitignore")
+  if (!(await fileExists(ignore))) {
+    await writeFile(ignore, "# yoma 调试工具的运行产物,不进版本库(技能等用户文件不受影响)\ngdb/\nlogs/\nflash-state.json\n")
+  }
+}
+
+/** 回刷 known-good 固件。信箱模式的收尾也用它,所以第三参收窄成真正需要的两个注入位。 */
+export async function restoreKnownGood(
+  job: Job,
+  workspace: string,
+  options: { enginesDir?: string; runCommand?: RunCommand },
+): Promise<boolean> {
   const run = options.runCommand ?? runCommandReal
   // 必须过 exe():Windows 上少了 .exe 就 spawn 不起来 —— 而这里是**失败兜底路径**,
   // 它坏掉的时机正好是"别的都已经出错了",板子留在半烧状态没人回刷。
@@ -271,13 +295,37 @@ function quoteIfNeeded(part: string): string {
 }
 
 /**
+ * 在飞的 turn-entry 子进程登记表 + 信号转杀。
+ *
+ * 没有它,SIGTERM/SIGINT 只杀得死 runner 本体,正在跑的 agent 轮变成孤儿继续
+ * 烧录/gdb/采日志 —— 无判据、无回填、无人监督地驱动硬件(实测复现过:sim 超时
+ * 杀掉 runner 后,孙进程把整轮跑完才放手)。收到信号先把孩子带走,再按约定退出。
+ */
+const activeTurnChildren = new Set<ReturnType<typeof spawn>>()
+let signalHandlersInstalled = false
+
+function installTurnSignalHandlers(): void {
+  if (signalHandlersInstalled) return
+  signalHandlersInstalled = true
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    process.on(signal, () => {
+      for (const child of activeTurnChildren) child.kill("SIGTERM")
+      // 立即退出而不是等孩子:孩子的默认信号处置就是死,拖着只会让上层收尸超时。
+      process.exit(signal === "SIGINT" ? 130 : 143)
+    })
+  }
+}
+
+/**
  * 起一个子进程跑一轮。
  *
  * 协议刻意做得又小又蠢:输入是一个 JSON 文件,输出是另一个 JSON 文件,
  * stderr 是给人看的进度,stdout 上的 `@@escalate` 行是唯一的双向通道
  * (子进程问、父进程答到 stdin)。这样出了事可以直接拿输入文件重放一轮。
+ *
+ * 导出给信箱模式复用:那边每个信箱轮就是一次本调用,进程边界的探针清理同样成立。
  */
-async function runTurnInChildProcess(
+export async function runTurnInChildProcess(
   input: TurnInput,
   handlers: {
     onEscalation?: (request: PermissionRequest) => Promise<"once" | "always" | "reject">
@@ -290,12 +338,18 @@ async function runTurnInChildProcess(
   const inputFile = path.join(dir, `turn-${stamp}.json`)
   const outputFile = path.join(dir, `turn-${stamp}.result.json`)
   await writeFile(inputFile, JSON.stringify(input, null, 2))
+  // stamp 可能与上次运行撞名(同 job 重新入箱时首轮必撞)。旧结果文件不清掉的话,
+  // 本次子进程崩溃没写输出时,父进程会把**上次的结果**当本轮结果回填 —— 静默错账。
+  await rm(outputFile, { force: true })
 
   const entry = path.join(import.meta.dir, "turn-entry.ts")
+  installTurnSignalHandlers()
   const child = spawn(process.execPath, [entry, inputFile, outputFile], {
     cwd: input.workspace,
     stdio: ["pipe", "pipe", "inherit"],
   })
+  activeTurnChildren.add(child)
+  child.on("close", () => activeTurnChildren.delete(child))
 
   let pending = ""
   child.stdout.on("data", (chunk: Buffer) => {
@@ -320,7 +374,7 @@ async function runTurnInChildProcess(
     child.on("close", resolve)
   })
 
-  const result = await Bun.file(outputFile).json().catch(() => undefined)
+  const result = await readJsonFile<TurnResult>(outputFile).catch(() => undefined)
   if (!result) throw new Error(`子进程没有产出结果(退出码 ${code});输入留在 ${inputFile}`)
   return result as TurnResult
 }
