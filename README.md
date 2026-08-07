@@ -202,68 +202,60 @@ OPENCODE_CHANNEL=prod bun --cwd packages/desktop package:mac
   `gh release create vX.Y.Z dist/yoma-mac-arm64.dmg dist/yoma-mac-arm64.zip dist/yoma-mac-arm64.zip.blockmap dist/latest-mac.yml`。
   已装用户的 app 每 10 分钟查一次更新，菜单里也能手动查。发布前记得抬
   `packages/desktop/package.json` 的 `version`。
-- **已知限制**：engines 里的 Python 三件套（board_ir / connections / controller_map）目前是
-  venv 脚本，装到别的电脑上必坏（打包时会有响亮警告），要等 my-pi 的 `engines/build.ts`
-  产出自包含产物；Windows / Linux 包同理需要对应平台的引擎产物，目前只有 mac-arm64。
+- **本机开发构建**（`bun engines/build.ts`）产出的 Python 三件套仍是 venv 脚本，
+  装到别的电脑上必坏 —— 打包时会有响亮警告。**对外分发用 CI 产物**：
+  `bun engines/build.ts --dist` / `.github/workflows/engines.yml` 走 PyInstaller 冻结，
+  产出自包含可执行文件，那条路已经没有这个问题。
 
-### Windows 包：现状与路线
+### Windows 包：怎么出
 
-壳的构建已实测跑通：`bun package:win` 在 mac 上就能出 NSIS 安装器（`dist/yoma-win-x64.exe`），
-不需要 Windows 机器。`stage-engines.ts` 按魔数校验引擎平台——当前 engines 全是 mac-arm64 的，
-所以它会**直接拒绝**打 Windows 包。这是对的：壳能装上，硬件引擎全是坏的。
+**在 Mac 上就能出**，不需要 Windows 机器 —— 壳的 NSIS 构建早就跑通，唯一的阻塞
+一直是"没有 Windows 的引擎二进制"。2026-08 之后这个阻塞没了：
 
-真正缺的两样：
+```sh
+bun build:desktop
+bun --cwd packages/desktop package:win
+# → packages/desktop/dist/yoma-win-x64.exe
+```
 
-1. **my-pi 为 Windows 构建 engines**：`probe-rs.exe` / `stm32kernel.exe`（Rust，官方支持 Windows）
-   + Python 三件套的自包含 exe。内核本身已是 Windows-aware（`engines.ts` 按 `${name}.exe` 找引擎、
-   进程树清理用 `taskkill`），引擎产物就位后前端零改动。
-2. ~~一台 Windows 机器做验证~~ **已验证**（2026-08-03，预览包在真实 Windows x64 上：
-   安装、配 key、真对话全通 —— 内核 JS 在 Windows 上没有平台问题；烧录冒烟等引擎就位后补）。
-   预览包挂在 Release `v0.1.0-win-preview.1`（硬件工具坏，其余可用）。
+`stage-engines.ts win32` 发现本地引擎是 Mach-O（不满足目标平台）时，会按
+`packages/desktop/engines.lock.json` 钉住的 tag **自动下载 Windows 预编译产物**
+（走 `gh`，私有仓也能取；下载发生在打包期，终端用户不需要任何令牌）。
+那份产物由本仓 `.github/workflows/engines.yml` 在 Windows runner 上构建，
+三个 Python 引擎已用 PyInstaller 冻结成自包含 `.exe` —— **拷到别人电脑不再坏**
+（这是 2026-08 之前对外分发的死穴）。
 
-### Windows 完整包 runbook（在 Windows 机器上从零到安装器）
+### 在 Windows 机器上从源码构建
 
-my-pi 的 `engines/build.ts` 本身就是 Windows-aware 的（`.exe` 后缀、venv 的 `Scripts`
-目录、符号链接失败退回复制、三个引擎源码是 git submodule 自动拉取），所以整条链在
-Windows 上就是照跑：
+`engines/build.ts` 本身是 Windows-aware 的（`.exe` 后缀、venv 的 `Scripts` 目录、
+符号链接失败退回复制、submodule 自动拉取），整条链照跑：
 
 ```powershell
 # ── 一次性准备 ───────────────────────────────────────────────
-# 1) 设置 → 系统 → 开发者选项 → 打开开发者模式,然后:
+# 1) 设置 → 系统 → 开发者选项 → 打开开发者模式，然后：
 git config --global core.symlinks true
-# 2) 工具链(VS Build Tools 装的时候勾"使用 C++ 的桌面开发"):
+# 2) 工具链（VS Build Tools 勾"使用 C++ 的桌面开发"）：
 winget install Git.Git GitHub.cli Oven-sh.Bun Rustlang.Rustup astral-sh.uv Microsoft.VisualStudio.2022.BuildTools
-# 3) GitHub 认证(私有仓 + 私有 submodule 走 HTTPS):
+# 3) GitHub 认证（私有仓 + 私有 submodule 走 HTTPS）：
 gh auth login
 git config --global url."https://github.com/".insteadOf "git@github.com:"
 
-# ── 取码(并排放,分支要对) ────────────────────────────────────
-git clone https://github.com/yoma-embedded/my-pi -b feat/gdb-tool
-git clone https://github.com/yoma-embedded/yoma-desktop -b feat/my-pi-kernel
+# ── 取码（合库之后一个仓库就够了）──────────────────────────────
+git clone --recurse-submodules https://github.com/yoma-embedded/yoma-pi
+cd yoma-pi; bun install
 
-# ── 构建引擎(首次编 probe-rs 约 10-20 分钟,submodule 自动初始化) ──
-cd my-pi; bun engines/build.ts
+# ── 构建引擎（首次编 probe-rs 约 10-20 分钟）──────────────────
+bun engines/build.ts
 
 # ── 出包 ────────────────────────────────────────────────────
-cd ..\yoma-desktop; bun install
 $env:OPENCODE_CHANNEL = "prod"
 bun build:desktop
 bun --cwd packages/desktop package:win
-# → packages\desktop\dist\yoma-win-x64.exe
 ```
 
-边界要知道：这个包在**构建机上全功能**；装到其他电脑时 probe-rs / stm32kernel
-照常能用，但 Python 三件套仍会坏（uv 生成的 exe 启动器内嵌 venv 绝对路径）——
-对外分发的根治依旧是 my-pi 侧产出自包含 exe。
-
-排坑（2026-08-04 首次 Windows 实跑验证过整条链）：如果 yoma-desktop 是**以前 clone 的**，
-检查 `git config --local core.symlinks` —— 旧 clone 可能留了 `false` 覆盖全局设置，
-`git config --local --unset core.symlinks` 后 `git checkout -- engines` 才能还原根软链。
-
-引擎缺位时的逃生口：`YOMA_ALLOW_FOREIGN_ENGINES=1` 强行出包，仅用于验证安装器流程本身，
-**不能分发**。另外两点：无签名 exe 会被 SmartScreen 拦（「更多信息 → 仍要运行」），要消除
-得买 Windows 代码签名证书；CI 签名脚本位 `script/sign-windows.ps1` 目前不存在，上
-GitHub Actions 打 win 包时要补上或摘除该钩子。
+排坑：无签名 exe 会被 SmartScreen 拦（「更多信息 → 仍要运行」），要消除得买 Windows
+代码签名证书；`script/sign-windows.ps1` 目前不存在，上 CI 打 win 包时要补上或摘除该钩子。
+引擎缺位时的逃生口 `YOMA_ALLOW_FOREIGN_ENGINES=1` 仅用于验证安装器流程本身，**不能分发**。
 
 Linux：`bun package:linux`（AppImage/deb/rpm 配置已在，引擎产物同样未就位）。渠道用环境变量
 `OPENCODE_CHANNEL`（`dev` / `beta` / `prod`）控制。
