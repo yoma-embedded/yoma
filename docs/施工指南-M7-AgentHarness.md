@@ -3,7 +3,7 @@
 > **✅ 已完工(2026-07-25)**:Step 1–10 全部落地,17 个 harness 参考测试 + 20 个 compaction 测试全绿(合计 142 pass)。
 > `example/04` 已毕业:import 从 pi-minimal 改回 `@yoma/my-pi/node`,`@ts-nocheck` 与 tsconfig exclude 均已删除,三个场景跑在自己的实现上。
 > Step 10 连带把 M8(compaction 三文件)一起做了 —— 因为 `compact()`/`navigateTree()` 对它是运行时硬依赖。
-> **2026-08-06 增补**:P0 三件落地 —— M9 技能发现(loadSkills + `/skill:` 命令)、AGENTS.md 上下文文件、轮级自动重试(内核 `retryLastTurn()` + ACP 层策略)。现状见文末盘点表。
+> **2026-08-06 增补**:P0 三件落地 —— M9 技能发现(loadSkills + `/skill:` 命令)、AGENTS.md 上下文文件、轮级自动重试(内核 `retryLastTurn()` + ACP 层策略)。同日凭证独立于 pi:`~/.my-pi/auth.json` + 标准环境变量,不再读 `~/.pi`。现状见文末盘点表。
 > **下一站不再是里程碑表,而是真实负载**:见文末"M7 之后"。
 >
 > 本指南基于对 pi-minimal `agent-harness.ts`(1029 行)的逐行侦察,所有依赖结论都经过对 import 块的逐条 grep 验证。行号均指 pi-minimal。日期:2026-07-24。
@@ -94,6 +94,7 @@
 | M9 Skills/模板 | 技能 ✅(loadSkills 移植 + `.agents/skills`/`~/.my-pi/skills` 发现 + `/skill:` 命令,2026-08-06)/ **模板发现 ❌** |
 | 上下文文件 | ✅ AGENTS.md/CLAUDE.md 全局 + 祖先链 + override 语义(coding-agent/src/core/resources.ts) |
 | 轮级自动重试 | ✅ 策略在 ACP 层(3 次、2s 指数退避、溢出与不可重试错误除外),机制在内核 |
+| 凭证独立于 pi | ✅ `~/.my-pi/auth.json`(FileCredentialStore 注入 `createModels`,请求时解析、改文件即时生效)+ 标准环境变量兜底(DEEPSEEK_API_KEY/MOONSHOT_API_KEY);默认 provider/model 读 `~/.my-pi/settings.json`;`MY_PI_API_KEY` 与 `~/.pi` 依赖已删(acp/models.ts,2026-08-06) |
 
 **仍然缺的**(都不阻塞,等真用到再补):
 

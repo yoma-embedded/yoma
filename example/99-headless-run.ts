@@ -10,6 +10,7 @@
 
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { AgentHarness, InMemorySessionStorage, NodeExecutionEnv, Session } from "@yoma/my-pi/node";
+import { CONFIG_DIR } from "../packages/coding-agent/src/acp/agent.ts";
 import { resolveModel } from "../packages/coding-agent/src/acp/models.ts";
 import { buildSystemPrompt, collectToolPromptData } from "../packages/coding-agent/src/core/system-prompt.ts";
 import {
@@ -25,7 +26,7 @@ if (!cwd || !promptFile || !logPath) {
 }
 const prompt = readFileSync(promptFile, "utf8").trim();
 
-const { models, model } = await resolveModel();
+const { models, model } = await resolveModel(CONFIG_DIR);
 console.log(`模型: ${model.provider}/${model.id}`);
 console.log(`工作目录: ${cwd}`);
 console.log(`prompt: ${prompt}\n${"━".repeat(70)}`);
