@@ -19,6 +19,7 @@ import { writeFile } from "node:fs/promises"
 
 import type { PermissionRequest } from "@yoma-desktop/kernel"
 
+import { fauxResolveModels } from "./faux.ts"
 import { readJsonFile } from "./fsx.ts"
 import type { TurnInput } from "./runner.ts"
 import { runTurn, type TurnResult } from "./turn.ts"
@@ -63,6 +64,9 @@ const result: TurnResult = await runTurn({
   sessionsRoot: input.sessionsRoot,
   stateDir: input.stateDir,
   enginesDir: input.enginesDir,
+  configDir: input.configDir,
+  // 假模型脚本以数据形态穿进来(本机演练/打包冒烟)—— 不联网、不要 key,其余全真。
+  resolveModels: input.faux ? fauxResolveModels(input.faux) : undefined,
   sessionID: input.sessionID,
   prompt: input.prompt,
   // 无人接管时**不装** handler:runTurn 会把策略的 escalate 转成 deny,

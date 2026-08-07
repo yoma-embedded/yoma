@@ -51,6 +51,10 @@ export interface MailboxMotherOptions {
   clone: string
   branch?: string
   sessionsRoot: string
+  /** 技能/上下文/凭据全局目录;演练与测试传临时目录隔离,生产缺省 ~/.my-pi。 */
+  configDir?: string
+  /** 假模型注入(本机演练):跨分析轮共享同一条响应队列。生产不传。 */
+  resolveModels?: TurnOptions["resolveModels"]
   onProgress?: (message: string) => void
   /** 测试注入:替换真实的内核轮。 */
   runTurn?: (options: TurnOptions) => Promise<TurnResult>
@@ -356,6 +360,8 @@ async function analyse(
       workspace: options.clone,
       sessionsRoot: options.sessionsRoot,
       stateDir: path.join(localDir(options.clone), "state"),
+      configDir: options.configDir,
+      resolveModels: options.resolveModels,
       sessionID,
       prompt,
       shouldStop: (usage) =>
@@ -429,7 +435,12 @@ function usageTokens(usage?: TurnUsage): number {
 
 /** 常驻循环,与 runner 侧同构;终局(done)即退出。 */
 export async function runMailboxMother(
-  options: MailboxMotherOptions & { pollSeconds: number; once?: boolean },
+  options: MailboxMotherOptions & {
+    pollSeconds: number
+    once?: boolean
+    /** 每步之后回调一次(含终局那步)。桌面端守护入口靠它发结构化事件。 */
+    onStep?: (outcome: MotherStepOutcome) => void
+  },
 ): Promise<MotherStepOutcome> {
   const lock = await acquireRoleLock(options.clone, "mother")
   if (!lock.ok) return { kind: "blocked", detail: lock.detail }
@@ -442,6 +453,7 @@ export async function runMailboxMother(
       } catch (error) {
         outcome = { kind: "blocked", detail: (error as Error).message }
       }
+      options.onStep?.(outcome)
       if (outcome.kind === "idle") options.onProgress?.(`(空闲)${outcome.detail}`)
       if (outcome.kind === "done" || options.once) return outcome
       blockedStreak = outcome.kind === "blocked" ? blockedStreak + 1 : 0

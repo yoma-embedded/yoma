@@ -30,6 +30,7 @@ import path from "node:path"
 import type { PermissionRequest } from "@yoma-desktop/kernel"
 import type { PermissionDecision } from "@yoma-desktop/kernel/host"
 
+import type { FauxScript } from "./faux.ts"
 import { fileExists, readJsonFile } from "./fsx.ts"
 import { exe, gradeRepeated, runCommandReal, type GradeResult, type RunCommand } from "./grader.ts"
 import type { Job } from "./job.ts"
@@ -100,6 +101,16 @@ export interface TurnInput {
    * `by: "human"`,而当时根本没有人。责任人记错比记漏更糟。
    */
   unattended: boolean
+  /**
+   * 打包态的子进程入口(esbuild 产物 mailbox-turn-entry.mjs 的绝对路径),由宿主
+   * 显式传入,**不猜**。缺省只在 bun 运行时合法(直跑 turn-entry.ts 源码);
+   * exe 里 process.execPath 是 Electron,不给入口就是配置错误,如实抛。
+   */
+  turnEntry?: string
+  /** 技能/上下文/凭据的全局目录。生产不传(默认 ~/.my-pi);演练与测试传临时目录隔离。 */
+  configDir?: string
+  /** 假模型脚本(本机演练/打包冒烟)。有它则子进程不联网、不要 key,其余全真。 */
+  faux?: FauxScript
 }
 
 export async function runJob(options: RunnerOptions): Promise<RunnerResult> {
@@ -342,11 +353,16 @@ export async function runTurnInChildProcess(
   // 本次子进程崩溃没写输出时,父进程会把**上次的结果**当本轮结果回填 —— 静默错账。
   await rm(outputFile, { force: true })
 
-  const entry = path.join(import.meta.dir, "turn-entry.ts")
+  // 双态入口:显式传入的打包产物优先;bun 运行时可退到直跑源码。两者都不满足是
+  // 配置错误(exe 里 execPath 是 Electron 本体,盲目 spawn 会把整个 app 再起一遍)。
+  const entry = input.turnEntry ?? (process.versions.bun ? path.join(import.meta.dir, "turn-entry.ts") : undefined)
+  if (!entry) throw new Error("非 bun 运行时必须显式传 TurnInput.turnEntry(esbuild 打包的子进程入口)")
   installTurnSignalHandlers()
   const child = spawn(process.execPath, [entry, inputFile, outputFile], {
     cwd: input.workspace,
     stdio: ["pipe", "pipe", "inherit"],
+    // Electron 看到它就以纯 node 面目运行;bun 与真 node 无视它,统一设不分叉。
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
   })
   activeTurnChildren.add(child)
   child.on("close", () => activeTurnChildren.delete(child))

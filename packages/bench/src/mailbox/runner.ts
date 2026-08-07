@@ -28,6 +28,7 @@ import path from "node:path"
 
 import type { PermissionRequest } from "@yoma-desktop/kernel"
 
+import type { FauxScript } from "../faux.ts"
 import { fileExists, readJsonFile } from "../fsx.ts"
 import * as git from "../git.ts"
 import { acquireRoleLock, backoffSeconds } from "./daemon.ts"
@@ -56,6 +57,12 @@ export interface MailboxRunnerOptions {
   branch?: string
   sessionsRoot: string
   enginesDir?: string
+  /** 打包态的 turn 子进程入口(见 TurnInput.turnEntry)。bun 开发态可缺省。 */
+  turnEntry?: string
+  /** 技能/上下文/凭据全局目录;演练与测试传临时目录隔离,生产缺省 ~/.my-pi。 */
+  configDir?: string
+  /** 本机演练的假模型脚本,按轮取 `fauxTurns[round-1]`。生产不传。 */
+  fauxTurns?: FauxScript[]
   onProgress?: (message: string) => void
   /** 有人守着工位时接管升级;不传 = 真无人值守,escalate 由策略转 deny。 */
   onEscalation?: (request: PermissionRequest) => Promise<"once" | "always" | "reject">
@@ -257,6 +264,9 @@ async function runRound(
     // 轮内看门狗也按两侧合计:mother 花掉的部分同样压缩本轮的可用余量。
     spentTokens: spentCombined,
     unattended: !options.onEscalation,
+    turnEntry: options.turnEntry,
+    configDir: options.configDir,
+    faux: options.fauxTurns?.[round - 1],
   }
 
   const executeTurn = (turnInput: TurnInput) =>
@@ -431,7 +441,12 @@ function countTools(turn: TurnResult): Record<string, number> {
 
 /** 常驻循环。`once` 给测试和 cron 场景(锁保证 cron 重叠时后来者干净退出)。 */
 export async function runMailboxRunner(
-  options: MailboxRunnerOptions & { pollSeconds: number; once?: boolean },
+  options: MailboxRunnerOptions & {
+    pollSeconds: number
+    once?: boolean
+    /** 每步之后回调一次(含终局那步)。桌面端守护入口靠它发结构化事件。 */
+    onStep?: (outcome: RunnerStepOutcome) => void
+  },
 ): Promise<RunnerStepOutcome> {
   const lock = await acquireRoleLock(options.clone, "runner")
   if (!lock.ok) return { kind: "blocked", detail: lock.detail }
@@ -444,6 +459,7 @@ export async function runMailboxRunner(
       } catch (error) {
         outcome = { kind: "blocked", detail: (error as Error).message }
       }
+      options.onStep?.(outcome)
       if (outcome.kind === "idle") options.onProgress?.(`(空闲)${outcome.detail}`)
       if (outcome.kind === "finalized" || options.once) return outcome
       blockedStreak = outcome.kind === "blocked" ? blockedStreak + 1 : 0

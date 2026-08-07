@@ -35,6 +35,18 @@ export interface SimOptions {
   /** 清掉上次模拟从头来(本地裸仓会一起消失)。缺省是续跑。 */
   fresh?: boolean
   onOutput?: (line: string) => void
+  /**
+   * 起角色守护进程的方式。缺省 bun 直跑 cli.ts(开发态);打包态由宿主注入
+   * (mailbox-host 以自身为入口自我 spawn)。返回的子进程必须把 stdout/stderr
+   * 开成 pipe —— sim 靠它转发两侧输出。
+   */
+  spawnRole?: (role: "runner" | "mother", clone: string, context: SimSpawnContext) => ChildProcess
+}
+
+export interface SimSpawnContext {
+  root: string
+  branch: string
+  pollSeconds: number
 }
 
 export interface SimResult {
@@ -106,20 +118,28 @@ export async function runSim(options: SimOptions): Promise<SimResult> {
     say(`信箱已有任务(状态 ${snapshot.state.kind}),继续上次的闭环`)
   }
 
-  const cliEntry = path.join(import.meta.dir, "..", "cli.ts")
-  const spawnRole = (role: "runner" | "mother", clone: string): ChildProcess => {
-    const child = spawn(
+  const spawnDefault = (role: "runner" | "mother", clone: string): ChildProcess => {
+    // 缺省路径依赖 bun(直跑 TS 源码 + import.meta.dir)。打包态没有这两样,
+    // 必须由宿主注入 spawnRole —— 静默走缺省会 spawn 出一个必死的进程。
+    if (!process.versions.bun) throw new Error("非 bun 运行时跑 sim 必须注入 spawnRole(打包态由 mailbox-host 自我 spawn)")
+    const cliEntry = path.join(import.meta.dir, "..", "cli.ts")
+    return spawn(
       process.execPath,
       [cliEntry, "mailbox", role, clone, "--interval", String(pollSeconds), "--branch", branch],
       { stdio: ["ignore", "pipe", "pipe"], cwd: root },
     )
+  }
+  const spawnRole = (role: "runner" | "mother", clone: string): ChildProcess => {
+    const child = options.spawnRole
+      ? options.spawnRole(role, clone, { root, branch, pollSeconds })
+      : spawnDefault(role, clone)
     const forward = (chunk: Buffer) => {
       for (const line of chunk.toString().split("\n")) {
         if (line.trim()) say(`[${role}] ${line.trimEnd()}`)
       }
     }
-    child.stdout!.on("data", forward)
-    child.stderr!.on("data", forward)
+    child.stdout?.on("data", forward)
+    child.stderr?.on("data", forward)
     return child
   }
 
