@@ -22,7 +22,8 @@
     "smoke": "bun ./scripts/kernel-smoke.ts",
     "smoke:mailbox": "bun ./scripts/mailbox-smoke.ts",
     "e2e:ipc": "bunx esbuild scripts/e2e-kernel-ipc.ts --bundle --platform=node --format=esm --external:electron --outfile=out/main/e2e-ipc.mjs --log-level=warning && YOMA_DESKTOP_DIR=\"$PWD\" ./node_modules/electron/dist/Electron.app/Contents/MacOS/Electron out/main/e2e-ipc.mjs",
-    "e2e:renderer": "bunx esbuild scripts/e2e-renderer-kernel.ts --bundle --platform=node --format=esm --external:electron --outfile=out/main/e2e-renderer.mjs --log-level=warning && YOMA_DESKTOP_DIR=\"$PWD\" ./node_modules/electron/dist/Electron.app/Contents/MacOS/Electron out/main/e2e-renderer.mjs"
+    "e2e:renderer": "bunx esbuild scripts/e2e-renderer-kernel.ts --bundle --platform=node --format=esm --external:electron --outfile=out/main/e2e-renderer.mjs --log-level=warning && YOMA_DESKTOP_DIR=\"$PWD\" ./node_modules/electron/dist/Electron.app/Contents/MacOS/Electron out/main/e2e-renderer.mjs",
+    "e2e:mailbox": "bunx esbuild scripts/e2e-mailbox-ipc.ts --bundle --platform=node --format=esm --external:electron --outfile=out/main/e2e-mailbox.mjs --log-level=warning && YOMA_DESKTOP_DIR=\"$PWD\" ./node_modules/electron/dist/Electron.app/Contents/MacOS/Electron out/main/e2e-mailbox.mjs"
   },
   "main": "./out/main/index.js",
   "dependencies": {
@@ -39,6 +40,7 @@
     "@actions/artifact": "4.0.0",
     "@lydell/node-pty": "catalog:",
     "@yoma-desktop/app": "workspace:*",
+    "@yoma-desktop/bench": "workspace:*",
     "@yoma-desktop/kernel": "workspace:*",
     "@yoma-desktop/ui": "workspace:*",
     "@sentry/solid": "catalog:",

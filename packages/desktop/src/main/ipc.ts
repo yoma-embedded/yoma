@@ -12,6 +12,7 @@ import { getStore } from "./store"
 import { getPinchZoomEnabled, setPinchZoomEnabled, setTitlebar, updateTitlebar } from "./windows"
 import type { UpdaterController } from "./updater-controller"
 import { createUpdaterSubscriptions } from "./updater-subscriptions"
+import type { MailboxController } from "./mailbox-controller"
 
 const pickerFilters = (ext?: string[]) => {
   if (!ext || ext.length === 0) return undefined
@@ -35,6 +36,8 @@ type Deps = {
   checkAppExists: (appName: string) => Promise<boolean> | boolean
   resolveAppPath: (appName: string) => Promise<string | null>
   updater: UpdaterController
+  /** 信箱调试台:controller 的四个动作直通。所有返回值都是普通对象,不抛 Error。 */
+  mailbox: Pick<MailboxController, "configure" | "start" | "stop" | "status">
   showUpdater: () => Promise<void> | void
   setBackgroundColor: (color: string) => void
   exportDebugLogs: () => Promise<string>
@@ -46,6 +49,14 @@ export function registerIpcHandlers(deps: Deps) {
   app.once("will-quit", updaterSubscriptions.clear)
 
   ipcMain.handle("kill-sidecar", () => deps.killSidecar())
+  ipcMain.handle("mailbox-configure", (_event: IpcMainInvokeEvent, settings: Parameters<Deps["mailbox"]["configure"]>[0]) =>
+    deps.mailbox.configure(settings),
+  )
+  ipcMain.handle("mailbox-start", (_event: IpcMainInvokeEvent, task: Parameters<Deps["mailbox"]["start"]>[0]) =>
+    deps.mailbox.start(task),
+  )
+  ipcMain.handle("mailbox-stop", () => deps.mailbox.stop())
+  ipcMain.handle("mailbox-status", () => deps.mailbox.status())
   // renderer reload 之后端口失效,preload 主动来要一次重新牵线。
   ipcMain.handle("kernel-attach", (event: IpcMainInvokeEvent) => deps.attachKernel(event))
   ipcMain.handle("await-initialization", () => deps.awaitInitialization())

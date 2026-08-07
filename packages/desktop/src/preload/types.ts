@@ -21,6 +21,22 @@ export type KernelAPI = {
 }
 
 export type ManualsAPI = ManualsPlatform
+
+/**
+ * 信箱调试台。与 KernelAPI 同一条纪律:preload 零依赖,类型在这里**结构化复制**
+ * (真源是 main/mailbox-controller.ts);事件与错误全是普通对象 —— contextBridge
+ * 会把 Error 剥得只剩 message。status/subscribe 的载荷 app 侧再收窄。
+ */
+export type MailboxSettingsWire = { remote: string; role: "runner" | "mother"; branch?: string; pollSeconds?: number }
+export type MailboxTaskWire = { kind: "runner" | "mother" | "sim" | "init"; jobFile?: string; fresh?: boolean }
+export type MailboxAPI = {
+  configure(settings: MailboxSettingsWire): Promise<{ ok: boolean; message?: string }>
+  start(task: MailboxTaskWire): Promise<{ ok: boolean; message?: string }>
+  stop(): Promise<{ ok: boolean; message?: string }>
+  status(): Promise<unknown>
+  subscribe(cb: (event: unknown) => void): () => void
+}
+
 export type UpdaterAPI = {
   subscribe: (cb: (state: UpdaterState) => void) => Promise<() => void>
   check: () => Promise<UpdaterState>
@@ -45,6 +61,7 @@ export type ElectronAPI = {
   installCli: () => Promise<string>
   awaitInitialization: () => Promise<ServerReadyData>
   manuals: ManualsAPI
+  mailbox: MailboxAPI
   updater: UpdaterAPI
   consumeInitialDeepLinks: () => Promise<string[]>
   getDefaultServerUrl: () => Promise<string | null>

@@ -64,4 +64,15 @@ export { motherStep, runMailboxMother, parseMotherDecision } from "./mailbox/mot
 export type { MailboxMotherOptions, MotherStepOutcome, MotherDecisionPayload } from "./mailbox/mother.ts"
 export { renderMailboxReport } from "./mailbox/report.ts"
 export { runSim } from "./mailbox/sim.ts"
-export type { SimOptions, SimResult } from "./mailbox/sim.ts"
+export type { SimOptions, SimResult, SimSpawnContext } from "./mailbox/sim.ts"
+export { runMailboxHost } from "./mailbox/host.ts"
+export type {
+  MailboxHostConfig,
+  MailboxHostEvent,
+  MailboxHostRole,
+  MailboxUiSnapshot,
+  MailboxUiState,
+  EmitMailboxEvent,
+} from "./mailbox/host.ts"
+export { fauxResolveModels } from "./faux.ts"
+export type { FauxScript, FauxMessage, FauxPart } from "./faux.ts"

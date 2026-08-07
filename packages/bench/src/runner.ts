@@ -26,6 +26,7 @@
 import { spawn } from "node:child_process"
 import { appendFile, mkdir, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 
 import type { PermissionRequest } from "@yoma-desktop/kernel"
 import type { PermissionDecision } from "@yoma-desktop/kernel/host"
@@ -355,7 +356,8 @@ export async function runTurnInChildProcess(
 
   // 双态入口:显式传入的打包产物优先;bun 运行时可退到直跑源码。两者都不满足是
   // 配置错误(exe 里 execPath 是 Electron 本体,盲目 spawn 会把整个 app 再起一遍)。
-  const entry = input.turnEntry ?? (process.versions.bun ? path.join(import.meta.dir, "turn-entry.ts") : undefined)
+  const entry =
+    input.turnEntry ?? (process.versions.bun ? path.join(path.dirname(fileURLToPath(import.meta.url)), "turn-entry.ts") : undefined)
   if (!entry) throw new Error("非 bun 运行时必须显式传 TurnInput.turnEntry(esbuild 打包的子进程入口)")
   installTurnSignalHandlers()
   const child = spawn(process.execPath, [entry, inputFile, outputFile], {

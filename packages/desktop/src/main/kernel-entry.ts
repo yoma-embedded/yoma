@@ -128,6 +128,13 @@ if (parentPort) {
       if (port) attach(port)
       return
     }
+    if (data?.type === "mailbox-active") {
+      // 探针互斥走控制通道:锁归 main 管,renderer 无解锁能力。host 未 start 时丢弃 ——
+      // main 在任务活跃期间会于内核 ready 后重申一次(见 main/mailbox.ts)。
+      const command = data as { type: "mailbox-active"; active: boolean; reason?: string }
+      void host?.handle("mailbox.setActive", { active: command.active, reason: command.reason })
+      return
+    }
     if (data?.type === "stop") {
       void host?.dispose().finally(() => process.exit(0))
     }

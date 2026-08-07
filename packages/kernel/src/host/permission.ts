@@ -91,6 +91,23 @@ interface Pending {
   timer: ReturnType<typeof setTimeout>
 }
 
+/**
+ * 硬件工具锁(调试台探针互斥):flash/gdb 全拒 —— 它们的任何动作都可能碰探针;
+ * log 只拒 rtt 路,command 模式(串口等任意命令)不占探针,照常放行。
+ * 其余工具一律不表态(undefined),落回正常的策略/规则/问人。
+ */
+export function hardwareLockPolicy(reason: string): PolicyProvider {
+  return ({ tool, input }) => {
+    const deny = { action: "deny" as const, rule: "mailbox-active", reason }
+    if (tool === "flash" || tool === "gdb") return deny
+    if (tool === "log") {
+      const command = typeof input.command === "string" && input.command.trim() !== "" ? input.command : undefined
+      if (!command) return deny
+    }
+    return undefined
+  }
+}
+
 export interface PermissionGateOptions {
   rules?: PermissionRules
   emit(event: KernelEvent): void
@@ -106,6 +123,12 @@ export class PermissionGate {
   private readonly emit: (event: KernelEvent) => void
   private readonly timeoutMs: number
   private readonly policy?: PolicyProvider
+  /**
+   * 运行时可切换的覆盖策略,排在注入式策略之前。构造期注入的 policy 是宿主的
+   * 长期权威(bench 整轮一个),这个槽位是**任务生命周期**的:调试台任务活跃时
+   * 挂硬件锁,终局撤掉 —— 语义上不属于 rules 表(那是用户的配置,不该被任务改写)。
+   */
+  private override?: PolicyProvider
   private readonly onDecision?: (decision: PermissionDecision) => void
   private readonly pending = new Map<string, Pending>()
   private readonly detachers = new Map<string, () => void>()
@@ -125,6 +148,10 @@ export class PermissionGate {
   setRules(rules: PermissionRules): PermissionRules {
     this.rules = { ...DEFAULT_PERMISSION_RULES, ...rules }
     return this.getRules()
+  }
+
+  setOverride(policy: PolicyProvider | undefined): void {
+    this.override = policy
   }
 
   /** 未决请求快照 —— renderer 重连时重推,避免会话永久卡住。 */
@@ -164,11 +191,13 @@ export class PermissionGate {
       }
 
       // 第一层:注入式策略。escalate 会越过 rules 直奔 ask 流。
+      // 覆盖策略(任务级,setOverride)排在长期策略之前:硬件锁必须压过一切放行。
       let escalateRule: string | undefined
-      if (this.policy) {
+      for (const provider of [this.override, this.policy]) {
+        if (!provider) continue
         let decision: PolicyDecision | undefined
         try {
-          decision = await this.policy({ sessionID, tool: toolName, input })
+          decision = await provider({ sessionID, tool: toolName, input })
         } catch {
           decision = { action: "escalate", rule: "policy-error" }
         }
@@ -180,7 +209,10 @@ export class PermissionGate {
           record("deny", "policy", { rule: decision.rule })
           return { block: true, reason: decision.reason ?? `权限策略禁止 ${toolName}:${title}` }
         }
-        if (decision?.action === "escalate") escalateRule = decision.rule ?? "escalate"
+        if (decision?.action === "escalate") {
+          escalateRule = decision.rule ?? "escalate"
+          break
+        }
       }
 
       // 第二层:rules 表(策略要求 escalate 时跳过,直接去问人)。

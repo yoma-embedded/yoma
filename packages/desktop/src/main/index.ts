@@ -3,7 +3,8 @@ import { mkdirSync, rmSync } from "node:fs"
 import * as http from "node:http"
 import { createServer } from "node:net"
 import { homedir, tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
+import { fileURLToPath } from "node:url"
 import { getCACertificates, setDefaultCACertificates } from "node:tls"
 import type { Event } from "electron"
 import { app, BrowserWindow } from "electron"
@@ -16,6 +17,9 @@ import { checkAppExists, resolveAppPath } from "./apps"
 import { CHANNEL } from "./constants"
 import { registerIpcHandlers, sendDeepLinks, sendMenuCommand } from "./ipc"
 import { spawnKernel, type KernelProcess } from "./kernel"
+import { createMailboxMain } from "./mailbox"
+import type { MailboxSettings } from "./mailbox-controller"
+import { getStore } from "./store"
 import { forwardInitializationFailure } from "./initialization"
 import { exportDebugLogs, initCrashReporter, initLogging, startNetLog, write as writeLog } from "./logging"
 import { parseMarkdown } from "./markdown"
@@ -251,6 +255,30 @@ const main = Effect.gen(function* () {
   registerRendererProtocol()
   setDockIcon()
   const updater = setupAutoUpdater(stopSidecars)
+  // 信箱调试台:main 托管守护进程,renderer 走 window.api.mailbox。
+  // setHardwareLock 经内核控制通道下发;kernelProcess 是可变引用,按调用时取 ——
+  // 它在下面才被 spawn,而锁只会在任务启动后才拨动,时序天然安全。
+  const mailboxMain = createMailboxMain({
+    userDataDir: app.getPath("userData"),
+    sessionsRoot: join(app.getPath("userData"), "sessions"),
+    enginesDir: resolveEnginesDir(),
+    // 打包后本文件在 asar 里,而守护 .mjs 被 asarUnpack 解出(electron-builder 配置)。
+    bundleDir: dirname(fileURLToPath(import.meta.url)).replace("app.asar", "app.asar.unpacked"),
+    broadcast: (event) => {
+      for (const win of BrowserWindow.getAllWindows()) win.webContents.send("mailbox-event", event)
+    },
+    setHardwareLock: (active) => kernelProcess?.setMailboxActive(active),
+    persistence: {
+      get: () => {
+        const value = getStore("opencode.mailbox").get("settings") as MailboxSettings | undefined
+        return value && typeof value.remote === "string" && (value.role === "runner" || value.role === "mother")
+          ? value
+          : undefined
+      },
+      set: (settings) => getStore("opencode.mailbox").set("settings", settings),
+    },
+    log: (line) => writeLog("mailbox", "daemon", { line }),
+  })
   registerIpcHandlers({
     killSidecar: () => killSidecar(),
     attachKernel: (event) => {
@@ -276,6 +304,7 @@ const main = Effect.gen(function* () {
     checkAppExists: (appName) => checkAppExists(appName),
     resolveAppPath: async (appName) => resolveAppPath(appName),
     updater,
+    mailbox: mailboxMain.controller,
     showUpdater: () => showUpdaterDialog(updater, true),
     setBackgroundColor: (color) => setBackgroundColor(color),
     exportDebugLogs: () => exportDebugLogs(),
@@ -343,6 +372,8 @@ const main = Effect.gen(function* () {
     // 内核起不来不该让窗口开不出来 —— 前端还得能显示错误并引导去配置模型凭据。
     logger.error("kernel failed to start", String(error))
   })
+  // 内核进程(重)启动时锁状态在 main 手里 —— 任务活跃期间要向新内核重申探针锁。
+  void kernelProcess.ready.then(() => mailboxMain.reassertHardwareLock()).catch(() => {})
 
   mainWindow = createMainWindow()
   if (mainWindow) {

@@ -14,6 +14,7 @@ import { createCodingToolDefinitions } from "@yoma/my-pi-coding-agent"
 
 import type { KernelEvent, KernelHandlers, KernelMethod, KernelParams, KernelResult } from "../protocol.ts"
 import type { PermissionRules } from "../types.ts"
+import { hardwareLockPolicy } from "./permission.ts"
 import { createEmbeddedTools, SessionManager, type SessionManagerOptions } from "./session-manager.ts"
 import { ProjectStore, listFiles, readFile, searchFiles, vcsDiff, vcsInfo } from "./services.ts"
 import { StreamSink } from "./stream.ts"
@@ -23,7 +24,7 @@ export type * from "./details-check.ts"
 
 export { SessionProjection } from "./projector.ts"
 export { SessionManager } from "./session-manager.ts"
-export { PermissionGate, DEFAULT_PERMISSION_RULES } from "./permission.ts"
+export { PermissionGate, DEFAULT_PERMISSION_RULES, hardwareLockPolicy } from "./permission.ts"
 export type { PolicyProvider, PolicyDecision, PermissionDecision, PermissionDecisionOrigin } from "./permission.ts"
 export { StreamSink } from "./stream.ts"
 
@@ -96,6 +97,15 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     "permission.respond": async ({ id, response }) => sessions.permissions.respond(id, response),
     "permission.rules": async () => sessions.permissions.getRules(),
     "permission.setRules": async ({ rules }) => sessions.permissions.setRules(rules),
+    // 调试台探针互斥:走覆盖策略槽,不碰用户的 rules 表(见 protocol.ts 注释)。
+    "mailbox.setActive": async ({ active, reason }) => {
+      sessions.permissions.setOverride(
+        active
+          ? hardwareLockPolicy(reason ?? "调试台任务活跃,探针被任务占用 —— 交互会话暂时不能动硬件工具")
+          : undefined,
+      )
+      return { active }
+    },
 
     "model.list": () => sessions.providers(),
     // 凭据落在 my-pi 读的那份 ~/.pi/agent/auth.json —— 应用内配的 key 和命令行配 pi /

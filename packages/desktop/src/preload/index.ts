@@ -146,6 +146,19 @@ const api: ElectronAPI = {
       }
     },
   },
+  mailbox: {
+    configure: (settings) => ipcRenderer.invoke("mailbox-configure", settings),
+    start: (task) => ipcRenderer.invoke("mailbox-start", task),
+    stop: () => ipcRenderer.invoke("mailbox-stop"),
+    status: () => ipcRenderer.invoke("mailbox-status"),
+    subscribe: (cb) => {
+      const handler = (_: unknown, event: unknown) => cb(event)
+      ipcRenderer.on("mailbox-event", handler)
+      return () => {
+        ipcRenderer.removeListener("mailbox-event", handler)
+      }
+    },
+  },
   updater: {
     subscribe: async (cb) => {
       updaterCallbacks.add(cb)

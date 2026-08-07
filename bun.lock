@@ -164,6 +164,7 @@
         "@typescript/native-preview": "catalog:",
         "@valibot/to-json-schema": "1.6.0",
         "@yoma-desktop/app": "workspace:*",
+        "@yoma-desktop/bench": "workspace:*",
         "@yoma-desktop/kernel": "workspace:*",
         "@yoma-desktop/ui": "workspace:*",
         "electron": "42.3.3",
