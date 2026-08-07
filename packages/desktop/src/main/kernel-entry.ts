@@ -10,7 +10,7 @@
  */
 
 import { createKernelHost, kernelSelfCheck, type KernelHost } from "@yoma-desktop/kernel/host"
-import type { KernelEvent, KernelFrame } from "@yoma-desktop/kernel"
+import { RETIRED_TOOL_NAMES, TOOL_NAMES, type KernelEvent, type KernelFrame } from "@yoma-desktop/kernel"
 import { ensureDatasheetServerEnv } from "./datasheet-server.ts"
 
 // my-pi 的 datasheet 工具只读 process.env,而用户不该配环境变量 —— 默认值在这里兜。
@@ -139,5 +139,11 @@ if (parentPort) {
 if (process.env.YOMA_KERNEL_SELFCHECK === "1") {
   const report = kernelSelfCheck({ enginesDir: process.env.YOMA_ENGINES_DIR })
   console.log(JSON.stringify(report, null, 2))
-  process.exit(report.tools.length === 11 ? 0 : 1)
+  // 期望值**从工具名词汇表推**,不写魔数:内核 2026-08 让 grep 退役之后,这里的
+  // 硬编码 11 就一直是错的,而它只有跑 smoke 才暴露 —— 单测和 typecheck 都碰不到。
+  const expected = TOOL_NAMES.length - RETIRED_TOOL_NAMES.length
+  if (report.tools.length !== expected) {
+    console.error(`自检:装配出 ${report.tools.length} 个工具,期望 ${expected} 个`)
+  }
+  process.exit(report.tools.length === expected ? 0 : 1)
 }

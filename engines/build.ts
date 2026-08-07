@@ -166,7 +166,19 @@ if (dist) {
 		irpacks++;
 	}
 
+	// irpack 数量是"这份产物到底支持几个芯片族"的唯一体现,而它取决于 submodule
+	// 钉在哪个 commit —— 钉旧了就静默少一大半,用户侧表现成"这个族不支持",
+	// 看起来像产品限制而不是构建产物缺料(实测:一次 CI 只产出 2 个,本机是 27 个,
+	// 原因是那次跑在 submodule 还没 bump 的分支上)。少于阈值就红。
+	const MIN_IRPACKS = 20;
 	const { problems, notes } = auditDist(distDir);
+	if (irpacks < MIN_IRPACKS) {
+		problems.push(
+			`只收到 ${irpacks} 个 irpack(期望 ≥${MIN_IRPACKS})—— ` +
+				`多半是 engines/stm32-config-kernel 这个 submodule 钉在旧 commit 上,` +
+				`先 \`git submodule update --remote engines/stm32-config-kernel\` 再提交那个 gitlink`,
+		);
+	}
 	const manifest = {
 		platform: process.platform,
 		arch: process.arch,
