@@ -121,6 +121,9 @@ export function CodexSidebar(props: { onOpenSearch: () => void }) {
         <Show when={platform.manuals}>
           <ActionRow icon="archive" label="手册库" onClick={() => navigate("/manuals")} />
         </Show>
+        <Show when={platform.mailbox}>
+          <ActionRow icon="status" label={language.t("bench.nav")} onClick={() => navigate("/bench")} />
+        </Show>
       </div>
 
       <ScrollView class="-mr-1 min-h-0 flex-1 pr-1">

@@ -28,13 +28,14 @@ import path from "node:path"
 
 import type { FauxScript } from "../faux.ts"
 import { fauxResolveModels } from "../faux.ts"
+import { readTextFile } from "../fsx.ts"
 import type { GradeResult } from "../grader.ts"
 import { initMailbox } from "./init.ts"
 import { loadMailboxJob } from "./spec.ts"
 import { runMailboxMother, type MotherStepOutcome } from "./mother.ts"
 import { runMailboxRunner, type RunnerStepOutcome } from "./runner.ts"
 import { runSim } from "./sim.ts"
-import { scanMailbox, type MailboxSnapshot, type MailboxVerdict, type RoundFiles } from "./store.ts"
+import { REPORT_FILE, scanMailbox, type MailboxSnapshot, type MailboxVerdict, type RoundFiles } from "./store.ts"
 import { ensureClone } from "./sync.ts"
 
 export type MailboxHostRole = "runner" | "mother" | "init" | "status" | "sim"
@@ -79,8 +80,10 @@ export type MailboxUiState =
 
 export interface MailboxUiSnapshot {
   state: MailboxUiState
-  job?: { id: string; title: string; maxRounds: number; maxTokens: number; wallClockMin: number }
+  job?: { id: string; title: string; directory: string; maxRounds: number; maxTokens: number; wallClockMin: number }
   rounds: RoundFiles[]
+  /** 终局后附上的 report.md 原文(截断过)—— 终报页直接渲染,不再回信箱取。 */
+  report?: string
 }
 
 export type MailboxHostEvent =
@@ -245,7 +248,14 @@ function makeSnapshotEmitter(clone: string, emit: EmitMailboxEvent): () => Promi
     if (inflight) return
     inflight = true
     try {
-      const ui = trimSnapshot(await scanMailbox(clone))
+      const snapshot = await scanMailbox(clone)
+      const report =
+        snapshot.state.kind === "done"
+          ? await readTextFile(path.join(clone, REPORT_FILE))
+              .then((text) => clip(text, REPORT_CAP))
+              .catch(() => undefined)
+          : undefined
+      const ui = trimSnapshot(snapshot, report)
       const serialized = JSON.stringify(ui)
       if (serialized !== last) {
         last = serialized
@@ -262,12 +272,15 @@ function makeSnapshotEmitter(clone: string, emit: EmitMailboxEvent): () => Promi
 const PROMPT_CAP = 8000
 const TEXT_CAP = 8000
 const EVIDENCE_CAP = 1500
+const REPORT_CAP = 64_000
 
-function trimSnapshot(snapshot: MailboxSnapshot): MailboxUiSnapshot {
+function trimSnapshot(snapshot: MailboxSnapshot, report?: string): MailboxUiSnapshot {
   const job = snapshot.job
     ? {
         id: snapshot.job.job.id,
         title: snapshot.job.job.title,
+        // 观战跳转要用:会话路由是 (目录, sessionID) 二元组。
+        directory: snapshot.job.job.repo.directory,
         maxRounds: snapshot.job.mailbox.maxRounds,
         maxTokens: snapshot.job.job.budget.maxTokens,
         wallClockMin: snapshot.job.job.budget.wallClockMin,
@@ -284,7 +297,7 @@ function trimSnapshot(snapshot: MailboxSnapshot): MailboxUiSnapshot {
         }
       : undefined,
   }))
-  return { state: trimState(snapshot.state), job, rounds }
+  return { state: trimState(snapshot.state), job, rounds, report }
 }
 
 function trimState(state: MailboxSnapshot["state"]): MailboxUiState {

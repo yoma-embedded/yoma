@@ -5,6 +5,24 @@ import type { DesktopMenuAction } from "../desktop-menu"
 import { ServerConnection } from "./server"
 import type { ManualsPlatform } from "../manuals/types"
 import type { UpdaterPlatform } from "../updater"
+import type {
+  MailboxComposeInputView,
+  MailboxEventView,
+  MailboxSettingsView,
+  MailboxStatusView,
+  MailboxTaskRequestView,
+} from "@yoma-desktop/kernel"
+
+/** 信箱调试台(desktop only)。载荷类型是 kernel 的浏览器安全视图模型(mailbox-view)。 */
+export type MailboxPlatform = {
+  configure(settings: MailboxSettingsView): Promise<{ ok: boolean; message?: string }>
+  start(task: MailboxTaskRequestView): Promise<{ ok: boolean; message?: string }>
+  stop(): Promise<{ ok: boolean; message?: string }>
+  status(): Promise<MailboxStatusView>
+  probe(remote: string): Promise<{ ok: boolean; message: string }>
+  composeJob(input: MailboxComposeInputView): Promise<{ ok: boolean; jobFile?: string; message?: string }>
+  subscribe(cb: (event: MailboxEventView) => void): () => void
+}
 
 type PickerPaths = string | string[] | null
 type OpenDirectoryPickerOptions = { title?: string; multiple?: boolean }
@@ -84,6 +102,9 @@ type PlatformBase = {
 
   /** Datasheet manual library: list/download shared manuals, ingest user docs (desktop only) */
   manuals?: ManualsPlatform
+
+  /** 信箱调试台:跨机器多轮调试闭环的托管入口(desktop only)。事件与错误全是普通对象。 */
+  mailbox?: MailboxPlatform
 
   /** Get the preferred display backend (desktop only) */
   getDisplayBackend?(): Promise<DisplayBackend | null> | DisplayBackend | null

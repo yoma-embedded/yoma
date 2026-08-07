@@ -13,6 +13,7 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process"
 import { createHash } from "node:crypto"
 import { mkdirSync, writeFileSync } from "node:fs"
+import { readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import type { MailboxHostConfig } from "@yoma-desktop/bench"
@@ -41,9 +42,28 @@ export interface MailboxMainOptions {
 
 export interface MailboxMain {
   controller: MailboxController
+  /** 配置页的连通自检:git ls-remote,报错原样给人看。凭据走系统 git,这里不代管。 */
+  probe(remote: string): Promise<{ ok: boolean; message: string }>
+  /** 任务页:项目模板 + 描述 + 预算档 → 生成任务书文件。判据永远来自模板。 */
+  composeJob(input: MailboxComposeInput): Promise<{ ok: boolean; jobFile?: string; message?: string }>
   /** 内核进程(重)启动后重申探针锁 —— 锁状态在 main,内核只是执行者。 */
   reassertHardwareLock(): void
 }
+
+export interface MailboxComposeInput {
+  /** 项目模板(<项目>/.bench/mailbox.template.json)—— 本身就是一份少了 task 的任务书。 */
+  templatePath: string
+  description: string
+  tier: keyof typeof BUDGET_TIERS
+  title?: string
+}
+
+/** 预算三档。数值是决策:轮数管闭环长度,token 双侧合计,墙钟由 mother 在裁决点强制。 */
+export const BUDGET_TIERS = {
+  quick: { maxRounds: 4, maxTokens: 300_000, wallClockMin: 45 },
+  standard: { maxRounds: 8, maxTokens: 1_000_000, wallClockMin: 120 },
+  thorough: { maxRounds: 12, maxTokens: 2_500_000, wallClockMin: 360 },
+} as const
 
 /** 停机宽限:SIGTERM 之后守护要转杀孙进程,给它这么久,超时补硬杀。 */
 const STOP_GRACE_MS = 10_000
@@ -117,10 +137,82 @@ export function createMailboxMain(options: MailboxMainOptions): MailboxMain {
 
   return {
     controller,
+    probe: probeRemote,
+    composeJob: (input) => composeJob(input, mailboxDir),
     reassertHardwareLock() {
       if (controller.hardwareLockActive()) options.setHardwareLock(true)
     },
   }
+}
+
+/**
+ * 连通自检。GIT_TERMINAL_PROMPT=0:凭据缺失要**立刻报错**,不能让 git 在后台
+ * 等一个永远不会出现的终端输入 —— 那在 UI 上就是一个永远转圈的按钮。
+ */
+async function probeRemote(remote: string): Promise<{ ok: boolean; message: string }> {
+  if (!remote.trim()) return { ok: false, message: "远端地址是空的" }
+  return new Promise((resolve) => {
+    const child = spawn("git", ["ls-remote", remote.trim(), "HEAD"], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "true" },
+    })
+    let stdout = ""
+    let stderr = ""
+    child.stdout!.on("data", (chunk: Buffer) => (stdout += chunk.toString()))
+    child.stderr!.on("data", (chunk: Buffer) => (stderr += chunk.toString()))
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL")
+      resolve({ ok: false, message: "15 秒没有响应 —— 远端不可达,或 SSH 在等一个不存在的交互确认" })
+    }, 15_000)
+    child.on("error", (error) => {
+      clearTimeout(timer)
+      resolve({ ok: false, message: `git 起不来:${error.message}` })
+    })
+    child.on("close", (code) => {
+      clearTimeout(timer)
+      if (code === 0) resolve({ ok: true, message: stdout.trim() ? "已连通" : "已连通(远端还是空仓,init 时会建出分支)" })
+      else resolve({ ok: false, message: stderr.trim() || `git ls-remote 退出码 ${code}` })
+    })
+  })
+}
+
+/**
+ * 模板 + 描述 + 预算档 → 任务书。深校验不在这里做 —— init 时 parseMailboxJob 会
+ * 完整校验并把问题原样回给 UI(同一套报错,两处不重复实现)。
+ */
+async function composeJob(input: MailboxComposeInput, mailboxDir: string): Promise<{ ok: boolean; jobFile?: string; message?: string }> {
+  const tier = BUDGET_TIERS[input.tier]
+  if (!tier) return { ok: false, message: `预算档不认识:${String(input.tier)}` }
+  if (!input.description.trim()) return { ok: false, message: "任务描述是空的 —— agent 不该猜要修什么" }
+
+  let template: Record<string, unknown>
+  try {
+    const parsed: unknown = JSON.parse(await readFile(input.templatePath, "utf8"))
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("模板必须是一个 JSON 对象")
+    template = parsed as Record<string, unknown>
+  } catch (error) {
+    return { ok: false, message: `模板读不出来:${(error as Error).message}` }
+  }
+
+  const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14)
+  const baseId = typeof template.id === "string" && template.id.trim() ? template.id.trim() : "job"
+  const id = `${baseId}-${stamp}`
+  const templateBudget = typeof template.budget === "object" && template.budget !== null ? (template.budget as Record<string, unknown>) : {}
+  const templateMailbox = typeof template.mailbox === "object" && template.mailbox !== null ? (template.mailbox as Record<string, unknown>) : {}
+  const job = {
+    ...template,
+    id,
+    title: input.title?.trim() || (typeof template.title === "string" ? template.title : "调试任务"),
+    task: input.description.trim(),
+    budget: { ...templateBudget, maxTokens: tier.maxTokens, wallClockMin: tier.wallClockMin },
+    mailbox: { ...templateMailbox, maxRounds: tier.maxRounds },
+  }
+
+  const jobsDir = join(mailboxDir, "jobs")
+  mkdirSync(jobsDir, { recursive: true })
+  const jobFile = join(jobsDir, `${id}.json`)
+  await writeFile(jobFile, JSON.stringify(job, null, 2) + "\n")
+  return { ok: true, jobFile }
 }
 
 function cloneDirFor(mailboxDir: string, remote: string, role: string): string {

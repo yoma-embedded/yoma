@@ -13,6 +13,7 @@ import { getPinchZoomEnabled, setPinchZoomEnabled, setTitlebar, updateTitlebar }
 import type { UpdaterController } from "./updater-controller"
 import { createUpdaterSubscriptions } from "./updater-subscriptions"
 import type { MailboxController } from "./mailbox-controller"
+import type { MailboxMain } from "./mailbox"
 
 const pickerFilters = (ext?: string[]) => {
   if (!ext || ext.length === 0) return undefined
@@ -36,8 +37,8 @@ type Deps = {
   checkAppExists: (appName: string) => Promise<boolean> | boolean
   resolveAppPath: (appName: string) => Promise<string | null>
   updater: UpdaterController
-  /** 信箱调试台:controller 的四个动作直通。所有返回值都是普通对象,不抛 Error。 */
-  mailbox: Pick<MailboxController, "configure" | "start" | "stop" | "status">
+  /** 信箱调试台:controller 四动作 + 连通自检 + 任务书生成。返回值全是普通对象,不抛 Error。 */
+  mailbox: Pick<MailboxController, "configure" | "start" | "stop" | "status"> & Pick<MailboxMain, "probe" | "composeJob">
   showUpdater: () => Promise<void> | void
   setBackgroundColor: (color: string) => void
   exportDebugLogs: () => Promise<string>
@@ -57,6 +58,10 @@ export function registerIpcHandlers(deps: Deps) {
   )
   ipcMain.handle("mailbox-stop", () => deps.mailbox.stop())
   ipcMain.handle("mailbox-status", () => deps.mailbox.status())
+  ipcMain.handle("mailbox-probe", (_event: IpcMainInvokeEvent, remote: string) => deps.mailbox.probe(remote))
+  ipcMain.handle("mailbox-compose", (_event: IpcMainInvokeEvent, input: Parameters<Deps["mailbox"]["composeJob"]>[0]) =>
+    deps.mailbox.composeJob(input),
+  )
   // renderer reload 之后端口失效,preload 主动来要一次重新牵线。
   ipcMain.handle("kernel-attach", (event: IpcMainInvokeEvent) => deps.attachKernel(event))
   ipcMain.handle("await-initialization", () => deps.awaitInitialization())

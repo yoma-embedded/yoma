@@ -29,11 +29,19 @@ export type ManualsAPI = ManualsPlatform
  */
 export type MailboxSettingsWire = { remote: string; role: "runner" | "mother"; branch?: string; pollSeconds?: number }
 export type MailboxTaskWire = { kind: "runner" | "mother" | "sim" | "init"; jobFile?: string; fresh?: boolean }
+export type MailboxComposeWire = {
+  templatePath: string
+  description: string
+  tier: "quick" | "standard" | "thorough"
+  title?: string
+}
 export type MailboxAPI = {
   configure(settings: MailboxSettingsWire): Promise<{ ok: boolean; message?: string }>
   start(task: MailboxTaskWire): Promise<{ ok: boolean; message?: string }>
   stop(): Promise<{ ok: boolean; message?: string }>
   status(): Promise<unknown>
+  probe(remote: string): Promise<{ ok: boolean; message: string }>
+  composeJob(input: MailboxComposeWire): Promise<{ ok: boolean; jobFile?: string; message?: string }>
   subscribe(cb: (event: unknown) => void): () => void
 }
 

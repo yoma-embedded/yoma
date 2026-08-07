@@ -272,6 +272,10 @@ const createPlatform = (): Platform => {
 
     manuals: window.api.manuals,
 
+    // preload 的 wire 类型刻意松(零依赖纪律),真形状由 kernel 的 mailbox-view 定义;
+    // 两边的一致性由 bench 的 view-check 闸门 + e2e 钉住,这里只是收窄。
+    mailbox: window.api.mailbox as unknown as Platform["mailbox"],
+
     getDisplayBackend: async () => {
       return window.api.getDisplayBackend().catch(() => null)
     },

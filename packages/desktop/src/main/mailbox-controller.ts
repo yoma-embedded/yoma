@@ -139,7 +139,6 @@ export class MailboxController {
     if (request.kind === "init" && !request.jobFile) {
       return { ok: false, message: "init 需要任务书(jobFile)" }
     }
-    const settings = this.settings ?? { remote: "", role: "runner" }
     this.task = {
       kind: request.kind,
       request,

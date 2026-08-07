@@ -140,6 +140,38 @@ app.whenReady().then(async () => {
       })
     `)
     check("内核事件能推进 renderer world", Array.isArray(events), `${(events ?? []).length} 条`)
+
+    // ---------------------------------------------------------------------
+    // 4. 信箱调试台的桥:嵌套对象要**完整**穿过 contextBridge(施工指南 P3 验收)。
+    //    invoke 的返回值与 send 的事件走的是两条不同的序列化路径,各钉一条。
+    // ---------------------------------------------------------------------
+    check("preload 注入了 window.api.mailbox", await win.webContents.executeJavaScript(`!!window.api?.mailbox?.subscribe`))
+    ipcMain.handle("mailbox-status", () => ({
+      phase: "done",
+      done: { exitCode: 0, detail: "e2e", verdict: { outcome: "passed", reason: "判据全过", decidedBy: "policy" } },
+    }))
+    const statusThrough = await win.webContents.executeJavaScript(`
+      window.api.mailbox.status().then(
+        (s) => ({ outcome: s && s.done && s.done.verdict && s.done.verdict.outcome, by: s && s.done && s.done.verdict && s.done.verdict.decidedBy }),
+        (e) => ({ error: e && e.message }),
+      )
+    `)
+    check("mailbox.status 的嵌套 verdict 穿桥不丢", statusThrough?.outcome === "passed" && statusThrough?.by === "policy", JSON.stringify(statusThrough))
+
+    await win.webContents.executeJavaScript(`
+      window.__mailboxEvent = new Promise((resolve) => {
+        const off = window.api.mailbox.subscribe((event) => { off(); resolve(event) })
+      })
+      true
+    `)
+    win.webContents.send("mailbox-event", {
+      type: "host",
+      event: { type: "snapshot", snapshot: { state: { kind: "awaiting-mother", round: 2 }, rounds: [] } },
+    })
+    const eventThrough = await win.webContents.executeJavaScript(`
+      window.__mailboxEvent.then((e) => ({ kind: e && e.event && e.event.snapshot && e.event.snapshot.state && e.event.snapshot.state.kind, round: e && e.event && e.event.snapshot && e.event.snapshot.state && e.event.snapshot.state.round }))
+    `)
+    check("mailbox 事件的嵌套 snapshot 穿桥不丢", eventThrough?.kind === "awaiting-mother" && eventThrough?.round === 2, JSON.stringify(eventThrough))
   } catch (error) {
     check("renderer 端到端", false, (error as Error).message)
   }
