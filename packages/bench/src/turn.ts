@@ -256,6 +256,13 @@ export async function runTurn(options: TurnOptions): Promise<TurnResult> {
     }
   }
 
+  // 内核的事件批处理定时器是 unref 的(kernel host/stream.ts,为了不吊住
+  // utilityProcess 退出),而本函数的完成恰恰**依赖**那批事件送达。纯 node 下若
+  // 进程没有别的 ref 句柄(mother 的进程内分析轮正是如此;turn-entry 侥幸有 stdin
+  // 监听兜着),事件还没冲出来事件循环就空了,进程带着未决的 await 直接退出
+  // (实测:打包冒烟里 mother 走到"分析中"就消失)。bun 的存活语义不同,开发态
+  // 从不暴露 —— 所以这里必须显式抓一个 ref 句柄,离开时归还。
+  const keepalive = setInterval(() => {}, 60_000)
   let sessionID = options.sessionID ?? ""
   try {
     if (!sessionID) {
@@ -285,6 +292,7 @@ export async function runTurn(options: TurnOptions): Promise<TurnResult> {
     await done
     clearTimeout(hardTimeout)
   } finally {
+    clearInterval(keepalive)
     cancelSettle()
     await host.dispose().catch(() => {})
   }
