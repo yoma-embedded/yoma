@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { existsSync } from "node:fs"
 import { promisify } from "node:util"
 
 import type { Configuration } from "electron-builder"
@@ -15,9 +16,21 @@ const signScript = path.join(rootDir, "script", "sign-windows.ps1")
 const legacyDesktopEntry = path.join(packageDir, "resources", "linux", "opencode-desktop.desktop")
 const legacyDesktopEntryFpm = `${legacyDesktopEntry}=/usr/share/applications/opencode-desktop.desktop`
 
+/**
+ * Windows 代码签名。没有证书时**跳过而不是失败** —— 未签名包是当前已知且被文档
+ * 承认的状态(用户装的时候 SmartScreen 会拦一下,点"仍要运行"即可)。
+ *
+ * 之前的写法是"在 CI 的 Windows 上就无条件调 script/sign-windows.ps1",而那个脚本
+ * 从来没存在过 —— 于是任何 Windows CI 打包都必炸,而且错误长得像 pwsh 的问题,
+ * 不像"你还没配签名"。
+ */
 async function signWindows(configuration: { path: string }) {
   if (process.platform !== "win32") return
   if (process.env.GITHUB_ACTIONS !== "true") return
+  if (!existsSync(signScript)) {
+    console.warn(`[sign] 跳过签名:${signScript} 不存在 —— 产出的是未签名包(SmartScreen 会拦)`)
+    return
+  }
 
   await execFileAsync(
     "pwsh",

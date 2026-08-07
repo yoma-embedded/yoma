@@ -1,0 +1,113 @@
+# 在 Windows runner 上直接出安装包(NSIS)。
+#
+# 为什么要有这个:Mac 上也能打 Windows 包(壳是跨平台的,引擎按 engines.lock.json
+# 下载预编译产物),但那条路依赖某个人的机器。这个 workflow 让"出一个能装的 exe"
+# 变成点一下的事。
+#
+# 引擎来源两选一,由 engines 输入决定:
+#   prebuilt(默认)—— 按 packages/desktop/engines.lock.json 钉住的 tag 下载。
+#                     快(几十秒),但要求那个 tag 的 Release 里有 win32 产物。
+#   build         —— 当场从源码构建(cargo + PyInstaller),十几分钟,不依赖 Release。
+#
+# 产出的是**未签名**包:装的时候 SmartScreen 会拦,点「更多信息 → 仍要运行」。
+# 要消除得买 Windows 代码签名证书,那是产品决定不是技术问题。
+
+name: desktop-win
+
+on:
+  workflow_dispatch:
+    inputs:
+      engines:
+        description: 引擎从哪来
+        type: choice
+        default: prebuilt
+        options: [prebuilt, build]
+      channel:
+        description: 渠道(决定 appId / 产品名 / 自动更新)
+        type: choice
+        default: prod
+        options: [prod, beta, dev]
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      # 只有从源码构建引擎才需要私有 submodule;走预编译产物时跳过,省掉一次凭据依赖。
+      - name: 拉取 submodule(仅 engines=build)
+        if: inputs.engines == 'build'
+        shell: bash
+        env:
+          ENGINES_TOKEN: ${{ secrets.ENGINES_TOKEN }}
+        run: |
+          if [ -z "$ENGINES_TOKEN" ]; then
+            echo "::error::engines=build 需要 secrets.ENGINES_TOKEN 才能拉私有 submodule"
+            exit 1
+          fi
+          git config --global url."https://x-access-token:${ENGINES_TOKEN}@github.com/".insteadOf "git@github.com:"
+          git submodule update --init --recursive
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: 安装依赖
+        run: bun install --frozen-lockfile
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: inputs.engines == 'build'
+      - uses: Swatinem/rust-cache@v2
+        if: inputs.engines == 'build'
+        with:
+          workspaces: |
+            engines/probe-rs
+            engines/stm32-config-kernel
+      - uses: astral-sh/setup-uv@v5
+        if: inputs.engines == 'build'
+
+      - name: 构建引擎(仅 engines=build)
+        if: inputs.engines == 'build'
+        run: bun engines/build.ts
+
+      - name: 构建 renderer / main / preload
+        env:
+          OPENCODE_CHANNEL: ${{ inputs.channel }}
+        run: bun build:desktop
+
+      # stage-engines 自己会判断:本地 engines 满足 win32 就用本地(engines=build 的情况),
+      # 否则按 engines.lock.json 下载预编译产物。gh 用内置令牌鉴权(同仓 Release)。
+      - name: 出安装包
+        env:
+          OPENCODE_CHANNEL: ${{ inputs.channel }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun --cwd packages/desktop package:win
+
+      - name: 检查产物里的引擎确实是 Windows 二进制
+        shell: bash
+        run: |
+          stage=packages/desktop/.engines-stage/bin
+          test -d "$stage" || { echo "::error::没有 .engines-stage/bin"; exit 1; }
+          fail=0
+          for f in "$stage"/*; do
+            name=$(basename "$f")
+            # PE 文件以 "MZ" 开头;venv 脚本以 "#!" 开头(那种拷到别人电脑必坏)
+            magic=$(head -c 2 "$f" | xxd -p)
+            case "$magic" in
+              4d5a) echo "  ✓ $name (PE)";;
+              2321) echo "::error::$name 还是 shebang 脚本,不能分发"; fail=1;;
+              *)    echo "::error::$name 不是 PE 二进制(magic=$magic)"; fail=1;;
+            esac
+          done
+          exit $fail
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yoma-win-x64-${{ inputs.channel }}
+          path: packages/desktop/dist/*.exe
+          if-no-files-found: error
