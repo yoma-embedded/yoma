@@ -68,7 +68,7 @@ function detectFormat(head: Buffer): BinFormat {
  * hint 可覆盖:默认那句"去 my-pi 跑 build.ts"只适用于"本地产物缺失/悬空",
  * 拿它去回答"校验和不符"会把人引向完全错误的方向(实测自己就差点被自己误导)。
  */
-function fail(message: string, hint = "先在 my-pi 仓库跑 `bun engines/build.ts`(为目标平台),再回来打包。"): never {
+function fail(message: string, hint = "先跑 `bun engines/build.ts`(为目标平台),再回来打包。"): never {
   console.error(`\n[stage-engines] ${message}`)
   console.error(`[stage-engines] ${hint}\n`)
   process.exit(1)

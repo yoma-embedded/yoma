@@ -12,28 +12,28 @@
     "skipLibCheck": true,
     "paths": {
       "@yoma/my-pi": [
-        "../../../my-pi/packages/agent/src/index.ts"
+        "../../packages/agent/src/index.ts"
       ],
       "@yoma/my-pi/node": [
-        "../../../my-pi/packages/agent/src/node.ts"
+        "../../packages/agent/src/node.ts"
       ],
       "@yoma/my-pi-coding-agent": [
-        "../../../my-pi/packages/coding-agent/src/index.ts"
+        "../../packages/coding-agent/src/index.ts"
       ],
       "@yoma/my-pi-coding-agent/system-prompt": [
-        "../../../my-pi/packages/coding-agent/src/core/system-prompt.ts"
+        "../../packages/coding-agent/src/core/system-prompt.ts"
       ],
       "@yoma/my-pi-coding-agent/models": [
-        "../../../my-pi/packages/coding-agent/src/acp/models.ts"
+        "../../packages/coding-agent/src/acp/models.ts"
       ],
       "@yoma/my-pi-coding-agent/resources": [
-        "../../../my-pi/packages/coding-agent/src/core/resources.ts"
+        "../../packages/coding-agent/src/core/resources.ts"
       ],
       "@earendil-works/pi-ai": [
-        "../../../my-pi/packages/ai/dist/index.js"
+        "../../packages/ai/dist/index.js"
       ],
       "@earendil-works/pi-ai/providers/*": [
-        "../../../my-pi/packages/ai/dist/providers/*.js"
+        "../../packages/ai/dist/providers/*.js"
       ]
     },
     "allowImportingTsExtensions": true

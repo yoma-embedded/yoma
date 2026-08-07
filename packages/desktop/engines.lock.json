@@ -1,5 +1,5 @@
 {
-  "//": "预编译引擎产物的钉子。app 的行为依赖引擎版本(探针协议、芯片数据库、代码生成),所以必须钉住而不是always-latest —— 换版本是一次显式提交,git blame 查得到。产物由 my-pi 的 .github/workflows/engines.yml 打 tag 时产出。",
-  "repo": "yoma-embedded/my-pi",
+  "//": "预编译引擎产物的钉子。合库之后引擎源码就在本仓 engines/,本地能直接构建;这个钉子只用于**跨平台打包**(比如在 Mac 上打 Windows 包,本机产不出 PE 二进制)和 CI 复现。产物由本仓 .github/workflows/engines.yml 打 engines-v* tag 时产出。",
+  "repo": "yoma-embedded/yoma-pi",
   "tag": "engines-v0.1.0"
 }

@@ -1,0 +1,140 @@
+# 引擎产物的多平台构建与发布。
+#
+#   手动触发(workflow_dispatch)→ 只产出 artifact,用来验证;
+#   打 tag `engines-v*`          → 同时挂到 Release 上,桌面端按版本号取。
+#
+# 产出的是**自包含**产物:三个 Python 程序经 PyInstaller 冻结(开发期它们是 venv 的
+# console script,第一行写死构建机路径,拷到别人电脑必坏);两个 Rust 二进制直接拷。
+# `bun engines/build.ts --dist` 末尾会自检这一点,不通过就红。
+#
+# fw/(ST 官方 HAL,1.1GB)**不在产物里** —— 只有 stm32kernel generate 用得到,
+# 而那条命令本来就收 --fw-dir。见 engines/build.ts 文件头。
+
+name: engines
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 构建哪些平台(首跑建议先只跑 windows —— macOS runner 按 10 倍计费)
+        type: choice
+        default: all
+        options: [all, windows, macos]
+  push:
+    tags: ["engines-v*"]
+
+permissions:
+  contents: write # 发布 Release 资产需要
+
+jobs:
+  # 只为算出矩阵而存在的小任务(ubuntu,1 倍计费,几秒钟)。
+  # 存在的理由是钱:私有仓的 macOS runner 是 10 倍计费,而 probe-rs 冷编译要二十来分钟。
+  # 三平台全量首跑 ≈ 400+ 分钟额度(免费额度 2000/月),所以要能只跑一个平台。
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        shell: bash
+        run: |
+          all='[{"os":"macos-14","name":"darwin-arm64"},{"os":"macos-13","name":"darwin-x64"},{"os":"windows-latest","name":"win32-x64"}]'
+          case "${{ inputs.platforms || 'all' }}" in
+            windows) picked=$(echo "$all" | jq -c '[.[] | select(.name | startswith("win"))]') ;;
+            macos)   picked=$(echo "$all" | jq -c '[.[] | select(.name | startswith("darwin"))]') ;;
+            *)       picked="$all" ;;
+          esac
+          echo "matrix=$picked" >> "$GITHUB_OUTPUT"
+          echo "将构建:$picked"
+
+  build:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        # submodule 单独拉:stm32-config-kernel 和 controller_map 是私有仓,
+        # 默认的 GITHUB_TOKEN 只对**当前**仓库有权限,拉不动它们。
+        with:
+          submodules: false
+
+      - name: 拉取 submodule(私有仓走 PAT)
+        shell: bash
+        env:
+          ENGINES_TOKEN: ${{ secrets.ENGINES_TOKEN }}
+        run: |
+          if [ -z "$ENGINES_TOKEN" ]; then
+            echo "::error::缺少 secrets.ENGINES_TOKEN —— 私有 submodule 拉不下来。"
+            echo "去仓库 Settings → Secrets and variables → Actions 加一个对"
+            echo "yoma-embedded/stm32-config-kernel 和 controller_map 有读权限的 PAT。"
+            exit 1
+          fi
+          # .gitmodules 里私有仓用的是 git@github.com: 形式,CI 里没有 SSH key,
+          # 所以把 SSH URL 改写成带 token 的 HTTPS。probe-rs 是公开仓,不受影响。
+          git config --global url."https://x-access-token:${ENGINES_TOKEN}@github.com/".insteadOf "git@github.com:"
+          if ! git submodule update --init --recursive; then
+            # 令牌存在但拉不动,基本是这三种。GitHub 对"没权限"一律报"仓库不存在",
+            # 照字面找会一直找不到原因,所以这里把三种可能一次说清。
+            echo "::error::submodule 拉取失败。ENGINES_TOKEN 存在,但用不了 —— 常见三种原因:"
+            echo "  1) 令牌过期了(fine-grained token 有有效期,到期当天 CI 才会突然红);"
+            echo "  2) 组织没批:fine-grained token 访问组织仓库要在 yoma-embedded 的"
+            echo "     Settings → Personal access tokens 里批准,没批时 GitHub 报的是"
+            echo "     '仓库不存在',不是'没权限',很容易看错方向;"
+            echo "  3) 令牌没勾上 stm32-config-kernel / controller_map,或 Contents 不是 Read。"
+            exit 1
+          fi
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      # build.ts 从 @yoma/my-pi-coding-agent 取 engineBin/exe(路径解析和运行时同一套,
+      # 报告才不会和真实行为漂移)。那是 workspace 包,不装就是
+      # "Cannot find module" —— 本机不报是因为早就装过。
+      #
+      # 合库之后 lockfile 是全量的(含 electron、solid、5 个 patch),装机会慢一些。
+      # 试过用 --filter 收窄到内核三包,实测**并没有真的收窄**(dry-run 里桌面端的包
+      # 照样在列),所以不留这个未经验证的优化 —— CI 刚修好,不值得拿它冒险。
+      - name: 安装依赖
+        run: bun install --frozen-lockfile
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # probe-rs 是个大工程,不缓存的话每次 CI 都要从头编十几分钟。
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            engines/probe-rs
+            engines/stm32-config-kernel
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: 构建可分发产物
+        run: bun engines/build.ts --dist --out dist
+
+      - name: 打包
+        shell: bash
+        run: |
+          cd dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a -tzip "../engines-${{ matrix.name }}.zip" .
+          else
+            # -h 解引用软链(产物里本不该有,双保险);COPYFILE_DISABLE 去掉 macOS 的 ._ 伴生文件
+            COPYFILE_DISABLE=1 tar -czhf "../engines-${{ matrix.name }}.tar.gz" .
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engines-${{ matrix.name }}
+          path: engines-${{ matrix.name }}.*
+          if-no-files-found: error
+
+      - name: 挂到 Release(仅 tag 触发)
+        if: startsWith(github.ref, 'refs/tags/engines-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: engines-${{ matrix.name }}.*
+          fail_on_unmatched_files: true

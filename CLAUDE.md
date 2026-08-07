@@ -5,56 +5,49 @@
 
 ## 这是什么
 
-Yoma Desktop 是一个 Electron 桌面端,UI 用 SolidJS。它 **fork 自 opencode 的前端**,
-但后端内核已经换成 **`../my-pi`** —— 不再是 opencode,也不再是 `../yoma`。
+Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
 
-唯一的兄弟仓依赖是 **`../my-pi` 的源码**。本仓库不需要任何兄弟仓的 **构建产物**
-(历史上依赖过 `../yoma/publish/server`,已拆除)。
+- **内核**(`packages/{ai,agent,coding-agent}`)—— agent 循环、会话树、压缩、技能,
+  以及嵌入式工具组(烧录 / 日志 / gdb / 网表 / 数据手册 / STM32 配置)。
+- **桌面端**(`packages/{desktop,app,kernel,ui,session-ui,util,bench}`)——
+  Electron 外壳 + SolidJS UI,fork 自 opencode 的前端;`bench` 是无人值守调试台。
 
-## 内核接缝:my-pi 走 alias,不进 install graph
+**2026-08 之前这是两个仓库**(`my-pi` 和 `yoma-desktop`,兄弟目录 + alias 接缝)。
+合并的决定性理由是**它们从来不独立发布**:打包时 esbuild 把内核源码整个 inline 进
+`out/main/kernel.js`,用户装的 app 里没有"内核这个包",只有一个把两边融在一起的产物。
+仓库该按发布节奏切分,而这两半的发布节奏不是相近 —— 是同一个。
 
-这是全仓最容易搞错的一件事,原因写在 `packages/kernel/mypi.ts` 顶部:
+分开时代付出的代价(现在都没了):路径映射要维护 4 份、`bun use-mypi` 切检出、
+"半切"(app 跑新代码而 typecheck 验旧检出,两边全绿却说的不是同一件事)、
+以及**跨仓库的静默断裂** —— 一天之内撞过三次,其中"凭据路径 + 格式变了"那次
+类型系统根本抓不到,表现是用户配了 key 而内核静默读不到。
 
-- my-pi 内部用 `workspace:*` 互相引用 → 声明成 `file:`/`link:` 依赖会让 `bun install` 直接失败;
-- my-pi 只发 raw TypeScript(`exports` 指向 `src/*.ts`,内部 153 处 `./x.ts` 后缀说明符)
-  → 真装进 node_modules 后,Node 的 strip-only 加载器报
-  `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`,**无 flag 可关**;
-- 它还有 TS 参数属性(`gdb.ts:485`、`acp/agent.ts:209`)→ strip-only 模式直接
-  `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`。
+## 内核接缝:为什么还留着 alias
 
-所以走 **alias**:构建期 esbuild 把 my-pi 源码整个 inline 进 `out/main/kernel.js`
-(参数属性和 `.ts` 说明符在这一步一起消失),typecheck 期由 tsconfig 的 `paths` 走同一组映射。
-**my-pi 一个字节都不用改**,而且它一旦挪文件是编译期硬失败,不是运行时惊喜。
+内核现在就是本仓的 workspace 包,裸说明符已经能靠 bun 解析。但**打包期仍然要显式别名**:
 
-这张映射存在 **三份**(被工具链逼的,`packages/kernel/src/mypi-alias.test.ts` 把它们钉在一起):
+- electron-vite 默认外部化 node_modules 里的东西,而内核必须被 **inline**:
+  它只发 raw TypeScript(`exports` 指向 `src/*.ts`,内部大量 `./x.ts` 后缀说明符),
+  外部化后 Node 的 strip-only 加载器报 `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`,
+  **无 flag 可关**;还有 TS 参数属性(`gdb.ts`、`acp/agent.ts`)会直接
+  `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`。inline 时这两样一起消失。
+- 别名指的是**真实路径**而不是 node_modules 里的软链,这是有意的:走软链时
+  TypeScript 会把同一个 `ProviderStreams` 当成两个类型(private 字段让它们名义上
+  不兼容),typecheck 直接红。踩过。
+- `coding-agent` 的 `exports` 里**没有** `/system-prompt`、`/models`、`/resources`
+  这三个深引用,它们只靠别名可达。改成 workspace 解析之前必须先补 exports。
+
+映射仍存在 **四份**(被工具链逼的,`packages/kernel/src/mypi-alias.test.ts` 钉住):
 
 | 位置 | 谁用 |
 |---|---|
 | `tsconfig.mypi.json` 的 `paths` | typecheck(tsgo),被 kernel/desktop 继承 —— **位置的真源** |
 | `packages/kernel/tsconfig.json` 里 **内联** 的同一份 | `bun test` —— bun 不跟随数组形式的 `extends` |
+| `packages/bench/tsconfig.json` 里同样的内联副本 | bench 直接跑源码,同理 |
 | `packages/kernel/mypi.ts` 的 `MY_PI_ALIASES` | 打包期(electron-vite / esbuild),根目录从第一份反推 |
 
-pi-ai 的 path 必须指向 **`dist/index.js` 而不是 `.d.ts`**:bun 会照着 paths 真去加载那个文件。
-
-### 换一个 my-pi 检出(worktree)
-
-```
-bun use-mypi                    # 看当前指向谁
-bun use-mypi ../my-pi/.claude/worktrees/xxx
-bun use-mypi --reset            # 回到 ../my-pi
-```
-
-它改的是两份 tsconfig,`mypi.ts` 自动跟上,`git diff` 里能一眼看见当前指向谁。
-
-**别只设 `MY_PI_DIR` 环境变量。** 它只能改到打包期那一份,结果是 **半切**:app 跑的是
-worktree 的代码,typecheck 和单测还在验旧检出,两边全绿而它们说的不是同一件事。
-
-也别试图用一条 `.mypi` 软链把三份统一(试过,退回来了):tsconfig 的 paths 走软链、而
-my-pi 内部的相对 import 走真实路径,TypeScript 会把同一个 `ProviderStreams` 当成两个
-类型(private 字段让它们名义上不兼容),typecheck 直接红。
-
-`engines` **不跟着切** —— 那是另一条软链,里面是编译产物不是源码,而 worktree 基本不会
-去跑 `bun engines/build.ts`。
+两个细节:paths 的值必须是**相对路径**(`./packages/...`),写成 `packages/...` 会
+`TS5090`;pi-ai 的 path 必须指向 **`dist/index.js` 而不是 `.d.ts`**,bun 会照着它真去加载。
 
 ## 仓库结构
 
@@ -258,10 +251,10 @@ bench 直接 import 它跑无人值守任务,于是权限门、投影器、自�
   抓不到**。
 - **engines 目录必须显式传**,别依赖 my-pi 的 `enginesDir()` 向上查找 —— 它只认
   "名字叫 engines 且存在",会高高兴兴找到一个没有 `bin/` 的空壳,然后报
-  "去跑 `bun engines/build.ts`",让你以为是没编译。仓库根的 `engines` 是指向
-  `../my-pi/engines` 的软链。
+  "去跑 `bun engines/build.ts`",让你以为是没编译。合库后 `engines/` 就是仓内真目录
+  (三个 submodule + build.ts),不再是软链。
 - **engines 有两个来源,`scripts/stage-engines.ts` 按目标平台自动选**:本地
-  `../my-pi/engines`(开发机的软链,仅当它满足目标平台)或 my-pi 的**预编译 Release
+  `engines/`(跑过 `bun engines/build.ts` 之后,仅当它满足目标平台)或**预编译 Release
   产物**(按 `packages/desktop/engines.lock.json` 钉住的 tag,用 `gh` 下载)。
   后者让"在 Mac 上打 Windows 包"第一次真正成立 —— 以前只能靠
   `YOMA_ALLOW_FOREIGN_ENGINES=1` 打出一个引擎全坏的包。

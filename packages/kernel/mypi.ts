@@ -1,35 +1,36 @@
 /**
- * my-pi 内核的解析位置 —— 全仓唯一的一份。
+ * 内核源码的解析位置 —— 全仓唯一的一份。
  *
- * my-pi 只发 raw TypeScript(`exports` 直接指向 `src/*.ts`,153 处 `./x.ts` 后缀说明符),
- * 而且它内部用 `workspace:*` 互相引用。所以它 **不能** 作为 npm 依赖装进来:
- *   - 声明成 file:/link: 依赖 → bun 解析不了它内部的 `workspace:*`,install 直接失败;
- *   - 真装进 node_modules → Node 的 strip-only 加载器对 node_modules 下的 .ts
- *     报 ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING,无 flag 可关。
+ * ## 为什么还需要这个文件(合库之后)
  *
- * 所以走 alias:构建期由 esbuild/rollup 把 my-pi 源码整个 inline 进 bundle
- * (参数属性和 .ts 说明符在这一步一起消失),typecheck 期由 tsconfig 的 paths 走同一组映射。
- * 结果是 my-pi 一个字节都不用改,而且它一旦挪文件,我们这边是编译期硬失败,不是运行时惊喜。
+ * 内核(packages/{ai,agent,coding-agent})现在和桌面端在同一棵树上,裸说明符
+ * `@yoma/my-pi` 已经能靠 bun workspace 解析。但**打包期仍然要显式别名**:
+ * electron-vite 默认会把 node_modules 里的东西外部化,而内核必须被 **inline 进
+ * `out/main/kernel.js`** —— 它只有 raw TypeScript(`exports` 指向 `src/*.ts`,
+ * 内部大量 `./x.ts` 后缀说明符),外部化之后 Electron 的 strip-only 加载器直接报
+ * ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING,无 flag 可关。
  *
- * **位置的真源是 `tsconfig.mypi.json`**,不是这里。本文件从它的 paths 反推根目录。
+ * 而且别名指的是**真实路径**而不是 node_modules 里的软链,这一点是有意的:
+ * 走软链时 TypeScript 会把同一个 `ProviderStreams` 当成两个类型(private 字段让
+ * 它们名义上不兼容),typecheck 直接红。踩过。
  *
- * 这个方向是刻意的。反过来(这里定义、tsconfig 手抄)在切换检出时会 **半切**:
- * 打包跟着环境变量走了,typecheck 和 bun test 还在验旧的那一份,两边都绿,说的却不是
- * 同一份代码。换检出用 `bun use-mypi <目录>` —— 它改 tsconfig,这里自动跟上。
+ * **位置的真源是 `tsconfig.mypi.json`**,不是这里。本文件从它的 paths 反推根目录,
+ * 于是"改了映射却忘了改另一份"变成不可能。三份映射的一致性由
+ * `src/mypi-alias.test.ts` 钉住。
  *
- * 顺带解释为什么不是一个 `.mypi` 软链(试过,退回来了):tsconfig 的 paths 走软链、
- * 而 my-pi 内部的相对 import 走真实路径,TypeScript 会把同一个 `ProviderStreams`
- * 当成两个不同的类型(private 字段让它们名义上不兼容),typecheck 直接红。
+ * 2026-08 合库之前这里还有一堆东西:MY_PI_DIR 环境变量、兄弟目录猜测、
+ * `bun use-mypi` 切检出。那些全部是为"内核在另一个仓库"服务的,一并删掉了 ——
+ * 现在内核和它的消费者在同一次提交里,不存在"指错检出"这回事。
  */
 import { existsSync, readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
 
-/** 认领标志:my-pi 一定有这个文件。用它把"路径算错"从静默变成响亮。 */
+/** 认领标志:内核一定有这个文件。用它把"路径算错"从静默变成响亮。 */
 const MARKER = "packages/agent/src/index.ts"
 const SHARED_TSCONFIG = "tsconfig.mypi.json"
 
-/** 从 tsconfig.mypi.json 的 `@yoma/my-pi` 条目反推 my-pi 根目录。 */
+/** 从 tsconfig.mypi.json 的 `@yoma/my-pi` 条目反推仓库根目录。 */
 function fromSharedTsconfig(start: string): string | undefined {
   let dir = start
   for (let depth = 0; depth < 8; depth += 1) {
@@ -52,22 +53,23 @@ function fromSharedTsconfig(start: string): string | undefined {
 function resolveMyPiDir(): string {
   const here = path.dirname(fileURLToPath(import.meta.url))
   const candidates: string[] = []
-  // 环境变量只影响打包期,tsconfig 跟不了 —— 留着做一次性实验,别当成切换手段。
-  if (process.env.MY_PI_DIR) candidates.push(path.resolve(process.env.MY_PI_DIR))
   // 本文件可能被 vite 的 config 加载器内联进别的位置,所以从两个起点各往上找一遍。
   for (const start of [here, process.cwd()]) {
     const found = fromSharedTsconfig(start)
     if (found) candidates.push(found)
   }
-  // tsconfig 都找不到时才退回猜:兄弟目录 ../my-pi。
-  candidates.push(path.resolve(here, "..", "..", "..", "my-pi"))
-  candidates.push(path.resolve(process.cwd(), "..", "my-pi"))
-  candidates.push(path.resolve(process.cwd(), "..", "..", "my-pi"))
+  // tsconfig 找不到时退回:从本文件往上走,认 MARKER。
+  let dir = here
+  for (let depth = 0; depth < 8; depth += 1) {
+    candidates.push(dir)
+    const parent = path.dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
 
   for (const dir of candidates) if (existsSync(path.join(dir, MARKER))) return dir
   throw new Error(
-    `找不到 my-pi 内核。试过:\n${candidates.map((c) => `  ${c}`).join("\n")}\n` +
-      `把 my-pi 检出成本仓库的兄弟目录,或跑 \`bun use-mypi <目录>\`。`,
+    `找不到内核源码(应在本仓 ${MARKER})。试过:\n${candidates.map((c) => `  ${c}`).join("\n")}`,
   )
 }
 

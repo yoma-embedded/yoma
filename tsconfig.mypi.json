@@ -1,17 +1,17 @@
 {
   "$schema": "https://json.schemastore.org/tsconfig",
-  "//": "my-pi 内核的 TypeScript 解析映射 —— 必须和 packages/kernel/mypi.ts 的 MY_PI_ALIASES 保持一致。见那里的说明:my-pi 只能走 alias,不能进 install graph。paths 里的相对路径按声明它的配置文件位置解析,所以这张表在被 extends 时依然指向仓库的兄弟目录 ../my-pi。注意 paths 是整体替换而不是合并,自己有 paths 的包(如 app 的 @/*)必须把这几条抄进去。",
+  "//": "内核包的 TypeScript 解析映射 —— 必须和 packages/kernel/mypi.ts 的 MY_PI_ALIASES 保持一致。2026-08 合库之后内核就在本仓 packages/{ai,agent,coding-agent},这张表因此只是把裸说明符指到源码入口(不再跨仓库)。仍然保留而不是改走 workspace 解析,是因为打包期要靠同一组映射把内核 inline 进 bundle,而且 paths 指真实路径能避开'同一个类型经软链被当成两个'那类问题。注意 paths 是整体替换而不是合并,自己有 paths 的包(如 app 的 @/*)必须把这几条抄进去。",
   "compilerOptions": {
     "allowImportingTsExtensions": true,
     "paths": {
-      "@yoma/my-pi": ["../my-pi/packages/agent/src/index.ts"],
-      "@yoma/my-pi/node": ["../my-pi/packages/agent/src/node.ts"],
-      "@yoma/my-pi-coding-agent": ["../my-pi/packages/coding-agent/src/index.ts"],
-      "@yoma/my-pi-coding-agent/system-prompt": ["../my-pi/packages/coding-agent/src/core/system-prompt.ts"],
-      "@yoma/my-pi-coding-agent/models": ["../my-pi/packages/coding-agent/src/acp/models.ts"],
-      "@yoma/my-pi-coding-agent/resources": ["../my-pi/packages/coding-agent/src/core/resources.ts"],
-      "@earendil-works/pi-ai": ["../my-pi/packages/ai/dist/index.js"],
-      "@earendil-works/pi-ai/providers/*": ["../my-pi/packages/ai/dist/providers/*.js"]
+      "@yoma/my-pi": ["./packages/agent/src/index.ts"],
+      "@yoma/my-pi/node": ["./packages/agent/src/node.ts"],
+      "@yoma/my-pi-coding-agent": ["./packages/coding-agent/src/index.ts"],
+      "@yoma/my-pi-coding-agent/system-prompt": ["./packages/coding-agent/src/core/system-prompt.ts"],
+      "@yoma/my-pi-coding-agent/models": ["./packages/coding-agent/src/acp/models.ts"],
+      "@yoma/my-pi-coding-agent/resources": ["./packages/coding-agent/src/core/resources.ts"],
+      "@earendil-works/pi-ai": ["./packages/ai/dist/index.js"],
+      "@earendil-works/pi-ai/providers/*": ["./packages/ai/dist/providers/*.js"]
     }
   }
 }

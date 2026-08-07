@@ -1,0 +1,17 @@
+{
+	"name": "@yoma/my-pi",
+	"version": "0.1.0",
+	"description": "my-pi agent core, for learning",
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts",
+		"./node": "./src/node.ts",
+		"./package.json": "./package.json"
+	},
+	"dependencies": {
+		"@earendil-works/pi-ai": "workspace:*",
+		"ignore": "7.0.5",
+		"typebox": "1.1.38",
+		"yaml": "2.9.0"
+	}
+}

@@ -81,7 +81,7 @@ const data = join(enginesDir, "data")
 const REQUIRED_BINS = ["stm32kernel", "probe-rs", "controller_map", "board_ir", "connections"]
 
 if (!existsSync(bin)) {
-  fail(`${bin} 不存在 —— 跑 \`bun engines/build.ts\`(在 my-pi 仓库)。\n` + `注意:my-pi 的 enginesDir() 是向上查找 + existsSync,会"找到"一个没有 bin/ 的空壳然后报"去跑 build.ts",别被那条信息带偏。`)
+  fail(`${bin} 不存在 —— 跑 \`bun engines/build.ts\`(在仓库根)。\n` + `注意:my-pi 的 enginesDir() 是向上查找 + existsSync,会"找到"一个没有 bin/ 的空壳然后报"去跑 build.ts",别被那条信息带偏。`)
 }
 const present = readdirSync(bin)
 const missingBins = REQUIRED_BINS.filter((name) => !present.includes(name))

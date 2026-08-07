@@ -1,0 +1,7 @@
+# 构建中间产物。
+# 注意:*.elf 故意**不**在这里 —— 两个 ELF 是提交进 git 的测试资产,
+# 目的是让 `bun test` 不依赖 ARM 工具链。详见 README.md。
+*.map
+*.o
+# 由 fixture.ld.in 生成的链接脚本(.ld.in 后缀不同,不会被误伤)
+*.ld

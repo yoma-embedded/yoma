@@ -87,7 +87,7 @@ async function checkEnvironment(job: Job, enginesDir?: string): Promise<string[]
   if (needsProbe && enginesDir) {
     const probeRs = path.join(enginesDir, "bin", process.platform === "win32" ? "probe-rs.exe" : "probe-rs")
     if (!(await Bun.file(probeRs).exists())) {
-      issues.push(`判据要用 RTT 采日志,但 ${probeRs} 不在 —— 先在 my-pi 仓库跑 \`bun engines/build.ts\``)
+      issues.push(`判据要用 RTT 采日志,但 ${probeRs} 不在 —— 先跑 \`bun engines/build.ts\``)
     }
   }
 
