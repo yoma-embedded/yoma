@@ -89,6 +89,7 @@ Bun workspace,`packages/` 下 7 个包:
 | `bun --cwd packages/desktop e2e:ipc` | 生产路径:真 utilityProcess + 真 MessagePort + 真协议帧(不开窗口) |
 | `bun --cwd packages/desktop e2e:renderer` | 最后一跳:真窗口 + 真 preload + **真 contextBridge** |
 | `bun packages/bench/src/cli.ts run <job.json>` | 无人值守调试台:跑完整闭环(`check` 只校验,`grade` 只跑判据) |
+| `bun packages/bench/src/cli.ts mailbox sim <job.json>` | 信箱闭环单机模拟(`init`/`runner`/`mother`/`status` 是生产形态的四个子命令) |
 
 后三个是 CI 里唯一能挡住"my-pi 一次重构悄悄搞死桌面端"的东西 —— 我们是把它整个 inline
 进 bundle 的,内核的改动可以在我们这边零编译错误地把 app 弄坏,直到用户点下去才发现。
@@ -223,10 +224,34 @@ bench 直接 import 它跑无人值守任务,于是权限门、投影器、自�
    `effectivePolicy`),而不是发一个注定被自动拒绝的 ask —— 后者会把决策记成
    `by: "human"`,而当时根本没有人。`TurnInput.unattended` 就是为了把这件事传进子进程。
 
-两个实测踩过的坑:`.bench/` 必须自带 `.gitignore`(否则运行产物被 `git add -A` 卷进
-提交,研发打开 diff 看到五个内部文件加一处真改动);`result.text` 只收 **assistant**
-消息的非 synthetic text part(用户消息的 part 也是 text part,不过滤的话提示词会
-原样出现在报告的"根因分析"里)。
+三个实测踩过的坑:`.bench/` 必须自带 `.gitignore`(否则运行产物被 `git add -A` 卷进
+提交,研发打开 diff 看到五个内部文件加一处真改动);**`.my-pi/` 的运行产物同理**
+(gdb 会话日志/烧录状态 —— 信箱闭环首跑时 17 个改动文件里 16 个是它;由
+`ensureMyPiIgnore` 兜住,只忽略产物子路径,不碰用户自己提交的技能/上下文);
+`result.text` 只收 **assistant** 消息的非 synthetic text part(用户消息的 part 也是
+text part,不过滤的话提示词会原样出现在报告的"根因分析"里)。
+
+### 信箱闭环(`bench/src/mailbox/`)
+
+跨机器多轮调试:**母 agent(决策)↔ 工位 runner(执行)**,唯一通道是一个 git 仓库
+(信箱)。两侧都是 yoma 内核跑的 agent —— runner 轮复用 turn-entry 子进程与 grader,
+mother 轮是 readonly 策略的内核会话(不碰硬件,无需子进程)。协议要点:
+
+- **状态由文件存在性推断,不落状态文件**:`rounds/NNN/` 里 instruction 有而 result
+  无 → 等 runner;result 有 → 等 mother;`verdict.json` 出现 → 终局。runner 的
+  result.json **最后写**,mother 的 decision + 下轮 instruction **同一次提交**。
+- **pull 是 `fetch + reset --hard + clean -fd`**,工作树永远等于远端已推真相 ——
+  崩溃写了一半的文件在下次轮询自动消失,协议退回"重跑本步",没有恢复逻辑可写错。
+  两侧的本地状态(会话指针、token 计数)住在自带 `.gitignore` 的目录里,clean 不删
+  被 ignore 的文件,这是它们的护身符。
+- **裁决分两层,层序即权力边界**:判据全过 / 预算耗尽 / 环境错误由确定性守卫直接
+  终局(记 `by:"policy"`),模型只裁"判据没过且预算还有"的局面;mother 说 `success`
+  会被解析器拒绝 —— 判据不归模型管,对哪个模型都一样。
+- **硬件动作只在工位侧**:交付 push 与失败回刷 known-good 都发生在 runner 看到
+  verdict 之后的收尾里,且失败回刷只在终局做一次(轮与轮之间是延续,每轮回刷
+  等于每轮白烧一次片)。
+- 单机模拟(`mailbox sim`)起 **两个真子进程 + 各自的克隆 + 本地裸仓**,与生产的
+  差别只有远端 URL(`--remote` 换私有 GitHub 仓即是跨机器形态)。
 
 ## 约定与规矩
 
@@ -291,6 +316,11 @@ bench 直接 import 它跑无人值守任务,于是权限门、投影器、自�
   `getLogicalScrollOffset is not a function`。
 
 ## 已知的未完成项
+
+- **信箱调试台还没进桌面端**:引擎(`bench/src/mailbox/`)已完工并真跑验证,但产品形态
+  (研发/测试各下载 exe、配置即用)待施工 —— 完整设计与分阶段计划在
+  `docs/施工指南-信箱调试台桌面端.md`(决策端定为全自动母 agent)。开工第一步是
+  bench 去 Bun 化(29 处,exe 里没有 bun),别先动 UI。
 
 - `ServerConnection` / `ServerKey` 这套概念还散在 app 的路由与标签页里(现在只是空壳,
   `serverReady` 用占位值立刻 resolve)。清除它是独立一件事。
