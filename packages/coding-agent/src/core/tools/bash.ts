@@ -20,9 +20,21 @@ import {
 import { type Static, Type } from "typebox";
 import { type ToolDefinition, wrapToolDefinition } from "./types.ts";
 
+/**
+ * Every other subprocess in the suite is bounded — engines 5 min, flash 2 min,
+ * gdb 20/60 s, log 120 s — and bash, the one that runs arbitrary commands, was
+ * the only unbounded one. The cost was real: a `find / -iname …` walked the
+ * whole filesystem and froze a run for twenty minutes, with nothing to kill it
+ * but a human noticing. A default that a caller can raise is strictly better
+ * than a hang no caller can escape.
+ */
+export const DEFAULT_BASH_TIMEOUT_S = 120;
+
 const bashSchema = Type.Object({
 	command: Type.String({ description: "Bash command to execute" }),
-	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (optional, no default timeout)" })),
+	timeout: Type.Optional(
+		Type.Number({ description: `Timeout in seconds (default ${DEFAULT_BASH_TIMEOUT_S}; raise it for long builds)` }),
+	),
 });
 
 export type BashToolInput = Static<typeof bashSchema>;
@@ -30,11 +42,6 @@ export type BashToolInput = Static<typeof bashSchema>;
 export interface BashToolDetails {
 	truncation?: TruncationResult;
 	fullOutputPath?: string;
-}
-
-export interface BashToolOptions {
-	/** 拼在每条命令前面的前缀(例如 shell 初始化命令)。 */
-	commandPrefix?: string;
 }
 
 /** onUpdate 的节流间隔:token 级刷新会把 UI 打爆,100ms 攒一批。 */
@@ -70,21 +77,21 @@ function appendStatus(text: string, status: string): string {
 
 export function createBashToolDefinition(
 	env: ExecutionEnv,
-	options?: BashToolOptions,
 ): ToolDefinition<typeof bashSchema, BashToolDetails | undefined> {
-	const commandPrefix = options?.commandPrefix;
 	return {
 		name: "bash",
 		label: "bash",
-		description: "Execute a bash command and return its output.",
+		description:
+			process.platform === "win32"
+				? "Execute a bash command and return its output. This is Git Bash on Windows: its /d/... and /tmp paths are private to bash — pass D:/... style paths to native programs (python, cmake) and to the other tools."
+				: "Execute a bash command and return its output.",
 		promptSnippet: "Run shell commands",
 		promptGuidelines: [
 			"Use bash for running commands, tests, and builds.",
-			"Prefer the read tool over cat/sed, and the grep tool over grep/rg, when inspecting files.",
+			"Prefer the read tool over cat/sed when inspecting files.",
 		],
 		parameters: bashSchema,
 		async execute(_toolCallId, { command, timeout }, signal, onUpdate) {
-			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
 
 			let updateTimer: ReturnType<typeof setTimeout> | undefined;
 			let updateDirty = false;
@@ -132,8 +139,8 @@ export function createBashToolDefinition(
 			}
 
 			try {
-				const captured = await executeShellWithCapture(env, resolvedCommand, {
-					timeout,
+				const captured = await executeShellWithCapture(env, command, {
+					timeout: timeout ?? DEFAULT_BASH_TIMEOUT_S,
 					abortSignal: signal,
 					returnExecutionErrors: true,
 					onChunk: (_chunk, getProgress) => {
@@ -176,6 +183,6 @@ export function createBashToolDefinition(
 	};
 }
 
-export function createBashTool(env: ExecutionEnv, options?: BashToolOptions) {
-	return wrapToolDefinition(createBashToolDefinition(env, options));
+export function createBashTool(env: ExecutionEnv) {
+	return wrapToolDefinition(createBashToolDefinition(env));
 }

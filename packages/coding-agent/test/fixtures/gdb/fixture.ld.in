@@ -1,0 +1,64 @@
+/* One linker script for every QEMU Cortex-M machine we care about.
+ * Works because lm3s6965evb, netduinoplus2, stm32vldiscovery, mps2-an385/386/500
+ * and microbit ALL boot from 0x00000000 and put SRAM at 0x20000000.
+ * Sizes are the intersection (smallest is stm32vldiscovery: 128K/8K). */
+MEMORY
+{
+  FLASH (rx)  : ORIGIN = FLASH_ORIGIN, LENGTH = FLASH_LEN
+  RAM   (rwx) : ORIGIN = RAM_ORIGIN, LENGTH = RAM_LEN
+}
+
+/* Deliberately small so the stack-overflow scenario reaches unmapped memory
+ * quickly and deterministically instead of thrashing for seconds. */
+__stack_size = 2K;
+
+ENTRY(Reset_Handler)
+
+SECTIONS
+{
+  .vectors : { KEEP(*(.vectors)) } > FLASH
+
+  .text : {
+    *(.text*)
+    *(.rodata*)
+    . = ALIGN(4);
+  } > FLASH
+
+  /* ARM unwind tables: keep them so `backtrace` past a fault is possible. */
+  .ARM.exidx : {
+    __exidx_start = .;
+    *(.ARM.exidx*)
+    __exidx_end = .;
+  } > FLASH
+
+  __data_load = LOADADDR(.data);
+  .data : {
+    __data_start = .;
+    *(.data*)
+    . = ALIGN(4);
+    __data_end = .;
+  } > RAM AT> FLASH
+
+  .bss (NOLOAD) : {
+    __bss_start = .;
+    *(.bss*)
+    *(COMMON)
+    . = ALIGN(4);
+    __bss_end = .;
+  } > RAM
+
+  /* Two stacks:
+   *   MSP (__stack_top)        - exception handlers only, top 1K, never overflows
+   *   PSP (__thread_stack_top) - main() runs here; the stack-overflow scenario
+   *                              drives it down through .bss and out the bottom
+   *                              of RAM, which faults cleanly because the
+   *                              handler still has a valid MSP to push onto.
+   */
+  __stack_top        = ORIGIN(RAM) + LENGTH(RAM);
+  __thread_stack_top = __stack_top - 1K;
+  __stack_limit      = __bss_end;
+
+  ASSERT(__bss_end + 1K <= __thread_stack_top, "ERROR: .bss collides with stacks")
+
+  /DISCARD/ : { *(.ARM.attributes) *(.comment) }
+}

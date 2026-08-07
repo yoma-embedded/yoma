@@ -13,6 +13,9 @@ engines/data/
 .env.*
 !.env.example
 
+# 工具的运行期产物:日志采集、gdb 会话转录、烧录记录
+.my-pi/
+
 *.log
 *.tsbuildinfo
 .DS_Store

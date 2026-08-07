@@ -201,6 +201,35 @@ describe("stm32config buildArgs", () => {
 		]);
 	});
 
+	it("builds candidates argv from part when no configPath is given", () => {
+		expect(
+			buildStm32ConfigArgs(
+				{ command: "candidates", part: "STM32F103C8Tx", peripheral: "ADC1", signal: "IN2" },
+				dataDir,
+				fwDir,
+			),
+		).toEqual([
+			"candidates",
+			"--part",
+			"STM32F103C8Tx",
+			"--peripheral",
+			"ADC1",
+			"--data-dir",
+			dataDir,
+			"--pretty",
+			"--signal",
+			"IN2",
+		]);
+		// configPath wins when both are given.
+		expect(
+			buildStm32ConfigArgs(
+				{ command: "candidates", configPath: "/w/b.json", part: "STM32F103C8Tx", peripheral: "ADC1" },
+				dataDir,
+				fwDir,
+			).slice(0, 3),
+		).toEqual(["candidates", "--config", "/w/b.json"]);
+	});
+
 	it("throws when a required field is missing", () => {
 		expect(() => buildStm32ConfigArgs({ command: "describe-mcu" }, dataDir, fwDir)).toThrow(
 			/describe-mcu requires part/,
@@ -208,6 +237,9 @@ describe("stm32config buildArgs", () => {
 		expect(() => buildStm32ConfigArgs({ command: "validate" }, dataDir, fwDir)).toThrow(/validate requires configPath/);
 		expect(() => buildStm32ConfigArgs({ command: "candidates", configPath: "/w/b.json" }, dataDir, fwDir)).toThrow(
 			/candidates requires peripheral/,
+		);
+		expect(() => buildStm32ConfigArgs({ command: "candidates", peripheral: "ADC1" }, dataDir, fwDir)).toThrow(
+			/candidates requires configPath or part/,
 		);
 		expect(() => buildStm32ConfigArgs({ command: "generate", configPath: "/w/b.json" }, dataDir, fwDir)).toThrow(
 			/generate requires out/,

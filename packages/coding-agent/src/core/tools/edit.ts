@@ -61,8 +61,6 @@ export interface EditToolDetails {
 	firstChangedLine?: number;
 }
 
-export interface EditToolOptions {}
-
 /** 兼容模型的两种常见畸形入参:edits 传成 JSON 字符串,以及旧的单条 oldText/newText 形式。 */
 function prepareEditArguments(input: unknown): EditToolInput {
 	if (!input || typeof input !== "object") {
@@ -99,7 +97,6 @@ function validateEditInput(input: EditToolInput): { path: string; edits: Edit[] 
 
 export function createEditToolDefinition(
 	env: FileSystem,
-	_options?: EditToolOptions,
 ): ToolDefinition<typeof editSchema, EditToolDetails> {
 	return {
 		name: "edit",
@@ -170,6 +167,6 @@ export function createEditToolDefinition(
 	};
 }
 
-export function createEditTool(env: FileSystem, options?: EditToolOptions) {
-	return wrapToolDefinition(createEditToolDefinition(env, options));
+export function createEditTool(env: FileSystem) {
+	return wrapToolDefinition(createEditToolDefinition(env));
 }

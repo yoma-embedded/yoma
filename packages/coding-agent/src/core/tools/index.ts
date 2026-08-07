@@ -3,15 +3,16 @@
  *
  * 与 pi 的差异:工厂第一个参数是注入的 ExecutionEnv 而不是 cwd 字符串 ——
  * cwd 从 env.cwd 拿,文件与进程访问都经由 env,于是同一套工具对远程/沙箱环境也成立。
- * 这正是 pi 用 ReadOperations/WriteOperations/GrepOperations/BashOperations 四套
+ * 这正是 pi 用 ReadOperations/WriteOperations/BashOperations 那几套
  * 可插拔接口达成的目的,my-pi 用一个能力接口一次性覆盖。
  *
- * 尚未移植:find(依赖 fd 二进制)、ls。等真用到再补。
+ * 装配面只有两个工厂:编码四件套 + 嵌入式六件套。按名挑选、聚合 Options、
+ * grep(依赖外部 ripgrep,本仓永远不可用)等历史装配面在 2026-08 的精简中删除;
+ * 单工具工厂仍然从各自模块导出,测试和特殊装配直接用它们。
  */
 export {
 	type BashToolDetails,
 	type BashToolInput,
-	type BashToolOptions,
 	createBashTool,
 	createBashToolDefinition,
 } from "./bash.ts";
@@ -31,7 +32,6 @@ export {
 	createEditToolDefinition,
 	type EditToolDetails,
 	type EditToolInput,
-	type EditToolOptions,
 } from "./edit.ts";
 export {
 	applyEditsToNormalizedContent,
@@ -57,12 +57,87 @@ export {
 	type FlashToolOptions,
 } from "./flash.ts";
 export {
-	createGrepTool,
-	createGrepToolDefinition,
-	type GrepToolDetails,
-	type GrepToolInput,
-	type GrepToolOptions,
-} from "./grep.ts";
+	buildServerArgv,
+	classifyEval,
+	createGdbTool,
+	createGdbToolDefinition,
+	elfMachine,
+	type EvalClass,
+	type ExecOp,
+	EXEC_OPS,
+	GDB_ACTIONS,
+	GDB_SERVERS,
+	type GdbAction,
+	type GdbServerKind,
+	GdbSession,
+	type GdbToolDetails,
+	type GdbToolInput,
+	hexToWords,
+	parseConnect,
+	pickFreePort,
+	preferredGdbNames,
+	renderBanner,
+	resolveGdbPath,
+	SERVER_CAPS,
+	type ServerCaps,
+	spawnServer,
+	waitForServerReady,
+} from "./gdb.ts";
+export {
+	clip,
+	type CoreId,
+	decodeBreakpointUnits,
+	decodeCpuid,
+	decodeDfsr,
+	decodeDhcsr,
+	decodeException,
+	decodeExcReturn,
+	decodeFault,
+	decodeStackedFrame,
+	decodeWatchpointUnits,
+	escapeCString,
+	type ExcReturnInfo,
+	type FaultDecode,
+	type Flag,
+	type Frame,
+	frameOf,
+	frameRecords,
+	type FrameResult,
+	hex,
+	MAX_RECORD_CHARS,
+	type MiRecord,
+	type MiTuple,
+	type MiValue,
+	miNumber,
+	miString,
+	miTuple,
+	parseMiValue,
+	parseRecord,
+	parseResults,
+	parseResultsStrict,
+	type RecordKind,
+	renderFrame,
+	renderFrames,
+	SCB,
+	type StackedFrame,
+	unwrapList,
+} from "./gdb-mi.ts";
+export {
+	buildAttachArgs,
+	createLogTool,
+	createLogToolDefinition,
+	foldLines,
+	LOG_ACTIONS,
+	LogCapture,
+	type LogAction,
+	type LogLine,
+	type LogToolDetails,
+	type LogToolInput,
+	renderRows,
+	selectForDisplay,
+	splitArgv,
+	splitChunk,
+} from "./log.ts";
 export {
 	createNetlistTool,
 	createNetlistToolDefinition,
@@ -71,13 +146,12 @@ export {
 	type NetlistToolOptions,
 	sanitizeStem,
 } from "./netlist.ts";
-export { resolveReadPath, resolveToCwd } from "./path-utils.ts";
+export { fromMsysPath, resolveReadPath, resolveToCwd } from "./path-utils.ts";
 export {
 	createReadTool,
 	createReadToolDefinition,
 	type ReadToolDetails,
 	type ReadToolInput,
-	type ReadToolOptions,
 } from "./read.ts";
 export {
 	buildStm32ConfigArgs,
@@ -95,156 +169,47 @@ export {
 	createWriteToolDefinition,
 	type WriteToolDetails,
 	type WriteToolInput,
-	type WriteToolOptions,
 } from "./write.ts";
 
-import type { AgentTool, ExecutionEnv } from "@yoma/my-pi";
-import { type BashToolOptions, createBashTool, createBashToolDefinition } from "./bash.ts";
-import { createEditTool, createEditToolDefinition, type EditToolOptions } from "./edit.ts";
-import { createDatasheetTool, createDatasheetToolDefinition } from "./datasheet.ts";
-import { createFlashTool, createFlashToolDefinition, type FlashToolOptions } from "./flash.ts";
-import { createGrepTool, createGrepToolDefinition, type GrepToolOptions } from "./grep.ts";
-import { createNetlistTool, createNetlistToolDefinition, type NetlistToolOptions } from "./netlist.ts";
-import { createReadTool, createReadToolDefinition, type ReadToolOptions } from "./read.ts";
-import { createStm32ConfigTool, createStm32ConfigToolDefinition, type Stm32ConfigToolOptions } from "./stm32config.ts";
+import type { ExecutionEnv } from "@yoma/my-pi";
+import { createBashToolDefinition } from "./bash.ts";
+import { createDatasheetToolDefinition } from "./datasheet.ts";
+import { createEditToolDefinition } from "./edit.ts";
+import { createFlashToolDefinition } from "./flash.ts";
+import { createGdbToolDefinition } from "./gdb.ts";
+import { createLogToolDefinition } from "./log.ts";
+import { createNetlistToolDefinition } from "./netlist.ts";
+import { createReadToolDefinition } from "./read.ts";
+import { createStm32ConfigToolDefinition } from "./stm32config.ts";
 import type { ToolDefinition } from "./types.ts";
-import { createWriteTool, createWriteToolDefinition, type WriteToolOptions } from "./write.ts";
+import { createWriteToolDefinition } from "./write.ts";
 
-export type Tool = AgentTool<any>;
 export type ToolDef = ToolDefinition<any, any>;
-export type ToolName = "read" | "bash" | "edit" | "write" | "grep" | "stm32config" | "netlist" | "flash" | "datasheet";
-export const allToolNames: Set<ToolName> = new Set([
-	"read",
-	"bash",
-	"edit",
-	"write",
-	"grep",
-	"stm32config",
-	"netlist",
-	"flash",
-	"datasheet",
-]);
 
-export interface ToolsOptions {
-	read?: ReadToolOptions;
-	bash?: BashToolOptions;
-	write?: WriteToolOptions;
-	edit?: EditToolOptions;
-	grep?: GrepToolOptions;
-	stm32config?: Stm32ConfigToolOptions;
-	netlist?: NetlistToolOptions;
-	flash?: FlashToolOptions;
-}
-
-export function createToolDefinition(toolName: ToolName, env: ExecutionEnv, options?: ToolsOptions): ToolDef {
-	switch (toolName) {
-		case "read":
-			return createReadToolDefinition(env, options?.read);
-		case "bash":
-			return createBashToolDefinition(env, options?.bash);
-		case "edit":
-			return createEditToolDefinition(env, options?.edit);
-		case "write":
-			return createWriteToolDefinition(env, options?.write);
-		case "grep":
-			return createGrepToolDefinition(env, options?.grep);
-		case "stm32config":
-			return createStm32ConfigToolDefinition(env, options?.stm32config);
-		case "netlist":
-			return createNetlistToolDefinition(env, options?.netlist);
-		case "flash":
-			return createFlashToolDefinition(env, options?.flash);
-		case "datasheet":
-			return createDatasheetToolDefinition(env);
-		default:
-			throw new Error(`Unknown tool name: ${toolName}`);
-	}
-}
-
-export function createTool(toolName: ToolName, env: ExecutionEnv, options?: ToolsOptions): Tool {
-	switch (toolName) {
-		case "read":
-			return createReadTool(env, options?.read);
-		case "bash":
-			return createBashTool(env, options?.bash);
-		case "edit":
-			return createEditTool(env, options?.edit);
-		case "write":
-			return createWriteTool(env, options?.write);
-		case "grep":
-			return createGrepTool(env, options?.grep);
-		case "stm32config":
-			return createStm32ConfigTool(env, options?.stm32config);
-		case "netlist":
-			return createNetlistTool(env, options?.netlist);
-		case "flash":
-			return createFlashTool(env, options?.flash);
-		case "datasheet":
-			return createDatasheetTool(env);
-		default:
-			throw new Error(`Unknown tool name: ${toolName}`);
-	}
-}
-
-/** 编码用的五件套,顺序与 pi 一致。 */
-export function createCodingToolDefinitions(env: ExecutionEnv, options?: ToolsOptions): ToolDef[] {
+/** 编码四件套,顺序与 pi 一致。 */
+export function createCodingToolDefinitions(env: ExecutionEnv): ToolDef[] {
 	return [
-		createReadToolDefinition(env, options?.read),
-		createBashToolDefinition(env, options?.bash),
-		createEditToolDefinition(env, options?.edit),
-		createWriteToolDefinition(env, options?.write),
-		createGrepToolDefinition(env, options?.grep),
-	];
-}
-
-export function createCodingTools(env: ExecutionEnv, options?: ToolsOptions): Tool[] {
-	return [
-		createReadTool(env, options?.read),
-		createBashTool(env, options?.bash),
-		createEditTool(env, options?.edit),
-		createWriteTool(env, options?.write),
-		createGrepTool(env, options?.grep),
+		createReadToolDefinition(env),
+		createBashToolDefinition(env),
+		createEditToolDefinition(env),
+		createWriteToolDefinition(env),
 	];
 }
 
 /**
  * 嵌入式引擎工具组,顺序即流水线:
- * netlist(原理图)→ datasheet(查手册,全在线)→ stm32config(驱动)→ flash(烧录)。
- * 与编码五件套分开装配:引擎未构建/服务器未配置时工具仍会注册,
+ * netlist(原理图)→ datasheet(查手册,全在线)→ stm32config(驱动)→ flash(烧录)
+ * → log(看板子真正打了什么)→ gdb(日志不够时进去看寄存器和栈,闭环的最后一环)。
+ * 与编码四件套分开装配:引擎未构建/服务器未配置时工具仍会注册,
  * 调用时才返回修复指引(与 yoma 行为一致)。
  */
-export function createEmbeddedToolDefinitions(env: ExecutionEnv, options?: ToolsOptions): ToolDef[] {
+export function createEmbeddedToolDefinitions(env: ExecutionEnv): ToolDef[] {
 	return [
-		createNetlistToolDefinition(env, options?.netlist),
+		createNetlistToolDefinition(env),
 		createDatasheetToolDefinition(env),
-		createStm32ConfigToolDefinition(env, options?.stm32config),
-		createFlashToolDefinition(env, options?.flash),
+		createStm32ConfigToolDefinition(env),
+		createFlashToolDefinition(env),
+		createLogToolDefinition(env),
+		createGdbToolDefinition(env),
 	];
-}
-
-export function createEmbeddedTools(env: ExecutionEnv, options?: ToolsOptions): Tool[] {
-	return [
-		createNetlistTool(env, options?.netlist),
-		createDatasheetTool(env),
-		createStm32ConfigTool(env, options?.stm32config),
-		createFlashTool(env, options?.flash),
-	];
-}
-
-export function createReadOnlyTools(env: ExecutionEnv, options?: ToolsOptions): Tool[] {
-	return [createReadTool(env, options?.read), createGrepTool(env, options?.grep)];
-}
-
-export function createAllTools(env: ExecutionEnv, options?: ToolsOptions): Record<ToolName, Tool> {
-	return {
-		read: createReadTool(env, options?.read),
-		bash: createBashTool(env, options?.bash),
-		edit: createEditTool(env, options?.edit),
-		write: createWriteTool(env, options?.write),
-		grep: createGrepTool(env, options?.grep),
-		stm32config: createStm32ConfigTool(env, options?.stm32config),
-		netlist: createNetlistTool(env, options?.netlist),
-		flash: createFlashTool(env, options?.flash),
-		datasheet: createDatasheetTool(env),
-	};
 }

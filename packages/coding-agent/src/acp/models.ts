@@ -1,13 +1,15 @@
 /**
  * 模型解析与模型目录。
  *
- * 刻意复用 pi 已有的凭证文件 ~/.pi/agent/auth.json —— 你在命令行里 `pi` 配好的 key
- * 直接就能给 my-pi 用,不需要再配一遍环境变量。环境变量优先级更高。
+ * 凭证完全独立于 pi:key 存 <configDir>/auth.json(FileCredentialStore,0600),
+ * 或走各家的标准环境变量(DEEPSEEK_API_KEY / MOONSHOT_API_KEY)。解析发生在每次
+ * 请求时(models.streamSimple → resolveProviderAuth):存储的凭证优先,环境变量
+ * 兜底 —— 改 auth.json 不用重启。
  *
- * 选择顺序:MY_PI_PROVIDER/MY_PI_MODEL 环境变量 → ~/.pi/agent/settings.json 的默认值
- * → auth.json 里第一个有 key 的 provider。
+ * 选择顺序:MY_PI_PROVIDER/MY_PI_MODEL 环境变量 → <configDir>/settings.json 的
+ * defaultProvider/defaultModel → 第一个有凭证的 provider。
  *
- * 注册策略:凡是 auth.json 里有 key 的 provider,统统注册进同一个 Models 注册表 ——
+ * 注册策略:凡是有凭证的 provider,统统注册进同一个 Models 注册表 ——
  * 不能只注册"当前选中的那一个"。AgentHarness.models 是 readonly,harness 建好之后
  * 换不掉注册表;而 ModelsImpl.requireProvider 对未注册的 provider 会抛 Unknown provider。
  * 所以跨 provider 的 setModel() 只有在 provider 提前注册好的前提下才不会在发请求时才炸。
@@ -16,12 +18,14 @@
  * (@earendil-works/pi-ai/dist/providers/data/*.json),不要凭空编 —— thinkingLevelMap
  * 写错的直接后果是 thinking 档位在 Zed 里能选但发不出去。
  */
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import {
 	createModels,
 	createProvider,
+	type Credential,
+	type CredentialStore,
+	envApiKeyAuth,
 	type Model,
 	type ModelCost,
 	type Models,
@@ -48,6 +52,8 @@ interface ProviderSpec {
 	id: string;
 	name: string;
 	baseUrl: string;
+	/** 标准 API key 环境变量,与上游 pi-ai 的约定一致;按序取第一个有值的。 */
+	envVars: readonly string[];
 	/** 没指定模型时用哪个,必须是 models 里的 id。 */
 	defaultModel: string;
 	models: ModelSpec[];
@@ -76,6 +82,7 @@ const PROVIDERS: Record<string, ProviderSpec> = {
 		id: "deepseek",
 		name: "DeepSeek",
 		baseUrl: "https://api.deepseek.com",
+		envVars: ["DEEPSEEK_API_KEY"],
 		defaultModel: "deepseek-v4-pro",
 		models: [
 			{
@@ -116,6 +123,7 @@ const PROVIDERS: Record<string, ProviderSpec> = {
 		id: "moonshotai-cn",
 		name: "Moonshot (Kimi)",
 		baseUrl: "https://api.moonshot.cn/v1",
+		envVars: ["MOONSHOT_API_KEY"],
 		defaultModel: "kimi-k2-turbo-preview",
 		models: [
 			{
@@ -197,6 +205,61 @@ function readJson(path: string): any {
 	}
 }
 
+/**
+ * 文件版凭证仓库:<configDir>/auth.json,格式与 pi 相同
+ * ({"deepseek":{"type":"api_key","key":"sk-…"}}),0600 权限。
+ * 每次 read 都重读文件,所以改 auth.json 即时生效。
+ * 单 ACP 进程用,写入靠 promise 链串行化即可,不需要 pi 那套跨进程文件锁。
+ */
+export class FileCredentialStore implements CredentialStore {
+	private chain: Promise<unknown> = Promise.resolve();
+
+	constructor(private readonly path: string) {}
+
+	private load(): Record<string, Credential> {
+		return readJson(this.path) ?? {};
+	}
+
+	private save(data: Record<string, Credential>): void {
+		mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
+		writeFileSync(this.path, `${JSON.stringify(data, null, "\t")}\n`, { encoding: "utf8", mode: 0o600 });
+		chmodSync(this.path, 0o600);
+	}
+
+	async read(providerId: string): Promise<Credential | undefined> {
+		return this.load()[providerId];
+	}
+
+	modify(
+		providerId: string,
+		fn: (current: Credential | undefined) => Promise<Credential | undefined>,
+	): Promise<Credential | undefined> {
+		const task = this.chain.then(async () => {
+			const data = this.load();
+			const next = await fn(data[providerId]);
+			if (next !== undefined) {
+				data[providerId] = next;
+				this.save(data);
+			}
+			return data[providerId];
+		});
+		this.chain = task.catch(() => {});
+		return task;
+	}
+
+	delete(providerId: string): Promise<void> {
+		const task = this.chain.then(async () => {
+			const data = this.load();
+			if (providerId in data) {
+				delete data[providerId];
+				this.save(data);
+			}
+		});
+		this.chain = task.catch(() => {});
+		return task;
+	}
+}
+
 export interface ResolvedModel {
 	models: Models;
 	model: Model<any>;
@@ -219,21 +282,15 @@ function toModel(spec: ProviderSpec, m: ModelSpec): Model<"openai-completions"> 
 	};
 }
 
-function registerProvider(models: MutableModels, spec: ProviderSpec, apiKey: string): void {
+function registerProvider(models: MutableModels, spec: ProviderSpec): void {
 	models.setProvider(
 		createProvider({
 			id: spec.id,
 			name: spec.name,
 			baseUrl: spec.baseUrl,
-			// key 已经从 auth.json / 环境变量里读到了,resolve 直接交出来即可,
-			// 不走 envApiKeyAuth 那条"再去查环境变量"的路。
-			auth: {
-				apiKey: {
-					name: `${spec.name} API key`,
-					login: async () => ({ type: "api_key", key: apiKey }),
-					resolve: async () => ({ auth: { apiKey }, source: "my-pi config" }),
-				},
-			},
+			// 每次请求时才解析:注入的 FileCredentialStore 里存储的 key 优先,
+			// spec.envVars 兜底(envApiKeyAuth 的既定语义)。
+			auth: { apiKey: envApiKeyAuth(`${spec.name} API key`, spec.envVars) },
 			models: spec.models.map((m) => toModel(spec, m)),
 			api: openAICompletionsApi(),
 		}),
@@ -241,43 +298,48 @@ function registerProvider(models: MutableModels, spec: ProviderSpec, apiKey: str
 }
 
 /**
- * 装配注册表:auth.json 里凡是有 key 的 provider 全部注册进去,并选出默认模型。
+ * 装配注册表:凡是有凭证(auth.json 或环境变量)的 provider 全部注册进去,并选出默认模型。
  *
  * 一次性把所有可用 provider 都注册好,是跨 provider 切模型能工作的前提。
  */
-export async function resolveModel(): Promise<ResolvedModel> {
-	const piDir = join(homedir(), ".pi", "agent");
-	const auth = readJson(join(piDir, "auth.json")) ?? {};
-	const settings = readJson(join(piDir, "settings.json")) ?? {};
+export async function resolveModel(configDir: string): Promise<ResolvedModel> {
+	const authPath = join(configDir, "auth.json");
+	const credentials = new FileCredentialStore(authPath);
+	const settings = readJson(join(configDir, "settings.json")) ?? {};
 
-	const envProvider = process.env.MY_PI_PROVIDER;
-	const keyOf = (id: string): string | undefined =>
-		(id === envProvider ? process.env.MY_PI_API_KEY : undefined) ?? auth[id]?.key;
+	const hasCredential = async (spec: ProviderSpec): Promise<boolean> => {
+		const stored = await credentials.read(spec.id);
+		if (stored?.type === "api_key" && stored.key) return true;
+		return spec.envVars.some((name) => process.env[name]);
+	};
+
+	const available: string[] = [];
+	for (const spec of Object.values(PROVIDERS)) {
+		if (await hasCredential(spec)) available.push(spec.id);
+	}
 
 	const providerId =
-		envProvider ??
+		process.env.MY_PI_PROVIDER ??
 		(settings.defaultProvider && PROVIDERS[settings.defaultProvider] ? settings.defaultProvider : undefined) ??
-		Object.keys(PROVIDERS).find((id) => keyOf(id));
+		available[0];
 
 	if (!providerId) {
+		const envVars = Object.values(PROVIDERS).flatMap((spec) => spec.envVars);
 		throw new Error(
-			`No usable provider. Configure one with pi (~/.pi/agent/auth.json), or set MY_PI_PROVIDER plus its API key. Known providers: ${Object.keys(PROVIDERS).join(", ")}`,
+			`No usable provider. Add a key to ${authPath} like {"deepseek":{"type":"api_key","key":"sk-..."}}, or export one of: ${envVars.join(", ")}.`,
 		);
 	}
 	const spec = PROVIDERS[providerId];
 	if (!spec) {
 		throw new Error(`Unknown provider: ${providerId}. Known providers: ${Object.keys(PROVIDERS).join(", ")}`);
 	}
-
-	const apiKey = keyOf(providerId);
-	if (!apiKey) {
-		throw new Error(`No API key for provider ${providerId}. Run \`pi\` to configure it, or set MY_PI_API_KEY.`);
+	if (!available.includes(providerId)) {
+		throw new Error(`No API key for provider ${providerId}. Add it to ${authPath}, or export ${spec.envVars.join(" / ")}.`);
 	}
 
-	const models = createModels();
-	for (const [id, candidate] of Object.entries(PROVIDERS)) {
-		const key = keyOf(id);
-		if (key) registerProvider(models, candidate, key);
+	const models = createModels({ credentials });
+	for (const id of available) {
+		registerProvider(models, PROVIDERS[id]!);
 	}
 
 	const modelId =

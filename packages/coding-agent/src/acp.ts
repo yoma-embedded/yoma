@@ -11,20 +11,18 @@
  * 调试:stderr 不参与协议,全部落到 ~/.my-pi/acp.log。Zed 里出问题时 tail -f 它。
  */
 import { appendFileSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import { NodeExecutionEnv } from "@yoma/my-pi/node";
-import { MyPiAcpAgent } from "./acp/agent.ts";
+import { CONFIG_DIR, MyPiAcpAgent } from "./acp/agent.ts";
 import { resolveModel } from "./acp/models.ts";
 
-const LOG_DIR = join(homedir(), ".my-pi");
-const LOG_PATH = join(LOG_DIR, "acp.log");
+const LOG_PATH = join(CONFIG_DIR, "acp.log");
 
 function log(message: string): void {
 	try {
-		mkdirSync(LOG_DIR, { recursive: true });
+		mkdirSync(CONFIG_DIR, { recursive: true });
 		appendFileSync(LOG_PATH, `${new Date().toISOString()} ${message}\n`);
 	} catch {
 		// 日志失败绝不能影响协议。
@@ -41,7 +39,7 @@ async function main(): Promise<void> {
 	const cwd = process.env.MY_PI_CWD ?? process.cwd();
 	const env = new NodeExecutionEnv({ cwd });
 
-	const resolved = await resolveModel();
+	const resolved = await resolveModel(CONFIG_DIR);
 	log(`starting my-pi acp: provider=${resolved.model.provider} model=${resolved.model.id} cwd=${cwd}`);
 
 	const agent = new MyPiAcpAgent({

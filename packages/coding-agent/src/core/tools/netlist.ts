@@ -11,13 +11,14 @@
 import path from "node:path";
 import type { ExecutionEnv } from "@yoma/my-pi";
 import { type Static, Type } from "typebox";
-import { type EnginePathOptions, engineBin, engineDataDir, runEngine } from "./engines.ts";
+import { capEngineOutput, type EnginePathOptions, engineBin, engineDataDir, runEngine } from "./engines.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { type ToolDefinition, wrapToolDefinition } from "./types.ts";
 
 const netlistSchema = Type.Object({
 	netlistPath: Type.String({
-		description: "Path to the schematic netlist file (Altium/OrCAD PCB II .NET or KiCad kicadxml XML)",
+		description:
+			"Path to the schematic netlist file (Altium/OrCAD PCB II .NET, KiCad kicadxml XML, or KiCad legacy EESchema .net)",
 	}),
 	part: Type.Optional(
 		Type.String({
@@ -51,17 +52,21 @@ export type NetlistToolOptions = EnginePathOptions;
 
 const DESCRIPTION = `Parses a schematic netlist and maps out the hardware design: the main controller, every peripheral/component wired to it, and which MCU pin each signal lands on.
 
-- Input formats: Altium/OrCAD PCB II .NET netlists and KiCad kicadxml XML. Connections are traced through series resistors/inductors/ferrite beads and closed solder bridges to the real endpoint; DNF parts are flagged.
-- Netlists usually do NOT carry the MCU part number. If you know the part (from the user, silkscreen, or BOM), always pass \`part\` — you then get the full board IR: an stm32_map of peripheral suggestions (CAN/SPI/TIM/ADC/USB/... with per-signal evidence and confidence) plus a cfg_seed, a starter configuration document for the stm32config tool.
-- Without \`part\` you get the raw per-pin connection map (pin → net → traced endpoints). Use it to identify the board and controller first, then re-run with \`part\`.
+- Input formats: Altium/OrCAD PCB II .NET netlists, KiCad kicadxml XML, and KiCad legacy "EESchema Netlist Version 1.1" .net. Connections are traced through series resistors/inductors/ferrite beads and closed solder bridges to the real endpoint; DNF parts are flagged.
+- Netlists usually do NOT carry the MCU part number, but the USER'S REQUEST often does (prompt text, silkscreen, BOM). Whenever the part is already known, pass \`part\` ON THE FIRST CALL — you get the full board IR directly: an stm32_map of peripheral suggestions (CAN/SPI/TIM/ADC/USB/... with per-signal evidence and confidence) plus a cfg_seed, a starter configuration document for the stm32config tool. Do not run the bare mode first "to check".
+- Without \`part\` you get the raw per-pin connection map (pin → net → traced endpoints), tightly truncated: its only job is to identify the board and controller so you can re-run with \`part\`.
 - If detection reports low confidence or picks the wrong component, re-run with \`mainController\` set to the correct reference (e.g. "U2").
 - Treat low-confidence suggestions as hypotheses: verify them against the connection evidence and the datasheet before configuring peripherals.
-- This is the first step of the schematic → firmware pipeline: netlist → datasheet (look up anything unclear) → stm32config (validate/generate drivers) → build → flash.`;
+- This is the first step of the schematic → firmware pipeline: netlist → stm32config describe-mcu (pads, signals, ADC channels — authoritative, one call) → stm32config validate/generate (drivers) → build → flash. Reach for the datasheet only for behaviour the db does not carry: register semantics, electrical limits, application notes.`;
 
-/** 输出文件名的词干:去扩展名,不安全字符换下划线。导出给测试。 */
+/**
+ * 输出文件名的词干:去扩展名,不安全字符换下划线。导出给测试。
+ * 按 Unicode 字母/数字保留:纯 ASCII 白名单会把「咖啡机.NET」整个吞成 "_",
+ * 两张中文名网表就会共用同一组缓存文件互相覆盖。
+ */
 export function sanitizeStem(name: string): string {
 	const stem = path.basename(name).replace(/\.[^.]*$/, "");
-	return stem.replace(/[^A-Za-z0-9_.-]+/g, "_") || "board";
+	return stem.replace(/[^\p{L}\p{N}_.-]+/gu, "_") || "board";
 }
 
 export function createNetlistToolDefinition(
@@ -94,7 +99,16 @@ export function createNetlistToolDefinition(
 					throw new Error(`controller_map failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`);
 				}
 				const notes = result.stderr.trim();
-				const text = [notes && `[detection]\n${notes}`, result.stdout.trim()].filter(Boolean).join("\n\n");
+				// The raw pin map exists to identify the board and controller —
+				// a tighter cap than the general engine limit, because its full
+				// text is the fattest tool payload of an agent session and the
+				// distilled board-IR mode is one `part` argument away.
+				const map = capEngineOutput(
+					result.stdout.trim(),
+					"re-run with `part` set to get the condensed board IR instead of the raw pin map",
+					10_000,
+				);
+				const text = [notes && `[detection]\n${notes}`, map].filter(Boolean).join("\n\n");
 				return { content: [{ type: "text", text: text || "(no output)" }], details: { mode: "map" } };
 			}
 
@@ -143,14 +157,19 @@ export function createNetlistToolDefinition(
 			const cfgSeed = await readOptional(files.cfgSeed);
 
 			const notes = result.stderr.trim();
+			// Both files are on disk and named right above, so truncating what we
+			// inline costs the model one `read` — whereas inlining them whole has
+			// no upper bound at all.
 			const text = [
 				notes && `[detection]\n${notes}`,
 				`Board IR files written to ${outDir}:`,
 				`- ${files.boardIr} (full component/net graph; read it on demand)`,
 				`- ${files.stm32Map}`,
 				`- ${files.cfgSeed}`,
-				stm32Map && `[stm32_map] peripheral suggestions with evidence/confidence:\n${stm32Map}`,
-				cfgSeed && `[cfg_seed] starter stm32config document (extend it, then validate):\n${cfgSeed}`,
+				stm32Map &&
+					`[stm32_map] peripheral suggestions with evidence/confidence:\n${capEngineOutput(stm32Map, `read ${files.stm32Map} for the rest`)}`,
+				cfgSeed &&
+					`[cfg_seed] starter stm32config document (extend it, then validate):\n${capEngineOutput(cfgSeed, `read ${files.cfgSeed} for the rest`)}`,
 			]
 				.filter(Boolean)
 				.join("\n\n");

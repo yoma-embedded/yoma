@@ -10,7 +10,7 @@
 // 它管四类状态 —— harness 配置(随时可改)/ turn 快照(冻结)/ session(落盘即历史)/
 // 挂起写入(忙时排队)—— 并保证它们永不互相污染。
 import type { AssistantMessage, ImageContent, Model, Models, UserMessage } from "@earendil-works/pi-ai";
-import { runAgentLoop } from "../agent-loop.ts";
+import { runAgentLoop, runAgentLoopContinue } from "../agent-loop.ts";
 import type {
 	AgentContext,
 	AgentEvent,
@@ -566,7 +566,6 @@ export class AgentHarness<
 		text: string,
 		options?: AgentHarnessPromptOptions,
 	): Promise<AssistantMessage> {
-		let activeTurnState = turnState;
 		let messages: AgentMessage[] = [createUserMessage(text, options?.images)];
 		if (this.nextTurnQueue.length > 0) {
 			const queuedMessages = this.nextTurnQueue.splice(0);
@@ -587,17 +586,37 @@ export class AgentHarness<
 		});
 		if (beforeResult?.messages) messages = [...messages, ...beforeResult.messages];
 
-		const abortController = new AbortController();
+		return await this.runLoopToCompletion(
+			turnState,
+			this.createContext(turnState, beforeResult?.systemPrompt),
+			(context, config, emit, signal, streamFn) => runAgentLoop(messages, context, config, emit, signal, streamFn),
+		);
+	}
+
+	// executeTurn / retryLastTurn 共享的运行机:装 abort、跑 loop、炸了合成错误尾巴、
+	// 提取最后一条 assistant、finally 里 flush 挂起写入。
+	private async runLoopToCompletion(
+		initialTurnState: AgentHarnessTurnState<TSkill, TPromptTemplate, TTool>,
+		context: AgentContext,
+		startLoop: (
+			context: AgentContext,
+			config: AgentLoopConfig,
+			emit: (event: AgentEvent) => Promise<void>,
+			signal: AbortSignal,
+			streamFn: StreamFn,
+		) => Promise<AgentMessage[]>,
+	): Promise<AssistantMessage> {
+		let activeTurnState = initialTurnState;
 		const getTurnState = () => activeTurnState;
 		const setTurnState = (nextTurnState: AgentHarnessTurnState<TSkill, TPromptTemplate, TTool>) => {
 			activeTurnState = nextTurnState;
 		};
+		const abortController = new AbortController();
 		this.runAbortController = abortController;
 		const runResultPromise = (async () => {
 			try {
-				return await runAgentLoop(
-					messages,
-					this.createContext(turnState, beforeResult?.systemPrompt),
+				return await startLoop(
+					context,
 					this.createLoopConfig(getTurnState, setTurnState),
 					(event) => this.handleAgentEvent(event, abortController.signal),
 					abortController.signal,
@@ -680,6 +699,61 @@ export class AgentHarness<
 			const template = (turnState.resources.promptTemplates ?? []).find((candidate) => candidate.name === name);
 			if (!template) throw new AgentHarnessError("invalid_argument", `Unknown prompt template: ${name}`);
 			return await this.executeTurn(turnState, formatPromptTemplateInvocation(template, args));
+		} catch (error) {
+			this.phase = "idle";
+			throw normalizeHarnessError(error, "unknown");
+		} finally {
+			finishRunPromise();
+		}
+	}
+
+	/**
+	 * 重跑上一条失败的助手回合,不追加新的用户消息。
+	 *
+	 * 机制对齐 pi 的官方重试挂载点:失败的 assistant 消息从本次运行的循环上下文里
+	 * 被摘掉(会话树保留它 —— 同压缩,"改的是投影,不是历史"),然后从上一条可续
+	 * 消息处 runAgentLoopContinue。若运行中途经过 save point,重建的快照会重新包含
+	 * 这些失败条目(彼时已在上下文中段)—— 与 pi 恢复历史会话时中段错误上电线的
+	 * 语义一致,provider 侧可以容忍。
+	 *
+	 * 何时重试、重试几次、退避多久,是应用层的策略;内核只提供机制,同 compact() 的分工。
+	 */
+	async retryLastTurn(): Promise<AssistantMessage> {
+		if (this.phase !== "idle") throw new AgentHarnessError("busy", "AgentHarness is busy");
+		this.phase = "retry";
+		const finishRunPromise = this.startRunPromise();
+		try {
+			const turnState = await this.createTurnState();
+			const messages = turnState.messages.slice();
+			// 连续重试失败会在尾部堆多条 error assistant,一并摘掉。
+			let stripped = 0;
+			while (messages.length > 0) {
+				const last = messages[messages.length - 1]!;
+				if (last.role === "assistant" && last.stopReason === "error") {
+					messages.pop();
+					stripped++;
+					continue;
+				}
+				break;
+			}
+			if (stripped === 0) {
+				throw new AgentHarnessError(
+					"invalid_state",
+					"retryLastTurn requires the transcript to end with a failed assistant message",
+				);
+			}
+			if (messages.length === 0) {
+				throw new AgentHarnessError(
+					"invalid_state",
+					"Nothing to retry: transcript is empty besides failed assistant messages",
+				);
+			}
+			const retryTurnState = { ...turnState, messages };
+			return await this.runLoopToCompletion(
+				retryTurnState,
+				this.createContext(retryTurnState),
+				(context, config, emit, signal, streamFn) => runAgentLoopContinue(context, config, emit, signal, streamFn),
+			);
 		} catch (error) {
 			this.phase = "idle";
 			throw normalizeHarnessError(error, "unknown");

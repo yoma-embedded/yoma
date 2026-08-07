@@ -678,3 +678,86 @@ describe("AgentHarness", () => {
 		expect(resolved.promptTemplates).not.toBe(resources.promptTemplates);
 	});
 });
+
+// ---- retryLastTurn:重跑失败回合(P0 重试机制的内核半边)------------------
+
+describe("AgentHarness retryLastTurn", () => {
+	it("strips trailing failed assistant messages from the wire but keeps them in the session", async () => {
+		const registration = newFaux();
+		let retryWireMessages: Array<{ role: string }> | undefined;
+		registration.setResponses([
+			() => fauxAssistantMessage("", { stopReason: "error", errorMessage: "provider overloaded" }),
+			(context) => {
+				retryWireMessages = context.messages.map((message) => ({ role: message.role }));
+				return fauxAssistantMessage("recovered");
+			},
+		]);
+		const session = new Session(new InMemorySessionStorage());
+		const harness = new AgentHarness({
+			models,
+			env: createEnv(),
+			session,
+			model: registration.getModel(),
+		});
+
+		const failed = await harness.prompt("hello");
+		expect(failed).toMatchObject({ stopReason: "error", errorMessage: "provider overloaded" });
+
+		const retried = await harness.retryLastTurn();
+		expect(retried).toMatchObject({ role: "assistant", stopReason: "stop" });
+
+		// 重试请求的电线上只有那条 user —— 失败的 assistant 被摘掉了。
+		expect(retryWireMessages).toEqual([{ role: "user" }]);
+
+		// 会话树保留失败条目:改的是投影,不是历史。
+		const entries = await session.getEntries();
+		const roles = entries.flatMap((entry) =>
+			entry.type === "message" ? [`${entry.message.role}:${(entry.message as { stopReason?: string }).stopReason ?? ""}`] : [],
+		);
+		expect(roles).toEqual(["user:", "assistant:error", "assistant:stop"]);
+	});
+
+	it("strips a pile of consecutive failures, not just the last one", async () => {
+		const registration = newFaux();
+		let retryWireMessages: Array<{ role: string }> | undefined;
+		registration.setResponses([
+			() => fauxAssistantMessage("", { stopReason: "error", errorMessage: "boom 1" }),
+			() => fauxAssistantMessage("", { stopReason: "error", errorMessage: "boom 2" }),
+			(context) => {
+				retryWireMessages = context.messages.map((message) => ({ role: message.role }));
+				return fauxAssistantMessage("third time lucky");
+			},
+		]);
+		const session = new Session(new InMemorySessionStorage());
+		const harness = new AgentHarness({ models, env: createEnv(), session, model: registration.getModel() });
+
+		await harness.prompt("hello");
+		const secondFailure = await harness.retryLastTurn();
+		expect(secondFailure.stopReason).toBe("error");
+
+		const recovered = await harness.retryLastTurn();
+		expect(recovered.stopReason).toBe("stop");
+		expect(retryWireMessages).toEqual([{ role: "user" }]);
+	});
+
+	it("refuses to retry when the transcript does not end with a failure", async () => {
+		const registration = newFaux();
+		registration.setResponses([() => fauxAssistantMessage("all good")]);
+		const session = new Session(new InMemorySessionStorage());
+		const harness = new AgentHarness({ models, env: createEnv(), session, model: registration.getModel() });
+
+		await harness.prompt("hello");
+
+		expect.assertions(2);
+		try {
+			await harness.retryLastTurn();
+		} catch (error) {
+			expect(error).toBeInstanceOf(AgentHarnessError);
+			expect((error as AgentHarnessError).code).toBe("invalid_state");
+		}
+
+		// 相位已归位,后续 prompt 不受影响。
+		registration.setResponses([() => fauxAssistantMessage("still fine")]);
+		await harness.prompt("again");
+	});
+});

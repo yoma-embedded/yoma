@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "bun:test";
 import { getOrThrow, NodeExecutionEnv } from "@yoma/my-pi/node";
-import { createBashTool, createEditTool, createGrepTool, createReadTool, createWriteTool } from "../src/index.ts";
+import { createBashTool, createEditTool, createReadTool, createWriteTool } from "../src/index.ts";
 
 const tempDirs: string[] = [];
 
@@ -278,60 +278,5 @@ describe("bash tool", () => {
 		const text = textOf(result);
 		expect(text).toContain("Full output:");
 		expect(result.details?.truncation?.truncated).toBe(true);
-	});
-});
-
-describe("grep tool", () => {
-	it("finds matches with file and line numbers", async () => {
-		const env = makeEnv();
-		getOrThrow(await env.writeFile("a.ts", "alpha\nneedle\ngamma\n"));
-		getOrThrow(await env.writeFile("b.ts", "nothing\n"));
-		const grep = createGrepTool(env);
-		const result = await grep.execute("c1", { pattern: "needle" });
-		expect(textOf(result)).toContain("a.ts:2: needle");
-	});
-
-	it("returns No matches found when nothing matches", async () => {
-		const env = makeEnv();
-		getOrThrow(await env.writeFile("a.ts", "alpha\n"));
-		const grep = createGrepTool(env);
-		expect(textOf(await grep.execute("c1", { pattern: "zzzz" }))).toBe("No matches found");
-	});
-
-	it("filters by glob", async () => {
-		const env = makeEnv();
-		getOrThrow(await env.writeFile("a.ts", "hit\n"));
-		getOrThrow(await env.writeFile("b.md", "hit\n"));
-		const grep = createGrepTool(env);
-		const text = textOf(await grep.execute("c1", { pattern: "hit", glob: "*.md" }));
-		expect(text).toContain("b.md");
-		expect(text).not.toContain("a.ts");
-	});
-
-	it("includes context lines with - separators", async () => {
-		const env = makeEnv();
-		getOrThrow(await env.writeFile("a.ts", "one\ntwo\nneedle\nfour\nfive\n"));
-		const grep = createGrepTool(env);
-		const text = textOf(await grep.execute("c1", { pattern: "needle", context: 1 }));
-		expect(text).toContain("a.ts-2- two");
-		expect(text).toContain("a.ts:3: needle");
-		expect(text).toContain("a.ts-4- four");
-	});
-
-	it("treats the pattern literally when asked", async () => {
-		const env = makeEnv();
-		getOrThrow(await env.writeFile("a.ts", "a.b\naxb\n"));
-		const grep = createGrepTool(env);
-		const text = textOf(await grep.execute("c1", { pattern: "a.b", literal: true }));
-		expect(text).toContain("a.ts:1: a.b");
-		expect(text).not.toContain("axb");
-	});
-
-	it("caps matches at the limit and says how to get more", async () => {
-		const env = makeEnv();
-		getOrThrow(await env.writeFile("a.ts", Array.from({ length: 50 }, () => "hit").join("\n")));
-		const grep = createGrepTool(env);
-		const text = textOf(await grep.execute("c1", { pattern: "hit", limit: 5 }));
-		expect(text).toContain("5 matches limit reached. Use limit=10 for more, or refine pattern");
 	});
 });

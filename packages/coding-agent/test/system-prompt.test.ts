@@ -32,10 +32,10 @@ describe("buildSystemPrompt", () => {
 	});
 
 	describe("identity", () => {
-		it("names my-pi, not the underlying model vendor", () => {
+		it("identifies itself as Yoma, not the underlying model vendor", () => {
 			const prompt = buildSystemPrompt({ cwd: process.cwd() });
 
-			expect(prompt).toContain("operating inside my-pi, a coding agent harness");
+			expect(prompt).toContain("You are Yoma, a coding and embedded-development agent");
 		});
 
 		it("ends with the current working directory", () => {
@@ -90,7 +90,7 @@ describe("buildSystemPrompt", () => {
 			expect(prompt).toContain("- dynamic_tool: Run dynamic test behavior");
 		});
 
-		it("omits custom tools from available tools section when promptSnippet is not provided", () => {
+		it("lists custom tools even when promptSnippet is not provided", () => {
 			const prompt = buildSystemPrompt({
 				selectedTools: ["read", "dynamic_tool"],
 				contextFiles: [],
@@ -98,7 +98,19 @@ describe("buildSystemPrompt", () => {
 				cwd: process.cwd(),
 			});
 
-			expect(prompt).not.toContain("dynamic_tool");
+			expect(prompt).toContain("- dynamic_tool");
+		});
+	});
+
+	describe("agent behavior", () => {
+		it("includes working, evidence, and safety rules", () => {
+			const prompt = buildSystemPrompt({ cwd: process.cwd() });
+
+			expect(prompt).toContain("Working principles:");
+			expect(prompt).toContain("Evidence rules:");
+			expect(prompt).toContain("Safety:");
+			expect(prompt).toContain("Runtime behavior requires evidence from log or gdb.");
+			expect(prompt).toContain("Do not perform destructive hardware actions such as chip erase unless explicitly requested.");
 		});
 	});
 
@@ -189,7 +201,7 @@ describe("collectToolPromptData", () => {
 		const env = new NodeExecutionEnv({ cwd: process.cwd() });
 		const data = collectToolPromptData(createCodingToolDefinitions(env));
 
-		expect(data.selectedTools).toEqual(["read", "bash", "edit", "write", "grep"]);
+		expect(data.selectedTools).toEqual(["read", "bash", "edit", "write"]);
 		expect(data.toolSnippets?.read).toBe("Read file contents");
 		expect(data.promptGuidelines?.length).toBeGreaterThan(0);
 	});
