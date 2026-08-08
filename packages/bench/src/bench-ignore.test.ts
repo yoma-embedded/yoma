@@ -43,6 +43,8 @@ describe(".bench/.gitignore", () => {
     mkdirSync(path.join(benchDir, "turns"), { recursive: true })
     writeFileSync(path.join(benchDir, "mailbox.template.json"), "{}")
     writeFileSync(path.join(benchDir, "checks", "alive.py"), "print(1)")
+    mkdirSync(path.join(benchDir, "checks", "__pycache__"), { recursive: true })
+    writeFileSync(path.join(benchDir, "checks", "__pycache__", "alive.cpython-314.pyc"), "bytecode")
     writeFileSync(path.join(benchDir, "known-good", "fw.elf"), "elf")
     writeFileSync(path.join(benchDir, "turns", "turn-1.json"), "{}")
     writeFileSync(path.join(benchDir, "decisions.jsonl"), "{}")
@@ -53,6 +55,8 @@ describe(".bench/.gitignore", () => {
     expect(await ignored(repo, ".bench/known-good/fw.elf")).toBe(false)
     // 运行产物必须挡住 —— 否则 diff 里全是它们。
     expect(await ignored(repo, ".bench/turns/turn-1.json")).toBe(true)
+    // 判据脚本放行,但它们编译出来的 .pyc 不是项目配置(实测第一次提交就带进去两个)。
+    expect(await ignored(repo, ".bench/checks/__pycache__/alive.cpython-314.pyc")).toBe(true)
     expect(await ignored(repo, ".bench/decisions.jsonl")).toBe(true)
     // 忽略文件本身也要挡住:露出来就是一个未跟踪又不被忽略的文件,工作树因此
     // 永远"不干净",而开轮的第一道检查正是它(实测被自己挡死过)。

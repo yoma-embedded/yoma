@@ -273,11 +273,16 @@ export async function runJob(options: RunnerOptions): Promise<RunnerResult> {
 // 露出来就是一个未跟踪又不被忽略的文件 —— 工作树因此永远"不干净",而 prepareBranch
 // 的第一道检查正是"工作树必须干净"(实测:加了那一行,每一轮开局就被自己挡死)。
 // 被忽略不影响它生效:git 读 .gitignore 与它是否被跟踪无关。
+// `!checks/**` 会把 `__pycache__/*.pyc` 一起放出来(实测:第一次提交判据脚本就带进去
+// 两个 .pyc)。它们是运行产物,而且每换一个 Python 版本就换一批文件名 —— 放在
+// 放行规则之后再排掉,顺序即优先级。
 const BENCH_IGNORE = `# 调试台的**运行产物**不进版本库;模板与判据脚本是项目配置,要跟着仓库走。
 *
 !mailbox.template.json
 !checks/
 !checks/**
+checks/**/__pycache__/
+checks/**/*.pyc
 !known-good/
 !known-good/**
 `
