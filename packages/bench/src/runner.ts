@@ -32,7 +32,7 @@ import type { PermissionRequest } from "@yoma-desktop/kernel"
 import type { PermissionDecision } from "@yoma-desktop/kernel/host"
 
 import type { FauxScript } from "./faux.ts"
-import { fileExists, readJsonFile } from "./fsx.ts"
+import { fileExists, readJsonFile, readTextFile } from "./fsx.ts"
 import { exe, gradeRepeated, runCommandReal, type GradeResult, type RunCommand } from "./grader.ts"
 import type { Job } from "./job.ts"
 import { blockedPrompt, firstPrompt, retryPrompt } from "./prompts.ts"
@@ -255,18 +255,41 @@ export async function runJob(options: RunnerOptions): Promise<RunnerResult> {
 }
 
 /**
- * 建 .bench/ 并让 git 忽略它整个。
+ * 建 .bench/ 并让 git 忽略它的**运行产物**。
  *
- * 不加这一步的话,轮次输入输出、决策日志会被 `git add -A` 卷进提交 —— 研发打开 diff
+ * 不忽略的话,轮次输入输出、决策日志会被 `git add -A` 卷进提交 —— 研发打开 diff
  * 看到的是五个 bench 内部文件加一处真改动,审阅体验直接毁掉(实测第一次真跑就中了)。
  * 忽略文件放在目录内部而不是改仓库的 .gitignore:那是用户的文件,调试台不该动它。
+ *
+ * 但**不能忽略整个目录**:项目模板与判据脚本也住在这里,它们是项目配置,必须跟着
+ * 仓库走 —— 否则跨机器就断了:工位机克隆下来没有判据脚本,判据一律"命令起不来"
+ * (旧版本的 `*` 正是这样,实测 `.bench` 下零个文件被跟踪)。known-good 固件同理
+ * 放行,提不提交由项目自己定。
  */
+// 注意:**不要**写 `!.gitignore` 把它自己放出来。它是调试台自己生成的文件,
+// 露出来就是一个未跟踪又不被忽略的文件 —— 工作树因此永远"不干净",而 prepareBranch
+// 的第一道检查正是"工作树必须干净"(实测:加了那一行,每一轮开局就被自己挡死)。
+// 被忽略不影响它生效:git 读 .gitignore 与它是否被跟踪无关。
+const BENCH_IGNORE = `# 调试台的**运行产物**不进版本库;模板与判据脚本是项目配置,要跟着仓库走。
+*
+!mailbox.template.json
+!checks/
+!checks/**
+!known-good/
+!known-good/**
+`
+/** 旧版整目录忽略的原文。只有内容与它逐字相同才升级 —— 用户改过就不动。 */
+const LEGACY_BENCH_IGNORE = "# 调试台的运行产物,不进版本库(含自身)\n*\n"
+
 export async function ensureBenchDir(benchDir: string): Promise<void> {
   await mkdir(benchDir, { recursive: true })
   const ignore = path.join(benchDir, ".gitignore")
   if (!(await fileExists(ignore))) {
-    await writeFile(ignore, "# 调试台的运行产物,不进版本库(含自身)\n*\n")
+    await writeFile(ignore, BENCH_IGNORE)
+    return
   }
+  const current = await readTextFile(ignore).catch(() => "")
+  if (current === LEGACY_BENCH_IGNORE) await writeFile(ignore, BENCH_IGNORE)
 }
 
 /**

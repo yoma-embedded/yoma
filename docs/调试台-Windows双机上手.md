@@ -50,7 +50,14 @@ NSIS 安装包。
 ## 3. 项目模板(每个工程配一次,提交进版本库)
 
 模板告诉调试台**这个工程怎么构建、怎么验、板子是什么**。放在
-`<工程>/.bench/mailbox.template.json`。参考 final_foc 的那份:
+`<工程>/.bench/mailbox.template.json`。
+
+> **这三样必须提交进版本库**(工位机是从 git 克隆工程的,少了就跑不起来):
+> `.bench/mailbox.template.json`、`.bench/checks/*`、以及 `bench.knownGoodElf`
+> 指向的那份固件。调试台自己写的 `.bench/.gitignore` 只挡运行产物(轮次输入输出、
+> 决策日志),这三样是放行的。
+
+参考 final_foc 的那份:
 
 ```json
 {

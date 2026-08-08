@@ -160,8 +160,10 @@ export function createMailboxMain(options: MailboxMainOptions): MailboxMain {
       if (controller.hardwareLockActive()) options.setHardwareLock(true)
     },
     async stopAll(graceMs = 5_000) {
-      if (!children.size) return
+      // 先无条件 stop:任务可能正处在重启退避的间隙(没有子进程,但有一个定时器
+      // 等着再起一个)。先返回就等于退出路径上又生一个守护出来。
       controller.stop()
+      if (!children.size) return
       const deadline = Date.now() + graceMs
       while (children.size && Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 100))
