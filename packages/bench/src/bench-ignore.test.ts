@@ -83,15 +83,22 @@ describe(".bench/.gitignore", () => {
     expect(status.stdout).toBe("")
   })
 
-  test("旧版整目录忽略会被升级,用户改过的不动", async () => {
-    const legacy = "# 调试台的运行产物,不进版本库(含自身)\n*\n"
-
-    const upgraded = await makeRepo()
-    const upgradedBench = path.join(upgraded, ".bench")
-    mkdirSync(upgradedBench, { recursive: true })
-    writeFileSync(path.join(upgradedBench, ".gitignore"), legacy)
-    await ensureBenchDir(upgradedBench)
-    expect(await readFile(path.join(upgradedBench, ".gitignore"), "utf8")).toContain("!checks/")
+  test("历代旧版都会被升级,用户改过的不动", async () => {
+    // 每一版都要能升上来:只认最老那一版的话,中间版本的仓库永远拿不到后续修正。
+    const legacies = [
+      "# 调试台的运行产物,不进版本库(含自身)\n*\n",
+      "# 调试台的**运行产物**不进版本库;模板与判据脚本是项目配置,要跟着仓库走。\n*\n!mailbox.template.json\n!checks/\n!checks/**\n!known-good/\n!known-good/**\n",
+    ]
+    for (const legacy of legacies) {
+      const upgraded = await makeRepo()
+      const upgradedBench = path.join(upgraded, ".bench")
+      mkdirSync(upgradedBench, { recursive: true })
+      writeFileSync(path.join(upgradedBench, ".gitignore"), legacy)
+      await ensureBenchDir(upgradedBench)
+      const now = await readFile(path.join(upgradedBench, ".gitignore"), "utf8")
+      expect(now).toContain("!checks/")
+      expect(now).toContain("__pycache__")
+    }
 
     const custom = await makeRepo()
     const customBench = path.join(custom, ".bench")

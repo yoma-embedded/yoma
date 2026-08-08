@@ -286,8 +286,22 @@ checks/**/*.pyc
 !known-good/
 !known-good/**
 `
-/** 旧版整目录忽略的原文。只有内容与它逐字相同才升级 —— 用户改过就不动。 */
-const LEGACY_BENCH_IGNORE = "# 调试台的运行产物,不进版本库(含自身)\n*\n"
+/**
+ * 历代旧版的原文。只有内容与其中一份**逐字相同**才升级 —— 用户改过就不动。
+ * 每次改 BENCH_IGNORE 都要把上一版挪进来,否则已经建过 `.bench` 的项目永远停在旧规则
+ * (实测:只留最老那一版时,用了新一点版本的仓库拿不到 __pycache__ 那条修正)。
+ */
+const LEGACY_BENCH_IGNORE = [
+  "# 调试台的运行产物,不进版本库(含自身)\n*\n",
+  `# 调试台的**运行产物**不进版本库;模板与判据脚本是项目配置,要跟着仓库走。
+*
+!mailbox.template.json
+!checks/
+!checks/**
+!known-good/
+!known-good/**
+`,
+]
 
 export async function ensureBenchDir(benchDir: string): Promise<void> {
   await mkdir(benchDir, { recursive: true })
@@ -297,7 +311,7 @@ export async function ensureBenchDir(benchDir: string): Promise<void> {
     return
   }
   const current = await readTextFile(ignore).catch(() => "")
-  if (current === LEGACY_BENCH_IGNORE) await writeFile(ignore, BENCH_IGNORE)
+  if (LEGACY_BENCH_IGNORE.includes(current)) await writeFile(ignore, BENCH_IGNORE)
 }
 
 /**
