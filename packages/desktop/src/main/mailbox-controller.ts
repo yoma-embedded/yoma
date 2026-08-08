@@ -34,6 +34,17 @@ export interface MailboxTaskRequest {
   jobFile?: string
   /** sim:清掉上次演练从头来。 */
   fresh?: boolean
+  /**
+   * init 终局后自动接起本机常驻角色(任务页"入箱并开跑"的后半程)。
+   *
+   * 接力**必须由 main 持有**:它原来住在页面组件的 store 里,而 init 是 clone+push,
+   * 慢网络下能跑几分钟 —— 期间用户点去别的页面(或 reload 窗口)组件就卸载了,
+   * 接力随之蒸发,任务停在"已入箱但没人执行",界面上还什么都不说。
+   *
+   * 角色取**已保存的** settings.role,不由调用方指定:renderer 的表单可能是改了
+   * 没保存的中间状态,照它起守护会得到一个与配置不符的角色。
+   */
+  thenStart?: boolean
 }
 
 export interface MailboxStatus {
@@ -76,6 +87,18 @@ export function restartDelayMs(restarts: number): number {
   return Math.min(5_000 * 2 ** Math.max(0, restarts - 1), 60_000)
 }
 
+/**
+ * 连续这么多次"起来就死"之后放弃重启。
+ *
+ * 退避重启假设故障是瞬时的(网络、远端抽风);产物缺失、node 加载失败这类
+ * **永久性**故障永远重试不好,而重试期间 phase 一直是 running、探针锁一直扣着,
+ * 屏幕上只有一句 code 1 —— 用户看到的是"任务在跑",实际什么都没发生。
+ */
+const MAX_RESTARTS = 5
+
+/** 守护活过这么久才算"真的跑起来过",据此把重启计数清零。 */
+const HEALTHY_MS = 60_000
+
 interface ActiveTask {
   kind: MailboxTaskKind
   request: MailboxTaskRequest
@@ -85,6 +108,8 @@ interface ActiveTask {
   userStopped: boolean
   done?: { exitCode: number; detail: string; verdict?: MailboxVerdict }
   cancelRestart?: () => void
+  /** 本次 spawn 的时刻 —— 用来区分"跑了一阵才崩"和"起来就死"。 */
+  spawnedAt: number
 }
 
 export class MailboxController {
@@ -139,10 +164,21 @@ export class MailboxController {
     if (request.kind === "init" && !request.jobFile) {
       return { ok: false, message: "init 需要任务书(jobFile)" }
     }
+    // 角色必须与配置一致:工位机上误起决策守护(或反过来)会得到一个对着同一个
+    // 信箱说错话的进程,而症状是"任务一直没人执行"这种很难归因的安静失败。
+    if ((request.kind === "runner" || request.kind === "mother") && this.settings && this.settings.role !== request.kind) {
+      const label = (role: MailboxRole) => (role === "runner" ? "工位" : "决策")
+      return {
+        ok: false,
+        message: `本机角色是${label(this.settings.role)},不能起${label(request.kind)}守护 —— 去配置页改角色再来`,
+      }
+    }
+    const now = (this.deps.now ?? Date.now)()
     this.task = {
       kind: request.kind,
       request,
-      startedAt: (this.deps.now ?? Date.now)(),
+      startedAt: now,
+      spawnedAt: now,
       restarts: 0,
       userStopped: false,
     }
@@ -173,10 +209,21 @@ export class MailboxController {
     const task = this.task!
     const config = this.deps.buildConfig(this.settings ?? { remote: "", role: "runner" }, task.request)
     task.done = undefined
-    task.handle = this.deps.launch(config, {
-      onLine: (line) => this.handleLine(task, line),
-      onExit: (code) => this.handleExit(task, code),
-    })
+    task.spawnedAt = (this.deps.now ?? Date.now)()
+    try {
+      task.handle = this.deps.launch(config, {
+        onLine: (line) => this.handleLine(task, line),
+        onExit: (code) => this.handleExit(task, code),
+      })
+    } catch (error) {
+      // launch 同步抛(产物路径不可写、spawn 参数非法)时不会有 onExit,
+      // 不接住就是 phase 永远卡在 running、锁永远扣着。
+      this.phase = "error"
+      this.message = `守护进程起不来:${(error as Error).message}`
+      this.setLock(false)
+      this.task = undefined
+      this.pushStatus()
+    }
   }
 
   private handleLine(task: ActiveTask, line: string): void {
@@ -213,6 +260,20 @@ export class MailboxController {
       this.pushStatus()
       return
     }
+    // init 成功 → 自动接起本机常驻角色。接力在 main 手里,与 UI 是否还开着无关。
+    if (task.kind === "init" && done?.exitCode === 0 && task.request.thenStart && this.settings) {
+      const role = this.settings.role
+      this.phase = "idle"
+      this.task = undefined
+      this.setLock(false)
+      const started = this.start({ kind: role })
+      if (!started.ok) {
+        this.phase = "error"
+        this.message = `任务已入箱,但守护没起来:${started.message}`
+        this.pushStatus()
+      }
+      return
+    }
     if (done && done.exitCode === 3) {
       // 单实例锁冲突:活着的持有者在别的进程/别的 Yoma 实例。轮询抢锁只会刷屏。
       this.phase = "error"
@@ -231,7 +292,20 @@ export class MailboxController {
     }
     // 常驻角色异常退出:退避重启。协议可续(状态在信箱与本地 ignored 目录里),
     // 重启就是"重新执行同一条命令"。
-    task.restarts += 1
+    // 活过一分钟才崩的算"跑起来过",计数清零 —— 长跑任务不该被历史崩溃拖进上限。
+    const now = (this.deps.now ?? Date.now)()
+    task.restarts = now - task.spawnedAt >= HEALTHY_MS ? 1 : task.restarts + 1
+    if (task.restarts > MAX_RESTARTS) {
+      // 起来就死重复这么多次,故障是永久性的(产物缺失、node 加载失败……),
+      // 继续退避只是把锁一直扣着、把 phase 一直显示成 running。
+      this.phase = "error"
+      this.message = `守护进程连续 ${MAX_RESTARTS} 次起来就退出(最后一次 code ${code ?? "?"})—— 不再重试。${
+        done?.detail ?? "看日志:userData/logs"
+      }`
+      this.setLock(false)
+      this.pushStatus()
+      return
+    }
     const delay = restartDelayMs(task.restarts)
     this.message = `守护进程异常退出(code ${code ?? "?"}),${Math.round(delay / 1000)}s 后重启(第 ${task.restarts} 次)`
     this.pushStatus()

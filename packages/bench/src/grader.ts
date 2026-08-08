@@ -102,6 +102,34 @@ export type CaptureLog = (options: {
 /** 证据上限:够看清问题,又不至于把上下文吃光。 */
 const EVIDENCE_CHARS = 4000
 
+/**
+ * 在飞的判据子进程登记表 + 信号转杀。
+ *
+ * 判据的进程是 **detached** 起的(为了能杀整棵树,见 killTree),这意味着它们在
+ * 自己的进程组里:父进程收到 SIGTERM 时它们**收不到**,父进程默认处置一死,
+ * `probe-rs attach` 这类采集就成了攥着探针的孤儿 —— 下一次运行报的是"设备忙",
+ * 长得和"没插板子"一模一样。信箱守护被停止/超时杀掉时正好走这条路。
+ */
+const activeCheckChildren = new Set<ChildProcess>()
+let checkSignalHandlersInstalled = false
+
+function installCheckSignalHandlers(): void {
+  if (checkSignalHandlersInstalled) return
+  checkSignalHandlersInstalled = true
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    process.on(signal, () => {
+      for (const child of activeCheckChildren) killTree(child)
+      process.exit(signal === "SIGINT" ? 130 : 143)
+    })
+  }
+}
+
+function trackCheckChild(child: ChildProcess): void {
+  installCheckSignalHandlers()
+  activeCheckChildren.add(child)
+  child.on("close", () => activeCheckChildren.delete(child))
+}
+
 export async function grade(options: GradeOptions): Promise<GradeResult> {
   const { job, workspace } = options
   const run = options.runCommand ?? runCommandReal
@@ -310,6 +338,7 @@ export const runCommandReal: RunCommand = async (command, { cwd, timeoutMs }) =>
       resolve({ exitCode: null, stdout: "", stderr: "", timedOut: false, spawnError: (error as Error).message })
       return
     }
+    trackCheckChild(child)
 
     let stdout = ""
     let stderr = ""
@@ -347,6 +376,7 @@ export const captureLogReal: CaptureLog = async ({ source, pattern, mode, timeou
       resolve({ tail: "", timedOut: false, spawnError: (error as Error).message })
       return
     }
+    trackCheckChild(child)
 
     const lines: string[] = []
     let matchedLine: string | undefined

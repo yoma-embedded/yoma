@@ -997,6 +997,7 @@ export const dict = {
   "bench.task.launched": "任务已入箱 —— 落进信箱后守护自动接手。",
   "bench.task.daemon": "守护进程",
   "bench.task.daemon.hint": "对信箱里已有的任务,启动本机角色的常驻守护(比如重启之后,或任务由对面入箱)。",
+  "bench.task.needConfig": "先在配置页填好信箱远端与本机角色并保存。",
   "bench.task.startDaemon": "启动守护",
   "bench.task.daemonStarted": "守护已启动。",
   "bench.task.stop": "停止",

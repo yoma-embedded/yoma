@@ -37,6 +37,7 @@
     "marked": "^15"
   },
   "devDependencies": {
+    "esbuild": "catalog:",
     "@actions/artifact": "4.0.0",
     "@lydell/node-pty": "catalog:",
     "@yoma-desktop/app": "workspace:*",

@@ -82,7 +82,7 @@ export interface PermissionDecision {
 
 interface AskOutcome {
   response: PermissionResponse
-  by: "human" | "timeout" | "detach"
+  by: "human" | "timeout" | "detach" | "policy"
 }
 
 interface Pending {
@@ -92,19 +92,29 @@ interface Pending {
 }
 
 /**
- * 硬件工具锁(调试台探针互斥):flash/gdb 全拒 —— 它们的任何动作都可能碰探针;
- * log 只拒 rtt 路,command 模式(串口等任意命令)不占探针,照常放行。
- * 其余工具一律不表态(undefined),落回正常的策略/规则/问人。
+ * 硬件工具锁(调试台探针互斥):flash / gdb / log 的**取用**动作一律拒,
+ * 其余工具不表态(undefined),落回正常的策略/规则/问人。
+ *
+ * 两个例外是审查逼出来的,都不是可有可无的礼貌:
+ *
+ * 1. **`stop` / `status` 必须放行**。它们释放或只读探针。一刀切拒掉的后果是
+ *    "锁挂上之前就在跑的 RTT 采集 / gdb 会话再也停不下来" —— 锁反过来把冲突源
+ *    保护了起来,而它本来就是为消除冲突存在的。
+ * 2. **log 的 command 模式升级问人,而不是静默放行**。它确实不占探针(串口那条路),
+ *    但它能起**任意进程**(bench 的 policy.ts 为此单独判过白名单)。桌面端的交互内核
+ *    不注入 policy,rules 表里 log 又是 allow —— 静默落回 rules 等于给锁开一个后门:
+ *    模型的 flash 被拒后完全可以改用 `log start command:"probe-rs attach …"` 绕过去。
+ *    escalate 会越过 rules 直奔问人流,任务期间看串口这个合法用例一次点头即可。
  */
 export function hardwareLockPolicy(reason: string): PolicyProvider {
   return ({ tool, input }) => {
-    const deny = { action: "deny" as const, rule: "mailbox-active", reason }
-    if (tool === "flash" || tool === "gdb") return deny
-    if (tool === "log") {
-      const command = typeof input.command === "string" && input.command.trim() !== "" ? input.command : undefined
-      if (!command) return deny
+    if (tool !== "flash" && tool !== "gdb" && tool !== "log") return undefined
+    const action = typeof input.action === "string" ? input.action : ""
+    if (action === "stop" || action === "status") return undefined
+    if (tool === "log" && typeof input.command === "string" && input.command.trim() !== "") {
+      return { action: "escalate", rule: "mailbox-active" }
     }
-    return undefined
+    return { action: "deny", rule: "mailbox-active", reason }
   }
 }
 
@@ -152,6 +162,38 @@ export class PermissionGate {
 
   setOverride(policy: PolicyProvider | undefined): void {
     this.override = policy
+    // 挂锁时必须清算**在飞的未决请求**:override 只在 tool_call 进入时被问一次,
+    // 挂锁之前弹出的 flash/gdb 弹窗还挂在那(超时 10 分钟),用户随手一点"允许"
+    // 就在锁窗口内真的动了探针 —— 正是这把锁要防的撞车。
+    if (policy) void this.sweepPending(policy)
+  }
+
+  /**
+   * 用新策略重裁未决请求,判 deny 的就地拒掉。
+   *
+   * 两条纪律:裁决者记 `by: "policy"` 而**不是** human —— 当时没有人点,审计不能
+   * 伪造裁决者;策略抛错按 escalate 处理(留着继续等人),崩了宁可问人绝不静默放行。
+   * 策略可能是异步的,所以落定前再查一次 pending:respond() 可能已经先赢,先到先得。
+   */
+  private async sweepPending(policy: PolicyProvider): Promise<void> {
+    for (const [id, entry] of [...this.pending]) {
+      let decision: PolicyDecision | undefined
+      try {
+        decision = await policy({
+          sessionID: entry.request.sessionID,
+          tool: entry.request.tool,
+          input: entry.request.input,
+        })
+      } catch {
+        continue
+      }
+      if (decision?.action !== "deny") continue
+      if (this.pending.get(id) !== entry) continue
+      clearTimeout(entry.timer)
+      this.pending.delete(id)
+      this.emit({ type: "permission.replied", id, response: "reject" })
+      entry.resolve({ response: "reject", by: "policy" })
+    }
   }
 
   /** 未决请求快照 —— renderer 重连时重推,避免会话永久卡住。 */
@@ -253,6 +295,8 @@ export class PermissionGate {
       record("deny", by, { rule: escalateRule, response })
       if (by === "timeout") return { block: true, reason: `权限请求超时,${toolName} 被拒绝` }
       if (by === "detach") return { block: true, reason: `会话已关闭,${toolName} 被拒绝` }
+      // 等人的过程中策略变了(调试台任务挂了硬件锁),不能说成"用户拒绝了"。
+      if (by === "policy") return { block: true, reason: `权限策略在等待期间禁止了 ${toolName}` }
       return { block: true, reason: `用户拒绝了 ${toolName}` }
     })
     this.detachers.set(sessionID, off)

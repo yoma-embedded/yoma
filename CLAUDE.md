@@ -87,7 +87,9 @@ Bun workspace,`packages/` 下 7 个包:
 | `bun lint` | oxlint |
 | `bun --cwd packages/desktop smoke` | 内核冒烟:对 **构建产物** 验证 10 个工具 + 5 个引擎二进制 |
 | `bun --cwd packages/desktop e2e:ipc` | 生产路径:真 utilityProcess + 真 MessagePort + 真协议帧(不开窗口) |
-| `bun --cwd packages/desktop e2e:renderer` | 最后一跳:真窗口 + 真 preload + **真 contextBridge** |
+| `bun --cwd packages/desktop e2e:renderer` | 最后一跳:真窗口 + 真 preload + **真 contextBridge**(含 mailbox 桥三条) |
+| `bun --cwd packages/desktop smoke:mailbox` | 调试台冒烟:Electron RUN_AS_NODE 对打包产物跑完整**本机演练**(假模型,零 key 零硬件) |
+| `bun --cwd packages/desktop e2e:mailbox` | main 托管端到端:真 kernel.js 的 `mailbox.setActive` 往返 + 假守护喂 `@@event` + 停止杀树 + 锁冲突人话 |
 | `bun packages/bench/src/cli.ts run <job.json>` | 无人值守调试台:跑完整闭环(`check` 只校验,`grade` 只跑判据) |
 | `bun packages/bench/src/cli.ts mailbox sim <job.json>` | 信箱闭环单机模拟(`init`/`runner`/`mother`/`status` 是生产形态的四个子命令) |
 
@@ -253,6 +255,21 @@ mother 轮是 readonly 策略的内核会话(不碰硬件,无需子进程)。协
 - 单机模拟(`mailbox sim`)起 **两个真子进程 + 各自的克隆 + 本地裸仓**,与生产的
   差别只有远端 URL(`--remote` 换私有 GitHub 仓即是跨机器形态)。
 
+**产品形态(2026-08-08 起,P1–P3 已进桌面端;设计与验收见 `docs/施工指南-信箱调试台桌面端.md`)**:
+
+- 引擎打包成两个纯 node 产物(`out/main/mailbox-host.mjs` 五角色一个入口 +
+  `mailbox-turn-entry.mjs`,esbuild 见 `desktop/scripts/build-mailbox.ts`);
+  守护 stdout 上的 `@@event {json}` 行是唯一事件通道(与 `@@escalate` 同款)。
+- 桌面 main 托管守护(`main/mailbox-controller.ts` 纯逻辑 + `main/mailbox.ts` 接线;
+  child_process.spawn + RUN_AS_NODE,**不用 utilityProcess.fork** —— 它的 kill 没有
+  信号可选,POSIX 优雅停机依赖 SIGTERM 链);renderer 走 `window.api.mailbox`,
+  app 页面在 `/bench`(四分区:配置/任务/进度/终报)。
+- **探针互斥是硬锁**:runner 任务活跃时 main 经内核控制通道发 `mailbox.setActive`,
+  权限门的任务级覆盖槽把 flash/gdb/log(rtt) 判 deny(log 的 command 模式不占探针,
+  照常放行);不动用户 rules 表,renderer 无解锁能力,内核重启后 main 重申。
+- 浏览器侧类型是 kernel 的 `mailbox-view.ts`(结构化复制,View 后缀),漂移由
+  bench 的 `mailbox/view-check.ts` 约束式断言兜住 —— 与工具 details 同一套纪律。
+
 ## 约定与规矩
 
 - **绝不重启 app 或内核进程**(`packages/app/AGENTS.md`)。优先级:稳定 > 简单 > 性能。
@@ -295,6 +312,13 @@ mother 轮是 readonly 策略的内核会话(不碰硬件,无需子进程)。协
   而且报"找不到解释器",看起来像没编译。已由 my-pi 的 `bun engines/build.ts --dist`
   用 PyInstaller 冻结解决(那边的 CI 产出的就是冻结版);本地开发跑普通 `build.ts`
   仍是 console script,所以 stage-engines 的那条警告要留着。
+- **内核事件批处理的定时器是 unref 的,纯 node 下会把等事件的进程放空**。
+  host/stream.ts 的 16ms 合并窗口刻意 unref(给 utilityProcess 退出让路),而 bench
+  `runTurn` 的完成恰恰依赖那批事件送达 —— 进程没有别的 ref 句柄时(mother 的进程内
+  分析轮),node 在事件冲出来之前判定事件循环已空,带着未决 await 直接退出
+  (`unsettled top-level await`,实测:打包冒烟里 mother 走到"分析中"就消失)。
+  bun 的存活语义不同,开发态永远暴露不了。修法是 runTurn 全程持一个 ref 的
+  keepalive interval;任何"在纯 node 里等内核事件"的新代码都要记得这一条。
 - **Bun 的 `os.homedir()` 在进程启动时定死**,运行时改 `process.env.HOME` 对它无效。
   想在测试里隔离 `~/.pi/agent/auth.json` 这类真实凭据文件,要么走函数的 dir 注入参数,
   要么起一个出生时就带干净 HOME 的子进程(见 `host/auth.test.ts`)。实测踩过:
@@ -317,10 +341,11 @@ mother 轮是 readonly 策略的内核会话(不碰硬件,无需子进程)。协
 
 ## 已知的未完成项
 
-- **信箱调试台还没进桌面端**:引擎(`bench/src/mailbox/`)已完工并真跑验证,但产品形态
-  (研发/测试各下载 exe、配置即用)待施工 —— 完整设计与分阶段计划在
-  `docs/施工指南-信箱调试台桌面端.md`(决策端定为全自动母 agent)。开工第一步是
-  bench 去 Bun 化(29 处,exe 里没有 bun),别先动 UI。
+- **信箱调试台桌面端只剩 P4**:P1(引擎可打包化)/ P2(main 托管 + 探针互斥)/
+  P3(`/bench` 四分区 UI)已完工并全链验收(见"信箱闭环"一节与
+  `docs/施工指南-信箱调试台桌面端.md` 的施工记录)。待办:Windows 打包冒烟
+  (重点验收 taskkill 杀树)、双机验收剧本(exe 工位 + exe 决策对同一私有仓,
+  再验 exe ↔ CLI 混搭)、断网演练的 UI 呈现。仓里已有 Windows 出包 CI。
 
 - `ServerConnection` / `ServerKey` 这套概念还散在 app 的路由与标签页里(现在只是空壳,
   `serverReady` 用占位值立刻 resolve)。清除它是独立一件事。

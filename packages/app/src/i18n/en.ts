@@ -1054,6 +1054,7 @@ export const dict = {
   "bench.task.launched": "Task enqueued — the daemon starts automatically once it lands in the mailbox.",
   "bench.task.daemon": "Daemon",
   "bench.task.daemon.hint": "Start this machine's resident role for a task already in the mailbox (e.g. after a restart, or when the other side enqueued it).",
+  "bench.task.needConfig": "Set the mailbox remote and this machine's role first (Setup tab).",
   "bench.task.startDaemon": "Start daemon",
   "bench.task.daemonStarted": "Daemon started.",
   "bench.task.stop": "Stop",

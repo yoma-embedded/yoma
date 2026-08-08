@@ -184,7 +184,45 @@ app.whenReady().then(async () => {
     check("孙进程随 SIGTERM 链一并死掉(停止 = 整棵树)", grandDead, `pid ${grandPid}`)
   }
 
-  // ── 3. 锁冲突:人话,不进重启循环 ───────────────────────────────────────────
+  // ── 3. 退出 app 的那条路:stopAll 必须带走整棵守护树 ─────────────────────────
+  {
+    const userData = temp("mb-e2e-userdata-quit-")
+    const bundleDir = temp("mb-e2e-bundle-quit-")
+    writeFileSync(join(bundleDir, "mailbox-host.mjs"), FAKE_DAEMON_LONG)
+
+    let saved: MailboxSettings | undefined
+    const mailbox = createMailboxMain({
+      userDataDir: userData,
+      sessionsRoot: join(userData, "sessions"),
+      bundleDir,
+      broadcast: () => {},
+      setHardwareLock: () => {},
+      persistence: {
+        get: () => saved,
+        set: (settings) => {
+          saved = settings
+        },
+      },
+    })
+    mailbox.controller.configure({ remote: join(userData, "origin.git"), role: "runner" })
+    mailbox.controller.start({ kind: "runner" })
+
+    const pidFile = join(userData, "mailbox", "grandchild.pid")
+    const ready = await waitFor(() => existsSync(pidFile))
+    const daemonPid = mailbox.controller.status().task?.pid ?? 0
+    const grandPid = ready ? Number.parseInt(readFileSync(pidFile, "utf8"), 10) : 0
+    check("退出前守护与孙进程都活着", ready && alive(daemonPid) && alive(grandPid), `daemon ${daemonPid} / grand ${grandPid}`)
+
+    // 这就是 before-quit / relaunch 走的那条路。任务在飞时用户 Cmd+Q,
+    // 守护与 turn 孙进程绝不能变成还在动板子的孤儿。
+    await mailbox.stopAll(5_000)
+    const daemonDead = await waitFor(() => !alive(daemonPid), 5_000)
+    const grandDead = await waitFor(() => !alive(grandPid), 5_000)
+    check("stopAll 之后守护死了", daemonDead, `pid ${daemonPid}`)
+    check("stopAll 之后孙进程也死了(退出不留驱动硬件的孤儿)", grandDead, `pid ${grandPid}`)
+  }
+
+  // ── 4. 锁冲突:人话,不进重启循环 ───────────────────────────────────────────
   {
     const userData = temp("mb-e2e-userdata2-")
     const bundleDir = temp("mb-e2e-bundle2-")

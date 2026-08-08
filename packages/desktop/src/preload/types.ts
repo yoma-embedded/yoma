@@ -28,7 +28,7 @@ export type ManualsAPI = ManualsPlatform
  * 会把 Error 剥得只剩 message。status/subscribe 的载荷 app 侧再收窄。
  */
 export type MailboxSettingsWire = { remote: string; role: "runner" | "mother"; branch?: string; pollSeconds?: number }
-export type MailboxTaskWire = { kind: "runner" | "mother" | "sim" | "init"; jobFile?: string; fresh?: boolean }
+export type MailboxTaskWire = { kind: "runner" | "mother" | "sim" | "init"; jobFile?: string; fresh?: boolean; thenStart?: boolean }
 export type MailboxComposeWire = {
   templatePath: string
   description: string

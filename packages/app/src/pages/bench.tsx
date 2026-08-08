@@ -38,14 +38,31 @@ export default function BenchPage() {
     log: [] as string[],
     busy: false,
     notice: undefined as { error: boolean; text: string } | undefined,
-    /** init 任务终局后自动接着起的常驻角色(任务页"一键开跑"的后半程)。 */
-    afterInit: undefined as MailboxRoleView | undefined,
     form: { remote: "", role: "runner" as MailboxRoleView, branch: "", pollSeconds: "" },
     task: { templatePath: "", description: "", tier: "standard" as Tier, title: "" },
   })
 
   const t = (key: string) => language.t(key as never)
   const say = (error: boolean, text: string) => setState("notice", { error, text })
+
+  /**
+   * 所有 IPC 调用都从这里过。
+   *
+   * main 侧的契约是"返回普通对象不抛",但 Electron 的 ipcMain handler 一旦真的抛
+   * (磁盘满、路径非法),invoke 就是一个 rejected promise。没有兜底的话
+   * `void doSomething()` 会变成无人处理的 rejection:busy 永远停在 true,
+   * 整页按钮死掉,而屏幕上一个字都不说。
+   */
+  async function guard<T>(run: () => Promise<T>): Promise<T | undefined> {
+    try {
+      return await run()
+    } catch (error) {
+      say(true, (error as { message?: string })?.message ?? String(error))
+      return undefined
+    } finally {
+      setState("busy", false)
+    }
+  }
 
   function applyStatus(status: MailboxStatusView) {
     setState("status", status)
@@ -57,15 +74,6 @@ export default function BenchPage() {
         pollSeconds: status.settings.pollSeconds ? String(status.settings.pollSeconds) : "",
       })
     }
-    // 一键开跑的后半程:init 任务终局成功 → 自动起本机角色的常驻守护。
-    if (state.afterInit && status.phase === "done" && status.task?.kind === "init") {
-      const role = state.afterInit
-      setState("afterInit", undefined)
-      void mailbox?.start({ kind: role }).then((result) => {
-        if (!result.ok) say(true, result.message ?? t("bench.error.generic"))
-      })
-    }
-    if (state.afterInit && status.phase === "error") setState("afterInit", undefined)
   }
 
   function pushLog(line: string) {
@@ -97,42 +105,47 @@ export default function BenchPage() {
   async function saveSettings() {
     if (!mailbox) return
     const pollSeconds = Number.parseInt(state.form.pollSeconds, 10)
-    const result = await mailbox.configure({
-      remote: state.form.remote,
-      role: state.form.role,
-      branch: state.form.branch.trim() || undefined,
-      pollSeconds: Number.isFinite(pollSeconds) && pollSeconds > 0 ? pollSeconds : undefined,
-    })
+    const result = await guard(() =>
+      mailbox.configure({
+        remote: state.form.remote,
+        role: state.form.role,
+        branch: state.form.branch.trim() || undefined,
+        pollSeconds: Number.isFinite(pollSeconds) && pollSeconds > 0 ? pollSeconds : undefined,
+      }),
+    )
+    if (!result) return
     say(!result.ok, result.ok ? t("bench.config.saved") : (result.message ?? t("bench.error.generic")))
   }
 
   async function probeRemote() {
     if (!mailbox) return
     setState("busy", true)
-    const result = await mailbox.probe(state.form.remote)
-    setState("busy", false)
-    say(!result.ok, result.message)
+    const result = await guard(() => mailbox.probe(state.form.remote))
+    if (result) say(!result.ok, result.message)
   }
 
   async function composeAndLaunch() {
     if (!mailbox) return
     setState("busy", true)
-    const composed = await mailbox.composeJob({
-      templatePath: state.task.templatePath.trim(),
-      description: state.task.description,
-      tier: state.task.tier,
-      title: state.task.title.trim() || undefined,
-    })
+    const composed = await guard(() =>
+      mailbox.composeJob({
+        templatePath: state.task.templatePath.trim(),
+        description: state.task.description,
+        tier: state.task.tier,
+        title: state.task.title.trim() || undefined,
+      }),
+    )
+    if (!composed) return
     if (!composed.ok || !composed.jobFile) {
-      setState("busy", false)
       say(true, composed.message ?? t("bench.error.generic"))
       return
     }
-    setState("afterInit", state.form.role)
-    const started = await mailbox.start({ kind: "init", jobFile: composed.jobFile })
-    setState("busy", false)
+    // thenStart 的接力在 main 手里(角色取已保存的配置):这一页关掉、跳走、
+    // 甚至 reload 窗口,守护照样会在入箱成功后自己起来。
+    setState("busy", true)
+    const started = await guard(() => mailbox.start({ kind: "init", jobFile: composed.jobFile, thenStart: true }))
+    if (!started) return
     if (!started.ok) {
-      setState("afterInit", undefined)
       say(true, started.message ?? t("bench.error.generic"))
     } else {
       say(false, t("bench.task.launched"))
@@ -142,22 +155,30 @@ export default function BenchPage() {
 
   async function startDaemon() {
     if (!mailbox) return
-    const result = await mailbox.start({ kind: state.form.role })
+    // 角色用**已保存的**配置,不用表单的中间状态 —— 改了没保存就开跑会起错角色。
+    const role = state.status?.settings?.role
+    if (!role) {
+      say(true, t("bench.task.needConfig"))
+      return
+    }
+    const result = await guard(() => mailbox.start({ kind: role }))
+    if (!result) return
     say(!result.ok, result.ok ? t("bench.task.daemonStarted") : (result.message ?? t("bench.error.generic")))
     if (result.ok) setState("tab", "progress")
   }
 
   async function startRehearsal() {
     if (!mailbox) return
-    const result = await mailbox.start({ kind: "sim", fresh: true })
+    const result = await guard(() => mailbox.start({ kind: "sim", fresh: true }))
+    if (!result) return
     say(!result.ok, result.ok ? t("bench.task.rehearsalStarted") : (result.message ?? t("bench.error.generic")))
     if (result.ok) setState("tab", "progress")
   }
 
   async function stopTask() {
     if (!mailbox) return
-    const result = await mailbox.stop()
-    if (!result.ok) say(true, result.message ?? t("bench.error.generic"))
+    const result = await guard(() => mailbox.stop())
+    if (result && !result.ok) say(true, result.message ?? t("bench.error.generic"))
   }
 
   function watchSession(sessionID: string) {

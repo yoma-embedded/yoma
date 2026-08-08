@@ -168,7 +168,7 @@ export async function runMailboxHost(config: MailboxHostConfig, emit: EmitMailbo
         void emitSnapshot()
       },
     })
-    await emitSnapshot()
+    await emitSnapshot(true)
     if (outcome.kind === "finalized") {
       return finish(outcome.verdict.outcome === "passed" ? 0 : 2, `终局 ${outcome.verdict.outcome}`, outcome.verdict)
     }
@@ -190,7 +190,7 @@ export async function runMailboxHost(config: MailboxHostConfig, emit: EmitMailbo
       void emitSnapshot()
     },
   })
-  await emitSnapshot()
+  await emitSnapshot(true)
   if (outcome.kind === "done") {
     return finish(outcome.verdict.outcome === "passed" ? 0 : 2, `终局 ${outcome.verdict.outcome}`, outcome.verdict)
   }
@@ -240,13 +240,31 @@ function selfSpawn(config: MailboxHostConfig) {
   }
 }
 
-/** 快照发射器:去重(内容不变不发)、防重入(扫描在飞就跳过,下一步会再扫)。 */
-function makeSnapshotEmitter(clone: string, emit: EmitMailboxEvent): () => Promise<void> {
+/**
+ * 快照发射器:去重(内容不变不发)、防重入(扫描在飞就跳过,下一步会再扫)。
+ *
+ * `force` 是给**终局那一发**用的:守护循环最后一步的 onStep 会 `void emitSnapshot()`,
+ * 那次扫描往往还在飞,循环就返回了 —— 收尾的 `await emitSnapshot()` 撞上防重入门
+ * 直接空转,于是"带 verdict 与终报的最后一张快照"永远发不出去,UI 停在倒数第二张。
+ * force 会等在飞的那次跑完再扫一遍,保证终局状态一定送达。
+ */
+function makeSnapshotEmitter(clone: string, emit: EmitMailboxEvent): (force?: boolean) => Promise<void> {
   let last = ""
-  let inflight = false
-  return async () => {
-    if (inflight) return
-    inflight = true
+  let inflight: Promise<void> | undefined
+  const run = async (force?: boolean): Promise<void> => {
+    if (inflight) {
+      if (!force) return
+      await inflight.catch(() => {})
+    }
+    const started = doScan()
+    inflight = started
+    try {
+      await started
+    } finally {
+      if (inflight === started) inflight = undefined
+    }
+  }
+  const doScan = async (): Promise<void> => {
     try {
       const snapshot = await scanMailbox(clone)
       const report =
@@ -263,10 +281,9 @@ function makeSnapshotEmitter(clone: string, emit: EmitMailboxEvent): () => Promi
       }
     } catch {
       // 快照失败不致命:信箱可能正被同步,下一步自然重扫。
-    } finally {
-      inflight = false
     }
   }
+  return run
 }
 
 const PROMPT_CAP = 8000

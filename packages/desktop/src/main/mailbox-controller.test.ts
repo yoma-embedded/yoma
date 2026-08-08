@@ -10,6 +10,7 @@ import {
   MailboxController,
   restartDelayMs,
   type MailboxControllerDeps,
+  type MailboxLaunchHandle,
   type MailboxPublicEvent,
   type MailboxSettings,
 } from "./mailbox-controller.ts"
@@ -22,6 +23,10 @@ interface Harness {
   events: MailboxPublicEvent[]
   saved: MailboxSettings | undefined
   timers: { fn: () => void; ms: number; cancelled: boolean }[]
+  /** 假时钟:退避与"活过一分钟"的判定都读它。 */
+  clock: number
+  /** 让下一次 launch 同步抛(模拟产物缺失、路径不可写)。 */
+  launchThrows?: string
 }
 
 function makeHarness(initial?: MailboxSettings): Harness {
@@ -32,11 +37,14 @@ function makeHarness(initial?: MailboxSettings): Harness {
     events: [],
     saved: initial,
     timers: [],
+    clock: 1_000_000,
   }
   const deps: MailboxControllerDeps = {
+    now: () => harness.clock!,
     launch: (config, io) => {
+      if (harness.launchThrows) throw new Error(harness.launchThrows)
       harness.launches!.push({ config, io })
-      return { pid: 1000 + harness.launches!.length }
+      return { pid: 1000 + harness.launches!.length } satisfies MailboxLaunchHandle
     },
     stopProcess: (handle, force) => harness.stops!.push({ pid: handle.pid, force }),
     setHardwareLock: (active) => harness.locks!.push(active),
@@ -183,5 +191,89 @@ describe("退避曲线", () => {
     expect(restartDelayMs(2)).toBe(10_000)
     expect(restartDelayMs(5)).toBe(60_000)
     expect(restartDelayMs(9)).toBe(60_000)
+  })
+})
+
+describe("审查修复", () => {
+  test("永久性故障不无限重启:连续起来就死会放弃并撤锁", () => {
+    const harness = makeHarness(SETTINGS)
+    harness.controller.start({ kind: "runner" })
+    // 每次都是"起来就死"(时钟不前进 → 活不到 HEALTHY_MS)。
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const launch = harness.launches[harness.launches.length - 1]!
+      launch.io.onExit(1)
+      const timer = harness.timers[harness.timers.length - 1]
+      if (harness.controller.status().phase === "error") break
+      timer!.fn()
+    }
+    const status = harness.controller.status()
+    expect(status.phase).toBe("error")
+    expect(status.message).toContain("不再重试")
+    expect(harness.locks[harness.locks.length - 1]).toBe(false)
+    // 5 次重启用完就收手:第 6 次死亡没有再排定时器(6 次 launch / 5 个定时器)。
+    expect(harness.launches).toHaveLength(6)
+    expect(harness.timers).toHaveLength(5)
+  })
+
+  test("跑了一阵才崩的不算连击:重启计数复位", () => {
+    const harness = makeHarness(SETTINGS)
+    harness.controller.start({ kind: "runner" })
+    harness.launches[0]!.io.onExit(1)
+    expect(harness.timers[0]!.ms).toBe(restartDelayMs(1))
+    harness.timers[0]!.fn()
+
+    // 这一次活了两分钟才崩 —— 属于"跑起来过",计数回到 1 而不是累进到 2。
+    harness.clock += 120_000
+    harness.launches[1]!.io.onExit(1)
+    expect(harness.timers[1]!.ms).toBe(restartDelayMs(1))
+    expect(harness.controller.status().task?.restarts).toBe(1)
+  })
+
+  test("launch 同步抛不会把 phase 卡在 running,也不会扣着锁", () => {
+    const harness = makeHarness(SETTINGS)
+    harness.launchThrows = "spawn ENOENT"
+    const started = harness.controller.start({ kind: "runner" })
+    expect(started.ok).toBe(true)
+
+    const status = harness.controller.status()
+    expect(status.phase).toBe("error")
+    expect(status.message).toContain("spawn ENOENT")
+    expect(harness.locks).toEqual([true, false])
+    // 没有残留任务卡住下一次开跑。
+    expect(harness.controller.start({ kind: "runner" }).ok).toBe(true)
+  })
+
+  test("init 的接力由 main 完成,角色取已保存配置(不受 UI 生死影响)", () => {
+    const harness = makeHarness(SETTINGS)
+    harness.controller.start({ kind: "init", jobFile: "/tmp/job.json", thenStart: true })
+    expect(harness.launches[0]!.config.role).toBe("init")
+
+    emit(harness, 0, { type: "done", exitCode: 0, detail: "已入箱" })
+    harness.launches[0]!.io.onExit(0)
+
+    // 第二个进程是本机角色的常驻守护,而且探针锁跟着它挂上了。
+    expect(harness.launches).toHaveLength(2)
+    expect(harness.launches[1]!.config.role).toBe("runner")
+    expect(harness.controller.status().phase).toBe("running")
+    expect(harness.controller.status().task?.kind).toBe("runner")
+    expect(harness.locks).toEqual([true])
+  })
+
+  test("init 失败不接力", () => {
+    const harness = makeHarness(SETTINGS)
+    harness.controller.start({ kind: "init", jobFile: "/tmp/job.json", thenStart: true })
+    emit(harness, 0, { type: "done", exitCode: 1, detail: "spec 校验失败" })
+    harness.launches[0]!.io.onExit(1)
+
+    expect(harness.launches).toHaveLength(1)
+    expect(harness.controller.status().phase).toBe("error")
+  })
+
+  test("角色与配置不符时拒绝开跑 —— 工位机上起决策守护是安静的错", () => {
+    const harness = makeHarness(SETTINGS)
+    const refused = harness.controller.start({ kind: "mother" })
+    expect(refused.ok).toBe(false)
+    expect(refused.ok === false && refused.message).toContain("本机角色是工位")
+    expect(harness.launches).toHaveLength(0)
   })
 })

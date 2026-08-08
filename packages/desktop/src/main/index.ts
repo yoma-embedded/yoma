@@ -17,7 +17,7 @@ import { checkAppExists, resolveAppPath } from "./apps"
 import { CHANNEL } from "./constants"
 import { registerIpcHandlers, sendDeepLinks, sendMenuCommand } from "./ipc"
 import { spawnKernel, type KernelProcess } from "./kernel"
-import { createMailboxMain } from "./mailbox"
+import { createMailboxMain, type MailboxMain } from "./mailbox"
 import type { MailboxSettings } from "./mailbox-controller"
 import { getStore } from "./store"
 import { forwardInitializationFailure } from "./initialization"
@@ -58,6 +58,8 @@ const jsCallStackFeature = "DocumentPolicyIncludeJSCallStacksInCrashReports"
 let logger: ReturnType<typeof initLogging>
 let mainWindow: BrowserWindow | null = null
 let kernelProcess: KernelProcess | null = null
+/** 调试台托管。声明提到这里,是为了让 stopSidecars(定义在它被创建之前)能带走守护树。 */
+let mailboxMain: MailboxMain | null = null
 
 const pendingDeepLinks: string[] = []
 
@@ -165,6 +167,10 @@ const main = Effect.gen(function* () {
   const stopSidecars = async () => {
     const kernel = kernelProcess
     kernelProcess = null
+    // 调试台守护先停:任务在飞时退出 app,守护与 turn 孙进程会变成无人监督地
+    // 继续烧录/gdb 的孤儿(自动更新的 relaunch 走同一条路)。内核可以慢慢来,
+    // 板子不行。
+    await mailboxMain?.stopAll().catch(() => {})
     await kernel?.stop()
   }
   const relaunch = () => {
@@ -258,7 +264,7 @@ const main = Effect.gen(function* () {
   // 信箱调试台:main 托管守护进程,renderer 走 window.api.mailbox。
   // setHardwareLock 经内核控制通道下发;kernelProcess 是可变引用,按调用时取 ——
   // 它在下面才被 spawn,而锁只会在任务启动后才拨动,时序天然安全。
-  const mailboxMain = createMailboxMain({
+  mailboxMain = createMailboxMain({
     userDataDir: app.getPath("userData"),
     sessionsRoot: join(app.getPath("userData"), "sessions"),
     enginesDir: resolveEnginesDir(),
@@ -279,6 +285,7 @@ const main = Effect.gen(function* () {
     },
     log: (line) => writeLog("mailbox", "daemon", { line }),
   })
+  const mailbox = mailboxMain
   registerIpcHandlers({
     killSidecar: () => killSidecar(),
     attachKernel: (event) => {
@@ -305,12 +312,12 @@ const main = Effect.gen(function* () {
     resolveAppPath: async (appName) => resolveAppPath(appName),
     updater,
     mailbox: {
-      configure: (settings) => mailboxMain.controller.configure(settings),
-      start: (task) => mailboxMain.controller.start(task),
-      stop: () => mailboxMain.controller.stop(),
-      status: () => mailboxMain.controller.status(),
-      probe: (remote) => mailboxMain.probe(remote),
-      composeJob: (input) => mailboxMain.composeJob(input),
+      configure: (settings) => mailbox.controller.configure(settings),
+      start: (task) => mailbox.controller.start(task),
+      stop: () => mailbox.controller.stop(),
+      status: () => mailbox.controller.status(),
+      probe: (remote) => mailbox.probe(remote),
+      composeJob: (input) => mailbox.composeJob(input),
     },
     showUpdater: () => showUpdaterDialog(updater, true),
     setBackgroundColor: (color) => setBackgroundColor(color),
@@ -380,7 +387,7 @@ const main = Effect.gen(function* () {
     logger.error("kernel failed to start", String(error))
   })
   // 内核进程(重)启动时锁状态在 main 手里 —— 任务活跃期间要向新内核重申探针锁。
-  void kernelProcess.ready.then(() => mailboxMain.reassertHardwareLock()).catch(() => {})
+  void kernelProcess.ready.then(() => mailbox.reassertHardwareLock()).catch(() => {})
 
   mainWindow = createMainWindow()
   if (mainWindow) {

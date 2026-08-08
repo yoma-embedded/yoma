@@ -24,6 +24,8 @@ export interface MailboxTaskRequestView {
   kind: MailboxRoleView | "sim" | "init"
   jobFile?: string
   fresh?: boolean
+  /** init 终局后由 main 自动接起本机常驻角色(角色取已保存的配置,不由前端指定)。 */
+  thenStart?: boolean
 }
 
 export interface MailboxUsageView {
