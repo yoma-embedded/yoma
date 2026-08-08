@@ -16,6 +16,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { fileExists } from "../fsx.ts"
+import { resolveWorkspace } from "../job.ts"
 import { ensureBenchDir } from "../runner.ts"
 import { initMailbox } from "./init.ts"
 import { loadMailboxJob } from "./spec.ts"
@@ -24,6 +25,11 @@ import { ensureClone, initBareMailbox, pullReset } from "./sync.ts"
 
 export interface SimOptions {
   jobFile: string
+  /**
+   * **这台机器上**的工程目录。演练也走机器无关那条路 —— job 文件里可以没有
+   * directory(它本来就该没有),由这里提供。两个角色子进程用同一个值。
+   */
+  projectDir?: string
   /** 模拟根目录,默认 `<目标仓>/.bench/mailbox-sim/<jobId>`。 */
   root?: string
   /** 已有远端(私有 GitHub 仓等)。不给就在模拟根下建本地裸仓。 */
@@ -48,6 +54,8 @@ export interface SimSpawnContext {
   root: string
   branch: string
   pollSeconds: number
+  /** 定下来的本机工程目录,原样传给两个角色子进程。 */
+  projectDir: string
 }
 
 export interface SimResult {
@@ -70,7 +78,7 @@ export async function runSim(options: SimOptions): Promise<SimResult> {
   const say = options.onOutput ?? (() => {})
   const mailboxJob = await loadMailboxJob(options.jobFile)
   const job = mailboxJob.job
-  const workspace = path.resolve(job.repo.directory)
+  const workspace = resolveWorkspace(job, options.projectDir)
   // root 必须先归一成绝对路径:它还会被当作两个子进程的 cwd,相对路径在子进程里
   // 会再按 cwd 解析一次,拼出双重路径(实测:blocked 无限重试直到墙钟耗尽)。
   const root = path.resolve(options.root ?? path.join(workspace, ".bench", "mailbox-sim", job.id))
@@ -132,7 +140,7 @@ export async function runSim(options: SimOptions): Promise<SimResult> {
   }
   const spawnRole = (role: "runner" | "mother", clone: string): ChildProcess => {
     const child = options.spawnRole
-      ? options.spawnRole(role, clone, { root, branch, pollSeconds })
+      ? options.spawnRole(role, clone, { root, branch, pollSeconds, projectDir: workspace })
       : spawnDefault(role, clone)
     const forward = (chunk: Buffer) => {
       for (const line of chunk.toString().split("\n")) {

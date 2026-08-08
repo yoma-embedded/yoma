@@ -236,3 +236,101 @@ describe("splitArgv", () => {
     expect(splitArgv(`cmd "" x`)).toEqual(["cmd", "", "x"])
   })
 })
+
+describe("grade · script 判据(解释器由本机定)", () => {
+  test("真跑一个脚本:退出码 0 通过,展示的命令行是 job 里写的那条相对路径", async () => {
+    const workspace = mkdtempSync(path.join(tmpdir(), "grade-script-"))
+    writeFileSync(path.join(workspace, "ok.py"), "import sys; sys.exit(0)\n")
+    const result = await grade({
+      job: job({ checks: [{ type: "script", path: "ok.py" }] }),
+      workspace,
+    })
+    expect(result.passed).toBe(true)
+    expect(result.checks[0]!.summary).toContain("ok.py")
+    rmSync(workspace, { recursive: true, force: true })
+  })
+
+  test("非零退出判 fail,证据带 stderr", async () => {
+    const workspace = mkdtempSync(path.join(tmpdir(), "grade-script-"))
+    writeFileSync(path.join(workspace, "bad.py"), "import sys\nsys.stderr.write('电压不对\\n')\nsys.exit(3)\n")
+    const result = await grade({
+      job: job({ checks: [{ type: "script", path: "bad.py" }] }),
+      workspace,
+    })
+    expect(result.checks[0]!.outcome).toBe("fail")
+    expect(result.checks[0]!.evidence).toContain("电压不对")
+    rmSync(workspace, { recursive: true, force: true })
+  })
+
+  test("脚本不在 = 环境问题(error),不是代码问题(fail)—— 回填的指向不能错", async () => {
+    const workspace = mkdtempSync(path.join(tmpdir(), "grade-script-"))
+    const result = await grade({
+      job: job({ checks: [{ type: "script", path: ".bench/checks/没有.py" }] }),
+      workspace,
+    })
+    expect(result.checks[0]!.outcome).toBe("error")
+    expect(result.hasEnvironmentError).toBe(true)
+    rmSync(workspace, { recursive: true, force: true })
+  })
+
+  test("指向工作树之外的脚本直接拒 —— 判据是从信箱来的,不许它决定跑别处的东西", async () => {
+    const workspace = mkdtempSync(path.join(tmpdir(), "grade-script-"))
+    const result = await grade({
+      job: job({ checks: [{ type: "script", path: "../逃逸.py" }] }),
+      workspace,
+    })
+    expect(result.checks[0]!.outcome).toBe("error")
+    expect(result.checks[0]!.summary).toContain("工作树之外")
+    rmSync(workspace, { recursive: true, force: true })
+  })
+
+  test("argv 是权威执行形态:路径带空格也不会被引号规则咬到", async () => {
+    const workspace = mkdtempSync(path.join(tmpdir(), "grade script "))
+    writeFileSync(path.join(workspace, "ok.py"), "import sys; sys.exit(0)\n")
+    const result = await grade({
+      job: job({ checks: [{ type: "script", path: "ok.py" }] }),
+      workspace,
+    })
+    expect(result.passed).toBe(true)
+    rmSync(workspace, { recursive: true, force: true })
+  })
+})
+
+describe("grade · 判据的环境契约", () => {
+  test("probe-rs 路径与板卡事实由调试台注入,脚本不必写死绝对路径", async () => {
+    const workspace = mkdtempSync(path.join(tmpdir(), "grade-env-"))
+    writeFileSync(
+      path.join(workspace, "show.py"),
+      "import os, sys\nsys.stdout.write(os.environ.get('YOMA_PROBE_RS','') + '|' + os.environ.get('YOMA_CHIP','') + '|' + os.environ.get('YOMA_ELF',''))\n",
+    )
+    let seen = ""
+    await grade({
+      job: job({ checks: [{ type: "script", path: "show.py" }] }),
+      workspace,
+      enginesDir: "/opt/engines",
+      runCommand: async (command, options) => {
+        seen = JSON.stringify(options.env)
+        return { exitCode: 0, stdout: "", stderr: "", timedOut: false }
+      },
+    })
+    expect(seen).toContain("/opt/engines")
+    expect(seen).toContain("STM32G474RE")
+    expect(seen).toContain("build/main.elf")
+    expect(seen).toContain(workspace)
+    rmSync(workspace, { recursive: true, force: true })
+  })
+
+  test("真跑一遍:脚本从环境里读得到,而不是靠自己猜", async () => {
+    const workspace = mkdtempSync(path.join(tmpdir(), "grade-env-"))
+    writeFileSync(
+      path.join(workspace, "need-chip.py"),
+      "import os, sys\nsys.exit(0 if os.environ.get('YOMA_CHIP') == 'STM32G474RE' else 1)\n",
+    )
+    const result = await grade({
+      job: job({ checks: [{ type: "script", path: "need-chip.py" }] }),
+      workspace,
+    })
+    expect(result.passed).toBe(true)
+    rmSync(workspace, { recursive: true, force: true })
+  })
+})

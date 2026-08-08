@@ -24,6 +24,8 @@ export function describeChecks(checks: JobCheck[]): string {
         case "build":
         case "bash":
           return `- 命令 \`${check.command}\` 要退出码 ${check.type === "bash" ? (check.expectExitCode ?? 0) : 0}`
+        case "script":
+          return `- 脚本 \`${[check.path, ...(check.args ?? [])].join(" ")}\` 要退出码 ${check.expectExitCode ?? 0}(解释器由跑判据的机器自己定)`
         case "log_wait":
           return `- 设备日志里要出现 /${check.pattern}/`
         case "log_absent":

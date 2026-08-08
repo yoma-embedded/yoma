@@ -1,29 +1,39 @@
 /**
- * 信箱 runner —— 工位机上的常驻执行者。
+ * 工位端 —— 板子所在那台机器上的常驻执行者。
  *
  * 每次轮询一步:同步信箱 → 推断状态 → 该干活就干一轮 → 结果回填并推送。
  *
- * ## 一轮做什么(与单机 bench 的一轮同构)
+ * ## 一轮做什么
  *
- * 领指令 → 组提示词(母 agent 指令 + 上一轮判据证据,证据取自 runner 自己跑出的
- * grade,不信任 mother 转述)→ 子进程跑一轮 agent(探针清理靠进程边界,与单机模式
- * 同一条不变式)→ 判据亲跑 → 目标仓提交(审计点)→ result/patch 回填信箱。
+ * 领指令与附件 → 调试台把附件落到 `.bench/incoming/`(确定性动作,不经模型)→ 组提示词
+ * (角色说明 + 附件清单 + 研发端指令 + 上一轮判据证据)→ 子进程跑一轮 agent(探针清理
+ * 靠进程边界,与单机模式同一条不变式)→ 判据亲跑 → result 回填信箱。
+ *
+ * **怎么把新固件弄上板由 agent 自己定** —— `flash` 烧、跑工程里的 OTA 脚本、别的路子,
+ * 协议不预设机制。调试台只保证东西真的躺在那儿、路径写在提示词里。
+ *
+ * ## 这一侧不改代码
+ *
+ * 代码归研发端。`edit`/`write` 由 `role: "bench"` 直接拒(见 policy.ts),这边也
+ * 不开分支、不提交、不推交付分支 —— 它是纯粹的被测环境。工作树因此必须**干净**:
+ * 判据是在这棵树上跑的,树被动过判据就不再说明"已提交的那份代码行不行"。开轮前查一次
+ * 挡住烧 token,轮结束再查一次当证据。
  *
  * ## 与单机 runJob 的两个刻意差别
  *
  * 1. **失败不立即回刷 known-good。** 单机模式一个 job 跑完就该把板子还原;信箱模式
  *    的轮与轮之间是**延续**关系(下一轮从这一轮的状态接着调),每轮失败都回刷等于
  *    每轮都白烧一次片。回刷挪到终局:verdict 非 passed 时收尾一次。
- * 2. **判据没过不在本地重试。** 下一步归 mother 决定 —— 这正是信箱模式存在的理由。
+ * 2. **判据没过不在本地重试。** 下一步归研发端决定 —— 这正是信箱模式存在的理由。
  *
  * ## 本地状态
  *
- * `<workspace>/.bench/mailbox/<jobId>/state.json` 存 sessionID / baseCommit /
- * spentTokens / finalized。它是**工位机私有**的(会话在工位机的盘上,token 计数是
- * runner 侧的事实),不进信箱;丢了也只是重开会话,协议状态不受影响。
+ * `<workspace>/.bench/mailbox/<jobId>/state.json` 存 sessionID / spentTokens / finalized。
+ * 它是**工位机私有**的(会话在工位机的盘上,token 计数是这一侧的事实),不进信箱;
+ * 丢了也只是重开会话,协议状态不受影响。
  */
 
-import { appendFile, mkdir, writeFile } from "node:fs/promises"
+import { appendFile, copyFile, mkdir, readdir, writeFile } from "node:fs/promises"
 import path from "node:path"
 
 import type { PermissionRequest } from "@yoma-desktop/kernel"
@@ -33,11 +43,12 @@ import { fileExists, readJsonFile } from "../fsx.ts"
 import * as git from "../git.ts"
 import { acquireRoleLock, backoffSeconds } from "./daemon.ts"
 import { gradeRepeated, type GradeResult, type RunCommand } from "../grader.ts"
-import type { Job } from "../job.ts"
+import { resolveWorkspace, type Job } from "../job.ts"
 import { ensureBenchDir, ensureMyPiIgnore, restoreKnownGood, runTurnInChildProcess, type TurnInput } from "../runner.ts"
 import type { TurnResult } from "../turn.ts"
-import { runnerRoundPrompt } from "./prompts.ts"
+import { benchRolePrompt, runnerRoundPrompt } from "./prompts.ts"
 import {
+  roundArtifactsDir,
   scanMailbox,
   summarizeDenied,
   sumMotherTokens,
@@ -56,6 +67,11 @@ export interface MailboxRunnerOptions {
   clone: string
   branch?: string
   sessionsRoot: string
+  /**
+   * **这台机器上**的工程目录。信箱里的任务书不带绝对路径(它在别人机器上没意义),
+   * 工位机在哪儿检出这个工程是本机事实,由本机配置提供。
+   */
+  projectDir?: string
   enginesDir?: string
   /** 打包态的 turn 子进程入口(见 TurnInput.turnEntry)。bun 开发态可缺省。 */
   turnEntry?: string
@@ -86,12 +102,20 @@ export type RunnerStepOutcome =
 
 interface RunnerLocalState {
   sessionID?: string
-  baseCommit?: string
   spentTokens: number
   finalized?: boolean
 }
 
 const RUNNER_AUTHOR = { name: "yoma-mailbox-runner", email: "bench@yoma.local" }
+
+/**
+ * 附件在工位机上的落点,相对工程根。job 里的 `bench.elf` 通常就指这儿。
+ *
+ * 用正斜杠写死:这个字符串会进提示词、进 result.json、被另一台机器读。Windows 上
+ * `path.join` 会给出 `.bench\incoming`,于是同一个任务在两台机器上留下两种写法 ——
+ * 而 Node 在 Windows 上照样认正斜杠,没有理由让它漂。
+ */
+export const INCOMING_DIR = ".bench/incoming"
 
 function syncContext(options: MailboxRunnerOptions): MailboxSyncContext {
   return { clone: options.clone, branch: options.branch, author: RUNNER_AUTHOR, run: options.gitRun }
@@ -121,6 +145,27 @@ async function saveLocalState(workspace: string, jobId: string, state: RunnerLoc
   await writeFile(file, JSON.stringify(state, null, 2) + "\n")
 }
 
+/**
+ * 把本轮附件从信箱拷进工作区的 `.bench/incoming/`。
+ *
+ * **不清空目录**:某一轮没带附件不代表旧固件失效 —— 板子上跑的还是它,`bench.elf`
+ * 也还要靠那份 ELF 找 RTT 控制块。同名覆盖即可,那才是"新版本替换旧版本"的语义。
+ */
+async function stageIncoming(clone: string, round: number, workspace: string): Promise<string[]> {
+  const source = roundArtifactsDir(clone, round)
+  const entries = await readdir(source, { withFileTypes: true }).catch(() => [])
+  const files = entries.filter((entry) => entry.isFile())
+  if (!files.length) return []
+  const target = path.join(workspace, INCOMING_DIR)
+  await mkdir(target, { recursive: true })
+  const staged: string[] = []
+  for (const file of files) {
+    await copyFile(path.join(source, file.name), path.join(target, file.name))
+    staged.push(`${INCOMING_DIR}/${file.name}`)
+  }
+  return staged
+}
+
 /** 轮询一步。守护进程就是"pullReset → 这个函数 → 睡一觉"的循环。 */
 export async function runnerStep(options: MailboxRunnerOptions): Promise<RunnerStepOutcome> {
   const progress = (message: string) => options.onProgress?.(message)
@@ -132,18 +177,24 @@ export async function runnerStep(options: MailboxRunnerOptions): Promise<RunnerS
   if (snapshot.state.kind === "corrupt") return { kind: "blocked", detail: snapshot.state.detail }
   if (snapshot.state.kind === "empty") return { kind: "idle", detail: "信箱还没有任务(等 init)" }
   if (!snapshot.job) return { kind: "blocked", detail: "有轮次但没有 job.json —— 信箱不完整" }
+  if (snapshot.state.kind === "kickoff") return { kind: "idle", detail: "等研发端下发第一轮指令" }
 
   const mailboxJob = snapshot.job
   const job = mailboxJob.job
-  const workspace = path.resolve(job.repo.directory)
+  let workspace: string
+  try {
+    workspace = resolveWorkspace(job, options.projectDir)
+  } catch (error) {
+    return { kind: "blocked", detail: (error as Error).message }
+  }
   const state = await readLocalState(workspace, job.id)
 
   if (snapshot.state.kind === "done") {
     if (state.finalized) return { kind: "finalized", verdict: snapshot.state.verdict }
     const finalized = await finalize(options, mailboxJob, workspace, snapshot.state.verdict, progress)
     if (!finalized.ok) {
-      // 收尾的副作用(回刷/交付推送)失败不能闩死 —— 它们都幂等,交给退避循环重试。
-      // 闩死的代价是"板子留在半烧状态、没人再回刷"(正是回刷要防的事)。
+      // 收尾的副作用(回刷)失败不能闩死 —— 它幂等,交给退避循环重试。闩死的代价是
+      // "板子留在半烧状态、没人再回刷"(正是回刷要防的事)。
       return { kind: "blocked", detail: `终局收尾未完成:${finalized.detail}` }
     }
     state.finalized = true
@@ -152,7 +203,7 @@ export async function runnerStep(options: MailboxRunnerOptions): Promise<RunnerS
   }
 
   if (snapshot.state.kind === "awaiting-mother") {
-    return { kind: "idle", detail: `第 ${snapshot.state.round} 轮结果已回填,等母 agent 裁决` }
+    return { kind: "idle", detail: `第 ${snapshot.state.round} 轮结果已回填,等研发端处理` }
   }
 
   return runRound(options, mailboxJob, workspace, state, snapshot.state.instruction, snapshot.rounds, progress)
@@ -172,6 +223,7 @@ async function runRound(
   const started = now()
   const sync = syncContext(options)
   const round = instruction.round
+  const gitContext: git.GitContext = { cwd: workspace, run: options.gitRun }
 
   progress(`─── 信箱轮 ${round}/${mailboxJob.mailbox.maxRounds} ───`)
 
@@ -186,72 +238,49 @@ async function runRound(
       elapsedMs: now() - started,
     }
     await writeRoundResult(options.clone, result)
-    const pushed = await commitPush(sync, `round ${round}: runner 失败回填 —— ${error.slice(0, 80)}`)
+    const pushed = await commitPush(sync, `round ${round}: 工位端失败回填 —— ${error.slice(0, 80)}`)
     if (!pushed.pushed) return { kind: "blocked", detail: pushed.detail ?? "结果推不上去" }
     return { kind: "ran", round, error }
   }
 
-  // 本地 state 是缓存不是真相:token 计数与基线的持久副本随每轮 result 存进信箱。
-  // 本地丢了(清理 .bench、换工位机续跑)就从信箱回垫 —— 预算强制不能因为换了台机器
-  // 就归零重来(实测:不回垫的话一次丢失可以让实际花费翻倍)。
-  const hadLocalBase = Boolean(state.baseCommit)
+  // 本地 state 是缓存不是真相:token 计数的持久副本随每轮 result 存进信箱。本地丢了
+  // (清理 .bench、换工位机续跑)就从信箱回垫 —— 预算强制不能因为换了台机器就归零
+  // 重来(实测:不回垫的话一次丢失可以让实际花费翻倍)。
   const lastResult = [...rounds].reverse().find((entry) => entry.result)?.result
-  if (lastResult) {
-    if (lastResult.spentTokens > state.spentTokens) state.spentTokens = lastResult.spentTokens
-    if (!state.baseCommit && lastResult.git?.baseCommit) state.baseCommit = lastResult.git.baseCommit
-  }
+  if (lastResult && lastResult.spentTokens > state.spentTokens) state.spentTokens = lastResult.spentTokens
 
-  // 协议防线:mother 不该发出超上限的轮;真出现就如实回报,让它自己收到证据。
+  // 协议防线:研发端不该发出超上限的轮;真出现就如实回报,让它自己收到证据。
   if (round > mailboxJob.mailbox.maxRounds) {
     return finishWithError(`第 ${round} 轮超出 mailbox.maxRounds=${mailboxJob.mailbox.maxRounds},拒绝执行`)
   }
-  // 预算按**两侧合计**算 —— mother 的分析也是这份预算花出去的钱。只算自己的话,
-  // 全任务实际花费会超出 maxTokens 一整个"mother 累计"(与 mother 侧守卫口径一致)。
+  // 预算按**两侧合计**算 —— 研发端的分析也是这份预算花出去的钱。只算自己的话,
+  // 全任务实际花费会超出 maxTokens 一整个"研发端累计"(与研发端守卫口径一致)。
   const motherTokens = sumMotherTokens(rounds)
   const spentCombined = state.spentTokens + motherTokens
   if (spentCombined >= job.budget.maxTokens) {
     return finishWithError(
-      `token 预算 ${job.budget.maxTokens} 已耗尽(工位 ${state.spentTokens} + 母 agent ${motherTokens})`,
+      `token 预算 ${job.budget.maxTokens} 已耗尽(工位 ${state.spentTokens} + 研发端 ${motherTokens})`,
     )
   }
 
-  // 准备工作分支:第一轮建,后续轮确认还在(有人手动切走时要能自己回来)。
-  const gitContext: git.GitContext = { cwd: workspace, run: options.gitRun }
-  const branchName = job.repo.branch ?? `agent/${job.id}`
-  if (!hadLocalBase) {
-    // 本地没有历史(首轮,或换机/清理后的续跑):先过工位自检 —— 环境残缺时一轮
-    // 模型 token 都别烧,直接把问题回填给 mother。
-    const issue = await workspaceIssue(job, workspace, options.enginesDir)
-    if (issue) return finishWithError(`工位自检未过:${issue}`)
-    // 换机续跑的防线:信箱记着上一轮的头提交,本地必须真的有它。没有就说明这台机器
-    // 的目标仓没带着 agent 分支的历史 —— 静默"复用分支"实际是从当前 HEAD 重建,
-    // 前几轮已提交的修复会凭空蒸发,mother 会对着自相矛盾的证据继续烧预算(补审逮住过)。
-    if (lastResult?.git?.headCommit && !(await git.hasCommit(gitContext, lastResult.git.headCommit))) {
-      return finishWithError(
-        `目标仓里没有上一轮的提交 ${lastResult.git.headCommit.slice(0, 8)} —— 换机续跑要先把 ${branchName} 分支同步到这台工位机`,
-      )
-    }
-  }
-  if (!state.baseCommit) {
-    const prepared = await git.prepareBranch(gitContext, { branch: branchName, ref: job.repo.ref })
-    if (!prepared.ok) return finishWithError(`准备工作分支失败:${prepared.message}`)
-    state.baseCommit = prepared.baseCommit
-    await saveLocalState(workspace, job.id, state)
-    progress(prepared.message)
-  } else if ((await git.currentBranch(gitContext)) !== branchName) {
-    const prepared = await git.prepareBranch(gitContext, { branch: branchName })
-    if (!prepared.ok) return finishWithError(`回到工作分支失败:${prepared.message}`)
-  }
-
-  // 组提示词:mother 指令 + 上一轮判据证据(取自 runner 自己的 grade,不信转述)。
-  const previous = rounds.find((entry) => entry.round === round - 1)?.result
-  const prompt = runnerRoundPrompt(
-    instruction,
-    previous ? { grade: previous.grade, denied: previous.denied } : undefined,
-  )
+  // 环境自检每轮都做:工位机的状态会在轮与轮之间变(有人拔了探针、有人动了工作树)。
+  const issue = await workspaceIssue(job, workspace, options.enginesDir, gitContext)
+  if (issue) return finishWithError(`工位自检未过:${issue}`)
 
   await ensureBenchDir(path.join(workspace, ".bench"))
   await ensureMyPiIgnore(workspace)
+  const incoming = await stageIncoming(options.clone, round, workspace)
+  if (incoming.length) progress(`本轮附件已就位:${incoming.join("、")}`)
+
+  // 组提示词:角色说明(仅会话首轮)+ 附件清单(代码列的)+ 研发端指令 +
+  // 上一轮判据证据(取自调试台自己的 grade,不信转述)。
+  const previous = rounds.find((entry) => entry.round === round - 1)?.result
+  const prompt = runnerRoundPrompt(instruction, {
+    role: state.sessionID ? undefined : benchRolePrompt(job, INCOMING_DIR),
+    incoming,
+    previous: previous ? { grade: previous.grade, denied: previous.denied } : undefined,
+  })
+
   const input: TurnInput = {
     job,
     workspace,
@@ -261,12 +290,13 @@ async function runRound(
     sessionID: state.sessionID,
     prompt,
     maxTokens: job.budget.maxTokens,
-    // 轮内看门狗也按两侧合计:mother 花掉的部分同样压缩本轮的可用余量。
+    // 轮内看门狗也按两侧合计:研发端花掉的部分同样压缩本轮的可用余量。
     spentTokens: spentCombined,
     unattended: !options.onEscalation,
     turnEntry: options.turnEntry,
     configDir: options.configDir,
     faux: options.fauxTurns?.[round - 1],
+    role: "bench",
   }
 
   const executeTurn = (turnInput: TurnInput) =>
@@ -280,13 +310,18 @@ async function runRound(
   } catch (error) {
     if (!input.sessionID) return finishWithError(`agent 轮执行失败:${(error as Error).message}`)
     // 会话可能已不在(sessionsRoot 被清、桌面端删了会话)—— 这是可自愈的状态,
-    // 与 mother 侧同一套回退:丢掉延续重开会话再试一次,仍失败才算真失败。
+    // 与研发端同一套回退:丢掉延续重开会话再试一次,仍失败才算真失败。
     // 不回退的话,一个丢了的会话会把整个闭环打成无解释的 park(补审逮住过)。
     progress(`会话 ${input.sessionID} 打不开,重开会话再试一次`)
     state.sessionID = undefined
     await saveLocalState(workspace, job.id, state)
     try {
-      turn = await executeTurn({ ...input, sessionID: undefined })
+      // 会话重开 = 角色说明要重新带上,否则新会话不知道自己是工位端。
+      turn = await executeTurn({
+        ...input,
+        sessionID: undefined,
+        prompt: `${benchRolePrompt(job, INCOMING_DIR)}\n\n${input.prompt}`,
+      })
     } catch (retryError) {
       return finishWithError(`agent 轮执行失败(重开会话后仍失败):${(retryError as Error).message}`)
     }
@@ -296,7 +331,7 @@ async function runRound(
   state.spentTokens += turn.usage.tokens.input + turn.usage.tokens.output
   await saveLocalState(workspace, job.id, state)
 
-  // 完整决策日志与单机模式同款落盘 —— 信箱里只带被拒清单(mother 要的),
+  // 完整决策日志与单机模式同款落盘 —— 信箱里只带被拒清单(研发端要的),
   // 每一次 allow 的完整审计留在工位机(事后核"某条命令怎么被放行的"就靠它)。
   if (turn.decisions.length) {
     const decisionsLog = path.join(workspace, ".bench", "mailbox", job.id, "decisions.jsonl")
@@ -305,7 +340,11 @@ async function runRound(
     )
   }
 
-  // 判据:轮被中断(token 耗尽/超时)就不跑 —— stopReason 本身就是 mother 的证据。
+  // 工作树在轮结束时也要干净:agent 改了源码的话,接下来的判据跑的就不是研发端
+  // 提交的那份代码 —— 这是"考生自己填答题卡"的另一条路径,必须留下证据。
+  const dirty = await git.dirtyTrackedFiles(gitContext)
+
+  // 判据:轮被中断(token 耗尽/超时)就不跑 —— stopReason 本身就是研发端的证据。
   let grade: GradeResult | undefined
   if (!turn.stopReason) {
     progress("判据执行中(由调试台独立跑,不经模型)")
@@ -315,21 +354,6 @@ async function runRound(
     grade = graded.rounds[graded.rounds.length - 1]
   }
 
-  // 目标仓提交:每轮一个审计点,过没过都提交(演进过程正是 review 的价值所在)。
-  const committed = await git.commitAll(gitContext, {
-    message: `${grade?.passed ? "fix" : "wip"}: ${job.title} · 信箱轮 ${round}\n\n任务 ${job.id}(信箱闭环,指令来自 ${instruction.issuedBy})`,
-    author: { name: "yoma-bench", email: "bench@yoma.local" },
-  })
-  if (committed.committed) progress(`目标仓已提交 ${committed.commit?.slice(0, 8)}`)
-  // commit 本身坏了(gpgsign 无 pinentry、钩子缺依赖)时,diff/patch 全按已提交算,
-  // 证据链会静默退化成"没有代码改动" —— mother 会依据错误证据裁决。如实标成轮级
-  // 失败(turn/grade 仍附上,给人看),让它挂起等人修工位。
-  const commitBroken =
-    !committed.committed && committed.message !== "没有改动可提交"
-      ? `目标仓提交失败,改动证据不可信:${committed.message}`
-      : undefined
-
-  const base = state.baseCommit!
   const result: RoundResultFile = {
     round,
     sessionID: turn.sessionID,
@@ -344,20 +368,15 @@ async function runRound(
     },
     grade,
     denied: summarizeDenied(turn.decisions),
-    git: {
-      baseCommit: base,
-      headCommit: await git.headCommit(gitContext),
-      diffStat: await git.diffStat(gitContext, base),
-      changedFiles: await git.diffNameStatus(gitContext, base),
-      commits: await git.logSince(gitContext, base),
-    },
+    incoming: incoming.length ? incoming : undefined,
+    workspace: { head: await git.headCommit(gitContext), dirty },
     spentTokens: state.spentTokens,
-    error: commitBroken,
     at: new Date(started).toISOString(),
     elapsedMs: now() - started,
   }
+  if (dirty.length) progress(`⚠ 工作树被改动了(${dirty.length} 个已跟踪文件)—— 已作为证据回填`)
 
-  await writeRoundResult(options.clone, result, { patch: await git.diffPatch(gitContext, base) })
+  await writeRoundResult(options.clone, result)
   const pushed = await commitPush(
     sync,
     `round ${round}: ${grade ? (grade.passed ? "判据全过" : "判据未过") : (turn.stopReason ?? "轮被中断")}`,
@@ -367,10 +386,10 @@ async function runRound(
 }
 
 /**
- * 终局收尾 —— 硬件动作只发生在工位机,所以 push 交付分支和回刷 known-good 都在这里,
- * 而不是在写 verdict 的 mother 侧。全部动作幂等;任何一步失败都如实返回,由守护循环
- * 退避重试,绝不"失败也算收完"。收尾结果作为 finalize.json 推回信箱 —— 审计里
- * "板子回没回到已知状态、交付分支推没推出去"不能只活在一闪而过的 stderr 上。
+ * 终局收尾 —— 硬件动作只发生在工位机,所以回刷 known-good 在这里(交付 push 归研发端,
+ * 代码在它那儿)。动作幂等;失败如实返回,由守护循环退避重试,绝不"失败也算收完"。
+ * 收尾结果作为 finalize.json 推回信箱 —— 审计里"板子回没回到已知状态"不能只活在
+ * 一闪而过的 stderr 上。
  */
 async function finalize(
   options: MailboxRunnerOptions,
@@ -380,18 +399,9 @@ async function finalize(
   progress: (message: string) => void,
 ): Promise<{ ok: boolean; detail?: string }> {
   const job = mailboxJob.job
-  const gitContext: git.GitContext = { cwd: workspace, run: options.gitRun }
-  const branchName = job.repo.branch ?? `agent/${job.id}`
-  const record: { at: string; outcome: MailboxVerdict["outcome"]; delivered?: boolean; restored?: boolean } = {
+  const record: { at: string; outcome: MailboxVerdict["outcome"]; restored?: boolean } = {
     at: new Date().toISOString(),
     outcome: verdict.outcome,
-  }
-
-  if (verdict.outcome === "passed" && job.deliver?.push) {
-    const pushed = await git.pushBranch(gitContext, { branch: branchName, remote: job.deliver.remote ?? "origin" })
-    progress(pushed.ok ? pushed.message : `⚠ ${pushed.message}`)
-    if (!pushed.ok) return { ok: false, detail: `交付分支推送失败:${pushed.message}` }
-    record.delivered = true
   }
 
   if (verdict.outcome !== "passed" && job.bench.knownGoodElf && job.bench.chip) {
@@ -411,11 +421,21 @@ async function finalize(
   return { ok: true }
 }
 
-/** 与 cli 的 checkEnvironment 同一组事实,但只查文件不加载内核 —— 这是热路径上的守门。 */
-async function workspaceIssue(job: Job, workspace: string, enginesDir?: string): Promise<string | undefined> {
+/** 与 cli 的 checkEnvironment 同一组事实,但只查文件/git 状态不加载内核 —— 热路径上的守门。 */
+async function workspaceIssue(
+  job: Job,
+  workspace: string,
+  enginesDir: string | undefined,
+  gitContext: git.GitContext,
+): Promise<string | undefined> {
   if (!(await fileExists(path.join(workspace, ".git/HEAD")))) {
     const isWorktree = await fileExists(path.join(workspace, ".git"))
-    if (!isWorktree) return `${workspace} 不是 git 仓库(交付要开分支提交)`
+    if (!isWorktree) return `${workspace} 不是 git 仓库`
+  }
+  // 工作树必须等于已提交的真相:判据在这棵树上跑,树被动过判据就不再说明代码行不行。
+  const dirty = await git.dirtyTrackedFiles(gitContext)
+  if (dirty.length) {
+    return `工作树不干净(${dirty.slice(0, 5).join("、")}${dirty.length > 5 ? " 等" : ""})—— 判据要在已提交的代码上跑才有意义。先 \`git checkout .\` 或提交掉`
   }
   if (job.bench.knownGoodElf) {
     const elf = path.resolve(workspace, job.bench.knownGoodElf)

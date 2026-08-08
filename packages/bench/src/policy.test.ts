@@ -208,3 +208,62 @@ describe("matchGlob", () => {
     expect(matchGlob("**/secret.h", "secret.h")).toBe(true)
   })
 })
+
+/**
+ * 角色边界 —— 信箱闭环的分工。压在三档之上,只拒不升级:这两条不是"有人点头就能干"
+ * 的权限问题,是"这台机器上根本不该发生"。
+ */
+describe("策略 · 角色边界", () => {
+  function roleDecider(role: "dev" | "bench", overrides: Record<string, unknown> = {}) {
+    return createPolicyDecider({ job: job(overrides), workspace: WORKSPACE, role })
+  }
+
+  test("研发端碰不到硬件:flash/gdb/log 一律拒,而且是拒不是升级", () => {
+    const decide = roleDecider("dev")
+    for (const [tool, input] of [
+      ["flash", { action: "download", chip: "STM32G474RE" }],
+      ["gdb", { action: "start" }],
+      ["log", { action: "start" }],
+      ["log", { action: "start", command: "cat /dev/ttyUSB0" }],
+    ] as const) {
+      const verdict = decide(tool, input as Record<string, unknown>)
+      expect(verdict.action).toBe("deny")
+      expect(verdict.rule).toContain("dev-role")
+    }
+  })
+
+  test("研发端照常改代码、跑构建 —— 那是它的主业", () => {
+    const decide = roleDecider("dev")
+    expect(decide("write", { path: "src/main.c", content: "int x;\n" }).action).toBe("allow")
+    expect(decide("bash", { command: "cmake --build build" }).action).toBe("allow")
+    expect(decide("read", { path: "src/main.c" }).action).toBe("allow")
+  })
+
+  test("工位端不改源码:edit/write 与生成工程一律拒", () => {
+    const decide = roleDecider("bench")
+    expect(decide("write", { path: "src/main.c", content: "x" }).action).toBe("deny")
+    expect(decide("edit", { path: "src/main.c", edits: [] }).action).toBe("deny")
+    expect(decide("stm32config", { command: "generate" }).action).toBe("deny")
+    // 但查询类的 stm32config 不受影响。
+    expect(decide("stm32config", { command: "validate" }).action).toBe("allow")
+  })
+
+  test("工位端照常动硬件 —— 板子在它这儿", () => {
+    const decide = roleDecider("bench")
+    expect(decide("flash", { action: "download", chip: "STM32G474RE" }).action).toBe("allow")
+    expect(decide("gdb", { action: "start" }).action).toBe("allow")
+    expect(decide("log", { action: "start" }).action).toBe("allow")
+  })
+
+  test("不给角色(单机模式)时两边都不拦,与合库前行为一致", () => {
+    const decide = decider()
+    expect(decide("flash", { action: "download", chip: "STM32G474RE" }).action).toBe("allow")
+    expect(decide("write", { path: "src/main.c", content: "x" }).action).toBe("allow")
+  })
+
+  test("角色拒绝优先于策略档:readonly 档下研发端的硬件动作仍记角色理由", () => {
+    const verdict = roleDecider("dev", { policy: "readonly" })("flash", { action: "download" })
+    expect(verdict.action).toBe("deny")
+    expect(verdict.rule).toBe("dev-role:flash")
+  })
+})

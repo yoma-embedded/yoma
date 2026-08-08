@@ -27,17 +27,16 @@ function collect(): { events: MailboxHostEvent[]; emit: (event: MailboxHostEvent
   return { events, emit: (event) => events.push(event) }
 }
 
-async function writeJobFile(dir: string, targetDir: string, overrides: Record<string, unknown> = {}): Promise<string> {
+async function writeJobFile(dir: string, overrides: Record<string, unknown> = {}): Promise<string> {
   const file = path.join(dir, "job.json")
-  await writeFile(file, JSON.stringify(rawMailboxJob(targetDir, overrides), null, 2))
+  await writeFile(file, JSON.stringify(rawMailboxJob(overrides), null, 2))
   return file
 }
 
 describe("runMailboxHost:一次性角色", () => {
-  test("init 入箱后 status 能看到 awaiting-runner,事件全程结构化", async () => {
-    const target = await makeTargetRepo(temp)
+  test("init 入箱后 status 能看到 kickoff(第一轮归研发端),事件全程结构化", async () => {
     const { bare, motherClone } = await makeMailbox(temp)
-    const jobFile = await writeJobFile(temp.dir("job-"), target)
+    const jobFile = await writeJobFile(temp.dir("job-"))
 
     const init = collect()
     const initCode = await runMailboxHost({ role: "init", clone: motherClone, jobFile }, init.emit)
@@ -53,9 +52,10 @@ describe("runMailboxHost:一次性角色", () => {
     expect(statusCode).toBe(0)
     const snapshot = status.events.find((event) => event.type === "snapshot")
     if (snapshot?.type !== "snapshot") throw new Error("没有 snapshot 事件")
-    expect(snapshot.snapshot.state).toEqual({ kind: "awaiting-runner", round: 1 })
+    expect(snapshot.snapshot.state).toEqual({ kind: "kickoff" })
     expect(snapshot.snapshot.job?.id).toBe("m-1")
-    expect(snapshot.snapshot.rounds[0]?.instruction?.issuedBy).toBe("init")
+    // init 只放任务书 —— 一个轮次都还没有。
+    expect(snapshot.snapshot.rounds).toEqual([])
   })
 
   test("配置残缺时如实抛,不猜默认值", async () => {
@@ -68,7 +68,7 @@ describe("faux 脚本穿过真 turn-entry 子进程", () => {
   test("TurnInput.faux 让一轮不要 key 跑完,text 与工具调用如实回填", async () => {
     const workspace = await makeTargetRepo(temp)
     const input = {
-      job: rawMailboxJob(workspace),
+      job: { ...rawMailboxJob(), repo: { directory: workspace } },
       workspace,
       sessionsRoot: temp.dir("sessions-"),
       stateDir: temp.dir("state-"),
@@ -100,10 +100,10 @@ describe("faux 脚本穿过真 turn-entry 子进程", () => {
 })
 
 describe("sim 自我 spawn:假模型全闭环", () => {
-  test("两轮走到 verdict passed,改动真的落在目标仓 agent 分支上", async () => {
+  test("两轮走到 verdict passed,代码改动落在研发端的 agent 分支上", async () => {
     const target = await makeTargetRepo(temp)
     const root = temp.dir("sim-root-")
-    const jobFile = await writeJobFile(temp.dir("job-"), target, {
+    const jobFile = await writeJobFile(temp.dir("job-"), {
       success: { checks: [{ type: "bash", command: "test -f proof.txt" }] },
     })
 
@@ -112,6 +112,8 @@ describe("sim 自我 spawn:假模型全闭环", () => {
       {
         role: "sim",
         jobFile,
+        // 工程目录是本机配置,不在任务书里 —— 演练走的是和生产同一条路。
+        projectDir: target,
         root: path.join(root, "sim"),
         pollSeconds: 1,
         timeoutMin: 3,
@@ -119,16 +121,19 @@ describe("sim 自我 spawn:假模型全闭环", () => {
         configDir: temp.dir("config-"),
         hostEntry: path.join(import.meta.dir, "host-entry.ts"),
         faux: {
-          turns: [
-            // 第 1 轮:只侦察不动手 —— 判据必须失败,逼出 mother 的 continue。
-            [[{ text: "我先看了一圈,还没有改动" }]],
-            // 第 2 轮:真的用 write 工具创建判据要的文件。
-            [[{ tool: "write", input: { path: "proof.txt", content: "bench-ok\n" } }], [{ text: "已创建 proof.txt" }]],
-          ],
+          // 工位端只观察不动手(新分工下它连 write 都会被策略拒)。
+          turns: [[[{ text: "上电看了一圈,没有 proof.txt" }]], [[{ text: "研发端给的东西已就位,再看一遍" }]]],
+          // 研发端一条共享队列:开局 → 改代码(write)+ 附产物。
           mother: [
             [
               {
-                text: '第 1 轮没有改动,判据自然不过。\n```json\n{"decision":"continue","analysis":"首轮只是侦察","instruction":"用 write 工具创建 proof.txt,内容 bench-ok"}\n```',
+                text: '还没有任何证据,先让工位端看一眼。\n```json\n{"decision":"continue","analysis":"开局先取证","instruction":"看看工程根下有没有 proof.txt,把结果说回来"}\n```',
+              },
+            ],
+            [{ tool: "write", input: { path: "proof.txt", content: "bench-ok\n" } }],
+            [
+              {
+                text: '我把 proof.txt 建好了,顺手附给你。\n```json\n{"decision":"continue","analysis":"缺的就是这个文件","instruction":"东西在附件里,再验一次","artifacts":["proof.txt"]}\n```',
               },
             ],
           ],
@@ -144,14 +149,17 @@ describe("sim 自我 spawn:假模型全闭环", () => {
     // 子进程的结构化事件穿透上来了(sim 转发的 child 事件)。
     expect(events.some((event) => event.type === "child" && event.event.type === "hello")).toBe(true)
 
-    // 终局真相从模拟根里 mother 的克隆读(runSim 收尾时已对齐远端)。
+    // 终局真相从模拟根里研发端的克隆读(runSim 收尾时已对齐远端)。
     const verdict = await readVerdict(path.join(root, "sim", "mother-clone"))
     expect(verdict?.outcome).toBe("passed")
     expect(verdict?.decidedBy).toBe("policy")
 
-    // 目标仓:agent 分支上有提交,proof.txt 是被提交的(不是散落的工作区文件)。
+    // 目标仓:agent 分支上有提交,proof.txt 是被**研发端**提交的,不是散落的工作区文件。
     const show = await runGitReal(["show", "agent/m-1:proof.txt"], target)
     expect(show.ok).toBe(true)
     expect(show.stdout.trim()).toBe("bench-ok")
+
+    // 附件真的穿过了信箱,落在工位端的 incoming 目录里。
+    expect(await readFile(path.join(target, ".bench", "incoming", "proof.txt"), "utf8")).toBe("bench-ok\n")
   }, 180_000)
 })

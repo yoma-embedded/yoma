@@ -1,7 +1,8 @@
-// 调试台:信箱闭环(母 agent ↔ 工位 runner)的产品面。四个分区:配置 / 任务 / 进度 / 终报。
-// 工位与决策同一套代码,角色只影响可见动作。Node 侧全部在 Electron main
+// 调试台:信箱闭环(研发端 mother ↔ 工位端 runner)的产品面。四个分区:配置 / 任务 / 进度 / 终报。
+// 两个角色同一套代码,角色只影响可见动作。Node 侧全部在 Electron main
 // (packages/desktop/src/main/mailbox.ts),这里只消费 platform.mailbox;web 平台显示提示。
 // 判据不归模型管、任务书由模板生成 —— 描述只进 task,判据永远来自模板。
+// 任务书**不带绝对路径**:工程目录是本机事实,由配置页的"工程目录"提供。
 import { For, Match, onCleanup, onMount, Show, Switch } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useNavigate } from "@solidjs/router"
@@ -38,7 +39,7 @@ export default function BenchPage() {
     log: [] as string[],
     busy: false,
     notice: undefined as { error: boolean; text: string } | undefined,
-    form: { remote: "", role: "runner" as MailboxRoleView, branch: "", pollSeconds: "" },
+    form: { remote: "", role: "runner" as MailboxRoleView, branch: "", pollSeconds: "", projectDir: "" },
     task: { templatePath: "", description: "", tier: "standard" as Tier, title: "" },
   })
 
@@ -72,6 +73,7 @@ export default function BenchPage() {
         role: status.settings.role,
         branch: status.settings.branch ?? "",
         pollSeconds: status.settings.pollSeconds ? String(status.settings.pollSeconds) : "",
+        projectDir: status.settings.projectDir ?? "",
       })
     }
   }
@@ -111,6 +113,7 @@ export default function BenchPage() {
         role: state.form.role,
         branch: state.form.branch.trim() || undefined,
         pollSeconds: Number.isFinite(pollSeconds) && pollSeconds > 0 ? pollSeconds : undefined,
+        projectDir: state.form.projectDir.trim() || undefined,
       }),
     )
     if (!result) return
@@ -252,6 +255,15 @@ export default function BenchPage() {
                   label={(role) => t(`bench.config.role.${role}`)}
                   onSelect={(role) => role && setState("form", "role", role)}
                 />
+              </div>
+              <div class={INPUT_ROW}>
+                <span class={LABEL}>{t("bench.config.projectDir")}</span>
+                <TextInputV2
+                  value={state.form.projectDir}
+                  onInput={(event) => setState("form", "projectDir", event.currentTarget.value)}
+                  placeholder="/path/to/project"
+                />
+                <span class="text-[11px] text-v2-text-text-muted">{t("bench.config.projectDir.hint")}</span>
               </div>
               <div class="flex gap-3">
                 <div class={`${INPUT_ROW} flex-1`}>
@@ -416,6 +428,22 @@ export default function BenchPage() {
   )
 }
 
+/** 附件大小:给人看的粗粒度就够(一件通常是 1–5MB 的固件)。 */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+/** `git diff --stat` 的最后一行就是那句汇总("3 files changed, …");空 diff 时没有。 */
+function diffSummary(diffStat: string): string | undefined {
+  const lines = diffStat
+    .trim()
+    .split("\n")
+    .filter((line) => line.trim())
+  return lines.at(-1)?.trim()
+}
+
 function PhaseBadge(props: { status?: MailboxStatusView; t: (key: string) => string }) {
   const phase = () => props.status?.phase ?? "idle"
   return (
@@ -445,6 +473,9 @@ function StateBanner(props: { status?: MailboxStatusView; t: (key: string) => st
         return props.t("bench.progress.state.empty")
       case "corrupt":
         return `${props.t("bench.progress.state.corrupt")}:${current.detail}`
+      // 任务书在信箱里,但一个轮次都还没有 —— 第一轮由研发端出(init 不再代劳)。
+      case "kickoff":
+        return props.t("bench.progress.state.kickoff")
       case "awaiting-runner":
         return `${props.t("bench.progress.state.awaitingRunner")}(${props.t("bench.round")} ${current.round})`
       case "awaiting-mother":
@@ -492,11 +523,32 @@ function RoundCard(props: { round: MailboxRoundView; t: (key: string) => string;
         </details>
       </Show>
 
+      {/* 本轮附件:研发端构建出的新产物,随指令一起穿过信箱。 */}
+      <Show when={props.round.instruction?.artifacts?.length}>
+        <div class="text-[11px] text-v2-text-text-muted">
+          {t("bench.progress.artifacts")}
+          {props.round.instruction!.artifacts!.map((item) => `${item.name}(${formatBytes(item.bytes)})`).join(" · ")}
+        </div>
+      </Show>
+
       <Show when={props.round.result}>
         {(result) => (
           <div class="flex flex-col gap-2">
             <Show when={result().error}>
               <div class="text-[12px] text-v2-state-fg-danger">{result().error}</div>
+            </Show>
+            {/* 工位端不该改代码:工作树脏了就是"证据要打折"的信号,必须显眼。 */}
+            <Show when={result().workspace?.dirty.length}>
+              <div class="text-[12px] text-v2-state-fg-danger">
+                {t("bench.progress.dirty")}({result().workspace!.dirty.length}):
+                {result().workspace!.dirty.slice(0, 5).join(" ")}
+              </div>
+            </Show>
+            <Show when={result().incoming?.length}>
+              <div class="text-[11px] text-v2-text-text-muted">
+                {t("bench.progress.incoming")}
+                {result().incoming!.join(" · ")}
+              </div>
             </Show>
             <Show when={result().turn?.text}>
               <div class="max-h-[120px] overflow-y-auto whitespace-pre-wrap text-[12px] leading-[1.6] text-v2-text-text-base">
@@ -557,6 +609,16 @@ function RoundCard(props: { round: MailboxRoundView; t: (key: string) => string;
               <div class="whitespace-pre-wrap text-[12px] leading-[1.6] text-v2-text-text-muted">
                 {decision().analysis ?? decision().reason}
               </div>
+            </Show>
+            {/* 代码改动来自**研发端的裁决**(它才是改代码的一侧),不是工位端的结果。 */}
+            <Show when={decision().git}>
+              {(git) => (
+                <div class="text-[11px] text-v2-text-text-muted">
+                  {t("bench.progress.changes")}
+                  {git().changedFiles.length} · {git().headCommit.slice(0, 8)}
+                  <Show when={diffSummary(git().diffStat)}>{(summary) => <> · {summary()}</>}</Show>
+                </div>
+              )}
             </Show>
           </footer>
         )}

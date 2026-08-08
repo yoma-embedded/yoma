@@ -54,6 +54,11 @@ export interface MailboxHostConfig {
   enginesDir?: string
   /** 技能/上下文/凭据全局目录。生产不传(默认 ~/.my-pi);演练与测试传临时目录。 */
   configDir?: string
+  /**
+   * **这台机器上**的工程目录。信箱里的任务书不带绝对路径(它在别人机器上没意义),
+   * 两侧各自从本机配置拿它。runner/mother 必填(除非 job.json 自带 directory)。
+   */
+  projectDir?: string
   /** 打包态 turn 子进程入口(mailbox-turn-entry.mjs 绝对路径)。非 bun 运行时必填。 */
   turnEntry?: string
   /** sim 自我 spawn 的宿主入口。缺省 process.argv[1](host-entry 场景天然正确)。 */
@@ -74,6 +79,7 @@ export interface MailboxHostConfig {
 export type MailboxUiState =
   | { kind: "empty" }
   | { kind: "corrupt"; detail: string }
+  | { kind: "kickoff" }
   | { kind: "awaiting-runner"; round: number }
   | { kind: "awaiting-mother"; round: number }
   | { kind: "done"; verdict: MailboxVerdict }
@@ -111,6 +117,7 @@ export async function runMailboxHost(config: MailboxHostConfig, emit: EmitMailbo
   if (config.role === "sim") {
     const result = await runSim({
       jobFile: required(config.jobFile, "jobFile"),
+      projectDir: config.projectDir,
       root: config.root,
       remote: config.remote,
       branch,
@@ -137,7 +144,7 @@ export async function runMailboxHost(config: MailboxHostConfig, emit: EmitMailbo
 
   const clone = path.resolve(required(config.clone, "clone"))
   if (config.remote) await ensureClone(config.remote, clone, { branch })
-  const emitSnapshot = makeSnapshotEmitter(clone, emit)
+  const emitSnapshot = makeSnapshotEmitter(clone, emit, config.projectDir)
 
   if (config.role === "status") {
     await emitSnapshot()
@@ -156,6 +163,7 @@ export async function runMailboxHost(config: MailboxHostConfig, emit: EmitMailbo
       clone,
       branch,
       sessionsRoot: required(config.sessionsRoot, "sessionsRoot"),
+      projectDir: config.projectDir,
       enginesDir: config.enginesDir,
       configDir: config.configDir,
       turnEntry: config.turnEntry,
@@ -180,6 +188,8 @@ export async function runMailboxHost(config: MailboxHostConfig, emit: EmitMailbo
     clone,
     branch,
     sessionsRoot: required(config.sessionsRoot, "sessionsRoot"),
+    projectDir: config.projectDir,
+    enginesDir: config.enginesDir,
     configDir: config.configDir,
     resolveModels: config.faux?.mother ? fauxResolveModels(config.faux.mother) : undefined,
     pollSeconds: config.pollSeconds ?? 15,
@@ -208,7 +218,11 @@ function required<T>(value: T | undefined, name: string): T {
  * 演练与生产因此是同一条代码路径 —— 差别只剩远端是本地裸仓还是真仓库。
  */
 function selfSpawn(config: MailboxHostConfig) {
-  return (role: "runner" | "mother", clone: string, context: { root: string; branch: string; pollSeconds: number }): ChildProcess => {
+  return (
+    role: "runner" | "mother",
+    clone: string,
+    context: { root: string; branch: string; pollSeconds: number; projectDir: string },
+  ): ChildProcess => {
     const hostEntry = config.hostEntry ?? process.argv[1]
     if (!hostEntry) throw new Error("sim 自我 spawn 需要 hostEntry(process.argv[1] 不可用时必须显式传)")
     const childConfig: MailboxHostConfig = {
@@ -217,6 +231,7 @@ function selfSpawn(config: MailboxHostConfig) {
       branch: context.branch,
       pollSeconds: context.pollSeconds,
       sessionsRoot: config.sessionsRoot,
+      projectDir: context.projectDir,
       enginesDir: config.enginesDir,
       configDir: config.configDir,
       turnEntry: config.turnEntry,
@@ -248,7 +263,7 @@ function selfSpawn(config: MailboxHostConfig) {
  * 直接空转,于是"带 verdict 与终报的最后一张快照"永远发不出去,UI 停在倒数第二张。
  * force 会等在飞的那次跑完再扫一遍,保证终局状态一定送达。
  */
-function makeSnapshotEmitter(clone: string, emit: EmitMailboxEvent): (force?: boolean) => Promise<void> {
+function makeSnapshotEmitter(clone: string, emit: EmitMailboxEvent, projectDir?: string): (force?: boolean) => Promise<void> {
   let last = ""
   let inflight: Promise<void> | undefined
   const run = async (force?: boolean): Promise<void> => {
@@ -273,7 +288,7 @@ function makeSnapshotEmitter(clone: string, emit: EmitMailboxEvent): (force?: bo
               .then((text) => clip(text, REPORT_CAP))
               .catch(() => undefined)
           : undefined
-      const ui = trimSnapshot(snapshot, report)
+      const ui = trimSnapshot(snapshot, report, projectDir)
       const serialized = JSON.stringify(ui)
       if (serialized !== last) {
         last = serialized
@@ -291,13 +306,14 @@ const TEXT_CAP = 8000
 const EVIDENCE_CAP = 1500
 const REPORT_CAP = 64_000
 
-function trimSnapshot(snapshot: MailboxSnapshot, report?: string): MailboxUiSnapshot {
+function trimSnapshot(snapshot: MailboxSnapshot, report?: string, projectDir?: string): MailboxUiSnapshot {
   const job = snapshot.job
     ? {
         id: snapshot.job.job.id,
         title: snapshot.job.job.title,
-        // 观战跳转要用:会话路由是 (目录, sessionID) 二元组。
-        directory: snapshot.job.job.repo.directory,
+        // 观战跳转要用:会话路由是 (目录, sessionID) 二元组,而且必须是**本机**目录 ——
+        // 信箱里的任务书不带路径,快照是发给本机 UI 的,所以取本机配置。
+        directory: projectDir ?? snapshot.job.job.repo.directory ?? "",
         maxRounds: snapshot.job.mailbox.maxRounds,
         maxTokens: snapshot.job.job.budget.maxTokens,
         wallClockMin: snapshot.job.job.budget.wallClockMin,
@@ -325,6 +341,8 @@ function trimState(state: MailboxSnapshot["state"]): MailboxUiState {
       return { kind: "corrupt", detail: state.detail }
     case "done":
       return { kind: "done", verdict: state.verdict }
+    case "kickoff":
+      return { kind: "kickoff" }
     case "awaiting-runner":
       return { kind: "awaiting-runner", round: state.round }
     case "awaiting-mother":

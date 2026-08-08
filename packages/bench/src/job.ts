@@ -15,11 +15,22 @@
  *   变砖的组合。
  */
 
+import path from "node:path"
+
 import { readTextFile } from "./fsx.ts"
 
 export interface JobRepo {
-  /** 仓库工作树所在目录(P0 用已检出的目录;P2 起支持 url 由工位机自 clone)。 */
-  directory: string
+  /**
+   * 仓库工作树所在目录。
+   *
+   * **信箱模式下不该填** —— 一份 job.json 要在两台机器上用,而绝对路径是本机事实:
+   * 出题那台机器的 `/Users/ben/…` 在工位机上不存在。两侧守护各自从本机配置拿
+   * 工程目录(`resolveWorkspace` 的 localDir),这里留空即可。
+   * 单机模式(`bench run`)仍然填它,因为那时只有一台机器。
+   */
+  directory?: string
+  /** 工程名,给人看、也给本机配置对号入座。缺省取 job.id。 */
+  name?: string
   /** 起始 ref。给了就在准备阶段 checkout,不给就用当前 HEAD。 */
   ref?: string
   /** agent 的工作分支名,默认 `agent/<jobId>`。 */
@@ -35,13 +46,20 @@ export interface JobBench {
   probe?: string
   /** 已知能跑的固件(相对仓库根)。失败或超预算时回刷它。 */
   knownGoodElf?: string
-  /** 本任务产出的 ELF(相对仓库根),log 判据要用它找 RTT 控制块。 */
+  /**
+   * 本任务产出的 ELF(相对仓库根),log 判据要用它找 RTT 控制块。
+   *
+   * 信箱模式下研发端才有构建环境,固件是**当附件穿过信箱**过来的,工位机上落在
+   * `.bench/incoming/<原文件名>` —— 所以这里通常写 `.bench/incoming/xxx.elf`,
+   * 而不是 `build/Debug/xxx.elf`(那是研发机上的路径,工位机没有构建产物)。
+   */
   elf?: string
 }
 
 export type JobCheck =
   | { type: "build"; command: string; timeoutS?: number }
   | { type: "bash"; command: string; timeoutS?: number; expectExitCode?: number }
+  | { type: "script"; path: string; args?: string[]; timeoutS?: number; expectExitCode?: number }
   | { type: "log_wait"; pattern: string; timeoutS?: number; source?: JobLogSource }
   | { type: "log_absent"; pattern: string; windowS?: number; source?: JobLogSource }
 
@@ -136,8 +154,9 @@ export function parseJob(raw: unknown): Job {
   if (!task) issues.push("task 必填:把现象、复现步骤、期望行为讲清楚,这是 agent 唯一的任务来源")
 
   const repoRaw = isObject(raw.repo) ? raw.repo : undefined
+  // repo.directory **不再必填**:信箱模式下它是本机事实,由每台机器自己配。
+  // 单机模式缺了它会在 resolveWorkspace 那里报错,那时才知道没有本机覆盖可用。
   const directory = repoRaw ? str(repoRaw.directory) : undefined
-  if (!directory) issues.push("repo.directory 必填(仓库工作树所在目录)")
 
   const benchRaw = isObject(raw.bench) ? raw.bench : {}
   const bench: JobBench = {
@@ -179,6 +198,23 @@ export function parseJob(raw: unknown): Job {
           } as JobCheck)
         break
       }
+      case "script": {
+        const scriptPath = str(item.path)
+        if (!scriptPath) issues.push(`${at}.path 必填(相对仓库根的脚本路径,如 .bench/checks/alive.py)`)
+        else if (path.isAbsolute(scriptPath)) issues.push(`${at}.path 必须是相对仓库根的路径 —— 绝对路径是本机事实,换台机器就不存在了`)
+        else if (scriptPath.includes('"')) issues.push(`${at}.path 不能含引号`)
+        else {
+          const args = strList(item.args)
+          checks.push({
+            type: "script",
+            path: scriptPath,
+            ...(args ? { args } : {}),
+            timeoutS: num(item.timeoutS),
+            expectExitCode: num(item.expectExitCode),
+          })
+        }
+        break
+      }
       case "log_wait":
       case "log_absent": {
         const pattern = str(item.pattern)
@@ -198,7 +234,7 @@ export function parseJob(raw: unknown): Job {
         break
       }
       default:
-        issues.push(`${at}.type "${type ?? ""}" 不认识,可选:build / bash / log_wait / log_absent`)
+        issues.push(`${at}.type "${type ?? ""}" 不认识,可选:build / bash / script / log_wait / log_absent`)
     }
   }
   if (successRaw && checks.length === 0 && issues.length === 0) {
@@ -234,7 +270,8 @@ export function parseJob(raw: unknown): Job {
     id: id!,
     title,
     repo: {
-      directory: directory!,
+      directory,
+      name: str(repoRaw?.name) ?? id,
       ref: str(repoRaw?.ref),
       branch: str(repoRaw?.branch) ?? `agent/${id}`,
     },
@@ -293,6 +330,24 @@ function safeRegex(pattern: string): boolean {
   } catch {
     return false
   }
+}
+
+/**
+ * 定出这台机器上的工作树。
+ *
+ * `localDir`(本机配置)**优先于** job 里的 directory —— 这正是机器无关的支点:
+ * 任务书跨机器传,路径由收件的机器说了算。两个都没有时报错,而且要说清楚该去哪配,
+ * 否则用户看到的是后面某个 git 命令在 `undefined` 目录里失败。
+ */
+export function resolveWorkspace(job: Job, localDir?: string): string {
+  const directory = localDir?.trim() || job.repo.directory
+  if (!directory) {
+    throw new JobSpecError([
+      `这台机器上没有配 ${job.repo.name ?? job.id} 的工程目录 —— 信箱里的任务书不带绝对路径(它在别人机器上没意义)。` +
+        `在本机的调试台设置里填"工程目录",或者给单机模式的 job.json 补 repo.directory`,
+    ])
+  }
+  return path.resolve(directory)
 }
 
 export async function loadJob(file: string): Promise<Job> {

@@ -27,6 +27,8 @@ interface Harness {
   clock: number
   /** 让下一次 launch 同步抛(模拟产物缺失、路径不可写)。 */
   launchThrows?: string
+  /** 接线层的兜底工程目录(真实现里是 composeJob 从模板位置推导出来的)。 */
+  derivedProjectDir?: string
 }
 
 function makeHarness(initial?: MailboxSettings): Harness {
@@ -55,12 +57,15 @@ function makeHarness(initial?: MailboxSettings): Harness {
         harness.saved = settings
       },
     },
+    // 接线层的口径:已保存的配置优先,其次 composeJob 推导出的项目根。
+    projectDir: (settings) => settings.projectDir?.trim() || harness.derivedProjectDir,
     buildConfig: (settings, task) => ({
       role: task.kind === "init" ? "init" : task.kind,
       remote: settings.remote,
       clone: "/tmp/clone",
       jobFile: task.jobFile,
       sessionsRoot: "/tmp/sessions",
+      projectDir: settings.projectDir?.trim() || harness.derivedProjectDir,
     }),
     schedule: (fn, ms) => {
       const entry = { fn, ms, cancelled: false }
@@ -74,7 +79,7 @@ function makeHarness(initial?: MailboxSettings): Harness {
   return harness as Harness
 }
 
-const SETTINGS: MailboxSettings = { remote: "git@example.com:mail.git", role: "runner" }
+const SETTINGS: MailboxSettings = { remote: "git@example.com:mail.git", role: "runner", projectDir: "/work/fw" }
 
 function emit(harness: Harness, index: number, event: unknown): void {
   harness.launches[index]!.io.onLine(`@@event ${JSON.stringify(event)}`)
@@ -273,7 +278,48 @@ describe("审查修复", () => {
     const harness = makeHarness(SETTINGS)
     const refused = harness.controller.start({ kind: "mother" })
     expect(refused.ok).toBe(false)
-    expect(refused.ok === false && refused.message).toContain("本机角色是工位")
+    expect(refused.ok === false && refused.message).toContain("本机角色是工位端")
     expect(harness.launches).toHaveLength(0)
+  })
+})
+
+describe("本机工程目录", () => {
+  test("保存设置不拦空目录,只做 trim —— 先填远端回头再填目录是常态", () => {
+    const harness = makeHarness()
+    expect(harness.controller.configure({ remote: "git@example.com:mail.git", role: "runner" })).toEqual({ ok: true })
+    expect(harness.saved?.projectDir).toBeUndefined()
+
+    harness.controller.configure({ ...SETTINGS, projectDir: "  /work/fw  " })
+    expect(harness.saved?.projectDir).toBe("/work/fw")
+  })
+
+  test("常驻角色没配工程目录就拒绝开跑,而且说人话", () => {
+    const harness = makeHarness({ remote: "git@example.com:mail.git", role: "runner" })
+    const refused = harness.controller.start({ kind: "runner" })
+    expect(refused.ok).toBe(false)
+    expect(refused.ok === false && refused.message).toContain("工程目录")
+    expect(harness.launches).toHaveLength(0)
+    // 拦在开跑之前,所以既没起进程也没上探针锁。
+    expect(harness.locks).toEqual([])
+  })
+
+  test("演练不需要工程目录 —— 它的工作树是自己生成的一次性目标仓", () => {
+    const harness = makeHarness({ remote: "git@example.com:mail.git", role: "runner" })
+    expect(harness.controller.start({ kind: "sim", fresh: true })).toEqual({ ok: true })
+    expect(harness.launches[0]!.config.role).toBe("sim")
+  })
+
+  test("接线层推导出的项目根顶得上:出题机不用先去配置页填一遍", () => {
+    const harness = makeHarness({ remote: "git@example.com:mail.git", role: "runner" })
+    harness.derivedProjectDir = "/Users/ben/fw"
+    expect(harness.controller.start({ kind: "runner" })).toEqual({ ok: true })
+    expect(harness.launches[0]!.config.projectDir).toBe("/Users/ben/fw")
+  })
+
+  test("已保存的配置优先于推导,并且真的进了守护配置", () => {
+    const harness = makeHarness(SETTINGS)
+    harness.derivedProjectDir = "/Users/ben/fw"
+    harness.controller.start({ kind: "runner" })
+    expect(harness.launches[0]!.config.projectDir).toBe("/work/fw")
   })
 })

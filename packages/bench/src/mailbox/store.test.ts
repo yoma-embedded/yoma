@@ -3,6 +3,8 @@ import { mkdirSync, writeFileSync } from "node:fs"
 import path from "node:path"
 
 import {
+  attachArtifacts,
+  roundArtifactsDir,
   roundDir,
   scanMailbox,
   sumMotherTokens,
@@ -24,19 +26,20 @@ function result(round: number, overrides: Partial<RoundResultFile> = {}): RoundR
 }
 
 describe("mailbox store", () => {
-  test("状态由文件存在性推断:empty → awaiting-runner → awaiting-mother → done", async () => {
+  test("状态由文件存在性推断:empty → kickoff → awaiting-runner → awaiting-mother → done", async () => {
     const root = temp.dir("store-")
     expect((await scanMailbox(root)).state.kind).toBe("empty")
 
-    await writeJson(path.join(root, JOB_FILE), rawMailboxJob("/tmp/ws"))
-    expect((await scanMailbox(root)).state.kind).toBe("empty")
+    // job.json 到位而零轮次 = 等研发端开第一轮(init 不再写死第一轮指令)。
+    await writeJson(path.join(root, JOB_FILE), rawMailboxJob())
+    expect((await scanMailbox(root)).state.kind).toBe("kickoff")
 
-    await writeInstruction(root, { round: 1, prompt: "复现", issuedBy: "init", at: new Date(0).toISOString() })
+    await writeInstruction(root, { round: 1, prompt: "复现", issuedBy: "mother", at: new Date(0).toISOString() })
     const awaitingRunner = await scanMailbox(root)
     expect(awaitingRunner.state.kind).toBe("awaiting-runner")
     if (awaitingRunner.state.kind === "awaiting-runner") expect(awaitingRunner.state.round).toBe(1)
 
-    await writeRoundResult(root, result(1), { patch: "diff --git a b" })
+    await writeRoundResult(root, result(1))
     const awaitingMother = await scanMailbox(root)
     expect(awaitingMother.state.kind).toBe("awaiting-mother")
 
@@ -56,7 +59,7 @@ describe("mailbox store", () => {
 
   test("状态永远看最大的轮 —— 下发第 2 轮后回到 awaiting-runner", async () => {
     const root = temp.dir("store-")
-    await writeJson(path.join(root, JOB_FILE), rawMailboxJob("/tmp/ws"))
+    await writeJson(path.join(root, JOB_FILE), rawMailboxJob())
     await writeInstruction(root, { round: 1, prompt: "复现", issuedBy: "init", at: new Date(0).toISOString() })
     await writeRoundResult(root, result(1))
     await writeInstruction(root, { round: 2, prompt: "改 A 处", issuedBy: "mother", at: new Date(0).toISOString() })
@@ -70,7 +73,7 @@ describe("mailbox store", () => {
 
   test("损坏要报 corrupt 并说清哪里坏 —— 不抛异常打死轮询循环", async () => {
     const root = temp.dir("store-")
-    await writeJson(path.join(root, JOB_FILE), rawMailboxJob("/tmp/ws"))
+    await writeJson(path.join(root, JOB_FILE), rawMailboxJob())
     await writeInstruction(root, { round: 1, prompt: "复现", issuedBy: "init", at: new Date(0).toISOString() })
     mkdirSync(path.join(root, "rounds", "002"), { recursive: true })
     const noInstruction = await scanMailbox(root)
@@ -83,11 +86,56 @@ describe("mailbox store", () => {
     if (badJob.state.kind === "corrupt") expect(badJob.state.detail).toContain("job.json")
   })
 
-  test("patch 与 result 落在同一轮目录里", async () => {
+  test("一轮的输入是一整包:指令 + patch + 附件同住一个轮目录", async () => {
     const root = temp.dir("store-")
-    await writeRoundResult(root, result(2), { patch: "diff --git a/x b/x" })
+    const workspace = temp.dir("ws-")
+    writeFileSync(path.join(workspace, "fw.elf"), "ELF-BYTES")
+
+    const attached = await attachArtifacts(
+      root,
+      2,
+      [{ source: path.join(workspace, "fw.elf"), name: "fw.elf", from: "build/fw.elf" }],
+      1024 * 1024,
+    )
+    expect(attached.ok).toBe(true)
+    if (attached.ok) expect(attached.artifacts[0]).toEqual({ name: "fw.elf", bytes: 9, from: "build/fw.elf" })
+
+    await writeInstruction(
+      root,
+      { round: 2, prompt: "烧进去", issuedBy: "mother", at: new Date(0).toISOString() },
+      { patch: "diff --git a/x b/x" },
+    )
     expect(await Bun.file(path.join(roundDir(root, 2), "patch.diff")).text()).toContain("diff --git")
+    expect(await Bun.file(path.join(roundArtifactsDir(root, 2), "fw.elf")).text()).toBe("ELF-BYTES")
+
+    await writeRoundResult(root, result(2))
     expect(((await Bun.file(path.join(roundDir(root, 2), "result.json")).json()) as RoundResultFile).round).toBe(2)
+  })
+
+  test("附件超上限直接拒 —— 信箱是个 git 仓,塞进去就永远瘦不回来", async () => {
+    const root = temp.dir("store-")
+    const workspace = temp.dir("ws-")
+    writeFileSync(path.join(workspace, "big.bin"), "x".repeat(2048))
+    const attached = await attachArtifacts(
+      root,
+      1,
+      [{ source: path.join(workspace, "big.bin"), name: "big.bin", from: "build/big.bin" }],
+      1024,
+    )
+    expect(attached.ok).toBe(false)
+    if (!attached.ok) expect(attached.error).toContain("上限")
+  })
+
+  test("附件声明了但文件不在 —— 报错要指名道姓,不能留个空目录", async () => {
+    const root = temp.dir("store-")
+    const attached = await attachArtifacts(
+      root,
+      1,
+      [{ source: path.join(temp.dir("ws-"), "nope.elf"), name: "nope.elf", from: "build/nope.elf" }],
+      1024,
+    )
+    expect(attached.ok).toBe(false)
+    if (!attached.ok) expect(attached.error).toContain("build/nope.elf")
   })
 
   test("sumMotherTokens 只数 decision 里的用量", async () => {

@@ -29,7 +29,7 @@ import type { KernelEvent } from "@yoma-desktop/kernel"
 import type { AssistantMessage, PermissionRequest, Session, Tokens } from "@yoma-desktop/kernel"
 
 import type { Job } from "./job.ts"
-import { createPolicy } from "./policy.ts"
+import { createPolicy, type PolicyRole } from "./policy.ts"
 import type { PermissionDecision, PolicyProvider } from "@yoma-desktop/kernel/host"
 
 /** idle 之后再等这么久没有新状态,才认为一轮真的结束(躲开自动压缩的第二段)。 */
@@ -51,6 +51,8 @@ export interface TurnOptions {
   sessionID?: string
   /** 本轮要说的话。 */
   prompt: string
+  /** 信箱闭环的分工边界(见 policy.ts 的 PolicyRole)。单机模式不传。 */
+  role?: PolicyRole
   /** 权限升级的处理者。不给则一律拒绝(真无人值守且没人接的场景)。 */
   onEscalation?: (request: PermissionRequest) => Promise<"once" | "always" | "reject">
   /** 决策审计出口。 */
@@ -145,7 +147,7 @@ export async function runTurn(options: TurnOptions): Promise<TurnResult> {
    * 记录是 `by: "policy"`,rule 保留,理由里写明"没有人接管",研发一眼看得出
    * 这条路是被策略挡的、不是谁点了拒绝。
    */
-  const policy = createPolicy({ job: options.job, workspace: options.workspace })
+  const policy = createPolicy({ job: options.job, workspace: options.workspace, role: options.role })
   const effectivePolicy: PolicyProvider = options.onEscalation
     ? policy
     : async (call) => {

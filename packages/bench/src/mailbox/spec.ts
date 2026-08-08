@@ -3,17 +3,22 @@
  *
  * ## 这是什么
  *
- * 一份信箱任务 = 一份普通 bench job(目标仓、硬件、判据、预算、策略)+ 一个 `mailbox`
- * 段(轮数上限、母 agent 的模型与分析预算、轮询间隔)。两个角色共用这一份文件:
+ * 一份信箱任务 = 一份普通 bench job(工程标识、硬件、判据、预算、策略)+ 一个 `mailbox`
+ * 段(轮数上限、研发端的模型与分析预算、轮询间隔、附件上限)。两个角色共用这一份文件:
  *
- * - **runner**(工位机,连着板子):领指令 → 跑一轮 → 判据亲跑 → 回填结果;
- * - **mother**(母 agent,任何机器):读结果 → 分析 → 决定下一轮指令或终局。
+ * - **mother**(研发端,有构建环境):读结果 → 改代码 → 构建 → 把产物当附件塞进本轮 →
+ *   用大白话写指令;
+ * - **runner**(工位端,连着板子):领指令与附件 → 上板(怎么上由它自己定)→ 观察复现 →
+ *   判据由调试台亲跑 → 回填结果。
  *
  * 两边只通过一个 git 仓库(信箱)通信,不共享文件系统、不开端口。
  *
+ * **这份文件里不该出现绝对路径**:它要在两台机器上被读。工程目录是本机事实,由各自
+ * 的守护配置提供(见 `resolveWorkspace`)。
+ *
  * ## 为什么复用 Job 而不是另起一套
  *
- * 判据与策略在信箱模式下**语义不变**:判据仍由 runner 亲自跑(mother 说"通过"也
+ * 判据与策略在信箱模式下**语义不变**:判据仍由工位端调试台亲跑(研发端说"通过"也
  * 不算数),策略仍在每轮的子进程里生效。另起一套字段等于把这些不变式重新发明一遍,
  * 还会和单机模式漂移。
  *
@@ -46,6 +51,12 @@ export interface MailboxConfig {
   mother: MailboxMotherConfig
   /** 两侧守护进程的轮询间隔(秒)。CLI 的 --interval 可覆盖。 */
   pollSeconds: number
+  /**
+   * 单轮附件合计上限(字节)。信箱是个 git 仓,每轮塞一个几十 MB 的 ELF 会让它
+   * 一直长大而且永远瘦不回去(git 不忘事)。默认 32MB —— 一个带调试信息的
+   * Cortex-M 固件通常 1–5MB,留了足够余量,又拦得住"把整个 build 目录附上"。
+   */
+  maxArtifactBytes: number
 }
 
 export interface MailboxJob {
@@ -55,6 +66,7 @@ export interface MailboxJob {
 
 export const DEFAULT_MOTHER_ANALYSIS_TOKENS = 200_000
 export const DEFAULT_POLL_SECONDS = 15
+export const DEFAULT_MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -86,6 +98,9 @@ export function parseMailboxJob(raw: unknown): MailboxJob {
   const pollSeconds = num(mailboxRaw.pollSeconds) ?? DEFAULT_POLL_SECONDS
   if (pollSeconds < 1) issues.push("mailbox.pollSeconds 至少为 1")
 
+  const maxArtifactBytes = num(mailboxRaw.maxArtifactBytes) ?? DEFAULT_MAX_ARTIFACT_BYTES
+  if (maxArtifactBytes < 1) issues.push("mailbox.maxArtifactBytes 至少为 1")
+
   if (issues.length) throw new JobSpecError(issues)
 
   return {
@@ -97,6 +112,7 @@ export function parseMailboxJob(raw: unknown): MailboxJob {
         maxTokensPerAnalysis,
       },
       pollSeconds,
+      maxArtifactBytes,
     },
   }
 }

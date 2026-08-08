@@ -22,7 +22,7 @@ import { kernelSelfCheck } from "@yoma-desktop/kernel/host"
 import { fileExists } from "./fsx.ts"
 import { gradeRepeated } from "./grader.ts"
 import * as git from "./git.ts"
-import { JobSpecError, loadJob, type Job } from "./job.ts"
+import { JobSpecError, loadJob, resolveWorkspace, type Job } from "./job.ts"
 import { renderReport } from "./report.ts"
 import { runJob } from "./runner.ts"
 import { initMailbox } from "./mailbox/init.ts"
@@ -82,7 +82,7 @@ async function askHuman(request: PermissionRequest): Promise<"once" | "always" |
 
 async function checkEnvironment(job: Job, enginesDir?: string): Promise<string[]> {
   const issues: string[] = []
-  const workspace = path.resolve(job.repo.directory)
+  const workspace = resolveWorkspace(job)
 
   if (!(await fileExists(path.join(workspace, ".git/HEAD")))) {
     const isWorktree = await fileExists(path.join(workspace, ".git"))
@@ -131,7 +131,7 @@ async function commandCheck(jobFile: string): Promise<void> {
 
 async function commandGrade(jobFile: string): Promise<void> {
   const job = await loadJob(jobFile)
-  const workspace = path.resolve(job.repo.directory)
+  const workspace = resolveWorkspace(job)
   say(`${BOLD}只跑判据${RESET}(不动代码)· ${workspace}`)
 
   const graded = await gradeRepeated({
@@ -156,7 +156,7 @@ async function commandGrade(jobFile: string): Promise<void> {
 
 async function commandRun(jobFile: string, flags: Set<string>): Promise<void> {
   const job = await loadJob(jobFile)
-  const workspace = path.resolve(job.repo.directory)
+  const workspace = resolveWorkspace(job)
   const enginesDir = defaultEnginesDir()
   const sessionsRoot = defaultSessionsRoot()
   const stateDir = path.join(workspace, ".bench", "state")
@@ -256,6 +256,8 @@ interface MailboxFlags {
   once: boolean
   ask: boolean
   fresh: boolean
+  /** 本机的工程目录。信箱里的任务书不带绝对路径 —— 它在别人机器上没意义。 */
+  project?: string
 }
 
 function parseMailboxArgs(args: string[]): { positionals: string[]; flags: MailboxFlags } {
@@ -273,6 +275,7 @@ function parseMailboxArgs(args: string[]): { positionals: string[]; flags: Mailb
     else if (arg === "--branch") flags.branch = value()
     else if (arg === "--remote") flags.remote = value()
     else if (arg === "--root") flags.root = value()
+    else if (arg === "--project") flags.project = value()
     else if (arg === "--timeout-min") flags.timeoutMin = Number(value())
     else if (arg === "--once") flags.once = true
     else if (arg === "--ask") flags.ask = true
@@ -317,6 +320,7 @@ async function commandMailbox(sub: string | undefined, rest: string[]): Promise<
       clone,
       branch: flags.branch,
       sessionsRoot: defaultSessionsRoot(),
+      projectDir: flags.project,
       enginesDir: defaultEnginesDir(),
       onProgress: (message) => say(`${DIM}${message}${RESET}`),
       onEscalation: flags.ask ? askHuman : undefined,
@@ -336,6 +340,8 @@ async function commandMailbox(sub: string | undefined, rest: string[]): Promise<
       clone,
       branch: flags.branch,
       sessionsRoot: defaultSessionsRoot(),
+      projectDir: flags.project,
+      enginesDir: defaultEnginesDir(),
       onProgress: (message) => say(`${DIM}${message}${RESET}`),
       pollSeconds: await pollSecondsOf(clone, flags),
       once: flags.once,
@@ -372,8 +378,9 @@ async function commandMailbox(sub: string | undefined, rest: string[]): Promise<
     const state = snapshot.state
     if (state.kind === "done") say(`${GREEN}${BOLD}终局 ${state.verdict.outcome}${RESET} —— ${state.verdict.reason}`)
     else if (state.kind === "awaiting-runner") say(`${YELLOW}等工位机执行第 ${state.round} 轮${RESET}`)
-    else if (state.kind === "awaiting-mother") say(`${YELLOW}等母 agent 裁决第 ${state.round} 轮${RESET}`)
+    else if (state.kind === "awaiting-mother") say(`${YELLOW}等研发端处理第 ${state.round} 轮${RESET}`)
     else if (state.kind === "empty") say(`${DIM}信箱是空的(等 init)${RESET}`)
+    else if (state.kind === "kickoff") say(`${YELLOW}等研发端下发第一轮${RESET}`)
     else say(`${RED}信箱损坏:${state.detail}${RESET}`)
     return
   }
@@ -381,6 +388,7 @@ async function commandMailbox(sub: string | undefined, rest: string[]): Promise<
   if (sub === "sim") {
     const result = await runSim({
       jobFile: target,
+      projectDir: flags.project,
       root: flags.root,
       remote: flags.remote,
       branch: flags.branch,

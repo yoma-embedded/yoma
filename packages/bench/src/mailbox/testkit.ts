@@ -65,12 +65,16 @@ export async function freshClone(temp: Temp, bare: string): Promise<string> {
   return clone
 }
 
-export function rawMailboxJob(targetDir: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+/**
+ * 信箱里那份 job.json 的原文。**不带 `repo.directory`** —— 它是本机事实,
+ * 两侧各自用 `projectDir` 提供(这正是机器无关的支点)。
+ */
+export function rawMailboxJob(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: "m-1",
     title: "测试任务",
     task: "修 bug",
-    repo: { directory: targetDir },
+    repo: { name: "m-1" },
     success: { checks: [{ type: "bash", command: "true" }] },
     policy: "unattended",
     budget: { maxIterations: 3, maxTokens: 100_000, wallClockMin: 60 },

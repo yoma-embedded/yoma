@@ -35,8 +35,8 @@ export function renderMailboxReport(input: MailboxReportInput): string {
 |---|---|
 | 任务 | \`${job.id}\` |
 | 轮次 | ${verdict.rounds} / ${mailboxJob.mailbox.maxRounds} |
-| 终局裁决 | ${verdict.decidedBy === "policy" ? "确定性守卫(代码)" : "母 agent"} |
-| 用量 | 调试侧 ${verdict.totalRunnerTokens.toLocaleString()} tokens · 母 agent ${verdict.totalMotherTokens.toLocaleString()} tokens |
+| 终局裁决 | ${verdict.decidedBy === "policy" ? "确定性守卫(代码)" : "研发端"} |
+| 用量 | 工位端 ${verdict.totalRunnerTokens.toLocaleString()} tokens · 研发端 ${verdict.totalMotherTokens.toLocaleString()} tokens |
 | 板卡 | ${job.bench.board ?? "—"}${job.bench.chip ? ` (${job.bench.chip})` : ""} |
 | 权限策略 | \`${job.policy}\` |`)
 
@@ -49,9 +49,9 @@ export function renderMailboxReport(input: MailboxReportInput): string {
 
 function renderRounds(rounds: RoundFiles[]): string {
   const lines = [
-    "## 决策链(每轮:指令从哪来 → 执行结果 → 谁裁决了什么)",
+    "## 决策链(每轮:研发端给了什么 → 工位端跑出什么 → 谁裁决了什么)",
     "",
-    "| 轮 | 指令来源 | 判据 | 改动 | 裁决 |",
+    "| 轮 | 附件 | 判据 | 研发端改动 | 裁决 |",
     "|---|---|---|---|---|",
   ]
   for (const round of rounds) {
@@ -64,28 +64,37 @@ function renderRounds(rounds: RoundFiles[]): string {
         : round.result?.turn?.stopReason
           ? `⚠ ${clip(round.result.turn.stopReason, 60)}`
           : "—"
-    const changed = round.result?.git?.changedFiles.length ?? 0
+    // 改动记在**裁决**上:研发端是在裁决那一步动的代码,产出随下一轮指令发出去。
+    const changed = round.decision?.git?.changedFiles.length ?? 0
     const decision = round.decision
-      ? `${round.decision.decision}(${round.decision.by === "policy" ? "守卫" : "母 agent"})`
+      ? `${round.decision.decision}(${round.decision.by === "policy" ? "守卫" : "研发端"})`
       : "—"
-    lines.push(
-      `| ${round.round} | ${round.instruction?.issuedBy === "init" ? "init(复现轮)" : "母 agent"} | ${grade} | ${changed ? `${changed} 个文件` : "无"} | ${decision} |`,
-    )
+    const artifacts = round.instruction?.artifacts?.length
+      ? round.instruction.artifacts.map((item) => `\`${item.name}\``).join("<br>")
+      : "—"
+    lines.push(`| ${round.round} | ${artifacts} | ${grade} | ${changed ? `${changed} 个文件` : "无"} | ${decision} |`)
   }
   return lines.join("\n")
 }
 
-/** 最后一轮的两份自述:调试 agent 与母 agent,都明确标注"是它说的"。 */
+/** 最后一轮的两份自述:工位端与研发端,都明确标注"是它说的"。 */
 function renderLastWords(rounds: RoundFiles[]): string {
   const last = rounds[rounds.length - 1]
   if (!last) return ""
   const sections: string[] = []
   if (last.result?.turn?.text) {
-    sections.push(`## 调试 agent 的最后自述(未经独立验证)\n\n${quote(clip(last.result.turn.text, 2000))}`)
+    sections.push(`## 工位端的最后自述(未经独立验证)\n\n${quote(clip(last.result.turn.text, 2000))}`)
   }
   const analysed = [...rounds].reverse().find((round) => round.decision?.analysis)
   if (analysed?.decision?.analysis) {
-    sections.push(`## 母 agent 的最后分析(未经独立验证)\n\n${quote(clip(analysed.decision.analysis, 1500))}`)
+    sections.push(`## 研发端的最后分析(未经独立验证)\n\n${quote(clip(analysed.decision.analysis, 1500))}`)
+  }
+  const dirty = [...rounds].reverse().find((round) => round.result?.workspace?.dirty.length)
+  if (dirty?.result?.workspace?.dirty.length) {
+    sections.push(
+      `## ⚠ 工位机的工作树在第 ${dirty.round} 轮被改动过\n\n${dirty.result.workspace.dirty.map((file) => `- \`${file}\``).join("\n")}\n\n` +
+        `工位端不该改源码 —— 判据是在这棵被改过的树上跑的,该轮证据要打折看。`,
+    )
   }
   return sections.join("\n\n")
 }

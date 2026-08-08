@@ -69,6 +69,7 @@ const result: TurnResult = await runTurn({
   resolveModels: input.faux ? fauxResolveModels(input.faux) : undefined,
   sessionID: input.sessionID,
   prompt: input.prompt,
+  role: input.role,
   // 无人接管时**不装** handler:runTurn 会把策略的 escalate 转成 deny,
   // 审计因此记成 policy 而不是 human。装一个"注定回拒"的 handler 是在伪造裁决者。
   onEscalation: input.unattended

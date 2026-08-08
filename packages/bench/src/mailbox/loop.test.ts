@@ -1,13 +1,14 @@
 /**
- * 全协议舞步:init → runner 轮 1(判据未过)→ mother continue → runner 轮 2(判据过)
- * → 守卫终局 passed → runner 收尾。两侧各拿各的克隆,只通过裸仓说话 —— 模型与硬件
- * 全走注入位,git 全真。这是"跨机器闭环在协议层真的能转起来"的证据。
+ * 全协议舞步:init → 研发端开局下发轮 1 → 工位端轮 1(判据未过)→ 研发端改代码+附产物
+ * → 工位端轮 2(判据过)→ 守卫终局 passed → 工位端收尾。两侧各拿各的克隆,只通过裸仓
+ * 说话 —— 模型与硬件全走注入位,git 全真。这是"跨机器闭环在协议层真的能转起来"的证据。
  */
 
 import { afterEach, describe, expect, test } from "bun:test"
 import { writeFileSync } from "node:fs"
 import path from "node:path"
 
+import { runGitReal } from "../git.ts"
 import type { TurnInput } from "../runner.ts"
 import { initMailbox } from "./init.ts"
 import { motherStep } from "./mother.ts"
@@ -21,27 +22,28 @@ afterEach(() => temp.cleanup())
 
 describe("mailbox 闭环", () => {
   test("两轮修复剧本从头走到尾", async () => {
+    // 单机模拟:两个角色共用同一个工程检出(生产里是两台机器各自的检出)。
     const target = await makeTargetRepo(temp)
     const mailbox = await makeMailbox(temp)
-    const mailboxJob = parseMailboxJob(rawMailboxJob(target))
+    const mailboxJob = parseMailboxJob(rawMailboxJob())
 
-    // ── init:任务入箱,第 1 轮(复现)下发 ──
+    // ── init:只放任务书,第一轮归研发端 ──
     const initialized = await initMailbox({ clone: mailbox.motherClone, mailboxJob })
     expect(initialized.initialized).toBe(true)
 
-    // runner 侧的剧本:轮 1 只观察(判据未过),轮 2 修好(判据过)。
+    // 工位端剧本:轮 1 只观察(判据未过),轮 2 拿到新固件后判据过。
     const runnerPrompts: string[] = []
     let round = 0
     const runnerOptions = {
       clone: mailbox.runnerClone,
+      projectDir: target,
       sessionsRoot: temp.dir("sessions-"),
       runTurn: async (input: TurnInput) => {
         runnerPrompts.push(input.prompt)
         round += 1
-        if (round === 2) writeFileSync(path.join(target, "usart.c"), "// 清 ORE 后重试接收\n")
         return fakeTurn({
           sessionID: "ses-debug",
-          text: round === 1 ? "复现了:日志停在 RX overrun" : "已在中断里先清 ORE",
+          text: round === 1 ? "复现了:日志停在 RX overrun" : "烧了新固件,overrun 不再出现",
           usage: usage(1000, 200),
         })
       },
@@ -51,21 +53,39 @@ describe("mailbox 闭环", () => {
       },
     }
 
-    // mother 侧:第 1 轮证据 → continue 并给出具体指令。
+    // 研发端剧本:开局只让复现;拿到证据后改代码、"构建"出固件、附上它。
+    const motherPrompts: string[] = []
+    let analyses = 0
     const motherOptions = {
       clone: mailbox.motherClone,
+      projectDir: target,
       sessionsRoot: temp.dir("sessions-"),
-      runTurn: async () =>
-        fakeTurn({
+      runTurn: async (options: { prompt: string }) => {
+        motherPrompts.push(options.prompt)
+        analyses += 1
+        if (analyses === 1) {
+          return fakeTurn({
+            sessionID: "ses-mother",
+            text: '先看现象。\n```json\n{"decision":"continue","analysis":"还没有任何证据,先复现","instruction":"上电跑起来,把串口日志贴回来"}\n```',
+            usage: usage(3000, 400),
+          })
+        }
+        // 改代码 + 构建产物(测试里就是写两个文件),然后附上固件。
+        writeFileSync(path.join(target, "usart.c"), "// 清 ORE 后重试接收\n")
+        writeFileSync(path.join(target, "fw.elf"), "NEW-ELF")
+        return fakeTurn({
           sessionID: "ses-mother",
-          text: '证据链成立。\n```json\n{"decision":"continue","analysis":"RX overrun 与 ORE 未清吻合","instruction":"在 usart 中断里先清 ORE 再重试接收,烧录后用日志确认 overrun 消失"}\n```',
+          text: '证据链成立。\n```json\n{"decision":"continue","analysis":"RX overrun 与 ORE 未清吻合","instruction":"新固件在附件里,弄上板,再复现一次看 overrun 还在不在","artifacts":["fw.elf"]}\n```',
           usage: usage(3000, 400),
-        }),
+        })
+      },
     }
 
     // ── 舞步 ──
+    expect((await runnerStep(runnerOptions)).kind).toBe("idle") // 还没有指令,等研发端
+    expect((await motherStep(motherOptions)).kind).toBe("decided") // 开局:下发轮 1
     expect((await runnerStep(runnerOptions)).kind).toBe("ran") // 轮 1
-    expect((await motherStep(motherOptions)).kind).toBe("decided") // continue → 轮 2 下发
+    expect((await motherStep(motherOptions)).kind).toBe("decided") // 改代码 + 附固件 → 轮 2
     expect((await runnerStep(runnerOptions)).kind).toBe("ran") // 轮 2,判据过
     const done = await motherStep(motherOptions) // 守卫终局
     expect(done.kind).toBe("done")
@@ -73,10 +93,10 @@ describe("mailbox 闭环", () => {
       expect(done.verdict.outcome).toBe("passed")
       expect(done.verdict.rounds).toBe(2)
       expect(done.verdict.totalRunnerTokens).toBe(2400) // 两轮 (1000+200)×2
-      expect(done.verdict.totalMotherTokens).toBe(3400) // 一次分析 3000+400
+      expect(done.verdict.totalMotherTokens).toBe(6800) // 两次研发端轮 (3000+400)×2
       expect(done.verdict.decidedBy).toBe("policy")
     }
-    expect((await runnerStep(runnerOptions)).kind).toBe("finalized") // runner 看到 verdict 收尾退场
+    expect((await runnerStep(runnerOptions)).kind).toBe("finalized") // 工位端看到 verdict 收尾退场
 
     // ── 远端真相(全新克隆,不信任何工作副本) ──
     const verify = await freshClone(temp, mailbox.bare)
@@ -88,8 +108,21 @@ describe("mailbox 闭环", () => {
     expect(snapshot.rounds[1]!.decision?.decision).toBe("success")
     expect(snapshot.rounds[1]!.decision?.by).toBe("policy")
 
-    // 轮 2 的提示词确实是"母 agent 指令 + 上一轮证据"。
-    expect(runnerPrompts[1]).toContain("先清 ORE 再重试接收")
+    // 产物真的穿过了信箱,并落到工位端的 incoming 目录。
+    expect(snapshot.rounds[1]!.instruction?.artifacts?.[0]?.name).toBe("fw.elf")
+    expect(await Bun.file(path.join(verify, "rounds", "002", "artifacts", "fw.elf")).text()).toBe("NEW-ELF")
+    expect(snapshot.rounds[1]!.result?.incoming).toEqual([".bench/incoming/fw.elf"])
+    expect(await Bun.file(path.join(target, ".bench", "incoming", "fw.elf")).text()).toBe("NEW-ELF")
+
+    // 代码改动是**研发端**做的,提交在 agent 分支上,补丁随轮 2 的指令走。
+    expect(snapshot.rounds[1]!.decision?.git).toBeUndefined() // 轮 2 的裁决是守卫,不带改动
+    expect(snapshot.rounds[0]!.decision?.git?.changedFiles.join()).toContain("usart.c")
+    expect(await Bun.file(path.join(verify, "rounds", "002", "patch.diff")).text()).toContain("usart.c")
+    expect((await runGitReal(["rev-parse", "--abbrev-ref", "HEAD"], target)).stdout).toBe("agent/m-1")
+
+    // 轮 2 的提示词确实是"附件清单 + 研发端指令 + 上一轮证据"。
+    expect(runnerPrompts[1]).toContain(".bench/incoming/fw.elf")
+    expect(runnerPrompts[1]).toContain("弄上板")
     expect(runnerPrompts[1]).toContain("上一轮判据结果")
 
     // 终报讲的是决策链,两个会话都可回放。

@@ -27,7 +27,14 @@ export type ManualsAPI = ManualsPlatform
  * (真源是 main/mailbox-controller.ts);事件与错误全是普通对象 —— contextBridge
  * 会把 Error 剥得只剩 message。status/subscribe 的载荷 app 侧再收窄。
  */
-export type MailboxSettingsWire = { remote: string; role: "runner" | "mother"; branch?: string; pollSeconds?: number }
+export type MailboxSettingsWire = {
+  remote: string
+  role: "runner" | "mother"
+  branch?: string
+  pollSeconds?: number
+  /** 本机的工程检出目录 —— 任务书不带绝对路径,两侧各配各的。 */
+  projectDir?: string
+}
 export type MailboxTaskWire = { kind: "runner" | "mother" | "sim" | "init"; jobFile?: string; fresh?: boolean; thenStart?: boolean }
 export type MailboxComposeWire = {
   templatePath: string
@@ -41,7 +48,7 @@ export type MailboxAPI = {
   stop(): Promise<{ ok: boolean; message?: string }>
   status(): Promise<unknown>
   probe(remote: string): Promise<{ ok: boolean; message: string }>
-  composeJob(input: MailboxComposeWire): Promise<{ ok: boolean; jobFile?: string; message?: string }>
+  composeJob(input: MailboxComposeWire): Promise<{ ok: boolean; jobFile?: string; projectDir?: string; message?: string }>
   subscribe(cb: (event: unknown) => void): () => void
 }
 

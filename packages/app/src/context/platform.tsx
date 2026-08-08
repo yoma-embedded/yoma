@@ -20,7 +20,8 @@ export type MailboxPlatform = {
   stop(): Promise<{ ok: boolean; message?: string }>
   status(): Promise<MailboxStatusView>
   probe(remote: string): Promise<{ ok: boolean; message: string }>
-  composeJob(input: MailboxComposeInputView): Promise<{ ok: boolean; jobFile?: string; message?: string }>
+  /** `projectDir` 是从模板位置推导出的**本机**工程根,不进任务书 —— 本机没配时的兜底。 */
+  composeJob(input: MailboxComposeInputView): Promise<{ ok: boolean; jobFile?: string; projectDir?: string; message?: string }>
   subscribe(cb: (event: MailboxEventView) => void): () => void
 }
 

@@ -135,6 +135,7 @@ app.whenReady().then(async () => {
   {
     const userData = temp("mb-e2e-userdata-")
     const bundleDir = temp("mb-e2e-bundle-")
+    const project = temp("mb-e2e-project-")
     writeFileSync(join(bundleDir, "mailbox-host.mjs"), FAKE_DAEMON_LONG)
 
     const locks: boolean[] = []
@@ -154,12 +155,20 @@ app.whenReady().then(async () => {
       },
     })
 
-    const configured = mailbox.controller.configure({ remote: join(userData, "origin.git"), role: "runner" })
+    // 工程目录是**本机配置**(任务书里不带绝对路径),常驻角色缺了它开不了跑。
+    const configured = mailbox.controller.configure({ remote: join(userData, "origin.git"), role: "runner", projectDir: project })
     check("configure 接受本地远端", configured.ok === true, JSON.stringify(configured))
 
     const started = mailbox.controller.start({ kind: "runner" })
     check("start 接受 runner 任务", started.ok === true, JSON.stringify(started))
     check("runner 任务活跃即上探针锁", locks[0] === true, JSON.stringify(locks))
+
+    // 守护配置是真写到盘上的那一份:本机工程目录必须穿到守护那头,否则第一轮才
+    // 在守护日志里报"没配工程目录",而 UI 上看着一切正常。
+    const hostConfigFile = join(userData, "mailbox", "host-runner.json")
+    const sawHostConfig = await waitFor(() => existsSync(hostConfigFile), 5_000)
+    const hostConfig = sawHostConfig ? (JSON.parse(readFileSync(hostConfigFile, "utf8")) as { projectDir?: string }) : {}
+    check("守护配置带上了本机工程目录", hostConfig.projectDir === project, JSON.stringify(hostConfig.projectDir))
 
     const sawSnapshot = await waitFor(() =>
       events.some((event) => event.type === "host" && event.event.type === "snapshot"),
@@ -204,7 +213,7 @@ app.whenReady().then(async () => {
         },
       },
     })
-    mailbox.controller.configure({ remote: join(userData, "origin.git"), role: "runner" })
+    mailbox.controller.configure({ remote: join(userData, "origin.git"), role: "runner", projectDir: userData })
     mailbox.controller.start({ kind: "runner" })
 
     const pidFile = join(userData, "mailbox", "grandchild.pid")
@@ -242,7 +251,7 @@ app.whenReady().then(async () => {
         },
       },
     })
-    mailbox.controller.configure({ remote: join(userData, "origin.git"), role: "runner" })
+    mailbox.controller.configure({ remote: join(userData, "origin.git"), role: "runner", projectDir: userData })
     mailbox.controller.start({ kind: "runner" })
     const errored = await waitFor(() => mailbox.controller.status().phase === "error")
     const status = mailbox.controller.status()

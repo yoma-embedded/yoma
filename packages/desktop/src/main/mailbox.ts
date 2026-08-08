@@ -50,8 +50,13 @@ export interface MailboxMain {
   stopAll(graceMs?: number): Promise<void>
   /** 配置页的连通自检:git ls-remote,报错原样给人看。凭据走系统 git,这里不代管。 */
   probe(remote: string): Promise<{ ok: boolean; message: string }>
-  /** 任务页:项目模板 + 描述 + 预算档 → 生成任务书文件。判据永远来自模板。 */
-  composeJob(input: MailboxComposeInput): Promise<{ ok: boolean; jobFile?: string; message?: string }>
+  /**
+   * 任务页:项目模板 + 描述 + 预算档 → 生成任务书文件。判据永远来自模板。
+   *
+   * `projectDir` 是**本机**的工程根(从模板位置推导),不进任务书 —— 它只是这台
+   * 机器上"工程目录"没配时的兜底(出题的机器天然就是工程所在的机器)。
+   */
+  composeJob(input: MailboxComposeInput): Promise<{ ok: boolean; jobFile?: string; projectDir?: string; message?: string }>
   /** 内核进程(重)启动后重申探针锁 —— 锁状态在 main,内核只是执行者。 */
   reassertHardwareLock(): void
 }
@@ -78,10 +83,22 @@ export function createMailboxMain(options: MailboxMainOptions): MailboxMain {
   const mailboxDir = join(options.userDataDir, "mailbox")
   const children = new Map<MailboxLaunchHandle, ChildProcess>()
 
+  /**
+   * composeJob 推导出的项目根 —— 本机"工程目录"没配时的兜底。
+   *
+   * 出题的那台机器天然就是工程所在的机器(模板住在 `<项目>/.bench/` 里),所以
+   * "写描述 → 入箱并开跑"这条主路不该逼用户先去配置页填一遍路径。工位机没有这条
+   * 兜底,它必须自己配 —— 那正是机器无关任务书的代价,也是它该付的。
+   */
+  let composedProjectDir: string | undefined
+  /** 本机工程目录的唯一解析口径:已保存的配置优先,其次 composeJob 的推导。 */
+  const resolveProjectDir = (settings: MailboxSettings): string | undefined => settings.projectDir?.trim() || composedProjectDir
+
   const controller = new MailboxController({
     persistence: options.persistence,
     broadcast: options.broadcast,
     setHardwareLock: options.setHardwareLock,
+    projectDir: resolveProjectDir,
 
     launch(config, io) {
       mkdirSync(mailboxDir, { recursive: true })
@@ -148,14 +165,19 @@ export function createMailboxMain(options: MailboxMainOptions): MailboxMain {
     },
 
     buildConfig(settings, task) {
-      return buildHostConfig(settings, task, options, mailboxDir)
+      return buildHostConfig(settings, task, options, mailboxDir, resolveProjectDir(settings))
     },
   })
 
   return {
     controller,
     probe: probeRemote,
-    composeJob: (input) => composeJob(input, mailboxDir),
+    async composeJob(input) {
+      const composed = await composeJob(input, mailboxDir)
+      // 记下推导出的工程根:这台机器还没配"工程目录"时,守护就用它。
+      if (composed.ok && composed.projectDir) composedProjectDir = composed.projectDir
+      return composed
+    },
     reassertHardwareLock() {
       if (controller.hardwareLockActive()) options.setHardwareLock(true)
     },
@@ -218,8 +240,14 @@ async function probeRemote(remote: string): Promise<{ ok: boolean; message: stri
 /**
  * 模板 + 描述 + 预算档 → 任务书。深校验不在这里做 —— init 时 parseMailboxJob 会
  * 完整校验并把问题原样回给 UI(同一套报错,两处不重复实现)。
+ *
+ * 产出的任务书**不带绝对路径**:它要被推进信箱、在另一台机器上读。推导出的本机
+ * 工程根单独回给调用方(见 MailboxMain.composeJob 的注释)。
  */
-async function composeJob(input: MailboxComposeInput, mailboxDir: string): Promise<{ ok: boolean; jobFile?: string; message?: string }> {
+async function composeJob(
+  input: MailboxComposeInput,
+  mailboxDir: string,
+): Promise<{ ok: boolean; jobFile?: string; projectDir?: string; message?: string }> {
   const tier = BUDGET_TIERS[input.tier]
   if (!tier) return { ok: false, message: `预算档不认识:${String(input.tier)}` }
   if (!input.description.trim()) return { ok: false, message: "任务描述是空的 —— agent 不该猜要修什么" }
@@ -242,6 +270,12 @@ async function composeJob(input: MailboxComposeInput, mailboxDir: string): Promi
   const templateBudget = typeof template.budget === "object" && template.budget !== null ? (template.budget as Record<string, unknown>) : {}
   const templateMailbox = typeof template.mailbox === "object" && template.mailbox !== null ? (template.mailbox as Record<string, unknown>) : {}
   const templateRepo = typeof template.repo === "object" && template.repo !== null ? (template.repo as Record<string, unknown>) : {}
+  // repo.directory 被**摘掉**:任务书要在两台机器上被读,而绝对路径是本机事实
+  // (出题机的 /Users/… 在工位机上不存在)。模板真写了它,就当本机工程目录的
+  // 建议值用 —— 模板约定住在 <项目>/.bench/ 里,没写就取模板所在的项目根。
+  const { directory: templateDirectory, ...repoRest } = templateRepo as { directory?: unknown } & Record<string, unknown>
+  const projectDir =
+    typeof templateDirectory === "string" && templateDirectory.trim() ? templateDirectory.trim() : dirname(dirname(input.templatePath))
   // 模板的 task 字段是**项目级前置约束**(安全红线、目录禁区、已知现象),每个任务
   // 都带上 —— 不能指望每次描述都记得重写"电机绝不能转"这种事。
   const preamble = typeof template.task === "string" && template.task.trim() ? template.task.trim() : undefined
@@ -251,9 +285,9 @@ async function composeJob(input: MailboxComposeInput, mailboxDir: string): Promi
     id,
     title: input.title?.trim() || (typeof template.title === "string" ? template.title : "调试任务"),
     task: preamble ? `${preamble}\n\n## 本次要修的问题\n\n${description}` : description,
-    // 模板约定住在 <项目>/.bench/ 里:repo.directory 不写就取模板所在的项目根 ——
-    // 同一份模板在任何工位机上检出即用,不用每台机器手改一条绝对路径。
-    repo: { directory: dirname(dirname(input.templatePath)), ...templateRepo },
+    // 工程名默认取**模板的 id**(不是加了时间戳的任务 id):它要在两台机器上对号
+    // 入座,而"哪个工程"这件事不随每次出题变化。
+    repo: { name: baseId, ...repoRest },
     budget: { ...templateBudget, maxTokens: tier.maxTokens, wallClockMin: tier.wallClockMin },
     mailbox: { ...templateMailbox, maxRounds: tier.maxRounds },
   }
@@ -268,7 +302,7 @@ async function composeJob(input: MailboxComposeInput, mailboxDir: string): Promi
     // 契约写的,抛出去就是一个没人接的 rejection。
     return { ok: false, message: `任务书写不下去:${(error as Error).message}` }
   }
-  return { ok: true, jobFile }
+  return { ok: true, jobFile, projectDir }
 }
 
 function cloneDirFor(mailboxDir: string, remote: string, role: string): string {
@@ -281,6 +315,7 @@ function buildHostConfig(
   task: MailboxTaskRequest,
   options: MailboxMainOptions,
   mailboxDir: string,
+  projectDir?: string,
 ): MailboxHostConfig {
   const shared = {
     branch: settings.branch,
@@ -299,6 +334,9 @@ function buildHostConfig(
       pollSeconds: 2,
       // 内置演练是假模型:脚本与任务书一起生成(见 makeRehearsalJob)。
       faux: task.jobFile ? undefined : REHEARSAL_FAUX,
+      // **故意不传 projectDir**:演练的工作树是自己生成的一次性目标仓(任务书里
+      // 自带 directory)。把本机工程目录递进去,一旦 sim 哪天开始转发它,演练就会
+      // 在用户真实的工程里建分支、写文件 —— 演练必须是"不碰真东西"的。
       ...shared,
     }
   }
@@ -311,22 +349,34 @@ function buildHostConfig(
     clone: cloneDirFor(mailboxDir, settings.remote, task.kind === "init" ? settings.role : task.kind),
     jobFile: task.jobFile,
     pollSeconds: settings.pollSeconds ?? 15,
+    // 本机工程目录:任务书不带绝对路径,两侧各自从这里拿。init/status 也传 ——
+    // 快照里的 job.directory 是"打开会话观战"的跳转目标,那必须是本机路径。
+    projectDir,
     ...shared,
   }
 }
 
-/** 内置演练的假模型脚本:两轮 —— 侦察(判据失败)→ mother 裁 continue → write 修复。 */
+/**
+ * 内置演练的假模型脚本 —— 两轮,分工与生产一致:**代码归研发端,工位端只观察**。
+ *
+ * 研发端开局下指令(不改代码)→ 第 1 轮判据必然失败 → 研发端改代码(write)并下
+ * 第 2 轮 → 第 2 轮判据通过 → 守卫终局 passed。
+ *
+ * 工位端**不能**写文件:`role: "bench"` 在 bench 的 policy 里直接拒 edit/write。
+ * 所以修复动作必须由 mother 侧脚本发出 —— 它的改动由 issueInstruction 提交到项目仓
+ * 的 agent 分支上,这也正是"改动证据在研发端"的形态。
+ */
 const REHEARSAL_FAUX: MailboxHostConfig["faux"] = {
   turns: [
-    [[{ text: "我先看了一圈,还没有改动" }]],
-    [[{ tool: "write", input: { path: "proof.txt", content: "bench-ok\n" } }], [{ text: "已创建 proof.txt" }]],
+    [[{ text: "上板看了一圈:proof.txt 不在,现象复现" }]],
+    [[{ text: "换上新产物再复现一次:现象消失" }]],
   ],
   mother: [
-    [
-      {
-        text: '第 1 轮没有改动,判据自然不过。\n```json\n{"decision":"continue","analysis":"首轮只是侦察","instruction":"用 write 工具创建 proof.txt,内容 bench-ok"}\n```',
-      },
-    ],
+    [{ text: '开局先确认现状。\n```json\n{"decision":"continue","analysis":"还没有任何观测","instruction":"上板复现一次,报告现象"}\n```' }],
+    // 研发端读完第 1 轮结果:先改代码……
+    [{ tool: "write", input: { path: "proof.txt", content: "bench-ok\n" } }],
+    // ……再下第 2 轮指令(改动已在同一次 issueInstruction 里提交)。
+    [{ text: '缺的东西补上了。\n```json\n{"decision":"continue","analysis":"第 1 轮确认了缺失,已补上","instruction":"换上新产物再复现一次"}\n```' }],
   ],
 }
 

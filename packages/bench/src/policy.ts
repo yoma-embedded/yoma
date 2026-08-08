@@ -77,13 +77,34 @@ const SHELL_CHAINING = /[;&|`]|\$\(|\n/
 
 const READONLY_TOOLS = new Set(["read", "grep", "netlist", "datasheet", "log"])
 
+/**
+ * 要占用板子/探针的工具。研发端一律拒 —— `log` 也在内:它的 RTT 模式要探针,
+ * command 模式能起任意进程(串口读取器),两种都不是研发机上该发生的事。
+ */
+const HARDWARE_TOOLS = new Set(["flash", "gdb", "log"])
+
 /** gdb 的只读动作。start/break/exec/status 会控制目标运行,但不写存储;stop 是清理。 */
 const GDB_READONLY_ACTIONS = new Set(["status", "stop"])
+
+/**
+ * 角色 —— 信箱闭环的分工边界,**独立于**三档策略。
+ *
+ * - `dev`  研发端:改代码、构建、附产物。**碰不到硬件** —— 板子不在它这台机器上,
+ *   放行只会得到一堆"探针没找到"的噪声,更糟的是它可能真找到工位机之外的另一块板。
+ * - `bench` 工位端:烧录、gdb、采日志、观察。**不改源码** —— 代码归研发端,
+ *   这边动了源码就等于两处真相,而且下一轮研发端的 patch 会打在它没见过的树上。
+ * - 不给(单机模式)= 一个 agent 全干,与合库前行为一致。
+ *
+ * 角色是**拒绝**层,压在三档策略之上:角色说不行就是不行,不走升级 —— 升级意味着
+ * "有人点头就能干",而这两条边界不是权限问题,是"这台机器上根本不该发生"。
+ */
+export type PolicyRole = "dev" | "bench"
 
 export interface PolicyContext {
   job: Job
   /** 工作树根目录,edit/write 的路径必须落在里面。 */
   workspace: string
+  role?: PolicyRole
 }
 
 export interface PolicyEscalation {
@@ -123,6 +144,19 @@ export function createPolicyDecider(
 
   return (tool, input) => {
     const str = (key: string): string => (typeof input[key] === "string" ? (input[key] as string) : "")
+
+    // ── 角色边界:压在三档之上,只拒不升级(理由见 PolicyRole 的注释)。 ────────
+    if (context.role === "dev" && HARDWARE_TOOLS.has(tool)) {
+      return deny(`dev-role:${tool}`, `研发端不碰硬件 —— 板子在工位机上。把要做的动作写进给工位端的指令里`)
+    }
+    if (context.role === "bench") {
+      if (tool === "edit" || tool === "write") {
+        return deny(`bench-role:${tool}`, "工位端不改源码 —— 代码归研发端。要改就把现象报回去,让研发端改完把新产物附过来")
+      }
+      if (tool === "stm32config" && str("command") === "generate") {
+        return deny("bench-role:stm32config.generate", "生成驱动工程会往工作树写一整套代码,那是研发端的事")
+      }
+    }
 
     // 只读工具:放行 —— 但 log 的 command 模式能起任意进程,必须单独判,而且要在
     // readonly 早退**之前**判掉:白名单里的 python/node 足以执行任意代码,让它从

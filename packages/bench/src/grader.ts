@@ -26,6 +26,7 @@
 import { spawn, type ChildProcess } from "node:child_process"
 import path from "node:path"
 
+import { resolveScriptArgv } from "./interpreter.ts"
 import {
   DEFAULT_BUILD_TIMEOUT_S,
   DEFAULT_CHECK_TIMEOUT_S,
@@ -77,7 +78,15 @@ export interface RunOutcome {
   spawnError?: string
 }
 
-export type RunCommand = (command: string, options: { cwd: string; timeoutMs: number }) => Promise<RunOutcome>
+/**
+ * `command` 始终是给人看的那一行(报告、证据、测试断言都认它);`argv` 在有的时候是
+ * **权威的**执行形态。script 判据走这条路 —— 解释器与脚本路径由本机解析出来,
+ * 再拼回字符串又切一次只会白白引入引号规则(路径带空格是常态)。
+ */
+export type RunCommand = (
+  command: string,
+  options: { cwd: string; timeoutMs: number; argv?: string[]; env?: Record<string, string> },
+) => Promise<RunOutcome>
 
 export interface CaptureOutcome {
   /** 命中的那一行(log_wait 用)。 */
@@ -101,6 +110,37 @@ export type CaptureLog = (options: {
 
 /** 证据上限:够看清问题,又不至于把上下文吃光。 */
 const EVIDENCE_CHARS = 4000
+
+/**
+ * 判据进程的环境契约。
+ *
+ * 判据脚本要跨机器跑,可它总得知道 probe-rs 在哪、烧的是哪块芯片、哪个 ELF ——
+ * 而这些一半是本机事实(引擎路径),一半是任务事实(芯片/探针/固件)。写死在脚本里
+ * 就是把出题人那台机器钉进了判据(实测:`PROBE_RS = "/Users/ben/.../engines/bin/probe-rs"`
+ * 在 Windows 工位上必炸,而报错长得像"没插板子")。所以由调试台在**执行时**注入:
+ *
+ * | 变量 | 含义 |
+ * |---|---|
+ * | `YOMA_PROBE_RS` | probe-rs 可执行文件的完整路径(Windows 上已带 .exe) |
+ * | `YOMA_ENGINES_DIR` | 引擎目录(别的引擎二进制在 `<它>/bin/` 下) |
+ * | `YOMA_WORKSPACE` | 工程根的绝对路径(判据的 cwd 也是它) |
+ * | `YOMA_CHIP` / `YOMA_PROBE` | job.bench 里声明的芯片名与探针选择器 |
+ * | `YOMA_ELF` / `YOMA_KNOWN_GOOD_ELF` | 相对工程根的固件路径 |
+ *
+ * 脚本读不到时该有自己的兜底(单独手跑也要能用),但**别把绝对路径写死**。
+ */
+function checkEnv(job: Job, workspace: string, enginesDir?: string): Record<string, string> {
+  const env: Record<string, string> = { YOMA_WORKSPACE: workspace }
+  if (enginesDir) {
+    env.YOMA_ENGINES_DIR = enginesDir
+    env.YOMA_PROBE_RS = path.join(enginesDir, "bin", exe("probe-rs"))
+  }
+  if (job.bench.chip) env.YOMA_CHIP = job.bench.chip
+  if (job.bench.probe) env.YOMA_PROBE = job.bench.probe
+  if (job.bench.elf) env.YOMA_ELF = job.bench.elf
+  if (job.bench.knownGoodElf) env.YOMA_KNOWN_GOOD_ELF = job.bench.knownGoodElf
+  return env
+}
 
 /**
  * 在飞的判据子进程登记表 + 信号转杀。
@@ -134,6 +174,7 @@ export async function grade(options: GradeOptions): Promise<GradeResult> {
   const { job, workspace } = options
   const run = options.runCommand ?? runCommandReal
   const capture = options.captureLog ?? captureLogReal
+  const env = checkEnv(job, workspace, options.enginesDir)
   const checks: CheckResult[] = []
   let hasEnvironmentError = false
 
@@ -142,7 +183,7 @@ export async function grade(options: GradeOptions): Promise<GradeResult> {
     options.onProgress?.(`构建:${job.success.build}`)
     build = await runCommandCheck(
       { type: "build", command: job.success.build, timeoutS: job.success.buildTimeoutS },
-      { run, workspace },
+      { run, workspace, env },
     )
     if (build.outcome === "error") hasEnvironmentError = true
     if (build.outcome !== "pass") {
@@ -158,8 +199,8 @@ export async function grade(options: GradeOptions): Promise<GradeResult> {
   for (const check of job.success.checks) {
     options.onProgress?.(describeCheck(check))
     const result =
-      check.type === "build" || check.type === "bash"
-        ? await runCommandCheck(check, { run, workspace })
+      check.type === "build" || check.type === "bash" || check.type === "script"
+        ? await runCommandCheck(check, { run, workspace, env })
         : await logCheck(check, { capture, workspace, job, enginesDir: options.enginesDir })
     if (result.outcome === "error") hasEnvironmentError = true
     checks.push(result)
@@ -191,6 +232,8 @@ function describeCheck(check: JobCheck): string {
     case "build":
     case "bash":
       return `检查:${check.command}`
+    case "script":
+      return `检查:${[check.path, ...(check.args ?? [])].join(" ")}`
     case "log_wait":
       return `检查:等待日志 /${check.pattern}/`
     case "log_absent":
@@ -202,14 +245,53 @@ function skipped(check: JobCheck, why: string): CheckResult {
   return { check, outcome: "skip", summary: why, evidence: "", elapsedMs: 0 }
 }
 
+type CommandCheck = Extract<JobCheck, { type: "build" | "bash" | "script" }>
+
+/**
+ * script 判据的执行形态:解释器由**本机**解析(见 interpreter.ts),脚本路径必须
+ * 落在工作树内 —— 判据是从信箱里来的,允许它指向工作树外等于把"跑什么"的决定
+ * 交还给了出题的那台机器。
+ */
+function scriptPlan(
+  check: Extract<JobCheck, { type: "script" }>,
+  workspace: string,
+): { ok: true; command: string; argv: string[] } | { ok: false; error: string } {
+  const absolute = path.resolve(workspace, check.path)
+  const relative = path.relative(workspace, absolute)
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    return { ok: false, error: `判据脚本 ${check.path} 落在工作树之外` }
+  }
+  const resolved = resolveScriptArgv(absolute, check.args ?? [])
+  if (!resolved.ok) return { ok: false, error: resolved.error }
+  // 展示用的一行:相对路径,人一眼能对上 job 里写的那条。
+  const shown = [...resolved.argv.slice(0, resolved.argv.length - 1 - (check.args?.length ?? 0)), check.path, ...(check.args ?? [])]
+  return { ok: true, command: shown.join(" "), argv: resolved.argv }
+}
+
 async function runCommandCheck(
-  check: Extract<JobCheck, { type: "build" | "bash" }>,
-  context: { run: RunCommand; workspace: string },
+  check: CommandCheck,
+  context: { run: RunCommand; workspace: string; env?: Record<string, string> },
 ): Promise<CheckResult> {
   const started = Date.now()
   const defaultTimeout = check.type === "build" ? DEFAULT_BUILD_TIMEOUT_S : DEFAULT_CHECK_TIMEOUT_S
   const timeoutMs = (check.timeoutS ?? defaultTimeout) * 1000
-  const outcome = await context.run(check.command, { cwd: context.workspace, timeoutMs })
+
+  let command: string
+  let argv: string[] | undefined
+  if (check.type === "script") {
+    const plan = scriptPlan(check, context.workspace)
+    if (!plan.ok) {
+      // 解释器/脚本本身的问题是**环境**问题:回填给 mother 的话要指向这台机器,
+      // 否则它会开始"修"一个根本不存在的代码 bug(文件头那三种失败的分野)。
+      return { check, outcome: "error", summary: plan.error, evidence: "", elapsedMs: Date.now() - started }
+    }
+    command = plan.command
+    argv = plan.argv
+  } else {
+    command = check.command
+  }
+
+  const outcome = await context.run(command, { cwd: context.workspace, timeoutMs, argv, env: context.env })
   const elapsedMs = Date.now() - started
   const evidence = clip(joinStreams(outcome))
 
@@ -217,7 +299,7 @@ async function runCommandCheck(
     return {
       check,
       outcome: "error",
-      summary: `命令起不来:${outcome.spawnError} —— 这是环境问题,不是代码问题${spawnHint(check.command)}`,
+      summary: `命令起不来:${outcome.spawnError} —— 这是环境问题,不是代码问题${spawnHint(command)}`,
       evidence,
       elapsedMs,
     }
@@ -225,17 +307,17 @@ async function runCommandCheck(
   if (outcome.timedOut) {
     return { check, outcome: "error", summary: `命令超过 ${timeoutMs / 1000}s 未结束`, evidence, elapsedMs }
   }
-  const expected = check.type === "bash" ? (check.expectExitCode ?? 0) : 0
+  const expected = check.type === "build" ? 0 : (check.expectExitCode ?? 0)
   if (outcome.exitCode !== expected) {
     return {
       check,
       outcome: "fail",
-      summary: `退出码 ${outcome.exitCode}(期望 ${expected}):${check.command}`,
+      summary: `退出码 ${outcome.exitCode}(期望 ${expected}):${command}`,
       evidence,
       elapsedMs,
     }
   }
-  return { check, outcome: "pass", summary: `通过:${check.command}`, evidence, elapsedMs }
+  return { check, outcome: "pass", summary: `通过:${command}`, evidence, elapsedMs }
 }
 
 async function logCheck(
@@ -326,14 +408,19 @@ function clip(text: string, limit = EVIDENCE_CHARS): string {
  * 判据里写 `make -j8` 是一条命令,不是一段脚本 —— 过 shell 就等于允许判据自己
  * 拼出第二个语义,而且 Windows 工位上没有 sh。要管道请写成一个脚本文件再调它。
  */
-export const runCommandReal: RunCommand = async (command, { cwd, timeoutMs }) => {
-  const argv = splitArgv(command)
+export const runCommandReal: RunCommand = async (command, { cwd, timeoutMs, argv: given, env }) => {
+  const argv = given ?? splitArgv(command)
   if (!argv.length) return { exitCode: null, stdout: "", stderr: "", timedOut: false, spawnError: "命令为空" }
 
   return new Promise<RunOutcome>((resolve) => {
     let child: ChildProcess
     try {
-      child = spawn(argv[0]!, argv.slice(1), { cwd, stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32" })
+      child = spawn(argv[0]!, argv.slice(1), {
+        cwd,
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: process.platform !== "win32",
+        env: env ? { ...process.env, ...env } : process.env,
+      })
     } catch (error) {
       resolve({ exitCode: null, stdout: "", stderr: "", timedOut: false, spawnError: (error as Error).message })
       return

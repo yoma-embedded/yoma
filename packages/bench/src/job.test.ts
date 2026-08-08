@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import { JobSpecError, parseJob } from "./job.ts"
+import { JobSpecError, parseJob, resolveWorkspace } from "./job.ts"
 
 function base(overrides: Record<string, unknown> = {}) {
   return {
@@ -42,14 +42,22 @@ describe("parseJob · 必填", () => {
     expect(issuesOf(base({ id: "j 1; rm -rf /" }))[0]).toContain("只能含字母数字")
   })
 
-  test("task 与 repo.directory 必填", () => {
+  test("task 必填", () => {
     expect(issuesOf(base({ task: "  " }))[0]).toContain("task 必填")
-    expect(issuesOf(base({ repo: {} }))[0]).toContain("repo.directory 必填")
+  })
+
+  test("repo.directory 不再必填 —— 信箱模式下它是本机事实,由收件的机器提供", () => {
+    const job = parseJob(base({ repo: {} }))
+    expect(job.repo.directory).toBeUndefined()
+    expect(job.repo.name).toBe("j-1")
+    // 但真要用工作树时必须有人给,报错要说清去哪配。
+    expect(() => resolveWorkspace(job)).toThrow(/工程目录/)
+    expect(resolveWorkspace(job, "/tmp/ws")).toBe("/tmp/ws")
   })
 })
 
 describe("parseJob · 判据", () => {
-  test("认识四种检查类型", () => {
+  test("认识五种检查类型", () => {
     const job = parseJob(
       base({
         bench: { chip: "STM32G474RE", knownGoodElf: "g.elf" },
@@ -60,11 +68,18 @@ describe("parseJob · 判据", () => {
             { type: "log_wait", pattern: "PASS" },
             { type: "log_absent", pattern: "HardFault", windowS: 5 },
             { type: "build", command: "make flash" },
+            { type: "script", path: ".bench/checks/alive.py", args: ["--port", "COM3"] },
           ],
         },
       }),
     )
-    expect(job.success.checks.map((c) => c.type)).toEqual(["bash", "log_wait", "log_absent", "build"])
+    expect(job.success.checks.map((c) => c.type)).toEqual(["bash", "log_wait", "log_absent", "build", "script"])
+    expect(job.success.checks[4]).toMatchObject({ path: ".bench/checks/alive.py", args: ["--port", "COM3"] })
+  })
+
+  test("script 判据不许写绝对路径 —— 那是本机事实,换台机器就不存在", () => {
+    const issues = issuesOf(base({ success: { checks: [{ type: "script", path: "/Users/ben/x.py" }] } }))
+    expect(issues[0]).toContain("相对仓库根")
   })
 
   test("非法正则要在开跑前说清楚,而不是跑到一半炸", () => {
@@ -117,7 +132,7 @@ describe("parseJob · 预算与策略", () => {
 
 describe("parseJob · 报错质量", () => {
   test("一次报出全部问题,而不是一次一个", () => {
-    const issues = issuesOf({ id: "bad id", success: { checks: [] } })
+    const issues = issuesOf({ id: "bad id", success: { checks: [{ type: "nope" }] } })
     expect(issues.length).toBeGreaterThan(2)
   })
 

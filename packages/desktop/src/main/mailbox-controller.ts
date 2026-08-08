@@ -22,10 +22,15 @@ export type MailboxTaskKind = MailboxRole | "sim" | "init"
 export interface MailboxSettings {
   /** 信箱 git 远端(私有仓 URL 或本地裸仓路径)。凭据走系统 git,桌面端不代管。 */
   remote: string
-  /** 本机角色:工位(连板子)或决策(跑母 agent)。 */
+  /** 本机角色:工位端(连板子、只观察)或研发端(改代码、出指令)。 */
   role: MailboxRole
   branch?: string
   pollSeconds?: number
+  /**
+   * **这台机器上**的工程检出目录。信箱里的任务书不带绝对路径(它在别人机器上没
+   * 意义),两侧各自配自己的位置 —— 这是"同一份任务书跨 Mac/Windows"的支点。
+   */
+  projectDir?: string
 }
 
 export interface MailboxTaskRequest {
@@ -77,6 +82,12 @@ export interface MailboxControllerDeps {
   persistence: { get(): MailboxSettings | undefined; set(settings: MailboxSettings): void }
   /** 把任务请求补全成守护配置(clone 目录、bundle 路径这些只有接线层知道)。 */
   buildConfig(settings: MailboxSettings, task: MailboxTaskRequest): MailboxHostConfig
+  /**
+   * 本机工程目录的**实际取值**(接线层的口径:已保存的配置 → composeJob 推导的
+   * 项目根)。开跑前的护栏要问它而不是直接读 settings —— 出题的机器往往没手填过
+   * 这一项,而它有推导出来的兜底,拿 settings 判就会把主路拦死。
+   */
+  projectDir?(settings: MailboxSettings): string | undefined
   now?(): number
   /** 定时器注入(测试拨快钟)。返回取消函数。 */
   schedule?(fn: () => void, ms: number): () => void
@@ -144,13 +155,22 @@ export class MailboxController {
     return this.lockActive
   }
 
+  /** 本机工程目录的实际取值。没注入解析器时就是已保存的那一项。 */
+  private effectiveProjectDir(): string | undefined {
+    const settings = this.settings
+    if (!settings) return undefined
+    return (this.deps.projectDir?.(settings) ?? settings.projectDir)?.trim() || undefined
+  }
+
   configure(settings: MailboxSettings): { ok: true } | { ok: false; message: string } {
     if (!settings.remote?.trim()) return { ok: false, message: "信箱远端不能为空" }
     if (settings.role !== "runner" && settings.role !== "mother") return { ok: false, message: `角色不认识:${String(settings.role)}` }
     if (this.phase === "running" || this.phase === "stopping") {
       return { ok: false, message: "任务进行中,先停止再改配置 —— 换信箱等于换任务" }
     }
-    this.settings = { ...settings, remote: settings.remote.trim() }
+    // projectDir **不在这里拦**:保存设置是个随手动作(先填远端、回头再填目录),
+    // 拦在这一步等于逼人一次填全。真正需要它的时刻是开跑,护栏压在 start()。
+    this.settings = { ...settings, remote: settings.remote.trim(), projectDir: settings.projectDir?.trim() || undefined }
     this.deps.persistence.set(this.settings)
     this.pushStatus()
     return { ok: true }
@@ -164,13 +184,24 @@ export class MailboxController {
     if (request.kind === "init" && !request.jobFile) {
       return { ok: false, message: "init 需要任务书(jobFile)" }
     }
-    // 角色必须与配置一致:工位机上误起决策守护(或反过来)会得到一个对着同一个
+    // 角色必须与配置一致:工位机上误起研发端守护(或反过来)会得到一个对着同一个
     // 信箱说错话的进程,而症状是"任务一直没人执行"这种很难归因的安静失败。
     if ((request.kind === "runner" || request.kind === "mother") && this.settings && this.settings.role !== request.kind) {
-      const label = (role: MailboxRole) => (role === "runner" ? "工位" : "决策")
+      const label = (role: MailboxRole) => (role === "runner" ? "工位端" : "研发端")
       return {
         ok: false,
         message: `本机角色是${label(this.settings.role)},不能起${label(request.kind)}守护 —— 去配置页改角色再来`,
+      }
+    }
+    // 常驻角色要在**本机**的工程检出上干活,而任务书里没有路径。缺了就在这里说
+    // 人话:不然守护起得来、轮询也在跑,直到第一轮才在守护日志里报"没配工程目录"。
+    if (request.kind === "runner" || request.kind === "mother") {
+      const projectDir = this.effectiveProjectDir()
+      if (!projectDir) {
+        return {
+          ok: false,
+          message: "这台机器上还没配工程目录 —— 去配置页填「工程目录(本机)」。信箱里的任务书不带绝对路径,它在别人机器上没意义,所以每台机器各配各的",
+        }
       }
     }
     const now = (this.deps.now ?? Date.now)()

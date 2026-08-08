@@ -6,29 +6,35 @@
  * ```
  * <信箱根>/
  *   job.json                    总任务书(MailboxJob 原文)
- *   rounds/001/instruction.json mother → runner:本轮指令
- *   rounds/001/result.json      runner → mother:轮结果(最后写 —— 它的存在 = 本轮完成)
- *   rounds/001/patch.diff       相对基线的完整补丁(母 agent 看代码改动的唯一途径)
- *   rounds/001/decision.json    本轮裁决(mother 或确定性守卫)
+ *   rounds/001/instruction.json 研发端 → 工位端:本轮指令(自然语言)
+ *   rounds/001/artifacts/*      研发端 → 工位端:本轮附件(新构建的固件、脚本…)
+ *   rounds/001/patch.diff       研发端为本轮做的代码改动(审计与终报用)
+ *   rounds/001/result.json      工位端 → 研发端:轮结果(最后写 —— 它的存在 = 本轮完成)
+ *   rounds/001/decision.json    本轮裁决(研发端 mother 或确定性守卫)
  *   verdict.json                终局(出现即整个任务结束)
  *   report.md                   终报(与 verdict 同一次提交写入)
  * ```
+ *
+ * **一轮的输入是一整包**:指令 + 附件 + 补丁同住 `rounds/NNN/`,同一次提交推出去。
+ * 附件是这条邮路的重点 —— 研发端改完代码自己构建,把产物塞进 `artifacts/`,
+ * 用大白话告诉工位端"有新固件,烧进去然后复现 X";怎么上板(probe 烧录 / OTA /
+ * 别的)由工位端那个 agent 自己定,协议里不预设机制。
  *
  * ## 状态是**推断**出来的,不落盘
  *
  * 没有 state.json:状态 = "最大的一个有 instruction 的轮次处在哪一步"。单独维护一份
  * 状态文件意味着它可能和轮次文件失配,而失配时该信谁没有答案。文件的存在性本身就是
- * 状态机:instruction 有而 result 无 → 等 runner;result 有而 decision 无 → 等 mother;
- * verdict 有 → 结束。
+ * 状态机:一个轮次都没有 → 等研发端开第一轮(kickoff);instruction 有而 result 无
+ * → 等工位端;result 有而 decision 无 → 等研发端裁决;verdict 有 → 结束。
  *
  * ## 写入顺序即协议
  *
- * runner 一轮的产物里 **result.json 必须最后写**;mother 的 decision + 下轮 instruction
- * 必须**同一次提交**。配合 sync.ts 的 pullReset(工作树永远等于远端已推的真相),
+ * 工位端一轮的产物里 **result.json 必须最后写**;研发端的 decision + 下轮 instruction
+ * + 附件必须**同一次提交**。配合 sync.ts 的 pullReset(工作树永远等于远端已推的真相),
  * 崩溃在任何一步都只会退回"重跑本步",不会出现两边看到的状态互相矛盾。
  */
 
-import { mkdir, readdir, writeFile } from "node:fs/promises"
+import { copyFile, mkdir, readdir, stat, writeFile } from "node:fs/promises"
 import path from "node:path"
 
 import type { PermissionDecision } from "@yoma-desktop/kernel/host"
@@ -39,11 +45,22 @@ import type { GradeResult } from "../grader.ts"
 import type { TurnUsage } from "../turn.ts"
 import { parseMailboxJob, type MailboxJob } from "./spec.ts"
 
+/** 一件附件。`bytes` 由写入端记下,收件端可以据此核对自己拿到的是不是同一份。 */
+export interface RoundArtifact {
+  /** 文件名(不含目录),就是 `artifacts/` 下的那个名字。 */
+  name: string
+  bytes: number
+  /** 研发端仓库里的来源路径,给人看("这个 elf 是哪儿来的")。 */
+  from?: string
+}
+
 export interface RoundInstruction {
   round: number
-  /** 交给调试 agent 的完整指令文本。runner 会在其后自动附上上一轮判据证据。 */
+  /** 交给工位端 agent 的完整指令文本。收件端会在其后自动附上附件清单与上一轮判据证据。 */
   prompt: string
   issuedBy: "init" | "mother"
+  /** 本轮随指令一起穿过来的附件(内容在同目录的 `artifacts/` 下)。 */
+  artifacts?: RoundArtifact[]
   at: string
 }
 
@@ -58,6 +75,7 @@ export interface RoundTurnSummary {
   elapsedMs: number
 }
 
+/** 研发端在项目仓里为某一轮做的代码改动。相对任务基线,累计。 */
 export interface RoundGit {
   baseCommit: string
   headCommit: string
@@ -66,15 +84,26 @@ export interface RoundGit {
   commits: string[]
 }
 
+/**
+ * 工位端仓库的状态。新分工下工位端**不改代码**,所以它既不开分支也不提交 ——
+ * 但要如实报告:`dirty` 非空说明那边的 agent 动了工作树,这是证据不是小事。
+ */
+export interface RoundWorkspace {
+  head: string
+  dirty: string[]
+}
+
 export interface RoundResultFile {
   round: number
   sessionID?: string
   turn?: RoundTurnSummary
   grade?: GradeResult
-  /** 只带被拒的裁决 —— mother 要知道哪些路 agent 走不通。 */
+  /** 只带被拒的裁决 —— 研发端要知道哪些路工位端 agent 走不通。 */
   denied: { tool: string; title: string; rule?: string }[]
-  git?: RoundGit
-  /** runner 侧跨轮累计的 token(含本轮)。预算强制的输入。 */
+  /** 本轮附件在工位机上被放到了哪儿(相对仓库根),由调试台落盘、不经模型。 */
+  incoming?: string[]
+  workspace?: RoundWorkspace
+  /** 工位端跨轮累计的 token(含本轮)。预算强制的输入。 */
   spentTokens: number
   /** 轮级失败(环境没过、子进程没产出结果)。有它时 turn/grade 可能缺失。 */
   error?: string
@@ -88,15 +117,17 @@ export interface RoundDecision {
   round: number
   /**
    * 裁决者。`policy` = 确定性守卫(判据通过、预算耗尽、环境错误)—— 代码定的,
-   * 不是模型;`mother` = 母 agent 真判断过。审计不能伪造裁决者,这里同理。
+   * 不是模型;`mother` = 研发端 agent 真判断过。审计不能伪造裁决者,这里同理。
    */
   by: "mother" | "policy"
   decision: DecisionKind
-  /** mother 的分析自述(policy 裁决时缺省)。 */
+  /** 研发端的分析自述(policy 裁决时缺省)。 */
   analysis?: string
   reason?: string
   usage?: TurnUsage
   motherSessionID?: string
+  /** 研发端为下一轮做的代码改动(它自己提交的)。 */
+  git?: RoundGit
   at: string
 }
 
@@ -119,6 +150,8 @@ export interface RoundFiles {
 
 export type MailboxState =
   | { kind: "done"; verdict: MailboxVerdict }
+  /** job.json 在,一个轮次都还没有 —— 等研发端开第一轮(它可能要先改代码、先构建)。 */
+  | { kind: "kickoff" }
   | { kind: "awaiting-runner"; round: number; instruction: RoundInstruction }
   | { kind: "awaiting-mother"; round: number; instruction: RoundInstruction; result: RoundResultFile }
   | { kind: "empty" }
@@ -148,19 +181,69 @@ export async function writeJson(file: string, value: unknown): Promise<void> {
   await writeFile(file, JSON.stringify(value, null, 2) + "\n")
 }
 
-export async function writeInstruction(root: string, instruction: RoundInstruction): Promise<void> {
-  await writeJson(path.join(roundDir(root, instruction.round), "instruction.json"), instruction)
+export function roundArtifactsDir(root: string, round: number): string {
+  return path.join(roundDir(root, round), "artifacts")
 }
 
-/** patch/报告等旁证先落盘,result.json 最后写 —— 它的存在就是"本轮完成"的信号。 */
-export async function writeRoundResult(
+/**
+ * 把研发端的产物拷进本轮的 `artifacts/`。
+ *
+ * 拷贝由**代码**做,不是 agent 自己往信箱目录里写:研发端 agent 的工作区是项目仓,
+ * 它只在决定里声明"把这几个文件附上",存在性、大小、落地文件名都由这里核实。
+ * 好处是策略不必给 agent 开一个信箱目录的写权限,而且"附件是不是真的在"这件事
+ * 有机器保证 —— agent 说附了但文件不存在,是一个能被逮住的错误而不是空目录。
+ *
+ * 同名附件后来者覆盖(同一轮里重复声明同一个文件是笔误,不是两件东西)。
+ */
+export async function attachArtifacts(
   root: string,
-  result: RoundResultFile,
+  round: number,
+  entries: { source: string; name: string; from?: string }[],
+  maxBytes: number,
+): Promise<{ ok: true; artifacts: RoundArtifact[] } | { ok: false; error: string }> {
+  const dir = roundArtifactsDir(root, round)
+  const artifacts: RoundArtifact[] = []
+  let total = 0
+  for (const entry of entries) {
+    let bytes: number
+    try {
+      const info = await stat(entry.source)
+      if (!info.isFile()) return { ok: false, error: `${entry.from ?? entry.source} 不是文件,附不了` }
+      bytes = info.size
+    } catch {
+      return { ok: false, error: `要附的文件不存在:${entry.from ?? entry.source}(先构建出来再附)` }
+    }
+    total += bytes
+    if (total > maxBytes) {
+      return {
+        ok: false,
+        error: `本轮附件合计 ${(total / 1024 / 1024).toFixed(1)}MB,超过上限 ${(maxBytes / 1024 / 1024).toFixed(0)}MB —— ` +
+          `信箱是个 git 仓,每轮都塞大文件会一直长大。只附这一轮真正要用的东西`,
+      }
+    }
+    await mkdir(dir, { recursive: true })
+    await copyFile(entry.source, path.join(dir, entry.name))
+    artifacts.push({ name: entry.name, bytes, from: entry.from })
+  }
+  return { ok: true, artifacts }
+}
+
+/** 一轮的输入是一整包:指令 + 补丁 + 附件。instruction.json 最后写。 */
+export async function writeInstruction(
+  root: string,
+  instruction: RoundInstruction,
   extras?: { patch?: string },
 ): Promise<void> {
-  const dir = roundDir(root, result.round)
+  const dir = roundDir(root, instruction.round)
   await mkdir(dir, { recursive: true })
   if (extras?.patch !== undefined) await writeFile(path.join(dir, "patch.diff"), extras.patch)
+  await writeJson(path.join(dir, "instruction.json"), instruction)
+}
+
+/** 旁证先落盘,result.json 最后写 —— 它的存在就是"本轮完成"的信号。 */
+export async function writeRoundResult(root: string, result: RoundResultFile): Promise<void> {
+  const dir = roundDir(root, result.round)
+  await mkdir(dir, { recursive: true })
   await writeJson(path.join(dir, "result.json"), result)
 }
 
@@ -215,7 +298,10 @@ export async function scanMailbox(root: string): Promise<MailboxSnapshot> {
     for (const number of numbers) rounds.push(await readRound(root, number))
 
     if (verdict) return { job, state: { kind: "done", verdict }, rounds }
-    if (!job || rounds.length === 0) return { job, state: { kind: "empty" }, rounds }
+    if (!job) return { state: { kind: "empty" }, rounds }
+    // job 在但零轮次:第一轮指令由研发端出(它先看任务书,可能先改代码再附上产物)。
+    // 老版本由 init 直接写死第一轮"只复现取证",那等于把开局的判断从 agent 手里拿走。
+    if (rounds.length === 0) return { job, state: { kind: "kickoff" }, rounds }
 
     const last = rounds[rounds.length - 1]!
     if (!last.instruction) {

@@ -18,6 +18,11 @@ export interface MailboxSettingsView {
   role: MailboxRoleView
   branch?: string
   pollSeconds?: number
+  /**
+   * **这台机器上**的工程目录。信箱里的任务书不带绝对路径(它在别人机器上没意义),
+   * 两侧各自配自己的检出位置 —— 这是"同一份任务书跨 Mac/Windows"的支点。
+   */
+  projectDir?: string
 }
 
 export interface MailboxTaskRequestView {
@@ -49,10 +54,18 @@ export interface MailboxGradeView {
   hasEnvironmentError: boolean
 }
 
+/** 随一轮指令穿过信箱的附件(新固件等)。内容在 `rounds/NNN/artifacts/` 下。 */
+export interface MailboxArtifactView {
+  name: string
+  bytes: number
+  from?: string
+}
+
 export interface MailboxInstructionView {
   round: number
   prompt: string
   issuedBy: "init" | "mother"
+  artifacts?: MailboxArtifactView[]
   at: string
 }
 
@@ -74,13 +87,21 @@ export interface MailboxRoundGitView {
   commits: string[]
 }
 
+/** 工位端仓库的状态。它不该改代码,`dirty` 非空就是证据。 */
+export interface MailboxRoundWorkspaceView {
+  head: string
+  dirty: string[]
+}
+
 export interface MailboxRoundResultView {
   round: number
   sessionID?: string
   turn?: MailboxTurnSummaryView
   grade?: MailboxGradeView
   denied: { tool: string; title: string; rule?: string }[]
-  git?: MailboxRoundGitView
+  /** 本轮附件在工位机上的落点(相对工程根)。 */
+  incoming?: string[]
+  workspace?: MailboxRoundWorkspaceView
   spentTokens: number
   error?: string
   at: string
@@ -97,6 +118,8 @@ export interface MailboxDecisionView {
   reason?: string
   usage?: MailboxUsageView
   motherSessionID?: string
+  /** 研发端为下一轮做的代码改动(它自己提交的)。 */
+  git?: MailboxRoundGitView
   at: string
 }
 
@@ -120,6 +143,8 @@ export interface MailboxRoundView {
 export type MailboxUiStateView =
   | { kind: "empty" }
   | { kind: "corrupt"; detail: string }
+  /** job.json 在,一个轮次都还没有 —— 等研发端开第一轮。 */
+  | { kind: "kickoff" }
   | { kind: "awaiting-runner"; round: number }
   | { kind: "awaiting-mother"; round: number }
   | { kind: "done"; verdict: MailboxVerdictView }

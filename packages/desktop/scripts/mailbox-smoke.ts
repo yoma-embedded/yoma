@@ -100,15 +100,18 @@ writeFileSync(
       configDir: join(root, "my-pi-config"),
       turnEntry: turnBundle,
       hostEntry: hostBundle,
+      // 假模型脚本:分工与生产一致 —— **代码归研发端,工位端只观察**。
+      // 研发端开局下指令(不改代码)→ 第 1 轮判据必然失败 → 研发端 write 修复并下
+      // 第 2 轮(改动由 issueInstruction 提交到项目仓 agent 分支)→ 第 2 轮判据过。
+      // 工位端**不能**写文件:role "bench" 在 bench 的 policy 里直接拒 edit/write。
       faux: {
-        turns: [
-          [[{ text: "我先看了一圈,还没有改动" }]],
-          [[{ tool: "write", input: { path: "proof.txt", content: "bench-ok\n" } }], [{ text: "已创建 proof.txt" }]],
-        ],
+        turns: [[[{ text: "上板看了一圈:proof.txt 不在,现象复现" }]], [[{ text: "换上新产物再复现一次:现象消失" }]]],
         mother: [
+          [{ text: '开局先确认现状。\n```json\n{"decision":"continue","analysis":"还没有任何观测","instruction":"上板复现一次,报告现象"}\n```' }],
+          [{ tool: "write", input: { path: "proof.txt", content: "bench-ok\n" } }],
           [
             {
-              text: '第 1 轮没有改动,判据自然不过。\n```json\n{"decision":"continue","analysis":"首轮只是侦察","instruction":"用 write 工具创建 proof.txt,内容 bench-ok"}\n```',
+              text: '缺的东西补上了。\n```json\n{"decision":"continue","analysis":"第 1 轮确认了缺失,已补上","instruction":"换上新产物再复现一次"}\n```',
             },
           ],
         ],

@@ -35,6 +35,7 @@ import type { FauxScript } from "./faux.ts"
 import { fileExists, readJsonFile, readTextFile } from "./fsx.ts"
 import { exe, gradeRepeated, runCommandReal, type GradeResult, type RunCommand } from "./grader.ts"
 import type { Job } from "./job.ts"
+import type { PolicyRole } from "./policy.ts"
 import { blockedPrompt, firstPrompt, retryPrompt } from "./prompts.ts"
 import type { TurnResult } from "./turn.ts"
 
@@ -112,6 +113,8 @@ export interface TurnInput {
   configDir?: string
   /** 假模型脚本(本机演练/打包冒烟)。有它则子进程不联网、不要 key,其余全真。 */
   faux?: FauxScript
+  /** 信箱闭环的分工边界(见 policy.ts 的 PolicyRole)。单机模式不传。 */
+  role?: PolicyRole
 }
 
 export async function runJob(options: RunnerOptions): Promise<RunnerResult> {
@@ -299,14 +302,31 @@ export async function ensureBenchDir(benchDir: string): Promise<void> {
  * 17 个文件有 16 个是 `.my-pi/gdb/*.mi` 这类工具日志,真正的代码改动只有 1 个文件。
  * 只忽略**运行产物**而不是整个目录 —— `.my-pi/` 里还可能住着用户自己提交的
  * 项目技能与上下文;已有 .gitignore 时不动它(那是用户的文件)。
+ *
+ * 忽略清单里带 `.gitignore` 自身,与 `.bench` 同一条教训的第三次上演:这个文件是
+ * 调试台生成的,不忽略它就是一个"未跟踪又不被忽略"的条目,工作树因此永远不干净,
+ * 而 `prepareBranch` 的第一道检查正是它(实测:分工对调后研发端每轮开局都被自己挡死)。
+ * 忽略不影响生效 —— git 读 .gitignore 与它是否被跟踪无关;用户自己提交过就更不受影响。
  */
+const MY_PI_IGNORE = `# yoma 调试工具的运行产物,不进版本库(技能等用户文件不受影响)
+.gitignore
+gdb/
+logs/
+flash-state.json
+`
+/** 旧版原文(不忽略自身)。只有内容与它逐字相同才升级 —— 用户改过就不动。 */
+const LEGACY_MY_PI_IGNORE = "# yoma 调试工具的运行产物,不进版本库(技能等用户文件不受影响)\ngdb/\nlogs/\nflash-state.json\n"
+
 export async function ensureMyPiIgnore(workspace: string): Promise<void> {
   const dir = path.join(workspace, ".my-pi")
   await mkdir(dir, { recursive: true })
   const ignore = path.join(dir, ".gitignore")
   if (!(await fileExists(ignore))) {
-    await writeFile(ignore, "# yoma 调试工具的运行产物,不进版本库(技能等用户文件不受影响)\ngdb/\nlogs/\nflash-state.json\n")
+    await writeFile(ignore, MY_PI_IGNORE)
+    return
   }
+  const current = await readTextFile(ignore).catch(() => "")
+  if (current === LEGACY_MY_PI_IGNORE) await writeFile(ignore, MY_PI_IGNORE)
 }
 
 /** 回刷 known-good 固件。信箱模式的收尾也用它,所以第三参收窄成真正需要的两个注入位。 */

@@ -57,6 +57,23 @@ export async function isClean(context: GitContext): Promise<boolean> {
 }
 
 /**
+ * 被改动的**已跟踪**文件。未跟踪文件(`??`)不算 —— agent 顺手写个日志、判据落个
+ * 临时文件都会出现在那一栏,而工位端真正要防的是"源码被动过"。
+ */
+export async function dirtyTrackedFiles(context: GitContext): Promise<string[]> {
+  const status = await git(context, "status", "--porcelain")
+  if (!status.ok || !status.stdout) return []
+  // 逐行先 trim 再剥状态码,**不按固定列切**:runGitReal 对整段 stdout 做了 trim,
+  // 于是第一行的前导空格没了(` M x.c` → `M x.c`),按 `slice(3)` 会把文件名咬掉
+  // 一个字符(实测:main.c 变成 ain.c)。
+  return status.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "" && !line.startsWith("??"))
+    .map((line) => line.replace(/^[A-Z?!]{1,2}\s+/, ""))
+}
+
+/**
  * 准备工作分支。
  *
  * 起点由 `ref` 决定(不给就用当前 HEAD)。分支已存在就直接切过去 —— 打回续跑时

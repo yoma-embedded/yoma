@@ -34,7 +34,7 @@ function makeMain(): MailboxMain {
 }
 
 describe("composeJob", () => {
-  test("模板+描述+预算档合成任务书;repo.directory 缺省取模板所在项目根", async () => {
+  test("模板+描述+预算档合成任务书;不带绝对路径,项目根单独回给本机", async () => {
     const project = tempDir("proj-")
     const benchDir = path.join(project, ".bench")
     mkdirSync(benchDir, { recursive: true })
@@ -57,7 +57,10 @@ describe("composeJob", () => {
     const job = JSON.parse(readFileSync(composed.jobFile!, "utf8")) as Record<string, unknown>
     expect(job.task).toBe("修 CAN 掉帧")
     expect(String(job.id)).toStartWith("foc-")
-    expect((job.repo as { directory: string }).directory).toBe(project)
+    // 任务书要在另一台机器上被读:绝对路径一律不进去,工程根只回给本机。
+    expect((job.repo as { directory?: string }).directory).toBeUndefined()
+    expect((job.repo as { name: string }).name).toBe("foc")
+    expect(composed.projectDir).toBe(project)
     expect((job.budget as { maxTokens: number }).maxTokens).toBe(300_000)
     expect((job.mailbox as { maxRounds: number }).maxRounds).toBe(4)
     // 模板里没写的字段原样保留(判据永远来自模板)。
@@ -75,14 +78,21 @@ describe("composeJob", () => {
     expect(job.task).toContain("修 CAN 掉帧")
   })
 
-  test("模板自己声明的 repo.directory 优先于推导", async () => {
+  test("模板自己声明的 repo.directory 只当本机工程目录用,不进任务书", async () => {
     const project = tempDir("proj-")
     const templatePath = path.join(project, "template.json")
-    writeFileSync(templatePath, JSON.stringify({ repo: { directory: "D:\\work\\fw" }, success: { checks: [] } }))
+    writeFileSync(
+      templatePath,
+      JSON.stringify({ repo: { directory: "D:\\work\\fw", branch: "agent/foc" }, success: { checks: [] } }),
+    )
     const main = makeMain()
     const composed = await main.composeJob({ templatePath, description: "x", tier: "standard" })
-    const job = JSON.parse(readFileSync(composed.jobFile!, "utf8")) as { repo: { directory: string } }
-    expect(job.repo.directory).toBe("D:\\work\\fw")
+    const job = JSON.parse(readFileSync(composed.jobFile!, "utf8")) as { repo: { directory?: string; branch: string } }
+    expect(job.repo.directory).toBeUndefined()
+    // 模板声明的路径比推导更可信 —— 但它是**本机事实**,只能走 projectDir 这条路。
+    expect(composed.projectDir).toBe("D:\\work\\fw")
+    // repo 的其余字段原样保留。
+    expect(job.repo.branch).toBe("agent/foc")
   })
 
   test("坏模板与空描述都如实报,不产文件", async () => {
