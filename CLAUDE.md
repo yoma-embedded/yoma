@@ -264,9 +264,23 @@ mother 轮是 readonly 策略的内核会话(不碰硬件,无需子进程)。协
   child_process.spawn + RUN_AS_NODE,**不用 utilityProcess.fork** —— 它的 kill 没有
   信号可选,POSIX 优雅停机依赖 SIGTERM 链);renderer 走 `window.api.mailbox`,
   app 页面在 `/bench`(四分区:配置/任务/进度/终报)。
-- **探针互斥是硬锁**:runner 任务活跃时 main 经内核控制通道发 `mailbox.setActive`,
-  权限门的任务级覆盖槽把 flash/gdb/log(rtt) 判 deny(log 的 command 模式不占探针,
-  照常放行);不动用户 rules 表,renderer 无解锁能力,内核重启后 main 重申。
+- **探针互斥是硬锁**,而且锁的边界是**取用**而不是"这个工具":runner 任务活跃时
+  main 经内核控制通道发 `mailbox.setActive`,权限门的任务级覆盖槽拒掉 flash/gdb/log
+  的取用动作。三条不能少的例外/纪律(都是审查逼出来的):
+  - **`stop`/`status` 必须放行** —— 它们释放或只读探针。一刀切拒掉会让"锁挂上之前
+    就在跑的采集/gdb 会话再也停不下来",锁反过来保护了冲突源。
+  - **log 的 command 模式判 escalate 而不是放行** —— 它确实不占探针,但能起任意
+    进程,而交互内核不注入 policy、rules 里 log 又是 allow:静默落回 rules 等于给锁
+    开一个后门(flash 被拒的模型改用 `log start command:"probe-rs …"` 就绕过去了)。
+  - **挂锁要清算在飞的未决弹窗** —— override 只在 tool_call 进入时问一次,锁之前
+    弹出的 flash 弹窗还挂着(超时 10 分钟),用户随手一点"允许"就在锁窗口内真的
+    烧了片。清算时裁决者记 `by:"policy"`,**不是** human(当时没有人点)。
+  锁不动用户 rules 表,renderer 无解锁能力,内核重启后 main 重申。
+- **退出 app 必须带走守护树**(`stopSidecars` → `mailboxMain.stopAll`):任务在飞时
+  Cmd+Q 或自动更新 relaunch,守护与 turn 孙进程会变成**还在烧录/gdb 的孤儿**。
+  先 SIGTERM 让守护自己转杀孙进程,宽限后硬杀。同理,判据的 detached 子进程有
+  自己的信号转杀登记表(grader.ts)—— 它们在独立进程组里,父进程的 SIGTERM 到不了,
+  漏掉就是 `probe-rs attach` 攥着探针不放,而报错长得和"没插板子"一模一样。
 - 浏览器侧类型是 kernel 的 `mailbox-view.ts`(结构化复制,View 后缀),漂移由
   bench 的 `mailbox/view-check.ts` 约束式断言兜住 —— 与工具 details 同一套纪律。
 
@@ -312,6 +326,11 @@ mother 轮是 readonly 策略的内核会话(不碰硬件,无需子进程)。协
   而且报"找不到解释器",看起来像没编译。已由 my-pi 的 `bun engines/build.ts --dist`
   用 PyInstaller 冻结解决(那边的 CI 产出的就是冻结版);本地开发跑普通 `build.ts`
   仍是 console script,所以 stage-engines 的那条警告要留着。
+- **逐 chunk `Buffer.toString()` 会劈断多字节 UTF-8**。守护的一条 `@@event` 行可以
+  远超一个 pipe chunk(≤64KiB):终局快照带着几万字终报,中文 3 字节/字,轻松十几万
+  字节。chunk 边界大概率落在字符中间,各自解码就是两个 U+FFFD —— 而 JSON 的结构
+  字符全是 ASCII,`JSON.parse` 照样成功,**乱码静默进终报**。跨 chunk 的行拼接必须用
+  `new TextDecoder()` + `{ stream: true }`(turn-entry 的 stdin 读法是对的样板)。
 - **内核事件批处理的定时器是 unref 的,纯 node 下会把等事件的进程放空**。
   host/stream.ts 的 16ms 合并窗口刻意 unref(给 utilityProcess 退出让路),而 bench
   `runTurn` 的完成恰恰依赖那批事件送达 —— 进程没有别的 ref 句柄时(mother 的进程内
@@ -343,9 +362,11 @@ mother 轮是 readonly 策略的内核会话(不碰硬件,无需子进程)。协
 
 - **信箱调试台桌面端只剩 P4**:P1(引擎可打包化)/ P2(main 托管 + 探针互斥)/
   P3(`/bench` 四分区 UI)已完工并全链验收(见"信箱闭环"一节与
-  `docs/施工指南-信箱调试台桌面端.md` 的施工记录)。待办:Windows 打包冒烟
-  (重点验收 taskkill 杀树)、双机验收剧本(exe 工位 + exe 决策对同一私有仓,
-  再验 exe ↔ CLI 混搭)、断网演练的 UI 呈现。仓里已有 Windows 出包 CI。
+  `docs/施工指南-信箱调试台桌面端.md` 的施工记录)。待办:**在 Windows 上真跑一遍**
+  (打包冒烟 + taskkill 杀树验收)、双机验收剧本(exe 工位 + exe 决策对同一私有仓,
+  再验 exe ↔ CLI 混搭)、断网演练的 UI 呈现。仓里已有 Windows 出包 CI
+  (`.github/workflows/desktop-win.yml`,workflow_dispatch 一键出未签名 NSIS 包);
+  两台机器的上手步骤见 `docs/调试台-Windows双机上手.md`。
 
 - `ServerConnection` / `ServerKey` 这套概念还散在 app 的路由与标签页里(现在只是空壳,
   `serverReady` 用占位值立刻 resolve)。清除它是独立一件事。
