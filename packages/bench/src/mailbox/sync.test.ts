@@ -8,7 +8,10 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdirSync, writeFileSync } from "node:fs"
 import path from "node:path"
 
-import { commitPush, flushThenPullReset, pullReset, type MailboxSyncContext } from "./sync.ts"
+import { mkdir, writeFile } from "node:fs/promises"
+
+import { fileExists } from "../fsx.ts"
+import { cloneMailbox, commitPush, flushThenPullReset, initBareMailbox, pullReset, type MailboxSyncContext } from "./sync.ts"
 import { freshClone, makeMailbox, Temp } from "./testkit.ts"
 import { runGitReal } from "../git.ts"
 
@@ -124,5 +127,55 @@ describe("mailbox sync", () => {
     // 远端版本获胜,欠账被照协议丢弃(不硬推、不留 rebase 残局)。
     expect(await Bun.file(path.join(runnerClone, "rounds", "001", "result.json")).text()).toContain("fresh")
     expect((await runGitReal(["status", "--porcelain"], runnerClone)).stdout).toBe("")
+  })
+})
+
+describe("一个信箱仓跑第二个任务:新分支必须是空的", () => {
+  test("远端还没有这条分支时从空树起 —— 不继承上一个任务的 verdict", async () => {
+    const root = temp.dir("mailbox-branch-")
+    const bare = path.join(root, "origin.git")
+    await initBareMailbox(bare)
+
+    // 第一个任务:main 上跑完,留下 job.json / rounds / verdict.json。
+    const first = path.join(root, "first")
+    await cloneMailbox(bare, first)
+    await writeFile(path.join(first, "job.json"), "{}")
+    await mkdir(path.join(first, "rounds", "001"), { recursive: true })
+    await writeFile(path.join(first, "rounds", "001", "instruction.json"), "{}")
+    await writeFile(path.join(first, "verdict.json"), '{"outcome":"passed"}')
+    await commitPush({ clone: first, author: { name: "t", email: "t@e.c" } }, "第一个任务跑完")
+
+    // 第二个任务换一条分支:克隆下来必须看不到上一个任务的任何东西。
+    const second = path.join(root, "second")
+    await cloneMailbox(bare, second, { branch: "run-2" })
+    expect(await fileExists(path.join(second, "verdict.json"))).toBe(false)
+    expect(await fileExists(path.join(second, "job.json"))).toBe(false)
+    expect(await fileExists(path.join(second, "rounds", "001", "instruction.json"))).toBe(false)
+    // 孤儿分支此刻还"未出生"(没有提交),`rev-parse --abbrev-ref HEAD` 会答 "HEAD" ——
+    // 要用 branch --show-current 才看得到名字。首推之后它就正常了。
+    expect((await runGitReal(["branch", "--show-current"], second)).stdout).toBe("run-2")
+
+    // 而且它推得出去,推完 main 上的旧任务不受影响。
+    await writeFile(path.join(second, "job.json"), '{"id":"第二个"}')
+    const pushed = await commitPush({ clone: second, branch: "run-2", author: { name: "t", email: "t@e.c" } }, "第二个任务入箱")
+    expect(pushed.pushed).toBe(true)
+
+    const check = path.join(root, "check-main")
+    await cloneMailbox(bare, check)
+    expect(await fileExists(path.join(check, "verdict.json"))).toBe(true)
+  })
+
+  test("远端已有这条分支就正常跟踪它,不当成新分支清空", async () => {
+    const root = temp.dir("mailbox-branch-")
+    const bare = path.join(root, "origin.git")
+    await initBareMailbox(bare)
+    const first = path.join(root, "first")
+    await cloneMailbox(bare, first, { branch: "run-3" })
+    await writeFile(path.join(first, "job.json"), "{}")
+    await commitPush({ clone: first, branch: "run-3", author: { name: "t", email: "t@e.c" } }, "入箱")
+
+    const second = path.join(root, "second")
+    await cloneMailbox(bare, second, { branch: "run-3" })
+    expect(await fileExists(path.join(second, "job.json"))).toBe(true)
   })
 })

@@ -66,11 +66,23 @@ export async function cloneMailbox(
   const clone = await run(["clone", "-q", url, dir], ".")
   if (!clone.ok) throw new Error(`克隆信箱失败:${clone.stderr}`)
   const branch = options?.branch ?? "main"
-  // 克隆空仓后本地没有任何分支;显式切到协议分支,让后续 commit 落对地方。
   const current = await run(["rev-parse", "--abbrev-ref", "HEAD"], dir)
-  if (!current.ok || current.stdout !== branch) {
-    await run(["checkout", "-q", "-B", branch], dir)
+  if (current.ok && current.stdout === branch) return
+
+  if ((await run(["rev-parse", "--verify", "-q", `origin/${branch}`], dir)).ok) {
+    await run(["checkout", "-q", branch], dir)
+    return
   }
+
+  // 远端还没有这条分支(一个信箱仓跑第二个任务时的常态)。**必须从空树起**:
+  // `checkout -B` 会从默认分支的 HEAD 分叉,于是上一个任务的 job.json/rounds/
+  // verdict.json 原样跟过来 —— 新任务一开局就被扫成"已终局",而且 pullReset 帮不上忙
+  // (远端分支不存在时它什么都不做)。孤儿分支 + 清索引 + 清工作树才是"空信箱"。
+  // clean **不带 -x**:两侧的本地状态(会话指针、token 账本)住在被 ignore 的目录里,
+  // 那是它们的护身符,不能一起扫掉。
+  await run(["checkout", "-q", "--orphan", branch], dir)
+  await run(["rm", "-rq", "--cached", "--ignore-unmatch", "."], dir)
+  await run(["clean", "-qfd"], dir)
 }
 
 /**
