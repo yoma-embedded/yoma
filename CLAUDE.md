@@ -91,7 +91,7 @@ Bun workspace,`packages/` 下 7 个包:
 | `bun --cwd packages/desktop smoke:mailbox` | 调试台冒烟:Electron RUN_AS_NODE 对打包产物跑完整**本机演练**(假模型,零 key 零硬件) |
 | `bun --cwd packages/desktop e2e:mailbox` | main 托管端到端:真 kernel.js 的 `mailbox.setActive` 往返 + 假守护喂 `@@event` + 停止杀树 + 锁冲突人话 |
 | `bun packages/bench/src/cli.ts run <job.json>` | 无人值守调试台:跑完整闭环(`check` 只校验,`grade` 只跑判据) |
-| `bun packages/bench/src/cli.ts mailbox sim <job.json>` | 信箱闭环单机模拟(`init`/`runner`/`mother`/`status` 是生产形态的四个子命令) |
+| `bun packages/bench/src/cli.ts mailbox sim <job.json> --project <工程目录>` | 信箱闭环单机模拟(`init`/`runner`/`mother`/`status` 是生产形态的四个子命令;工程目录是本机事实,任务书里没有) |
 
 后三个是 CI 里唯一能挡住"my-pi 一次重构悄悄搞死桌面端"的东西 —— 我们是把它整个 inline
 进 bundle 的,内核的改动可以在我们这边零编译错误地把 app 弄坏,直到用户点下去才发现。
@@ -235,23 +235,55 @@ text part,不过滤的话提示词会原样出现在报告的"根因分析"里)�
 
 ### 信箱闭环(`bench/src/mailbox/`)
 
-跨机器多轮调试:**母 agent(决策)↔ 工位 runner(执行)**,唯一通道是一个 git 仓库
-(信箱)。两侧都是 yoma 内核跑的 agent —— runner 轮复用 turn-entry 子进程与 grader,
-mother 轮是 readonly 策略的内核会话(不碰硬件,无需子进程)。协议要点:
+跨机器多轮调试,唯一通道是一个 git 仓库(信箱)。两侧都是 yoma 内核跑的 agent。
 
-- **状态由文件存在性推断,不落状态文件**:`rounds/NNN/` 里 instruction 有而 result
-  无 → 等 runner;result 有 → 等 mother;`verdict.json` 出现 → 终局。runner 的
-  result.json **最后写**,mother 的 decision + 下轮 instruction **同一次提交**。
+**分工(2026-08-08 起对调)**:角色字符串仍是 `mother`/`runner`,含义换了 ——
+
+- **mother = 研发端**:有工程检出与构建环境。读证据 → 改代码 → 构建 → 把产物当
+  **附件**塞进本轮 → 用大白话写指令。它在项目仓上开分支、每轮提交、终局推交付分支。
+  碰不到硬件(`role:"dev"` 直接拒 flash/gdb/log)。进程内跑,不需要子进程。
+- **runner = 工位端**:板子在这儿。领指令与附件 → **自己决定怎么上板**(probe 烧录 /
+  OTA 脚本 / 别的)→ 复现观察 → 判据由调试台亲跑 → 回填。它**不改源码**
+  (`role:"bench"` 拒 edit/write)、不开分支、不提交;工作树必须干净,脏了如实回填成
+  证据(`result.workspace.dirty`)。复用 turn-entry 子进程与 grader。
+
+对调的理由是**手上有什么**:改代码要工具链和完整检出,那在研发机;上板要探针,那在
+工位机。反过来的旧分工逼着工位端既改代码又验证,等于让考生自己出题。
+
+- **协议里不预设"怎么把新固件弄上板"**:附件 + 一句人话就是全部机制。换成 OTA 或
+  远端 CI 产物时,变的只是指令里那句话和工位端手上的脚本 —— 不用改协议。
+  代价是"它可能忘了烧却接着测",挡它的是**构建指纹判据**(板上读到的版本要对得上),
+  不是协议。
+- **状态由文件存在性推断,不落状态文件**:零轮次 → `kickoff`(等研发端开第一轮,
+  init 不再写死"只复现取证");instruction 有而 result 无 → 等工位端;result 有 →
+  等研发端;`verdict.json` 出现 → 终局。工位端的 result.json **最后写**,研发端的
+  decision + 下轮 instruction + 附件 + patch **同一次提交**。
 - **pull 是 `fetch + reset --hard + clean -fd`**,工作树永远等于远端已推真相 ——
   崩溃写了一半的文件在下次轮询自动消失,协议退回"重跑本步",没有恢复逻辑可写错。
   两侧的本地状态(会话指针、token 计数)住在自带 `.gitignore` 的目录里,clean 不删
   被 ignore 的文件,这是它们的护身符。
 - **裁决分两层,层序即权力边界**:判据全过 / 预算耗尽 / 环境错误由确定性守卫直接
-  终局(记 `by:"policy"`),模型只裁"判据没过且预算还有"的局面;mother 说 `success`
+  终局(记 `by:"policy"`),模型只裁"判据没过且预算还有"的局面;研发端说 `success`
   会被解析器拒绝 —— 判据不归模型管,对哪个模型都一样。
-- **硬件动作只在工位侧**:交付 push 与失败回刷 known-good 都发生在 runner 看到
-  verdict 之后的收尾里,且失败回刷只在终局做一次(轮与轮之间是延续,每轮回刷
-  等于每轮白烧一次片)。
+- **硬件动作只在工位侧**:失败回刷 known-good 在 runner 的终局收尾里(只做一次 ——
+  轮与轮之间是延续,每轮回刷等于每轮白烧一次片);**交付 push 在研发端**(代码在
+  它那儿),而且必须在"刚写下 verdict"那一步就做 —— 守护循环见到 done 就返回退出,
+  留到下一轮等于永远不做(测试逮住过)。
+- **任务书里不许有绝对路径**:它要在两台机器上被读。工程目录由本机配置提供
+  (`resolveWorkspace(job, localDir)`;桌面端是配置页的"工程目录",CLI 是 `--project`),
+  `serializeMailboxJob` 会主动摘掉 `repo.directory`。判据同理:`{type:"script", path}`
+  的解释器由**跑判据的机器**当场解析(macOS 的 python3 / Windows 的 `py -3`),
+  probe-rs 路径与板卡事实由调试台经环境变量注入(`YOMA_PROBE_RS`/`YOMA_CHIP`/…,
+  见 grader.ts 的"判据的环境契约")。写死 `python3 …` 或绝对路径的判据,换台机器
+  一律"命令起不来",而那个报错长得和"板子没插"一模一样。
+- 附件落在工位机的 `.bench/incoming/<原名>`(被 `.bench/.gitignore` 挡住,不弄脏被测
+  仓库),所以 job 的 `bench.elf` 通常指那儿而不是 `build/…`——工位机不构建。
+  **不清空 incoming**:某轮没带附件不代表旧固件失效,板上跑的还是它。
+- **烧录新鲜度要有一条判据**,不然"agent 忘了烧却接着测"会变成假通过。最强的写法是
+  `probe-rs verify --chip X <elf>`(逐字节比对 flash 与 ELF),比读一个魔数常量强 ——
+  魔数只证明"某个带这个符号的固件在跑",不证明是哪一版。**但它内容不匹配时照样
+  exit 0**(实测:`Verification failed: contents do not match` / exit=0),所以判据脚本
+  必须认输出文本;只看退出码的话这条闸门永远不会响,比没有更糟。
 - 单机模拟(`mailbox sim`)起 **两个真子进程 + 各自的克隆 + 本地裸仓**,与生产的
   差别只有远端 URL(`--remote` 换私有 GitHub 仓即是跨机器形态)。
 
@@ -361,8 +393,10 @@ mother 轮是 readonly 策略的内核会话(不碰硬件,无需子进程)。协
 ## 已知的未完成项
 
 - **信箱调试台桌面端只剩 P4**:P1(引擎可打包化)/ P2(main 托管 + 探针互斥)/
-  P3(`/bench` 四分区 UI)已完工并全链验收(见"信箱闭环"一节与
-  `docs/施工指南-信箱调试台桌面端.md` 的施工记录)。待办:**在 Windows 上真跑一遍**
+  P3(`/bench` 四分区 UI)已完工并全链验收;2026-08-08 又做了**分工对调 + 机器无关**
+  (研发端改代码、工位端只上板;任务书不带绝对路径;script 判据)——
+  见"信箱闭环"一节与 `docs/施工指南-信箱调试台桌面端.md` 的施工记录。待办:
+  **在 Windows 上真跑一遍**
   (打包冒烟 + taskkill 杀树验收)、双机验收剧本(exe 工位 + exe 决策对同一私有仓,
   再验 exe ↔ CLI 混搭)、断网演练的 UI 呈现。仓里已有 Windows 出包 CI
   (`.github/workflows/desktop-win.yml`,workflow_dispatch 一键出未签名 NSIS 包);
