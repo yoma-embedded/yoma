@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os"
 import path from "node:path"
 
-import { createMailboxMain, type MailboxMain } from "./mailbox.ts"
+import { cloneDirFor, createMailboxMain, type MailboxMain } from "./mailbox.ts"
 
 const dirs: string[] = []
 afterEach(() => {
@@ -97,7 +97,11 @@ describe("composeJob", () => {
 
   test("坏模板与空描述都如实报,不产文件", async () => {
     const main = makeMain()
-    const bad = await main.composeJob({ templatePath: path.join(tempDir("x-"), "missing.json"), description: "x", tier: "quick" })
+    const bad = await main.composeJob({
+      templatePath: path.join(tempDir("x-"), "missing.json"),
+      description: "x",
+      tier: "quick",
+    })
     expect(bad.ok).toBe(false)
     expect(bad.message).toContain("模板读不出来")
 
@@ -124,4 +128,33 @@ describe("probe", () => {
     const result = await main.probe(bare)
     expect(result.ok).toBe(true)
   }, 20_000)
+})
+
+describe("cloneDirFor", () => {
+  const REMOTE = "git@github.com:me/mailbox.git"
+
+  test("换分支就换目录 —— 复用停在旧分支的克隆会让 init 死在 git 报错上", () => {
+    // ensureClone 见到 .git/HEAD 就早返回、不改分支,孤儿分支逻辑因此不会跑;
+    // 最后 `push -u origin run-1:run-1` 报 "src refspec run-1 does not match any"。
+    // 目录带上分支,这条路就走不到了。
+    expect(cloneDirFor("/m", REMOTE, "mother", "run-1")).not.toBe(cloneDirFor("/m", REMOTE, "mother", "run-2"))
+  })
+
+  test("留空 / 显式 main / 带空格的 main 都是同一条分支,必须同一个目录", () => {
+    // sync.ts 的 branchOf 就是 `branch ?? "main"` —— 这里不归一的话,同一条分支会有
+    // 两个克隆,而用户在界面上看不出任何区别。
+    const canonical = cloneDirFor("/m", REMOTE, "mother", "main")
+    expect(cloneDirFor("/m", REMOTE, "mother")).toBe(canonical)
+    expect(cloneDirFor("/m", REMOTE, "mother", "")).toBe(canonical)
+    expect(cloneDirFor("/m", REMOTE, "mother", "  main  ")).toBe(canonical)
+  })
+
+  test("角色仍然分目录 —— 同机双角色不共享工作树", () => {
+    expect(cloneDirFor("/m", REMOTE, "mother", "run-1")).not.toBe(cloneDirFor("/m", REMOTE, "runner", "run-1"))
+  })
+
+  test("远端与分支的拼接不会撞车", () => {
+    // 用 \n 分隔(分支名不能含换行),否则 ("a","b") 与 ("ab","") 会哈希到一起。
+    expect(cloneDirFor("/m", "a", "mother", "b")).not.toBe(cloneDirFor("/m", "ab", "mother", ""))
+  })
 })

@@ -56,7 +56,9 @@ export interface MailboxMain {
    * `projectDir` 是**本机**的工程根(从模板位置推导),不进任务书 —— 它只是这台
    * 机器上"工程目录"没配时的兜底(出题的机器天然就是工程所在的机器)。
    */
-  composeJob(input: MailboxComposeInput): Promise<{ ok: boolean; jobFile?: string; projectDir?: string; message?: string }>
+  composeJob(
+    input: MailboxComposeInput,
+  ): Promise<{ ok: boolean; jobFile?: string; projectDir?: string; message?: string }>
   /** 内核进程(重)启动后重申探针锁 —— 锁状态在 main,内核只是执行者。 */
   reassertHardwareLock(): void
 }
@@ -92,7 +94,8 @@ export function createMailboxMain(options: MailboxMainOptions): MailboxMain {
    */
   let composedProjectDir: string | undefined
   /** 本机工程目录的唯一解析口径:已保存的配置优先,其次 composeJob 的推导。 */
-  const resolveProjectDir = (settings: MailboxSettings): string | undefined => settings.projectDir?.trim() || composedProjectDir
+  const resolveProjectDir = (settings: MailboxSettings): string | undefined =>
+    settings.projectDir?.trim() || composedProjectDir
 
   const controller = new MailboxController({
     persistence: options.persistence,
@@ -231,7 +234,8 @@ async function probeRemote(remote: string): Promise<{ ok: boolean; message: stri
     })
     child.on("close", (code) => {
       clearTimeout(timer)
-      if (code === 0) resolve({ ok: true, message: stdout.trim() ? "已连通" : "已连通(远端还是空仓,init 时会建出分支)" })
+      if (code === 0)
+        resolve({ ok: true, message: stdout.trim() ? "已连通" : "已连通(远端还是空仓,init 时会建出分支)" })
       else resolve({ ok: false, message: stderr.trim() || `git ls-remote 退出码 ${code}` })
     })
   })
@@ -255,7 +259,8 @@ async function composeJob(
   let template: Record<string, unknown>
   try {
     const parsed: unknown = JSON.parse(await readFile(input.templatePath, "utf8"))
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("模板必须是一个 JSON 对象")
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+      throw new Error("模板必须是一个 JSON 对象")
     template = parsed as Record<string, unknown>
   } catch (error) {
     return { ok: false, message: `模板读不出来:${(error as Error).message}` }
@@ -267,15 +272,25 @@ async function composeJob(
   const rawId = typeof template.id === "string" && template.id.trim() ? template.id.trim() : "job"
   const baseId = rawId.replace(/[^A-Za-z0-9._-]/g, "-")
   const id = `${baseId}-${stamp}`
-  const templateBudget = typeof template.budget === "object" && template.budget !== null ? (template.budget as Record<string, unknown>) : {}
-  const templateMailbox = typeof template.mailbox === "object" && template.mailbox !== null ? (template.mailbox as Record<string, unknown>) : {}
-  const templateRepo = typeof template.repo === "object" && template.repo !== null ? (template.repo as Record<string, unknown>) : {}
+  const templateBudget =
+    typeof template.budget === "object" && template.budget !== null ? (template.budget as Record<string, unknown>) : {}
+  const templateMailbox =
+    typeof template.mailbox === "object" && template.mailbox !== null
+      ? (template.mailbox as Record<string, unknown>)
+      : {}
+  const templateRepo =
+    typeof template.repo === "object" && template.repo !== null ? (template.repo as Record<string, unknown>) : {}
   // repo.directory 被**摘掉**:任务书要在两台机器上被读,而绝对路径是本机事实
   // (出题机的 /Users/… 在工位机上不存在)。模板真写了它,就当本机工程目录的
   // 建议值用 —— 模板约定住在 <项目>/.bench/ 里,没写就取模板所在的项目根。
-  const { directory: templateDirectory, ...repoRest } = templateRepo as { directory?: unknown } & Record<string, unknown>
+  const { directory: templateDirectory, ...repoRest } = templateRepo as { directory?: unknown } & Record<
+    string,
+    unknown
+  >
   const projectDir =
-    typeof templateDirectory === "string" && templateDirectory.trim() ? templateDirectory.trim() : dirname(dirname(input.templatePath))
+    typeof templateDirectory === "string" && templateDirectory.trim()
+      ? templateDirectory.trim()
+      : dirname(dirname(input.templatePath))
   // 模板的 task 字段是**项目级前置约束**(安全红线、目录禁区、已知现象),每个任务
   // 都带上 —— 不能指望每次描述都记得重写"电机绝不能转"这种事。
   const preamble = typeof template.task === "string" && template.task.trim() ? template.task.trim() : undefined
@@ -305,8 +320,24 @@ async function composeJob(
   return { ok: true, jobFile, projectDir }
 }
 
-function cloneDirFor(mailboxDir: string, remote: string, role: string): string {
-  const hash = createHash("sha1").update(remote).digest("hex").slice(0, 10)
+/**
+ * 克隆目录 = f(远端, 分支, 角色)。**分支必须进 key**。
+ *
+ * 克隆是"某个远端某条分支的工作副本",而 `ensureClone` 见到 `.git/HEAD` 就早返回、
+ * 从不改分支。于是复用一个停在旧分支的克隆去跑新分支时,`cloneMailbox` 里那段孤儿
+ * 分支逻辑根本不会跑,init 走到最后 `push -u origin <新分支>:<新分支>` 直接报
+ * `src refspec <新分支> does not match any` —— 一个和"信箱配错了"毫无关系的 git 报错
+ * (实测复现过)。换分支 = 换目录,是这条路上唯一不需要用户手动去删缓存的解法。
+ *
+ * 分支归一到 main:留空与显式写 main 是同一件事(sync.ts 的 `branchOf` 就这么定的),
+ * 不归一的话同一条分支会有两个克隆,而且用户看不出为什么。
+ * key 用 `\n` 分隔 —— 分支名不能含换行,所以 (远端, 分支) 的拼接不会撞车。
+ */
+export function cloneDirFor(mailboxDir: string, remote: string, role: string, branch?: string): string {
+  const hash = createHash("sha1")
+    .update(`${remote}\n${branch?.trim() || "main"}`)
+    .digest("hex")
+    .slice(0, 10)
   return join(mailboxDir, "clones", hash, role)
 }
 
@@ -344,9 +375,9 @@ function buildHostConfig(
   return {
     role,
     remote: settings.remote,
-    // 克隆按远端×角色分目录:同机双角色(演练/联调)绝不共享工作树 ——
+    // 克隆按远端×分支×角色分目录:同机双角色(演练/联调)绝不共享工作树 ——
     // 两个守护对同一克隆 reset/clean 会互相清掉写了一半的回填。
-    clone: cloneDirFor(mailboxDir, settings.remote, task.kind === "init" ? settings.role : task.kind),
+    clone: cloneDirFor(mailboxDir, settings.remote, task.kind === "init" ? settings.role : task.kind, settings.branch),
     jobFile: task.jobFile,
     pollSeconds: settings.pollSeconds ?? 15,
     // 本机工程目录:任务书不带绝对路径,两侧各自从这里拿。init/status 也传 ——
@@ -367,16 +398,21 @@ function buildHostConfig(
  * 的 agent 分支上,这也正是"改动证据在研发端"的形态。
  */
 const REHEARSAL_FAUX: MailboxHostConfig["faux"] = {
-  turns: [
-    [[{ text: "上板看了一圈:proof.txt 不在,现象复现" }]],
-    [[{ text: "换上新产物再复现一次:现象消失" }]],
-  ],
+  turns: [[[{ text: "上板看了一圈:proof.txt 不在,现象复现" }]], [[{ text: "换上新产物再复现一次:现象消失" }]]],
   mother: [
-    [{ text: '开局先确认现状。\n```json\n{"decision":"continue","analysis":"还没有任何观测","instruction":"上板复现一次,报告现象"}\n```' }],
+    [
+      {
+        text: '开局先确认现状。\n```json\n{"decision":"continue","analysis":"还没有任何观测","instruction":"上板复现一次,报告现象"}\n```',
+      },
+    ],
     // 研发端读完第 1 轮结果:先改代码……
     [{ tool: "write", input: { path: "proof.txt", content: "bench-ok\n" } }],
     // ……再下第 2 轮指令(改动已在同一次 issueInstruction 里提交)。
-    [{ text: '缺的东西补上了。\n```json\n{"decision":"continue","analysis":"第 1 轮确认了缺失,已补上","instruction":"换上新产物再复现一次"}\n```' }],
+    [
+      {
+        text: '缺的东西补上了。\n```json\n{"decision":"continue","analysis":"第 1 轮确认了缺失,已补上","instruction":"换上新产物再复现一次"}\n```',
+      },
+    ],
   ],
 }
 
@@ -397,7 +433,8 @@ function makeRehearsalJob(mailboxDir: string): string {
     git("add", "-A")
     git("commit", "-q", "-m", "init")
   }
-  const checkCommand = process.platform === "win32" ? "cmd /c if exist proof.txt (exit 0) else (exit 1)" : "test -f proof.txt"
+  const checkCommand =
+    process.platform === "win32" ? "cmd /c if exist proof.txt (exit 0) else (exit 1)" : "test -f proof.txt"
   const jobFile = join(root, "job.json")
   writeFileSync(
     jobFile,

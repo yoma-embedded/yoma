@@ -11,7 +11,15 @@ import path from "node:path"
 import { mkdir, writeFile } from "node:fs/promises"
 
 import { fileExists } from "../fsx.ts"
-import { cloneMailbox, commitPush, flushThenPullReset, initBareMailbox, pullReset, type MailboxSyncContext } from "./sync.ts"
+import {
+  cloneMailbox,
+  commitPush,
+  ensureClone,
+  flushThenPullReset,
+  initBareMailbox,
+  pullReset,
+  type MailboxSyncContext,
+} from "./sync.ts"
 import { freshClone, makeMailbox, Temp } from "./testkit.ts"
 import { runGitReal } from "../git.ts"
 
@@ -93,7 +101,11 @@ describe("mailbox sync", () => {
     mkdirSync(path.join(runnerClone, "rounds", "001"), { recursive: true })
     writeFileSync(path.join(runnerClone, "rounds", "001", "result.json"), `{"round":1}\n`)
     const broken = await commitPush(
-      { ...ctx(runnerClone), run: (args, cwd) => (args[0] === "push" ? Promise.resolve({ ok: false, stdout: "", stderr: "网断了" }) : runGitReal(args, cwd)) },
+      {
+        ...ctx(runnerClone),
+        run: (args, cwd) =>
+          args[0] === "push" ? Promise.resolve({ ok: false, stdout: "", stderr: "网断了" }) : runGitReal(args, cwd),
+      },
       "round 1",
     )
     expect(broken.committed).toBe(true)
@@ -115,7 +127,11 @@ describe("mailbox sync", () => {
     mkdirSync(path.join(runnerClone, "rounds", "001"), { recursive: true })
     writeFileSync(path.join(runnerClone, "rounds", "001", "result.json"), `{"from":"stale"}\n`)
     await commitPush(
-      { ...ctx(runnerClone), run: (args, cwd) => (args[0] === "push" ? Promise.resolve({ ok: false, stdout: "", stderr: "断" }) : runGitReal(args, cwd)) },
+      {
+        ...ctx(runnerClone),
+        run: (args, cwd) =>
+          args[0] === "push" ? Promise.resolve({ ok: false, stdout: "", stderr: "断" }) : runGitReal(args, cwd),
+      },
       "欠账",
     )
     // ……与此同时这一步已被重跑并推送(同一路径,内容不同)—— rebase 必然冲突。
@@ -157,7 +173,10 @@ describe("一个信箱仓跑第二个任务:新分支必须是空的", () => {
 
     // 而且它推得出去,推完 main 上的旧任务不受影响。
     await writeFile(path.join(second, "job.json"), '{"id":"第二个"}')
-    const pushed = await commitPush({ clone: second, branch: "run-2", author: { name: "t", email: "t@e.c" } }, "第二个任务入箱")
+    const pushed = await commitPush(
+      { clone: second, branch: "run-2", author: { name: "t", email: "t@e.c" } },
+      "第二个任务入箱",
+    )
     expect(pushed.pushed).toBe(true)
 
     const check = path.join(root, "check-main")
@@ -177,5 +196,39 @@ describe("一个信箱仓跑第二个任务:新分支必须是空的", () => {
     const second = path.join(root, "second")
     await cloneMailbox(bare, second, { branch: "run-3" })
     expect(await fileExists(path.join(second, "job.json"))).toBe(true)
+  })
+})
+
+describe("ensureClone 的两道核对", () => {
+  test("复用的克隆停在别的分支时当场拦下,不拖到 push 才报 git 黑话", async () => {
+    const root = temp.dir("mailbox-ensure-")
+    const bare = path.join(root, "origin.git")
+    await initBareMailbox(bare)
+    const clone = path.join(root, "clone")
+    await cloneMailbox(bare, clone) // 停在 main
+
+    // 没有这道核对的话:早返回 → 孤儿分支逻辑不跑 → pullReset 因 origin/run-1 不存在
+    // 而空转 → init 以为信箱是空的 → push -u origin run-1:run-1 报
+    // "src refspec run-1 does not match any"(实测)。
+    await expect(ensureClone(bare, clone, { branch: "run-1" })).rejects.toThrow(/停在分支 main.*run-1/s)
+  })
+
+  test("分支一致就照常复用(留空 = main)", async () => {
+    const root = temp.dir("mailbox-ensure-")
+    const bare = path.join(root, "origin.git")
+    await initBareMailbox(bare)
+    const clone = path.join(root, "clone")
+    await cloneMailbox(bare, clone)
+    await ensureClone(bare, clone)
+    await ensureClone(bare, clone, { branch: "main" })
+  })
+
+  test("目录还不存在时正常克隆,并落在要求的分支上", async () => {
+    const root = temp.dir("mailbox-ensure-")
+    const bare = path.join(root, "origin.git")
+    await initBareMailbox(bare)
+    const clone = path.join(root, "clone")
+    await ensureClone(bare, clone, { branch: "run-9" })
+    expect((await runGitReal(["branch", "--show-current"], clone)).stdout).toBe("run-9")
   })
 })

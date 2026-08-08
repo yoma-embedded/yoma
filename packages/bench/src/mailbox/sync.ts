@@ -88,6 +88,13 @@ export async function cloneMailbox(
 /**
  * 克隆若已在(续跑)就复用,但必须核对 origin 与要求的远端一致 —— 否则"换了远端
  * 继续跑"会静默对着旧远端说话,屏幕上却打印着新地址(sim 首跑时实测复现过)。
+ *
+ * **分支同样要核对**,而且理由更硬:复用分支不对的克隆不会静默,会在很远的地方炸。
+ * 这里早返回就不改分支,于是 cloneMailbox 里的孤儿分支逻辑不会跑,克隆一直停在旧
+ * 分支;`pullReset` 因为 `origin/<新分支>` 不存在而什么都不做,init 因此以为信箱是
+ * 空的,一路走到 `push -u origin <新分支>:<新分支>` 才报
+ * `src refspec <新分支> does not match any` —— 一个跟"信箱配错了"毫无关系的 git 报错
+ * (实测复现过)。宁可在这一步用人话拦下。
  */
 export async function ensureClone(
   remote: string,
@@ -100,6 +107,15 @@ export async function ensureClone(
     if (!url.ok || normalizeRemote(url.stdout) !== normalizeRemote(remote)) {
       throw new Error(
         `${dir} 的 origin(${url.stdout || "读不出来"})与要求的远端(${remote})不一致 —— 换远端请换个克隆目录,或清掉旧克隆`,
+      )
+    }
+    // `branch --show-current` 而不是 `rev-parse --abbrev-ref HEAD`:后者对未出生的
+    // 分支(孤儿 checkout 之后、首次提交之前)答 "HEAD",会把正常状态误判成不一致。
+    const branch = options?.branch ?? "main"
+    const current = await run(["branch", "--show-current"], dir)
+    if (current.ok && current.stdout !== branch) {
+      throw new Error(
+        `${dir} 停在分支 ${current.stdout || "(游离 HEAD)"},与要求的分支 ${branch} 不一致 —— 换分支请换个克隆目录,或清掉旧克隆`,
       )
     }
     return
