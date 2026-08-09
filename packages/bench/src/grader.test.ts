@@ -19,7 +19,12 @@ function job(success: Record<string, unknown>): Job {
 }
 
 const okRun: RunCommand = async () => ({ exitCode: 0, stdout: "ok", stderr: "", timedOut: false })
-const failRun: RunCommand = async () => ({ exitCode: 1, stdout: "", stderr: "error: undefined reference", timedOut: false })
+const failRun: RunCommand = async () => ({
+  exitCode: 1,
+  stdout: "",
+  stderr: "error: undefined reference",
+  timedOut: false,
+})
 
 function captureThat(result: Partial<Awaited<ReturnType<CaptureLog>>>): CaptureLog {
   return async () => ({ tail: "", timedOut: false, ...result })
@@ -80,7 +85,13 @@ describe("grade · 命令判据", () => {
 describe("grade · 构建门", () => {
   test("构建失败时后面的检查全部 skip", async () => {
     const result = await grade({
-      job: job({ build: "make", checks: [{ type: "bash", command: "true" }, { type: "log_wait", pattern: "PASS" }] }),
+      job: job({
+        build: "make",
+        checks: [
+          { type: "bash", command: "true" },
+          { type: "log_wait", pattern: "PASS" },
+        ],
+      }),
       workspace: "/tmp/ws",
       runCommand: failRun,
     })
@@ -176,7 +187,7 @@ describe("gradeRepeated", () => {
     const result = await gradeRepeated({
       job: job({ checks: [{ type: "bash", command: "true" }], repeat: 3 }),
       workspace: "/tmp/ws",
-      runCommand: async () => (rounds += 1, { exitCode: 0, stdout: "", stderr: "", timedOut: false }),
+      runCommand: async () => ((rounds += 1), { exitCode: 0, stdout: "", stderr: "", timedOut: false }),
     })
     expect(result.passed).toBe(true)
     expect(rounds).toBe(3)
@@ -332,5 +343,49 @@ describe("grade · 判据的环境契约", () => {
     })
     expect(result.passed).toBe(true)
     rmSync(workspace, { recursive: true, force: true })
+  })
+})
+
+describe("判据输出的编码", () => {
+  /**
+   * 双机首跑实测:三条判据全过,但证据是
+   * `xTickCount@0x200002a8: 24920 -> 25665 (?=745) | ????????`。
+   *
+   * 原因是 stdout 不是终端时 Python 用 `locale.getpreferredencoding()` 编码,中文
+   * Windows 上那是 cp936(GBK),而我们按 UTF-8 解管道 —— 解出来的替换字符**不可逆**
+   * (把它编回字节再按 GBK 读只会得到"锟斤拷")。证据在写进信箱之前就已经毁了。
+   * 退出码不受影响,所以裁决是对的 —— 坏掉的恰恰是这套系统的产品:证据。
+   */
+  test("环境契约里钉死 UTF-8 —— 这是唯一能在 macOS 上响的闸门", async () => {
+    // **不能**用"跑个打中文的 Python 看证据花不花"来当断言:开发机 locale 本来就是
+    // UTF-8,不注入也照样过 —— 那是一个永远不会响的闸门,比没有更糟(实测确认过)。
+    // 真正能钉住的是机制本身:判据进程一定收到 PYTHONIOENCODING。
+    let seen: Record<string, string> | undefined
+    const capture: RunCommand = async (_command, options) => {
+      seen = options.env
+      return { exitCode: 0, stdout: "", stderr: "", timedOut: false }
+    }
+    await grade({
+      job: job({ checks: [{ type: "bash", command: "true" }] }),
+      workspace: "/tmp/ws",
+      runCommand: capture,
+    })
+    expect(seen?.PYTHONIOENCODING).toBe("utf-8")
+    expect(seen?.PYTHONUTF8).toBe("1")
+  })
+
+  test("本机上中文证据确实原样穿过来(locale 已是 UTF-8,只作旁证)", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "grader-enc-"))
+    try {
+      writeFileSync(path.join(dir, "zh.py"), "print('固件心跳正常 Δ=745')\n")
+      const result = await grade({
+        job: job({ checks: [{ type: "script", path: "zh.py", timeoutS: 30 }] }),
+        workspace: dir,
+      })
+      expect(result.checks[0]!.outcome).toBe("pass")
+      expect(result.checks[0]!.evidence).toContain("固件心跳正常 Δ=745")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

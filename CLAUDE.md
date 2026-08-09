@@ -363,6 +363,20 @@ text part,不过滤的话提示词会原样出现在报告的"根因分析"里)�
   字节。chunk 边界大概率落在字符中间,各自解码就是两个 U+FFFD —— 而 JSON 的结构
   字符全是 ASCII,`JSON.parse` 照样成功,**乱码静默进终报**。跨 chunk 的行拼接必须用
   `new TextDecoder()` + `{ stream: true }`(turn-entry 的 stdin 读法是对的样板)。
+- **子进程默认不按 UTF-8 输出,中文 Windows 上尤其**。Python 在 stdout 不是终端时用
+  `locale.getpreferredencoding()` 编码 —— 中文 Windows 上是 cp936(GBK),而我们按
+  UTF-8 解管道。解出来的 U+FFFD **不可逆**(编回字节再按 GBK 读只得到"锟斤拷")。
+  实测:双机首跑三条判据全过,证据却是
+  `xTickCount@0x200002a8: 24920 -> 25665 (?=745) | ????????` —— 退出码不受影响,
+  所以裁决是对的,坏掉的恰恰是这套系统的产品:证据,而且一声不吭。
+  凡是要读中文输出的子进程,环境里钉死编码(grader.ts 注入
+  `PYTHONIOENCODING=utf-8` + `PYTHONUTF8=1`)。
+  **它的测试不能写成"跑个打中文的脚本看花不花"** —— 开发机 locale 本来就是 UTF-8,
+  那是一个永远不会响的闸门(实测确认)。要断言的是机制:判据进程一定收到那两个变量。
+- **bun 的 `spawnSync`/`spawn` 省略 `env` 时不认运行时改过的 `process.env.PATH`**,
+  它按进程启动那一刻的环境解析 argv[0](与 `os.homedir()` 同一类)。想让子进程看到
+  当前环境就得显式传 `env`。实测:改了 PATH 之后不传 env,解析到的仍是旧 PATH 上那个
+  可执行文件 —— 探测类代码会探到另一个程序,而结论看起来完全合理。
 - **内核事件批处理的定时器是 unref 的,纯 node 下会把等事件的进程放空**。
   host/stream.ts 的 16ms 合并窗口刻意 unref(给 utilityProcess 退出让路),而 bench
   `runTurn` 的完成恰恰依赖那批事件送达 —— 进程没有别的 ref 句柄时(mother 的进程内

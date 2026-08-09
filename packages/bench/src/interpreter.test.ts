@@ -150,3 +150,30 @@ describe("解释器自检:PATH 命中不等于能用", () => {
     cleanup()
   })
 })
+
+describe("自检超时不构成'解释器是废的'证据", () => {
+  test("探测超时时放过去 —— 机器一忙就拒掉好解释器会把整轮判据变成环境错误", () => {
+    if (process.platform === "win32") return
+    const dir = temp()
+    // 一个"能跑但很慢"的解释器:自检必然超时,但它本身是好的。
+    const slow = path.join(dir, "python3")
+    writeFileSync(slow, "#!/bin/sh\nsleep 30\nexit 0\n")
+    chmodSync(slow, 0o755)
+    const script = path.join(dir, "check.py")
+    writeFileSync(script, "print(1)")
+
+    const savedPath = process.env.PATH
+    process.env.PATH = dir
+    resetInterpreterProbeCache()
+    try {
+      const resolved = resolveScriptArgv(script)
+      // 放过去。真有病的话判据自己会在它的超时里失败,结论一样是环境错误,只是慢一点。
+      expect(resolved.ok).toBe(true)
+      if (resolved.ok) expect(path.basename(resolved.argv[0]!)).toBe("python3")
+    } finally {
+      process.env.PATH = savedPath
+      resetInterpreterProbeCache()
+    }
+    cleanup()
+  }, 40_000)
+})

@@ -126,11 +126,23 @@ const EVIDENCE_CHARS = 4000
  * | `YOMA_WORKSPACE` | 工程根的绝对路径(判据的 cwd 也是它) |
  * | `YOMA_CHIP` / `YOMA_PROBE` | job.bench 里声明的芯片名与探针选择器 |
  * | `YOMA_ELF` / `YOMA_KNOWN_GOOD_ELF` | 相对工程根的固件路径 |
+ * | `PYTHONIOENCODING` / `PYTHONUTF8` | 钉死 UTF-8 输出 —— 见下 |
  *
  * 脚本读不到时该有自己的兜底(单独手跑也要能用),但**别把绝对路径写死**。
  */
 function checkEnv(job: Job, workspace: string, enginesDir?: string): Record<string, string> {
-  const env: Record<string, string> = { YOMA_WORKSPACE: workspace }
+  const env: Record<string, string> = {
+    YOMA_WORKSPACE: workspace,
+    // 判据的输出必须是 UTF-8 —— 我们按 UTF-8 解管道,而 Python 在 stdout 不是终端时
+    // 用 `locale.getpreferredencoding()` 编码:中文 Windows 上那是 cp936(GBK)。
+    // 于是判据打印的中文进到证据里就是一串 U+FFFD,**而且是不可逆的**(实测,双机
+    // 首跑的三条判据证据全花了:`xTickCount@0x200002a8: 24920 -> 25665 (?=745)`)。
+    // 退出码不受影响,所以裁决是对的 —— 坏掉的恰恰是这套系统的产品:证据。
+    // PYTHONIOENCODING 管 stdio 编码,PYTHONUTF8 顺带把整个解释器切到 UTF-8 模式
+    // (3.7+);两个都给,老版本也吃得下。
+    PYTHONIOENCODING: "utf-8",
+    PYTHONUTF8: "1",
+  }
   if (enginesDir) {
     env.YOMA_ENGINES_DIR = enginesDir
     env.YOMA_PROBE_RS = path.join(enginesDir, "bin", exe("probe-rs"))
@@ -264,7 +276,11 @@ function scriptPlan(
   const resolved = resolveScriptArgv(absolute, check.args ?? [])
   if (!resolved.ok) return { ok: false, error: resolved.error }
   // 展示用的一行:相对路径,人一眼能对上 job 里写的那条。
-  const shown = [...resolved.argv.slice(0, resolved.argv.length - 1 - (check.args?.length ?? 0)), check.path, ...(check.args ?? [])]
+  const shown = [
+    ...resolved.argv.slice(0, resolved.argv.length - 1 - (check.args?.length ?? 0)),
+    check.path,
+    ...(check.args ?? []),
+  ]
   return { ok: true, command: shown.join(" "), argv: resolved.argv }
 }
 
@@ -327,7 +343,8 @@ async function logCheck(
   const started = Date.now()
   const pattern = new RegExp(check.pattern)
   const isWait = check.type === "log_wait"
-  const timeoutMs = ((isWait ? check.timeoutS : check.windowS) ?? (isWait ? DEFAULT_CHECK_TIMEOUT_S : DEFAULT_LOG_WINDOW_S)) * 1000
+  const timeoutMs =
+    ((isWait ? check.timeoutS : check.windowS) ?? (isWait ? DEFAULT_CHECK_TIMEOUT_S : DEFAULT_LOG_WINDOW_S)) * 1000
 
   const outcome = await context.capture({
     source: check.source ?? { kind: "rtt" },
@@ -353,7 +370,13 @@ async function logCheck(
 
   if (isWait) {
     return outcome.matchedLine
-      ? { check, outcome: "pass", summary: `命中 /${check.pattern}/:${outcome.matchedLine.trim()}`, evidence, elapsedMs }
+      ? {
+          check,
+          outcome: "pass",
+          summary: `命中 /${check.pattern}/:${outcome.matchedLine.trim()}`,
+          evidence,
+          elapsedMs,
+        }
       : {
           check,
           outcome: "fail",
@@ -458,7 +481,11 @@ export const captureLogReal: CaptureLog = async ({ source, pattern, mode, timeou
   return new Promise<CaptureOutcome>((resolve) => {
     let child: ChildProcess
     try {
-      child = spawn(argv[0]!, argv.slice(1), { cwd, stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32" })
+      child = spawn(argv[0]!, argv.slice(1), {
+        cwd,
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: process.platform !== "win32",
+      })
     } catch (error) {
       resolve({ tail: "", timedOut: false, spawnError: (error as Error).message })
       return
@@ -511,7 +538,15 @@ export const captureLogReal: CaptureLog = async ({ source, pattern, mode, timeou
  */
 function rttArgv(job: Job, enginesDir?: string): string[] {
   const probeRs = enginesDir ? path.join(enginesDir, "bin", exe("probe-rs")) : exe("probe-rs")
-  const argv = [probeRs, "attach", job.bench.elf ?? "", "--chip", job.bench.chip ?? "", "--non-interactive", "--no-timestamps"]
+  const argv = [
+    probeRs,
+    "attach",
+    job.bench.elf ?? "",
+    "--chip",
+    job.bench.chip ?? "",
+    "--non-interactive",
+    "--no-timestamps",
+  ]
   if (job.bench.probe) argv.push("--probe", job.bench.probe)
   return argv.filter((item) => item !== "")
 }

@@ -125,13 +125,16 @@ export function onPath(name: string): boolean {
  */
 const probeCache = new Map<string, boolean>()
 
+/** 自检超时。给得宽松些 —— 它只是"没测出来"的边界,不是判据本身的超时。 */
+const PROBE_TIMEOUT_MS = 10_000
+
 export function probeInterpreter(label: string, argv: readonly string[]): boolean {
   const cached = probeCache.get(label)
   if (cached !== undefined) return cached
   let ok = false
   try {
     const outcome = spawnSync(argv[0]!, argv.slice(1), {
-      timeout: 5_000,
+      timeout: PROBE_TIMEOUT_MS,
       stdio: "ignore",
       // shell:false 是默认值,这里写出来是提醒:探测和判据一样绝不过 shell。
       shell: false,
@@ -142,9 +145,16 @@ export function probeInterpreter(label: string, argv: readonly string[]): boolea
       // 于是自检探到的会是另一个程序,结论对不上真正要跑的那个。
       env: process.env,
     })
-    ok = !outcome.error && outcome.status === 0
+    // **只有"跑了、而且明确失败"才算废**:非零退出 / 起不来。
+    // 超时的含义是"没测出来",不是"它是桩" —— 那个桩是**秒退** exit 9009 的。
+    // 把超时也算成废,机器一忙就会把一个好好的解释器拒掉,整轮判据变成环境错误、
+    // 闭环被 park。宁可放过去:解释器真有病的话,判据自己会在它的超时里失败,
+    // 结论一样是环境错误,只是慢一点(实测:开发机满载时这里假阳性过)。
+    if (outcome.error && (outcome.error as NodeJS.ErrnoException).code === "ETIMEDOUT") ok = true
+    else ok = !outcome.error && outcome.status === 0
   } catch {
-    ok = false
+    // 探测这一步自己出岔子同样不构成"解释器是废的"证据。
+    ok = true
   }
   probeCache.set(label, ok)
   return ok
