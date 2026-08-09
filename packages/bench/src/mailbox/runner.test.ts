@@ -7,7 +7,14 @@ import type { TurnInput } from "../runner.ts"
 import { initMailbox } from "./init.ts"
 import { runnerStep, type MailboxRunnerOptions } from "./runner.ts"
 import { parseMailboxJob } from "./spec.ts"
-import { attachArtifacts, writeDecision, writeInstruction, writeVerdict, type RoundArtifact, type RoundResultFile } from "./store.ts"
+import {
+  attachArtifacts,
+  writeDecision,
+  writeInstruction,
+  writeVerdict,
+  type RoundArtifact,
+  type RoundResultFile,
+} from "./store.ts"
 import { commitPush } from "./sync.ts"
 import { fakeGrade, fakeTurn, freshClone, makeMailbox, makeTargetRepo, rawMailboxJob, Temp, usage } from "./testkit.ts"
 
@@ -40,7 +47,11 @@ async function issue(
   await commitPush({ clone: mailbox.motherClone, author: { name: "t", email: "t@e.c" } }, `下发第 ${round} 轮`)
 }
 
-function options(clone: string, projectDir: string, overrides: Partial<MailboxRunnerOptions> = {}): MailboxRunnerOptions {
+function options(
+  clone: string,
+  projectDir: string,
+  overrides: Partial<MailboxRunnerOptions> = {},
+): MailboxRunnerOptions {
   return {
     clone,
     // 工程目录是**本机配置**,不来自信箱里的任务书 —— 机器无关的支点。
@@ -168,7 +179,12 @@ describe("mailbox runner", () => {
     })
     await runnerStep(opts)
 
-    await writeDecision(mailbox.motherClone, { round: 1, by: "mother", decision: "continue", at: new Date(0).toISOString() })
+    await writeDecision(mailbox.motherClone, {
+      round: 1,
+      by: "mother",
+      decision: "continue",
+      at: new Date(0).toISOString(),
+    })
     await issue(mailbox, 2, "验证假设:中断里丢了 ORE 清理")
 
     const outcome = await runnerStep(opts)
@@ -243,7 +259,12 @@ describe("mailbox runner", () => {
       },
     })
     await runnerStep(opts) // 第 1 轮
-    await writeDecision(mailbox.motherClone, { round: 1, by: "policy", decision: "fail", at: new Date(0).toISOString() })
+    await writeDecision(mailbox.motherClone, {
+      round: 1,
+      by: "policy",
+      decision: "fail",
+      at: new Date(0).toISOString(),
+    })
     await writeVerdict(mailbox.motherClone, {
       outcome: "failed",
       reason: "测试终局",
@@ -323,7 +344,12 @@ describe("mailbox runner", () => {
     // 模拟清理 .bench / 换工位机:本地 state 蒸发。
     await Bun.write(path.join(target, ".bench", "mailbox", "m-1", "state.json"), "{}")
 
-    await writeDecision(mailbox.motherClone, { round: 1, by: "mother", decision: "continue", at: new Date(0).toISOString() })
+    await writeDecision(mailbox.motherClone, {
+      round: 1,
+      by: "mother",
+      decision: "continue",
+      at: new Date(0).toISOString(),
+    })
     await issue(mailbox, 2, "继续")
 
     await runnerStep(opts) // 轮 2:回垫后 300 + 300
@@ -377,7 +403,12 @@ describe("mailbox runner", () => {
     })
     await runnerStep(opts) // 轮 1:无 sessionID,正常
 
-    await writeDecision(mailbox.motherClone, { round: 1, by: "mother", decision: "continue", at: new Date(0).toISOString() })
+    await writeDecision(mailbox.motherClone, {
+      round: 1,
+      by: "mother",
+      decision: "continue",
+      at: new Date(0).toISOString(),
+    })
     await issue(mailbox, 2, "继续")
 
     const outcome = await runnerStep(opts) // 轮 2:带旧 sessionID 失败 → 重开会话成功
@@ -402,7 +433,12 @@ describe("mailbox runner", () => {
       runCommand: async () => ({ exitCode: restoreOk ? 0 : 1, stdout: "", stderr: "探针抖了", timedOut: false }),
     })
     await runnerStep(opts) // 轮 1
-    await writeDecision(mailbox.motherClone, { round: 1, by: "policy", decision: "fail", at: new Date(0).toISOString() })
+    await writeDecision(mailbox.motherClone, {
+      round: 1,
+      by: "policy",
+      decision: "fail",
+      at: new Date(0).toISOString(),
+    })
     await writeVerdict(mailbox.motherClone, {
       outcome: "failed",
       reason: "测试终局",
@@ -443,5 +479,47 @@ describe("mailbox runner · 安全约束", () => {
       }),
     )
     expect(prompts[0]).toContain("绝不能让电机转动")
+  })
+})
+
+describe("分支不一致:必须在动板子之前就停", () => {
+  test("停在 main 的克隆 + branch run-1 —— 不跑模型、不动硬件,直接 blocked", async () => {
+    // 这是最危险的一种配错:`pullReset` 在 origin/run-1 还不存在时什么都不做(那是
+    // 首推前的合法状态),于是工作树仍是 main 的内容 —— 扫描器读到的是**另一个任务**
+    // 的 job.json 和待执行轮。没有闸门的话工位端会真的烧片、跑判据、回刷 known-good,
+    // 跑完一整轮才在 push 那一下报 `src refspec run-1 does not match any`。
+    const { target, mailbox } = await fixture()
+    await issue(mailbox, 1, "别的任务的指令:把电机跑到 3000rpm")
+
+    // 工位机手工 git clone —— 停在 main。
+    const clone = await freshClone(temp, mailbox.bare)
+    expect((await runGitReal(["branch", "--show-current"], clone)).stdout).toBe("main")
+
+    const prompts: string[] = []
+    const hardware: string[] = []
+    const outcome = await runnerStep({
+      clone,
+      branch: "run-1",
+      projectDir: target,
+      sessionsRoot: temp.dir("sessions-"),
+      runTurn: async (input: TurnInput) => {
+        prompts.push(input.prompt)
+        return fakeTurn()
+      },
+      grade: async () => ({ passed: false, rounds: [fakeGrade(false)] }),
+      runCommand: async (command: string) => {
+        hardware.push(command)
+        return { exitCode: 0, stdout: "", stderr: "", timedOut: false }
+      },
+    } as MailboxRunnerOptions)
+
+    expect(outcome.kind).toBe("blocked")
+    if (outcome.kind === "blocked") {
+      expect(outcome.detail).toContain("停在分支 main")
+      expect(outcome.detail).toContain("run-1")
+    }
+    // 闸门的意义全在这两条上:模型没被调用,板子没被碰。
+    expect(prompts).toEqual([])
+    expect(hardware).toEqual([])
   })
 })

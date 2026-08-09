@@ -171,7 +171,14 @@ export async function runnerStep(options: MailboxRunnerOptions): Promise<RunnerS
   const progress = (message: string) => options.onProgress?.(message)
   const sync = syncContext(options)
 
-  await flushThenPullReset(sync)
+  // 同步失败要走 blocked 而不是裸抛:守护对 blocked 有指数退避,而未捕获的异常会
+  // 一路冒到守护循环外面。"克隆停在别的分支""远端只读""网断了"都是这一类 ——
+  // 配置/环境问题,重试有意义,但得慢下来。
+  try {
+    await flushThenPullReset(sync)
+  } catch (error) {
+    return { kind: "blocked", detail: (error as Error).message }
+  }
   const snapshot = await scanMailbox(options.clone)
 
   if (snapshot.state.kind === "corrupt") return { kind: "blocked", detail: snapshot.state.detail }

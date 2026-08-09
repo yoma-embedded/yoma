@@ -130,6 +130,34 @@ export function normalizeRemote(url: string): string {
 }
 
 /**
+ * 每个入口都绕不过的闸门:**克隆当前所在分支必须等于要跑的分支**。
+ *
+ * 合法流程里这条永远成立(`cloneMailbox` 负责把克隆放到对的分支上)。破坏它的只有
+ * 两种情况:手工 `git clone` 之后带 `--branch 别的` 起守护,或者复用一个停在旧分支的
+ * 克隆(`ensureClone` 见到 `.git/HEAD` 就早返回)。
+ *
+ * 不拦的后果比"报错难看"严重得多 —— 是**照着别的任务的指令去动板子**:
+ * `pullReset` 在 `origin/<新分支>` 不存在时什么都不做(那是首推前的合法状态),
+ * 于是工作树还是旧分支的内容,扫描器照常读到**上一个任务**的 job.json 与待执行轮,
+ * 工位端真的会烧片、跑判据、回刷 known-good,跑完一整轮才在 push 那一下报
+ * `src refspec <新分支> does not match any`。子 agent 的调查脚本实测复现过:
+ * 硬件动作真的发生了,提示词里是另一个任务的指令。
+ *
+ * 所以拦在**最前面**:模型没调、板子没动之前就停。
+ */
+async function assertOnBranch(context: MailboxSyncContext): Promise<void> {
+  const branch = branchOf(context)
+  const current = await git(context, "branch", "--show-current")
+  // 读不出来(极老的 git、或根本不是仓库)就不拦 —— 后面的 fetch 会给出真报错。
+  if (!current.ok) return
+  if (current.stdout === branch) return
+  throw new Error(
+    `${context.clone} 停在分支 ${current.stdout || "(游离 HEAD)"},而要跑的是 ${branch} —— ` +
+      `再往下走会照着另一条分支上的任务动板子。换个克隆目录,或在这个克隆里切到 ${branch}。`,
+  )
+}
+
+/**
  * 守护进程的同步入口:先把上次没推上去的本地提交推完,再对齐远端真相。
  *
  * pullReset 的"工作树永远等于远端"语义有一个昂贵的反面:push 失败(断网、远端
@@ -139,6 +167,7 @@ export function normalizeRemote(url: string): string {
  */
 export async function flushThenPullReset(context: MailboxSyncContext): Promise<{ remoteHead?: string }> {
   const branch = branchOf(context)
+  await assertOnBranch(context)
   const localHead = await git(context, "rev-parse", "--verify", "-q", "HEAD")
   if (localHead.ok) {
     const remote = await git(context, "rev-parse", "--verify", "-q", `origin/${branch}`)
@@ -159,6 +188,7 @@ export async function flushThenPullReset(context: MailboxSyncContext): Promise<{
  */
 export async function pullReset(context: MailboxSyncContext): Promise<{ remoteHead?: string }> {
   const branch = branchOf(context)
+  await assertOnBranch(context)
   const fetch = await git(context, "fetch", "-q", "origin")
   if (!fetch.ok) throw new Error(`fetch 信箱失败:${fetch.stderr}`)
 

@@ -42,7 +42,13 @@ import { ensureBenchDir, ensureMyPiIgnore } from "../runner.ts"
 import { runTurn, type TurnOptions, type TurnResult, type TurnUsage } from "../turn.ts"
 import { acquireRoleLock, backoffSeconds } from "./daemon.ts"
 import { renderMailboxReport } from "./report.ts"
-import { motherFollowUpPrompt, motherKickoffPrompt, motherPrompt, motherRetryPrompt, type MotherPromptInput } from "./prompts.ts"
+import {
+  motherFollowUpPrompt,
+  motherKickoffPrompt,
+  motherPrompt,
+  motherRetryPrompt,
+  type MotherPromptInput,
+} from "./prompts.ts"
 import {
   attachArtifacts,
   readRound,
@@ -153,7 +159,9 @@ async function saveLocalState(clone: string, state: MotherLocalState): Promise<v
  * 从自由文本里取出决定。只认**最后一个** ```json 围栏 —— 模型常在正文里引用示例,
  * 最后一个才是"落笔"。
  */
-export function parseMotherDecision(text: string): { ok: true; payload: MotherDecisionPayload } | { ok: false; error: string } {
+export function parseMotherDecision(
+  text: string,
+): { ok: true; payload: MotherDecisionPayload } | { ok: false; error: string } {
   const fences = [...text.matchAll(/```(?:json)?\s*\n([\s\S]*?)```/g)]
   if (!fences.length) return { ok: false, error: "回复里没有 ```json 围栏" }
   const raw = fences[fences.length - 1]![1]!
@@ -169,13 +177,18 @@ export function parseMotherDecision(text: string): { ok: true; payload: MotherDe
   const record = parsed as Record<string, unknown>
   const decision = record.decision
   if (decision === "success") {
-    return { ok: false, error: `"success" 不是你能给的决定 —— 判据由工位端独立执行,全绿时闭环自动终止。可选:continue / fail / park` }
+    return {
+      ok: false,
+      error: `"success" 不是你能给的决定 —— 判据由工位端独立执行,全绿时闭环自动终止。可选:continue / fail / park`,
+    }
   }
   if (decision !== "continue" && decision !== "fail" && decision !== "park") {
     return { ok: false, error: `decision "${String(decision)}" 不认识,可选:continue / fail / park` }
   }
   const str = (key: string): string | undefined =>
-    typeof record[key] === "string" && (record[key] as string).trim() !== "" ? (record[key] as string).trim() : undefined
+    typeof record[key] === "string" && (record[key] as string).trim() !== ""
+      ? (record[key] as string).trim()
+      : undefined
   const instruction = str("instruction")
   const reason = str("reason")
   if (decision === "continue" && !instruction) {
@@ -188,8 +201,11 @@ export function parseMotherDecision(text: string): { ok: true; payload: MotherDe
   const artifactsRaw = record.artifacts
   let artifacts: string[] | undefined
   if (artifactsRaw !== undefined && artifactsRaw !== null) {
-    if (!Array.isArray(artifactsRaw)) return { ok: false, error: "artifacts 必须是一个字符串数组(相对工程根的文件路径)" }
-    artifacts = artifactsRaw.filter((item): item is string => typeof item === "string" && item.trim() !== "").map((item) => item.trim())
+    if (!Array.isArray(artifactsRaw))
+      return { ok: false, error: "artifacts 必须是一个字符串数组(相对工程根的文件路径)" }
+    artifacts = artifactsRaw
+      .filter((item): item is string => typeof item === "string" && item.trim() !== "")
+      .map((item) => item.trim())
     if (artifacts.length !== artifactsRaw.length) return { ok: false, error: "artifacts 里有不是字符串(或为空)的项" }
     if (!artifacts.length) artifacts = undefined
   }
@@ -238,9 +254,19 @@ function planArtifacts(
 
 export async function motherStep(options: MailboxMotherOptions): Promise<MotherStepOutcome> {
   const progress = (message: string) => options.onProgress?.(message)
-  const sync: MailboxSyncContext = { clone: options.clone, branch: options.branch, author: MOTHER_AUTHOR, run: options.gitRun }
+  const sync: MailboxSyncContext = {
+    clone: options.clone,
+    branch: options.branch,
+    author: MOTHER_AUTHOR,
+    run: options.gitRun,
+  }
 
-  await flushThenPullReset(sync)
+  // 与 runnerStep 同一条纪律:同步失败走 blocked(守护对它有退避),不裸抛。
+  try {
+    await flushThenPullReset(sync)
+  } catch (error) {
+    return { kind: "blocked", detail: (error as Error).message }
+  }
   const snapshot = await scanMailbox(options.clone)
 
   if (snapshot.state.kind === "corrupt") return { kind: "blocked", detail: snapshot.state.detail }
@@ -297,7 +323,12 @@ async function kickoff(
   progress: (message: string) => void,
 ): Promise<MotherStepOutcome> {
   const now = options.now ?? Date.now
-  const sync: MailboxSyncContext = { clone: options.clone, branch: options.branch, author: MOTHER_AUTHOR, run: options.gitRun }
+  const sync: MailboxSyncContext = {
+    clone: options.clone,
+    branch: options.branch,
+    author: MOTHER_AUTHOR,
+    run: options.gitRun,
+  }
   progress("研发端开局:读任务书,决定第一轮")
 
   const prepared = await prepareProjectBranch(options, mailboxJob, workspace)
@@ -332,13 +363,25 @@ async function kickoff(
       at: new Date(now()).toISOString(),
     }
     progress(`研发端开局就终止:${payload.decision} —— ${reason}`)
-    return settleTerminal(options, mailboxJob, [], decision, payload.decision === "fail" ? "failed" : "parked", reason, 0, 0)
+    return settleTerminal(
+      options,
+      mailboxJob,
+      [],
+      decision,
+      payload.decision === "fail" ? "failed" : "parked",
+      reason,
+      0,
+      0,
+    )
   }
 
   const issued = await issueInstruction(options, mailboxJob, workspace, 1, payload, progress)
   if (!issued.ok) return { kind: "blocked", detail: issued.error }
 
-  const pushed = await commitPush(sync, `round 1: 研发端开局下发第 1 轮${issued.artifacts.length ? `(附 ${issued.artifacts.length} 件)` : ""}`)
+  const pushed = await commitPush(
+    sync,
+    `round 1: 研发端开局下发第 1 轮${issued.artifacts.length ? `(附 ${issued.artifacts.length} 件)` : ""}`,
+  )
   if (!pushed.pushed) return { kind: "blocked", detail: pushed.detail ?? "第一轮指令推不上去" }
   return { kind: "decided", round: 0, decision: "continue" }
 }
@@ -355,7 +398,12 @@ async function decide(
   const { round, instruction, result } = state
   const job = mailboxJob.job
   const now = options.now ?? Date.now
-  const sync: MailboxSyncContext = { clone: options.clone, branch: options.branch, author: MOTHER_AUTHOR, run: options.gitRun }
+  const sync: MailboxSyncContext = {
+    clone: options.clone,
+    branch: options.branch,
+    author: MOTHER_AUTHOR,
+    run: options.gitRun,
+  }
 
   // 两本账取大:信箱里的 decision.usage(push 成功才有)与本地账本(push 前就记)。
   const local = await readLocalState(options.clone)
@@ -406,12 +454,18 @@ async function decide(
   // provider 级失败的轮长这样:text 空、没有工具调用、errors 非空 —— 内核把失败当
   // 数据,轮"正常"结束。不拦的话研发端会对着"什么都没做"的轮持续 continue,
   // 空轮 token≈0,一路烧到轮数上限,终局理由还会写成"轮数用尽"(补审逮住过)。
-  if (result.turn && !result.turn.text && Object.keys(result.turn.toolCounts).length === 0 && result.turn.errors.length) {
+  if (
+    result.turn &&
+    !result.turn.text &&
+    Object.keys(result.turn.toolCounts).length === 0 &&
+    result.turn.errors.length
+  ) {
     const reason = `第 ${round} 轮空转(provider 级错误):${result.turn.errors[0]}`
     return terminal(policyDecision("park", reason), "parked", reason)
   }
   if (result.grade?.hasEnvironmentError) {
-    const summary = [result.grade.build, ...result.grade.checks].find((check) => check?.outcome === "error")?.summary ?? ""
+    const summary =
+      [result.grade.build, ...result.grade.checks].find((check) => check?.outcome === "error")?.summary ?? ""
     const reason = `判据没跑成(环境问题):${summary}`
     return terminal(policyDecision("park", reason), "parked", reason)
   }
@@ -558,7 +612,12 @@ async function settleTerminal(
   motherTokensBefore: number,
 ): Promise<MotherStepOutcome> {
   const now = options.now ?? Date.now
-  const sync: MailboxSyncContext = { clone: options.clone, branch: options.branch, author: MOTHER_AUTHOR, run: options.gitRun }
+  const sync: MailboxSyncContext = {
+    clone: options.clone,
+    branch: options.branch,
+    author: MOTHER_AUTHOR,
+    run: options.gitRun,
+  }
   await writeDecision(options.clone, decision)
   const verdict: MailboxVerdict = {
     outcome,
@@ -604,7 +663,8 @@ async function prepareProjectBranch(
   await ensureMyPiIgnore(workspace)
 
   if (!state.baseCommit) {
-    if (!(await git.isRepo(gitContext))) return { ok: false, error: `${workspace} 不是 git 仓库 —— 研发端要在分支上提交改动` }
+    if (!(await git.isRepo(gitContext)))
+      return { ok: false, error: `${workspace} 不是 git 仓库 —— 研发端要在分支上提交改动` }
     const prepared = await git.prepareBranch(gitContext, { branch, ref: job.repo.ref })
     if (!prepared.ok) return { ok: false, error: `准备工作分支失败:${prepared.message}` }
     await saveLocalState(options.clone, { ...state, baseCommit: prepared.baseCommit })
