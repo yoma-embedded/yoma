@@ -18,6 +18,7 @@
  * 脚本执行也跑一遍,判据的副作用不能在探测阶段发生。
  */
 
+import { spawnSync } from "node:child_process"
 import { accessSync, constants, existsSync, statSync } from "node:fs"
 import path from "node:path"
 
@@ -26,6 +27,20 @@ interface Candidate {
   argv: string[]
   /** 找不到时报给人看的名字。 */
   label: string
+  /**
+   * 自检 argv(**不含脚本**)。给出来就在 PATH 命中之后真起一次进程,退出码 0 才算数。
+   *
+   * 为什么光查 PATH 不够:Windows 的"应用执行别名"会在 `%LOCALAPPDATA%\Microsoft\
+   * WindowsApps` 下放一个叫 `python.exe` / `python3.exe` 的桩。它在 PATH 上、stat
+   * 得到、看起来完全正常,**执行时却打印 "Python was not found; run without arguments
+   * to install from the Microsoft Store" 并 exit 9009**(实测,工位机第一次真跑就是
+   * 死在这儿)。这种"命中了但跑不了"只能靠真跑一次分辨。
+   *
+   * 代价是每种解释器一次 ~50ms 的探测,结果按 label 缓存。**只探解释器本身**
+   * (`--version`),绝不带上脚本 —— 判据的副作用不能在探测阶段发生。
+   * cmd / powershell 没有便宜的自检形式,留空只查 PATH。
+   */
+  probe?: string[]
 }
 
 /**
@@ -39,16 +54,32 @@ function candidatesFor(extension: string): Candidate[] {
   switch (extension) {
     case ".py":
       return win
-        ? [{ argv: ["py", "-3"], label: "py -3" }, { argv: ["python"], label: "python" }, { argv: ["python3"], label: "python3" }]
-        : [{ argv: ["python3"], label: "python3" }, { argv: ["python"], label: "python" }]
+        ? [
+            { argv: ["py", "-3"], label: "py -3", probe: ["py", "-3", "--version"] },
+            { argv: ["python"], label: "python", probe: ["python", "--version"] },
+            { argv: ["python3"], label: "python3", probe: ["python3", "--version"] },
+          ]
+        : [
+            { argv: ["python3"], label: "python3", probe: ["python3", "--version"] },
+            { argv: ["python"], label: "python", probe: ["python", "--version"] },
+          ]
     case ".sh":
-      return [{ argv: ["bash"], label: "bash" }, { argv: ["sh"], label: "sh" }]
+      return [
+        { argv: ["bash"], label: "bash", probe: ["bash", "--version"] },
+        { argv: ["sh"], label: "sh" },
+      ]
     case ".js":
     case ".mjs":
     case ".cjs":
-      return [{ argv: ["node"], label: "node" }, { argv: ["bun"], label: "bun" }]
+      return [
+        { argv: ["node"], label: "node", probe: ["node", "--version"] },
+        { argv: ["bun"], label: "bun", probe: ["bun", "--version"] },
+      ]
     case ".ts":
-      return [{ argv: ["bun"], label: "bun" }, { argv: ["node"], label: "node" }]
+      return [
+        { argv: ["bun"], label: "bun", probe: ["bun", "--version"] },
+        { argv: ["node"], label: "node", probe: ["node", "--version"] },
+      ]
     case ".ps1":
       return win
         ? [
@@ -70,9 +101,7 @@ export function onPath(name: string): boolean {
   if (name.includes("/") || name.includes("\\")) return existsSync(name)
   const dirs = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean)
   const extensions =
-    process.platform === "win32"
-      ? (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)
-      : [""]
+    process.platform === "win32" ? (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean) : [""]
   for (const dir of dirs) {
     for (const extension of extensions) {
       const candidate = path.join(dir, name + extension)
@@ -88,9 +117,45 @@ export function onPath(name: string): boolean {
   return false
 }
 
-export type InterpreterResolution =
-  | { ok: true; argv: string[] }
-  | { ok: false; error: string }
+/**
+ * 解释器自检:真起一次 `<解释器> --version`,退出码 0 才算能用。
+ *
+ * 按 label 缓存 —— 一轮判据有好几条,没必要每条都探。缓存活在进程里,而调试台
+ * 是"一轮一个子进程",所以不存在"装完 Python 还得重启"的陈旧问题。
+ */
+const probeCache = new Map<string, boolean>()
+
+export function probeInterpreter(label: string, argv: readonly string[]): boolean {
+  const cached = probeCache.get(label)
+  if (cached !== undefined) return cached
+  let ok = false
+  try {
+    const outcome = spawnSync(argv[0]!, argv.slice(1), {
+      timeout: 5_000,
+      stdio: "ignore",
+      // shell:false 是默认值,这里写出来是提醒:探测和判据一样绝不过 shell。
+      shell: false,
+      windowsHide: true,
+      // **env 必须显式传**:bun 不认运行时改过的 `process.env.PATH`,省略 env 时
+      // 它按进程启动那一刻的环境去解析 argv[0](与 `os.homedir()` 同一类行为,
+      // 实测:改了 PATH 之后不传 env 仍然解析到旧 PATH 上的那个可执行文件)。
+      // 于是自检探到的会是另一个程序,结论对不上真正要跑的那个。
+      env: process.env,
+    })
+    ok = !outcome.error && outcome.status === 0
+  } catch {
+    ok = false
+  }
+  probeCache.set(label, ok)
+  return ok
+}
+
+/** 测试用:清掉自检缓存。 */
+export function resetInterpreterProbeCache(): void {
+  probeCache.clear()
+}
+
+export type InterpreterResolution = { ok: true; argv: string[] } | { ok: false; error: string }
 
 /**
  * 把"脚本路径 + 参数"解析成本机能直接 spawn 的 argv。
@@ -106,6 +171,7 @@ export function resolveScriptArgv(scriptPath: string, args: readonly string[] = 
   if (!candidates.length) {
     return { ok: false, error: `这台机器(${process.platform})上跑不了 ${extension} 脚本` }
   }
+  const brokenOnPath: string[] = []
 
   for (const candidate of candidates) {
     if (candidate.argv.length === 0) {
@@ -114,16 +180,39 @@ export function resolveScriptArgv(scriptPath: string, args: readonly string[] = 
         try {
           accessSync(scriptPath, constants.X_OK)
         } catch {
-          return { ok: false, error: `${scriptPath} 没有可执行位,而它没有扩展名可推断解释器 —— 补 \`chmod +x\`,或者给文件加上 .py/.sh 之类的后缀` }
+          return {
+            ok: false,
+            error: `${scriptPath} 没有可执行位,而它没有扩展名可推断解释器 —— 补 \`chmod +x\`,或者给文件加上 .py/.sh 之类的后缀`,
+          }
         }
       }
       return { ok: true, argv: [scriptPath, ...args] }
     }
-    if (onPath(candidate.argv[0]!)) {
-      return { ok: true, argv: [...candidate.argv, scriptPath, ...args] }
+    if (!onPath(candidate.argv[0]!)) continue
+    if (candidate.probe && !probeInterpreter(candidate.label, candidate.probe)) {
+      // PATH 上有,但真跑起来是废的 —— 记下来,好让最终的报错指向真因。
+      brokenOnPath.push(candidate.label)
+      continue
     }
+    return { ok: true, argv: [...candidate.argv, scriptPath, ...args] }
   }
 
   const tried = candidates.map((candidate) => candidate.label).join(" / ")
-  return { ok: false, error: `这台机器上找不到能跑 ${extension} 的解释器(试过 ${tried})—— 装一个,或者把判据换成本机有的脚本类型` }
+  // "PATH 上根本没有"和"PATH 上有但跑不起来"要分开说:后者在 Windows 上几乎总是
+  // 应用执行别名那个桩,而"装一个 Python"是对它无效的建议 —— 人已经"装过"了,
+  // 真正要做的是装真的解释器或者关掉别名(设置 → 应用 → 高级应用设置 → 应用执行别名)。
+  if (brokenOnPath.length) {
+    return {
+      ok: false,
+      error:
+        `${brokenOnPath.join(" / ")} 在 PATH 上找得到,但执行 --version 不成功 —— ` +
+        `Windows 上这几乎总是"应用执行别名"的桩(跑起来只会让你去微软商店,exit 9009)。` +
+        `装一个真的解释器,或者到 设置 → 应用 → 高级应用设置 → 应用执行别名 里把它关掉。` +
+        `(试过:${tried})`,
+    }
+  }
+  return {
+    ok: false,
+    error: `这台机器上找不到能跑 ${extension} 的解释器(试过 ${tried})—— 装一个,或者把判据换成本机有的脚本类型`,
+  }
 }
