@@ -66,7 +66,8 @@ writeFileSync(join(target, "main.c"), "int main(void){return 0;}\n")
 git("add", "-A")
 git("commit", "-q", "-m", "init")
 
-const checkCommand = process.platform === "win32" ? "cmd /c if exist proof.txt (exit 0) else (exit 1)" : "test -f proof.txt"
+const checkCommand =
+  process.platform === "win32" ? "cmd /c if exist proof.txt (exit 0) else (exit 1)" : "test -f proof.txt"
 const jobFile = join(root, "job.json")
 writeFileSync(
   jobFile,
@@ -107,7 +108,11 @@ writeFileSync(
       faux: {
         turns: [[[{ text: "上板看了一圈:proof.txt 不在,现象复现" }]], [[{ text: "换上新产物再复现一次:现象消失" }]]],
         mother: [
-          [{ text: '开局先确认现状。\n```json\n{"decision":"continue","analysis":"还没有任何观测","instruction":"上板复现一次,报告现象"}\n```' }],
+          [
+            {
+              text: '开局先确认现状。\n```json\n{"decision":"continue","analysis":"还没有任何观测","instruction":"上板复现一次,报告现象"}\n```',
+            },
+          ],
           [{ tool: "write", input: { path: "proof.txt", content: "bench-ok\n" } }],
           [
             {
@@ -144,8 +149,13 @@ const child = spawn(execPath, [hostBundle, configFile], {
 let done: DoneEvent | undefined
 let sawChildHello = false
 let pending = ""
+// 逐 chunk `toString()` 会劈断多字节 UTF-8:done 事件那一行带着整份终报,中文
+// 3 字节/字,轻松超过一个 pipe chunk(≤64KiB),边界大概率落在字符中间。各自解码
+// 得到两个 U+FFFD,而 JSON 的结构字符全是 ASCII,parse 照样成功 —— 乱码静默进
+// 判定。与 main/mailbox.ts 同一条纪律:TextDecoder + { stream: true }。
+const stdoutDecoder = new TextDecoder()
 child.stdout.on("data", (chunk: Buffer) => {
-  pending += chunk.toString()
+  pending += stdoutDecoder.decode(chunk, { stream: true })
   const lines = pending.split("\n")
   pending = lines.pop() ?? ""
   for (const line of lines) {
@@ -156,7 +166,10 @@ child.stdout.on("data", (chunk: Buffer) => {
       if (event.type === "child") {
         const inner = (event as { event: { type: string } }).event
         if (inner.type === "hello") sawChildHello = true
-        if (inner.type === "step") console.log(`  [${String(event.role)}] step: ${JSON.stringify((inner as { outcome: unknown }).outcome).slice(0, 120)}`)
+        if (inner.type === "step")
+          console.log(
+            `  [${String(event.role)}] step: ${JSON.stringify((inner as { outcome: unknown }).outcome).slice(0, 120)}`,
+          )
       }
       if (event.type === "done") done = event as unknown as DoneEvent
     } catch {
@@ -166,13 +179,33 @@ child.stdout.on("data", (chunk: Buffer) => {
 })
 child.stderr.on("data", (chunk: Buffer) => process.stderr.write(chunk))
 
-const timer = setTimeout(() => {
-  console.error("✗ 冒烟超时(5 分钟),杀掉守护")
-  child.kill("SIGKILL")
-}, 5 * 60 * 1000)
+/**
+ * 停守护:**先 SIGTERM,宽限后才 SIGKILL**。
+ *
+ * sim 守护自己 spawn 两个角色子进程,角色守护又 spawn turn 孙进程。SIGKILL 捕获不到,
+ * 守护来不及转杀,孙进程就漏成孤儿 —— 实测踩过:一次超时的冒烟留下一个 mother host
+ * 空转轮询了一天多(5 分钟 CPU)。这里是 mother 角色所以只是白烧 CPU,同样的漏法
+ * 出在 runner 角色上就是一个攥着探针不放的孤儿,而那个报错长得和"没插板子"一样。
+ * 与 app 退出路径(main/mailbox.ts 的 stopAll)同一条纪律。
+ */
+const KILL_GRACE_MS = 10_000
+function stopDaemon(why: string): void {
+  console.error(`✗ ${why},停守护`)
+  child.kill("SIGTERM")
+  const hard = setTimeout(() => child.kill("SIGKILL"), KILL_GRACE_MS)
+  hard.unref?.()
+}
+
+const timer = setTimeout(() => stopDaemon("冒烟超时(5 分钟)"), 5 * 60 * 1000)
+// Ctrl-C 同理:默认行为只带走本进程,守护与孙进程会活下来继续跑。
+const onSignal = (signal: NodeJS.Signals) => stopDaemon(`收到 ${signal}`)
+process.once("SIGINT", onSignal)
+process.once("SIGTERM", onSignal)
 
 const code = await new Promise<number | null>((resolve) => child.on("close", resolve))
 clearTimeout(timer)
+process.off("SIGINT", onSignal)
+process.off("SIGTERM", onSignal)
 
 // ---------------------------------------------------------------------------
 // 判定:done 事件 + 退出码 + 目标仓里被提交的证据,三样都要
