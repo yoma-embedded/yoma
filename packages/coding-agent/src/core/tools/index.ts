@@ -162,6 +162,7 @@ export {
 	prepareSerial,
 	serialArgv,
 	type SerialPortInfo,
+	unsupportedBaud,
 	windowsReaderScript,
 } from "./serial.ts";
 export {

@@ -15,6 +15,7 @@ import {
 	prepareSerial,
 	releaseProbe,
 	serialArgv,
+	unsupportedBaud,
 	windowsReaderScript,
 } from "../src/index.ts";
 
@@ -137,6 +138,24 @@ describe("buildSttyArgs", () => {
 		expect(args).toContain("-crtscts");
 		// raw/-echo 必须在末尾,否则会被前面的组合选项覆盖回去。
 		expect(args.slice(-2)).toEqual(["raw", "-echo"]);
+	});
+});
+
+// docker 里实测过(coreutils 9.7 / 8.32):Linux 的 stty 只认 B 常量表,而 macOS
+// 给什么收什么。250000 是 Marlin 的默认速率 —— 同一份任务书换台机器就配不上了。
+describe("unsupportedBaud", () => {
+	it("Linux 上只认标准速率,并给出最近的两档", () => {
+		expect(unsupportedBaud(921600, "linux")).toBeUndefined();
+		expect(unsupportedBaud(115200, "linux")).toBeUndefined();
+		const message = unsupportedBaud(250000, "linux");
+		expect(message).toContain("230400 or 460800");
+		// 别让模型自己降速 —— 那会成功,然后吐一屏被它当成固件问题的乱码。
+		expect(message).toContain("Do not just pick a different rate");
+	});
+
+	it("macOS / Windows 不查表", () => {
+		expect(unsupportedBaud(250000, "darwin")).toBeUndefined();
+		expect(unsupportedBaud(250000, "win32")).toBeUndefined();
 	});
 });
 

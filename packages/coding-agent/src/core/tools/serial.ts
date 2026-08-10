@@ -49,9 +49,23 @@ import { runEngine } from "./engines.ts";
 /** 绝大多数板子的出厂速率;真值由调用方给,这只是 baud 缺省。 */
 export const DEFAULT_BAUD = 115_200;
 
-/** 波特率的合理区间 —— 卡掉 0 和手滑多打的零,不做白名单(非标速率是常态)。 */
+/** 波特率的合理区间 —— 卡掉 0 和手滑多打的零。上限按 macOS 来,它不查表。 */
 export const MIN_BAUD = 50;
 export const MAX_BAUD = 12_000_000;
+
+/**
+ * Linux 的 stty 只认 termios 的 B 常量表;macOS 的 speed_t 就是那个数字本身,给什么收什么。
+ * 实测(docker,coreutils 9.7 与 8.32):`stty 250000` → `invalid argument`,而同一条 argv
+ * 在 macOS 上原样成立、回读也是 250000。250000 是 Marlin 的默认速率,不是罕见值。
+ *
+ * 所以 Linux 上要**在跑 stty 之前**就拦下来并说清楚:stty 自己的报错是本地化的,
+ * 而模型看到"配不上"最顺手的下一步是改成 115200 —— 那会成功,然后吐一屏乱码,
+ * 而工具的说明书告诉它乱码意味着"波特率不对或者固件在讲二进制",于是它去怀疑固件。
+ */
+const LINUX_BAUDS = [
+	50, 75, 110, 134, 150, 200, 300, 600, 1200, 1800, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800,
+	500000, 576000, 921600, 1000000, 1152000, 1500000, 2000000, 2500000, 3000000, 3500000, 4000000,
+];
 
 /** macOS 自带的几个 cu.*:列出来只会让人往错的地方插。 */
 const DARWIN_NOISE = new Set(["cu.Bluetooth-Incoming-Port", "cu.debug-console", "cu.wlan-debug"]);
@@ -100,6 +114,19 @@ export function buildSttyArgs(baud: number): string[] {
 	return [String(baud), "cs8", "-parenb", "-cstopb", "-crtscts", "clocal", "raw", "-echo"];
 }
 
+/** Linux 上 stty 设不了的速率(见 LINUX_BAUDS);设得了就返回 undefined。 */
+export function unsupportedBaud(baud: number, platform: NodeJS.Platform = process.platform): string | undefined {
+	if (platform !== "linux" || LINUX_BAUDS.includes(baud)) return undefined;
+	const below = LINUX_BAUDS.filter((rate) => rate < baud).pop();
+	const above = LINUX_BAUDS.find((rate) => rate > baud);
+	const near = [below, above].filter((rate) => rate !== undefined).join(" or ");
+	return (
+		`Linux can only set the standard rates, and ${baud} is not one of them (nearest: ${near}). ` +
+		`Do not just pick a different rate — the bytes would be garbage. Either the firmware's rate is wrong, ` +
+		`or capture through a reader that can set it itself (a pyserial script) as a command source.`
+	);
+}
+
 /** 打不开串口是最常见的失败,而 errno 的默认文案没有一个能指向下一步动作。 */
 function describeOpenError(device: string, error: unknown, platform: NodeJS.Platform): string {
 	const code = (error as { code?: string } | null)?.code;
@@ -123,6 +150,9 @@ function describeOpenError(device: string, error: unknown, platform: NodeJS.Plat
  */
 export function prepareSerial(device: string, baud: number, platform: NodeJS.Platform = process.platform): number | undefined {
 	if (platform === "win32") return undefined;
+	// 在碰设备之前问清楚:这台机器的 stty 设得了这个速率吗。
+	const unsupported = unsupportedBaud(baud, platform);
+	if (unsupported) throw new Error(unsupported);
 
 	let configuring: number;
 	try {

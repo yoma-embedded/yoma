@@ -99,6 +99,11 @@ const UPDATE_THROTTLE_MS = 100;
 const FORCE_KILL_GRACE_MS = 3_000;
 const EXIT_WAIT_MS = 5_000;
 /**
+ * Windows 上串口是 PowerShell 自己开的,spawn 成功不代表口开成了。等这么久确认它
+ * 没当场死掉再宣布"在采了" —— POSIX 那边是我们自己 open 的,开不成当场就抛。
+ */
+const WIN32_SERIAL_OPEN_MS = 1_500;
+/**
  * 'exit' 可能先于最后一段 stdout 到达(管道还没排干)。收到退出后再宽限这么久,
  * 免得"最后一行正好是要等的那条"被判成"源退出了,没等到"。
  */
@@ -711,6 +716,11 @@ export class LogCapture {
 		}
 	}
 
+	/** 等源自己退出,或者到点 —— 给"它到底起来了没"一个有界的答案。 */
+	async settle(timeoutMs: number): Promise<void> {
+		await this.waitForExit(timeoutMs);
+	}
+
 	/** 'close'(管道排干)才算收全;finish() 就挂在它上面。 */
 	private async waitForClose(timeoutMs: number): Promise<void> {
 		const deadline = Date.now() + timeoutMs;
@@ -793,7 +803,11 @@ const logSchema = Type.Object({
 				'start over UART/USB serial: the port — "/dev/cu.usbmodem1103" (macOS), "/dev/ttyUSB0" or "/dev/ttyACM0" (Linux), "COM5" (Windows). Run action:"ports" to list them.',
 		}),
 	),
-	baud: Type.Optional(Type.Number({ description: `serial baud rate, 8N1 no flow control (default ${DEFAULT_BAUD}).` })),
+	baud: Type.Optional(
+		Type.Number({
+			description: `serial baud rate, 8N1 no flow control (default ${DEFAULT_BAUD}). Linux can only set the standard rates.`,
+		}),
+	),
 	command: Type.Optional(
 		Type.String({
 			description:
@@ -842,14 +856,16 @@ function logFileName(now = new Date()): string {
  * 串口那条路的失败十有八九是"名字写成了别的样子"或者"口不在了",而 errno 本身
  * 指不出下一步动作。抛出去之前把这台机器上真实存在的口贴上 —— 否则模型会去查线。
  */
+async function portHint(): Promise<string> {
+	const ports = await listSerialPorts().catch(() => []);
+	return ports.length > 0 ? ` — ports on this machine: ${ports.map((entry) => entry.path).join(", ")}` : "";
+}
+
 async function withPortHints<T>(run: () => T): Promise<T> {
 	try {
 		return run();
 	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		const ports = await listSerialPorts().catch(() => []);
-		const hint = ports.length > 0 ? ` — ports on this machine: ${ports.map((entry) => entry.path).join(", ")}` : "";
-		throw new Error(`log start: ${message}${hint}`);
+		throw new Error(`log start: ${error instanceof Error ? error.message : String(error)}${await portHint()}`);
 	}
 }
 
@@ -987,6 +1003,21 @@ export function createLogToolDefinition(
 						await started.stop();
 						throw error;
 					}
+					// Windows 上口是 PowerShell 开的,spawn 成功不代表口开成了。它要是当场死了
+					// 就把它自己那句话报出来 —— 否则模型拿着一句"Capturing …"去等一份永远不来
+					// 的日志,而 POSIX 那边("口被占着""口不在了")的那些话在这条路上全不会说。
+					if (serial && process.platform === "win32") {
+						await started.settle(WIN32_SERIAL_OPEN_MS);
+						if (started.exited) {
+							const said = started.lines
+								.map((line) => line.text)
+								.join("; ")
+								.trim();
+							await started.stop();
+							throw new Error(`log start: could not open ${label}${said ? `: ${said}` : ""}${await portHint()}`);
+						}
+					}
+
 					capture = started;
 					heldProbe = needsProbe;
 					const text = `Capturing ${label}${started.pid ? ` (pid ${started.pid})` : ""}.
