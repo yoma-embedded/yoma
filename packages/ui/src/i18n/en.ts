@@ -152,6 +152,7 @@ export const dict: Record<string, string> = {
   "ui.tool.log.action.wait": "Wait",
   "ui.tool.log.action.status": "Status",
   "ui.tool.log.action.stop": "Stop",
+  "ui.tool.log.action.ports": "Ports",
   "ui.tool.log.running": "Running",
   "ui.tool.log.stopped": "Stopped",
   "ui.tool.log.cursor": "Cursor",

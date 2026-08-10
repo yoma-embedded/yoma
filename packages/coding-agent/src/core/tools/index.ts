@@ -154,6 +154,17 @@ export {
 	type ReadToolInput,
 } from "./read.ts";
 export {
+	buildSttyArgs,
+	DEFAULT_BAUD,
+	listSerialPorts,
+	normalizeSerialPort,
+	parsePortLines,
+	prepareSerial,
+	serialArgv,
+	type SerialPortInfo,
+	windowsReaderScript,
+} from "./serial.ts";
+export {
 	buildStm32ConfigArgs,
 	createStm32ConfigTool,
 	createStm32ConfigToolDefinition,

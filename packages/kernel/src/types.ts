@@ -316,7 +316,7 @@ export interface FlashToolDetails {
   exitCode: number | null
 }
 
-export type LogAction = "start" | "read" | "wait" | "status" | "stop"
+export type LogAction = "start" | "read" | "wait" | "status" | "stop" | "ports"
 
 export interface LogToolDetails {
   action: LogAction

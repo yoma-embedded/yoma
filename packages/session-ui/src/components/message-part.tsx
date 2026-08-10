@@ -1769,6 +1769,7 @@ const LOG_ACTION_KEYS = {
   wait: "ui.tool.log.action.wait",
   status: "ui.tool.log.action.status",
   stop: "ui.tool.log.action.stop",
+  ports: "ui.tool.log.action.ports",
 } as const
 
 ToolRegistry.register({

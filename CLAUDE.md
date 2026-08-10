@@ -365,6 +365,18 @@ text part,不过滤的话提示词会原样出现在终报的"根因分析"里)�
   它按进程启动那一刻的环境解析 argv[0](与 `os.homedir()` 同一类)。想让子进程看到
   当前环境就得显式传 `env`。实测:改了 PATH 之后不传 env,解析到的仍是旧 PATH 上那个
   可执行文件 —— 探测类代码会探到另一个程序,而结论看起来完全合理。
+- **`detached` 起的读进程自己 open 一个 tty(串口/pty),SIGTERM 就杀不掉它**。
+  `detached` 会 setsid,子进程于是是 session leader;session leader 打开 tty 且没带
+  `O_NOCTTY`,那个 tty 就成了它的控制终端。实测(macOS,同一段代码两种写法各 4 次):
+  `cat /dev/ttysNNN` 每次都是 `Ss+`、SIGTERM 后 >1500ms 仍活着、'exit' 事件永不到;
+  `cat` 读继承来的 O_NOCTTY fd 每次都是 `Ss ??`、21ms 内退出。表现是 `log stop` 每次
+  等满 5 秒再强杀,并如实报"设备可能还被占着"—— 于是每次停采都像出了硬件故障。
+  所以串口这类源:**父进程开好 fd(O_NOCTTY)当 stdin 传下去,读进程不许自己 open**
+  (`tools/serial.ts`)。bench 的 grader 有一份独立的采集管线,写 `command: "cat /dev/…"`
+  会踩同一个坑。
+- **串口的 termios 属于设备而不是 fd,最后一个 fd 一关就复位**。流传甚广的
+  `stty … && cat …` 因此是错的:实测在 ST-Link VCP 上设完 921600、stty 一退出回读就是
+  9600,而症状是整屏乱码 —— 看起来像固件坏了。配置用的 fd 必须活到读用的 fd 开好为止。
 - **内核事件批处理的定时器是 unref 的,纯 node 下会把等事件的进程放空**。
   host/stream.ts 的 16ms 合并窗口刻意 unref(给 utilityProcess 退出让路),而 bench
   `runTurn` 的完成恰恰依赖那批事件送达 —— 进程没有别的 ref 句柄时(mother 的进程内

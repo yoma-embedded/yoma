@@ -243,6 +243,8 @@ export function runEngine(bin: string, args: string[], options: EngineRunOptions
 			stdio: ["ignore", "pipe", "pipe"],
 			// 自成进程组,这样 killTree 才够得着孙进程。
 			detached: process.platform !== "win32",
+			// 桌面端是 GUI 进程:引擎起来时不要在用户面前闪一个控制台窗口。
+			windowsHide: true,
 		});
 
 		let stdout = "";

@@ -143,6 +143,7 @@ export const dict = {
   "ui.tool.log.action.wait": "等待",
   "ui.tool.log.action.status": "状态",
   "ui.tool.log.action.stop": "停止",
+  "ui.tool.log.action.ports": "串口列表",
   "ui.tool.log.running": "运行中",
   "ui.tool.log.stopped": "已停止",
   "ui.tool.log.cursor": "读取位置",

@@ -1,6 +1,6 @@
 /**
- * log 工具:把板子的运行日志接进会话 —— RTT(probe-rs attach)或任意往 stdout
- * 吐日志的命令。五个动作(start/read/wait/status/stop)合成一个工具。
+ * log 工具:把板子的运行日志接进会话 —— RTT(probe-rs attach)、UART 串口,或者任意
+ * 往 stdout 吐日志的命令。六个动作(start/read/wait/status/stop/ports)合成一个工具。
  *
  * 【为什么不是"再来一个 bash"】
  * 日志源是长驻、有状态、主动吐数据的,和一次性 spawn 的引擎工具(runEngine)正相反。
@@ -18,18 +18,25 @@
  * 5. wait 是主力动作:一次调用把"跑起来了没 / 崩了没"变成确定性结论。
  *    没命中时**不推游标** —— 预览是预览,证据不能因为看了一眼就消失。
  *
+ * 【三种源,同一个采集器】
+ * RTT 是 `probe-rs attach`,串口是 serial.ts 给的 argv(POSIX 上是 cat,Windows 上是
+ * PowerShell),command 是模型自己写的 argv。三者都只是"一个往 stdout 吐字节的子进程",
+ * 所以缓冲、折叠、wait、killTree 只有一份。串口那条路怎么在三个系统上打开,
+ * 全部关在 serial.ts 里 —— 这个文件不认识 termios,也不认识 COM 口。
+ *
  * 【进程纪律】(评审确认过的两个真坑)
- * - detached + kill(-pid):`sh -c "stty … && cat …"` 里真正握着设备的是孙子进程,
+ * - detached + kill(-pid):`sh -c "…"` 这类源里真正握着设备的是孙子进程,
  *   只杀 shell 会留下孤儿一直占着串口。与 harness NodeExecutionEnv 的 killProcessTree 同策。
  * - unref:采集中的子进程和它的管道绝不能拖住事件循环,否则 ACP 退出时进程不肯死。
  *
  * 【与 flash 的关系】探针同一时间只能被一个进程握住:烧录前先 log stop。
+ * 串口不占探针,但它同样是独占设备 —— 一个口同一时间只能有一个程序读。
  *
  * 落盘用 node:fs 的 WriteStream 而不是 env.writeTextFile:后者是一次性读写,
  * 这里要的是行速率的追加。理由同 engines.ts 直接 spawn —— 这条路径本来就是本机的。
  */
 import { type ChildProcess, spawn } from "node:child_process";
-import { createWriteStream, type WriteStream } from "node:fs";
+import { closeSync, createWriteStream, type WriteStream } from "node:fs";
 import path from "node:path";
 import type { ExecutionEnv } from "@yoma/my-pi";
 import { type Static, Type } from "typebox";
@@ -45,9 +52,19 @@ import {
 	unrefStream as unref,
 } from "./engines.ts";
 import { resolveToCwd } from "./path-utils.ts";
+import {
+	DEFAULT_BAUD,
+	listSerialPorts,
+	MAX_BAUD,
+	MIN_BAUD,
+	normalizeSerialPort,
+	prepareSerial,
+	serialArgv,
+	serialLabel,
+} from "./serial.ts";
 import { type ToolDefinition, wrapToolDefinition } from "./types.ts";
 
-export const LOG_ACTIONS = ["start", "read", "wait", "status", "stop"] as const;
+export const LOG_ACTIONS = ["start", "read", "wait", "status", "stop", "ports"] as const;
 
 export type LogAction = (typeof LOG_ACTIONS)[number];
 
@@ -390,6 +407,12 @@ function installCleanupHooks(): void {
 
 export interface LogCaptureOptions {
 	maxBufferLines?: number;
+	/**
+	 * 已经打开好的设备 fd,作为子进程的 **stdin** 传下去(串口就走这条路,见 serial.ts:
+	 * 读进程自己 open 那个 tty 会把它变成控制终端,然后 SIGTERM 杀不掉)。
+	 * **所有权从构造那一刻起就归 LogCapture**,调用方不要再自己 close。
+	 */
+	hold?: number;
 }
 
 export interface WaitOutcome {
@@ -415,6 +438,7 @@ export class LogCapture {
 	private pendingOut = "";
 	private pendingErr = "";
 	private readonly maxBufferLines: number;
+	private hold?: number;
 	private waiters = new Set<() => void>();
 	private finished = false;
 
@@ -434,6 +458,14 @@ export class LogCapture {
 		this.file = file;
 		this.cwd = cwd;
 		this.maxBufferLines = options?.maxBufferLines ?? DEFAULT_BUFFER_LINES;
+		this.hold = options?.hold;
+	}
+
+	/** 子进程已经把 fd 复制走了(fork 那一刻),父进程这一份立刻还回去。 */
+	private releaseHold(): void {
+		const fd = this.hold;
+		this.hold = undefined;
+		if (fd !== undefined) closeSync(fd);
 	}
 
 	get running(): boolean {
@@ -454,12 +486,19 @@ export class LogCapture {
 			this.stream = undefined;
 		});
 
-		const child = spawn(this.argv[0]!, this.argv.slice(1), {
-			cwd: this.cwd,
-			stdio: ["ignore", "pipe", "pipe"],
-			// 自成进程组,stop 才能连孙子进程一起收掉(见 killTree)。
-			detached: process.platform !== "win32",
-		});
+		let child: ChildProcess;
+		try {
+			child = spawn(this.argv[0]!, this.argv.slice(1), {
+				cwd: this.cwd,
+				stdio: [this.hold ?? "ignore", "pipe", "pipe"],
+				// 自成进程组,stop 才能连孙子进程一起收掉(见 killTree)。
+				detached: process.platform !== "win32",
+				// 桌面端是 GUI 进程:probe-rs / PowerShell 起来时不要闪一个控制台窗口。
+				windowsHide: true,
+			});
+		} finally {
+			this.releaseHold();
+		}
 		this.child = child;
 
 		await new Promise<void>((resolve, reject) => {
@@ -705,6 +744,8 @@ export class LogCapture {
 	private finish(): void {
 		if (this.finished) return;
 		this.finished = true;
+		// 采集结束 = 串口该还回去了。stop / 源自己退 / spawn 失败三条路都汇到这里。
+		this.releaseHold();
 		// 先断源再收尾:stop() 之后哪怕子进程还活着(比如被孤儿孙进程握着管道),
 		// 也不能再往缓冲和文件里塞行 —— 否则 running=false 却还在长。
 		this.child?.stdout?.removeAllListeners("data");
@@ -724,8 +765,15 @@ export class LogCapture {
 const logSchema = Type.Object({
 	// 显式元组而非 .map():数组会丢掉元组结构,Static 推导塌成 never。
 	action: Type.Union(
-		[Type.Literal("start"), Type.Literal("read"), Type.Literal("wait"), Type.Literal("status"), Type.Literal("stop")],
-		{ description: "start | read | wait | status | stop" },
+		[
+			Type.Literal("start"),
+			Type.Literal("read"),
+			Type.Literal("wait"),
+			Type.Literal("status"),
+			Type.Literal("stop"),
+			Type.Literal("ports"),
+		],
+		{ description: "start | read | wait | status | stop | ports" },
 	),
 	chip: Type.Optional(
 		Type.String({ description: 'start over a debug probe: target chip name, e.g. "STM32F405RG" (RTT via probe-rs).' }),
@@ -739,6 +787,13 @@ const logSchema = Type.Object({
 	scanMemory: Type.Optional(
 		Type.Boolean({ description: "Scan RAM for the RTT control block when the ELF has no symbol for it." }),
 	),
+	port: Type.Optional(
+		Type.String({
+			description:
+				'start over UART/USB serial: the port — "/dev/cu.usbmodem1103" (macOS), "/dev/ttyUSB0" or "/dev/ttyACM0" (Linux), "COM5" (Windows). Run action:"ports" to list them.',
+		}),
+	),
+	baud: Type.Optional(Type.Number({ description: `serial baud rate, 8N1 no flow control (default ${DEFAULT_BAUD}).` })),
 	command: Type.Optional(
 		Type.String({
 			description:
@@ -757,25 +812,45 @@ export type LogToolInput = Static<typeof logSchema>;
 
 export type LogToolOptions = EnginePathOptions;
 
-const DESCRIPTION = `Captures the running board's log output — RTT over a debug probe, or any command that prints to stdout — so you can see what the firmware actually did instead of guessing from the source.
+const DESCRIPTION = `Captures the running board's log output — a UART/USB serial port, RTT over a debug probe, or any command that prints to stdout — so you can see what the firmware actually did instead of guessing from the source.
 
 Actions:
-- start (chip + elfPath, or command): begin capturing. Debug probe/RTT: pass chip and the elfPath you flashed. Anything else: pass command, e.g. a USB serial port on macOS: sh -c "stty -f /dev/cu.usbmodem1103 115200 raw && cat /dev/cu.usbmodem1103"
+- start (port, or chip + elfPath, or command): begin capturing. Exactly one source:
+  - UART / USB serial: port (plus baud, default ${DEFAULT_BAUD}; 8N1, no flow control). Same call on macOS, Linux and Windows — the port name is the only difference. Run ports first if you do not know it.
+  - Debug probe / RTT: chip and the elfPath you flashed.
+  - Anything else: command — an argv line (a decoder script, a vendor CLI, …); no shell unless you spawn one yourself.
+- ports: list the serial ports on this machine, with the OS's own description where it has one. Opens nothing, takes nothing — safe to call any time, including while a capture is running.
 - wait (pattern, [timeoutMs]): block until a new line matches the regex, the source exits, or the timeout expires. THIS IS THE MAIN ACTION — one call turns "did it boot / did it crash" into a definite answer and returns only the matched line plus a few lines of context. A wait that does not match leaves the cursor untouched, so nothing is lost: follow it with read.
 - read ([since], [pattern], [maxLines]): the tail of whatever arrived since the last read, then advances the cursor. With pattern it only shows matching lines and does not move the cursor (it is a query, not a consumption).
 - status: whether the source is still running, how many lines were captured, where the full log file is.
-- stop: end the capture. The log file stays.
+- stop: end the capture, releasing the serial port or the probe. The log file stays.
 
 Rules:
 - Every line is written to a log file; this tool only ever returns a bounded excerpt (tail, folded repeats, "N lines omitted"). To search history, grep the log file path it reports — do not ask this tool for a bigger excerpt.
 - Repeated lines are folded ("×137"); lines that differ only in numbers fold too, showing the first and the last of the run. Exact values are in the log file.
 - Prefer wait over read: read costs tokens and gives you a wall of text, wait costs one call and gives you a conclusion.
-- A debug probe can only be held by one process: stop the capture before flash download/erase/reset, then start it again.
+- A debug probe can only be held by one process: stop the capture before flash download/erase/reset, then start it again. A serial port is exclusive too, but only macOS and Windows enforce it — on Linux a second reader just silently splits the byte stream with the first, and this tool's stty would also change the other reader's baud. A successful start is not proof that nothing else is on the port.
+- Serial gives you the bytes the firmware sends, nothing else: a wrong baud looks like garbage, and a firmware that speaks a binary protocol (framed telemetry, a vendor protocol) looks like garbage too. For those, run a decoder that opens the port itself as a command source. Note the log file holds the same sanitized text you see here, not the raw bytes — binary cannot be recovered from it afterwards.
 - RTT only produces output while the target is running and only if the firmware writes to it. Silence is not proof of a crash — check status and the flash/reset results too.
 - Never claim the firmware printed, booted, or crashed unless a log line here shows it.`;
 
 function logFileName(now = new Date()): string {
 	return `hw-${stamp(now)}.log`;
+}
+
+/**
+ * 串口那条路的失败十有八九是"名字写成了别的样子"或者"口不在了",而 errno 本身
+ * 指不出下一步动作。抛出去之前把这台机器上真实存在的口贴上 —— 否则模型会去查线。
+ */
+async function withPortHints<T>(run: () => T): Promise<T> {
+	try {
+		return run();
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		const ports = await listSerialPorts().catch(() => []);
+		const hint = ports.length > 0 ? ` — ports on this machine: ${ports.map((entry) => entry.path).join(", ")}` : "";
+		throw new Error(`log start: ${message}${hint}`);
+	}
 }
 
 function sourceState(capture: LogCapture): string {
@@ -845,11 +920,30 @@ export function createLogToolDefinition(
 							`already capturing ${capture.label} (${capture.totalLines} lines so far). Run \`log stop\` first.`,
 						);
 					}
+					// 走到这儿说明上一次采集已经死了(还活着的话上面就抛了)。它要是握着探针,
+					// 租约现在就得还 —— 否则下一个源接手之后,租约的 isLive 看的是**新**采集,
+					// 于是一个早就退了的 RTT 会永远"活着":flash 被拒,理由指着一个不存在的会话。
+					dropProbe();
 					let argv: string[];
 					let label: string;
-					/** command 模式(串口)不碰探针,只有 RTT 那条路要租约。 */
+					/** 串口和 command 都不碰探针,只有 RTT 那条路要租约。 */
 					let needsProbe = false;
-					if (params.command) {
+					/** 串口:留到最后一步再真开设备(见下面 prepareSerial 那一句)。 */
+					let serial: { device: string; baud: number } | undefined;
+					// 三个源互斥。给了两个就是拿不准,而默默挑一个的代价是"它以为在读串口,
+					// 其实在读 RTT",两边都长得像"板子没输出"。
+					const sources = [params.port && "port", params.chip && "chip (RTT)", params.command && "command"].filter(
+						(name): name is string => typeof name === "string",
+					);
+					if (sources.length > 1) {
+						throw new Error(`log start: pass exactly one source, got ${sources.join(" + ")}`);
+					}
+					if (params.port) {
+						const device = await withPortHints(() => normalizeSerialPort(params.port!));
+						serial = { device, baud: clamp(params.baud, DEFAULT_BAUD, MIN_BAUD, MAX_BAUD) };
+						argv = serialArgv(device, serial.baud);
+						label = serialLabel(device, serial.baud);
+					} else if (params.command) {
 						argv = splitArgv(params.command);
 						if (argv.length === 0) throw new Error("log start: command is empty");
 						label = argv.join(" ");
@@ -881,11 +975,16 @@ export function createLogToolDefinition(
 					const dir = await env.createDir(path.dirname(file), { recursive: true });
 					if (!dir.ok) throw new Error(`could not create the log directory: ${dir.error.message}`);
 
-					const started = new LogCapture(argv, label, file, env.cwd);
+					// 串口在这里才真打开:前面任何一步抛错都不该留下一个开着的设备。
+					// 拿到的 fd 立刻交给 LogCapture,从此由它负责关(见 LogCaptureOptions.hold)。
+					const hold = serial ? await withPortHints(() => prepareSerial(serial!.device, serial!.baud)) : undefined;
+					const started = new LogCapture(argv, label, file, env.cwd, { hold });
 					try {
 						await started.start();
 					} catch (error) {
 						if (needsProbe) releaseProbe("log");
+						// 起不来也要把串口还回去 —— 和上面那行放探针是同一件事。
+						await started.stop();
 						throw error;
 					}
 					capture = started;
@@ -1002,6 +1101,25 @@ Next: \`log wait\` with a pattern (e.g. "boot|fault|error") — it blocks until 
 						`stopped ${active.label} after ${uptime.toFixed(1)}s and ${active.totalLines} lines.${survived}\n` +
 						`Full log: ${active.file}`;
 					return { content: [{ type: "text", text }], details: detailsOf("stop") };
+				}
+
+				case "ports": {
+					const ports = await listSerialPorts();
+					if (ports.length === 0) {
+						const text =
+							`no serial ports on this machine (${process.platform}). ` +
+							`Plug the board in — if it is already plugged in, the USB-serial driver did not enumerate it, which is a host problem, not a firmware one.`;
+						return { content: [{ type: "text", text }], details: detailsOf("ports") };
+					}
+					const text = [
+						`${ports.length} serial port${ports.length > 1 ? "s" : ""}:`,
+						...ports.map((entry) => `  ${entry.path}${entry.description ? `   ${entry.description}` : ""}`),
+						"",
+						// 不替模型挑口:第一个未必是板子(Windows 上常常是主板自带的 COM1,
+						// 它能打开、但永远不吐字节 —— 于是 wait 超时,看起来像固件哑了)。
+						`Then: \`log start\` with the port that is your board, plus the firmware's baud rate.`,
+					].join("\n");
+					return { content: [{ type: "text", text }], details: detailsOf("ports") };
 				}
 			}
 		},
