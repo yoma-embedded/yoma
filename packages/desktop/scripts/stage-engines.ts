@@ -96,8 +96,14 @@ function bundleName(target: string, arch: string): string {
 }
 
 function run(cmd: string[], cwd?: string): { ok: boolean; out: string } {
-  const proc = Bun.spawnSync({ cmd, cwd, stdout: "pipe", stderr: "pipe" })
-  return { ok: proc.exitCode === 0, out: `${proc.stdout.toString()}${proc.stderr.toString()}` }
+  // Bun.spawnSync 在可执行文件不存在时直接抛 ENOENT,不会给 exitCode ——
+  // Windows 上没有 unzip 时,必须吞掉这个异常才能落到 tar 回退(Win11 bsdtar 能读 zip)。
+  try {
+    const proc = Bun.spawnSync({ cmd, cwd, stdout: "pipe", stderr: "pipe" })
+    return { ok: proc.exitCode === 0, out: `${proc.stdout.toString()}${proc.stderr.toString()}` }
+  } catch (err) {
+    return { ok: false, out: err instanceof Error ? err.message : String(err) }
+  }
 }
 
 function extract(archive: string, into: string): void {

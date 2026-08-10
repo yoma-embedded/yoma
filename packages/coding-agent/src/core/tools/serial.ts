@@ -37,6 +37,14 @@
  * 直接写 stdout —— 不让 PowerShell 先按代码页解一遍,中文 Windows 上 cp936 解出来的
  * U+FFFD 是不可逆的(见根 CLAUDE.md"子进程默认不按 UTF-8 输出")。
  *
+ * 【Windows:stderr 上的 CLIXML 必须掐死在源头】(修在 powershellArgv,真机实测)
+ * PowerShell 5.1 一旦发现 stderr 被重定向,就把自己的**非 stdout 流**序列化成 CLIXML
+ * 写进 stderr。我们从不写它那些流,但 `New-Object` 会触发模块自动加载,而那个动作自带
+ * 一条**进度记录** —— 于是每一次 Windows 串口采集的第一行都是 `#< CLIXML`,还带 err 标记。
+ * 这不是噪声而是假证据:实测 `log wait pattern:"."` 命中的是 PowerShell 自己,不是板子。
+ * 开口失败时更糟,真实报错被埋进 ~380 字节 XML,里面 PowerShell 自己那句中文还是 cp936
+ * 乱码(它自己的输出走代码页,我们的不走)。
+ *
  * 【端口名不进 shell,也不进脚本文本】
  * POSIX 是 argv 直接 spawn;Windows 端口名先被 `^COM\d+$` 卡死再拼进脚本 —— 拼字符串
  * 的地方必须先有一道正则,否则 `port` 就是一条 PowerShell 注入通道。
@@ -195,14 +203,27 @@ function powershellExe(): string {
 	return existsSync(inbox) ? inbox : "powershell.exe";
 }
 
-/** -EncodedCommand 收 UTF-16LE 的 base64,于是脚本里的引号和反斜杠不参与命令行解析。 */
+/**
+ * 承重的一行,理由见文件头"stderr 上的 CLIXML"。实测(Windows 11 中文 + 真 ST-Link VCP,
+ * 对着一个被占住的 COM4):加上之后 stderr 从 482 字节降到 100 字节,只剩 catch 里那句
+ * UTF-8;`-OutputFormat Text` 对它**无效**。
+ */
+const PS_NO_PROGRESS = "$ProgressPreference='SilentlyContinue'";
+
+/**
+ * -EncodedCommand 收 UTF-16LE 的 base64,于是脚本里的引号和反斜杠不参与命令行解析。
+ *
+ * 关进度记录放在**这里**而不是各个脚本自己的开头:这是所有 PowerShell 调用的唯一入口,
+ * 于是"读串口""枚举端口"以及以后新加的脚本一起白得 —— 那条约束是"我们起的每一个
+ * PowerShell 都不许往 stderr 吐 CLIXML",按调用点写就是每次都得记得一遍。
+ */
 export function powershellArgv(script: string): string[] {
 	return [
 		powershellExe(),
 		"-NoProfile",
 		"-NonInteractive",
 		"-EncodedCommand",
-		Buffer.from(script, "utf16le").toString("base64"),
+		Buffer.from(`${PS_NO_PROGRESS}\n${script}`, "utf16le").toString("base64"),
 	];
 }
 
@@ -214,11 +235,12 @@ export function powershellArgv(script: string): string[] {
 export function windowsReaderScript(port: string, baud: number): string {
 	return [
 		"$ErrorActionPreference='Stop'",
+		// **每一句都放进 try**:try 之外抛出的话,报错就走 PowerShell 自己的错误流 ——
+		// 既按代码页编码,又被裹成 CLIXML。`$buf=New-Object …` 同样是一句会抛的话,
+		// 端口名不合法时 SerialPort 的构造也是。我们要的永远是下面 catch 里那条 UTF-8。
+		"try{",
 		"$out=[Console]::OpenStandardOutput()",
 		"$buf=New-Object byte[] 4096",
-		// 构造也放进 try:端口名不合法时 New-Object 就抛,而 PowerShell 自己打的那句
-		// 错误会按代码页编码 —— 我们要的是下面 catch 里那条 UTF-8 的。
-		"try{",
 		`$p=New-Object -TypeName System.IO.Ports.SerialPort -ArgumentList '${port}',${baud},'None',8,'One'`,
 		// POSIX 打开串口默认就拉高 DTR/RTS,这里对齐,免得同一块板子换台机器就不吐数据。
 		"$p.DtrEnable=$true",
@@ -262,9 +284,20 @@ export function serialLabel(device: string, baud: number): string {
 	return `serial ${device} @ ${baud} 8N1`;
 }
 
+/**
+ * 起了读进程之后,还要不要再"确认一下口真开成了" —— 以及等多久;0 = 不用等。
+ *
+ * 两个系统知道结果的时机不一样,而这是**平台知识**,所以住在这个文件里而不是 log.ts:
+ * POSIX 上设备是 prepareSerial 自己 open 的,"口被占着""口不在了"当场就抛;Windows 上
+ * 口是 PowerShell 开的,spawn 成功只说明 PowerShell 起来了,得等它自己报错退出才知道。
+ */
+export function serialOpenConfirmMs(platform: NodeJS.Platform = process.platform): number {
+	return platform === "win32" ? 1_500 : 0;
+}
+
 // ─── 枚举 ────────────────────────────────────────────────────────────────────
 
-/** `名字\t说明` 一行一个 —— Windows 脚本和 Linux by-id 共用这一种形状。 */
+/** `名字\t说明` 一行一个 —— Windows 枚举脚本吐的形状(Linux 的 by-id 直接构对象,不走这里)。 */
 export function parsePortLines(stdout: string): SerialPortInfo[] {
 	return stdout
 		.split(/\r?\n/)

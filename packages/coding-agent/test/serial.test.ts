@@ -12,9 +12,11 @@ import {
 	listSerialPorts,
 	normalizeSerialPort,
 	parsePortLines,
+	powershellArgv,
 	prepareSerial,
 	releaseProbe,
 	serialArgv,
+	serialOpenConfirmMs,
 	unsupportedBaud,
 	windowsReaderScript,
 } from "../src/index.ts";
@@ -173,13 +175,39 @@ describe("serialArgv", () => {
 		const index = argv.indexOf("-EncodedCommand");
 		expect(index).toBeGreaterThan(0);
 		const script = Buffer.from(argv[index + 1]!, "base64").toString("utf16le");
-		expect(script).toBe(windowsReaderScript("COM5", 921600));
+		// 脚本本体原样在后面;前面那一行由 powershellArgv 统一加(见下一条)。
+		expect(script.endsWith(windowsReaderScript("COM5", 921600))).toBe(true);
 		expect(script).toContain("-ArgumentList 'COM5',921600,'None',8,'One'");
+		// try 之外不许有会抛的语句:那样报错就走 PowerShell 自己的错误流,既按代码页
+		// 编码又被裹成 CLIXML,而我们要的是 catch 里那句自己编好的 UTF-8。
+		expect(script.indexOf("New-Object")).toBeGreaterThan(script.indexOf("try{"));
 		// 数据和报错都自己编成 UTF-8 字节:PowerShell 的字符串输出走控制台代码页,
 		// 中文 Windows 上解出来的 U+FFFD 不可逆(根 CLAUDE.md 那条)。
 		expect(script).toContain("$out.Write($buf,0,$n)");
 		expect(script).toContain("[Text.Encoding]::UTF8.GetBytes($_.Exception.Message)");
 		expect(script).not.toContain("Write-Host");
+	});
+
+	// PowerShell 5.1 一旦发现 stderr 被重定向,就把自己的**非 stdout 流**序列化成 CLIXML
+	// 写进去 —— 我们从不写它那些流,但 `New-Object` 触发的模块自动加载自带一条进度记录。
+	// 实测(Windows 11 中文 + 真 ST-Link VCP):少了这一行,每次采集的第一行都是带 err
+	// 标记的 `#< CLIXML`,于是 `log wait pattern:"."` 命中的是 PowerShell 自己而不是板子;
+	// 开口失败时真实报错还会被埋进 ~380 字节 XML(482 字节 → 100 字节)。
+	// 钉在 powershellArgv 上而不是某个脚本上:那是唯一入口,枚举脚本一起白得。
+	it("powershellArgv 给每一段脚本都关掉进度记录 —— 否则 stderr 会混进 CLIXML", () => {
+		const argv = powershellArgv("Write-Output 1");
+		const script = Buffer.from(argv[argv.indexOf("-EncodedCommand") + 1]!, "base64").toString("utf16le");
+		expect(script.startsWith("$ProgressPreference='SilentlyContinue'\n")).toBe(true);
+	});
+});
+
+describe("serialOpenConfirmMs", () => {
+	// 这个数字住在 serial.ts 而不是 log.ts:后者的文件头写着"不认识 termios,也不认识 COM 口"。
+	// POSIX 上设备是 prepareSerial 自己 open 的,开不成当场抛,再等就是白等 1.5 秒。
+	it("只有 Windows 需要再确认一次口真开成了", () => {
+		expect(serialOpenConfirmMs("win32")).toBeGreaterThan(0);
+		expect(serialOpenConfirmMs("darwin")).toBe(0);
+		expect(serialOpenConfirmMs("linux")).toBe(0);
 	});
 });
 
@@ -195,10 +223,13 @@ describe("parsePortLines", () => {
 // ─── 枚举 ────────────────────────────────────────────────────────────────────
 
 describe("listSerialPorts", () => {
-	it("只报真设备路径,不报系统自带的假串口", async () => {
+	// 端口名的形状跟着**本机**平台走:Windows 是 COMn,POSIX 是 /dev/ 下的设备路径。
+	// 只写死一种就是"换台机器必红" —— 写死 /dev/ 的那一版在 Windows 上实测是红的。
+	it("只报这个平台真实的端口名,不报系统自带的假串口", async () => {
 		const ports = await listSerialPorts();
 		for (const entry of ports) {
-			expect(entry.path.startsWith("/dev/")).toBe(true);
+			if (process.platform === "win32") expect(entry.path).toMatch(/^COM\d+$/);
+			else expect(entry.path.startsWith("/dev/")).toBe(true);
 			expect(entry.path).not.toContain("Bluetooth-Incoming-Port");
 		}
 	});
@@ -207,14 +238,16 @@ describe("listSerialPorts", () => {
 // ─── 打开设备 ────────────────────────────────────────────────────────────────
 
 describe("prepareSerial", () => {
+	// 这两条**显式传平台**(与下面 "win32" 那条同一种写法):Windows 上 prepareSerial 第一句
+	// 就返回 undefined,不传的话这两条在那儿跑的是空气 —— 实测是红的,不是绿的。
 	it("普通文件不是串口 —— 挡住写错的路径,也挡住拿它读任意文件", () => {
 		const file = join(createTempDir(), "not-a-tty.log");
 		writeFileSync(file, "hello");
-		expect(() => prepareSerial(file, 115200)).toThrow(/not a serial device/);
+		expect(() => prepareSerial(file, 115200, "darwin")).toThrow(/not a serial device/);
 	});
 
 	it("不存在的设备给的是下一步动作,不是 errno", () => {
-		expect(() => prepareSerial("/dev/nope-no-such-device", 115200)).toThrow(/does not exist/);
+		expect(() => prepareSerial("/dev/nope-no-such-device", 115200, "darwin")).toThrow(/does not exist/);
 	});
 
 	it.skipIf(!havePython())("真 pty 上开得起来,并且配置得下去", async () => {
@@ -263,9 +296,15 @@ describe("log start port", () => {
 		);
 	});
 
-	it("端口名写错时把这台机器上真实存在的口贴出来", async () => {
+	// 两个方向都要当场认出来 —— 报"打不开"会让人去查线。输入按本机平台挑:写死 COM5 的
+	// 那一版在 Windows 上是红的(COM5 在那儿是合法名字,只是这台机器上没有)。
+	it("端口名写成了另一个系统的样子时当场说清,而不是报打不开", async () => {
 		const tool = makeTool();
-		await expect(tool.execute("t", { action: "start", port: "COM5" })).rejects.toThrow(/Windows port name/);
+		const [wrong, expected] =
+			process.platform === "win32"
+				? (["/dev/ttyUSB0", /is not a Windows serial port/] as const)
+				: (["COM5", /Windows port name/] as const);
+		await expect(tool.execute("t", { action: "start", port: wrong })).rejects.toThrow(expected);
 	});
 
 	it("ports 不需要先 start,也不会打开任何设备", async () => {

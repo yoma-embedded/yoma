@@ -61,6 +61,7 @@ import {
 	prepareSerial,
 	serialArgv,
 	serialLabel,
+	serialOpenConfirmMs,
 } from "./serial.ts";
 import { type ToolDefinition, wrapToolDefinition } from "./types.ts";
 
@@ -98,11 +99,6 @@ const CONTEXT_ROWS = 3;
 const UPDATE_THROTTLE_MS = 100;
 const FORCE_KILL_GRACE_MS = 3_000;
 const EXIT_WAIT_MS = 5_000;
-/**
- * Windows 上串口是 PowerShell 自己开的,spawn 成功不代表口开成了。等这么久确认它
- * 没当场死掉再宣布"在采了" —— POSIX 那边是我们自己 open 的,开不成当场就抛。
- */
-const WIN32_SERIAL_OPEN_MS = 1_500;
 /**
  * 'exit' 可能先于最后一段 stdout 到达(管道还没排干)。收到退出后再宽限这么久,
  * 免得"最后一行正好是要等的那条"被判成"源退出了,没等到"。
@@ -271,7 +267,8 @@ export function foldLines(lines: LogLine[]): FoldedRow[] {
 }
 
 export type DisplayRow =
-	| { type: "line"; row: FoldedRow; marked?: boolean }
+	/** matchAt:命中在行内的字符下标 —— 超长行按它开窗裁(见 clipText)。 */
+	| { type: "line"; row: FoldedRow; marked?: boolean; matchAt?: number }
 	/** count 是省略掉的**原始行数**(不是折叠后的组数)。 */
 	| { type: "gap"; count: number };
 
@@ -280,9 +277,23 @@ export function formatElapsed(ms: number): string {
 	return `+${(ms / 1000).toFixed(3)}`;
 }
 
-/** 单行的字符上限:超长行只留头部,全文在日志文件里。 */
-export function clipText(text: string, max = MAX_ROW_CHARS): string {
-	return text.length <= max ? text : `${text.slice(0, max)}… (+${text.length - max} chars, full line in the log file)`;
+/**
+ * 单行的字符上限:超长行只留一段,全文在日志文件里。
+ *
+ * `anchor` 是**必须留在窗口里**的位置(wait 的命中点)。没有它就从行首裁,而嵌入式串口上
+ * 文本日志天然跟在二进制帧后面 —— 实测(B-G431B-ESC1,921600,波形帧刷屏时复位):命中行
+ * 491 字符、"initialized" 落在第 467 位,从行首裁 400 字正好把它裁掉,于是 wait 一边断言
+ * "匹配了"、一边只给出 400 字符 `U�U�…`,证据一个字都看不见 —— 而这个工具自己的规矩是
+ * "没有日志行证明就别说固件打印过"。
+ */
+export function clipText(text: string, max = MAX_ROW_CHARS, anchor?: number): string {
+	if (text.length <= max) return text;
+	// 窗口尽量把 anchor 摆在中间,再夹回 [0, length-max] —— 贴着行尾的命中就贴着行尾显示。
+	const start = anchor === undefined ? 0 : Math.max(0, Math.min(anchor - Math.floor(max / 2), text.length - max));
+	const after = text.length - start - max;
+	const before = start > 0 ? `…(+${start} chars before) ` : "";
+	const tail = after > 0 ? `… (+${after} chars, full line in the log file)` : " (full line in the log file)";
+	return `${before}${text.slice(start, start + max)}${tail}`;
 }
 
 export function renderLine(line: LogLine): string {
@@ -292,8 +303,9 @@ export function renderLine(line: LogLine): string {
 /** 渲染一条展示行。字符预算按它的返回值算,渲染与计价必须走同一个函数。 */
 export function renderRow(entry: DisplayRow): string {
 	if (entry.type === "gap") return `… ${entry.count} lines omitted (grep the full log for them) …`;
-	const { row, marked } = entry;
-	let text = `[${formatElapsed(row.line.t)}] ${row.line.err ? "! " : ""}${clipText(row.line.text)}`;
+	const { row, marked, matchAt } = entry;
+	const body = clipText(row.line.text, MAX_ROW_CHARS, matchAt);
+	let text = `[${formatElapsed(row.line.t)}] ${row.line.err ? "! " : ""}${body}`;
 	if (row.count > 1) {
 		text += ` ×${row.count}`;
 		text += row.lastText
@@ -681,8 +693,11 @@ export class LogCapture {
 				// 前文照样要给,否则模型看到的是一条没有来龙去脉的孤行。
 				const index = this.lines.findIndex((line) => line.seq === hit.seq);
 				const context = this.lines.slice(Math.max(0, index - CONTEXT_ROWS), index + CONTEXT_ROWS + 1);
-				const rows = foldLines(context).map(
-					(row) => ({ type: "line", row, marked: row.line.seq === hit.seq }) as DisplayRow,
+				// 命中点要一路交到渲染:超长行从行首裁的话,裁掉的正好是命中的那一段。
+				// re 没有 g 标志,exec 不带 lastIndex 状态,与上面那句 test 共用一个对象是安全的。
+				const matchAt = re.exec(hit.text)?.index;
+				const rows: DisplayRow[] = foldLines(context).map((row) =>
+					row.line.seq === hit.seq ? { type: "line", row, marked: true, matchAt } : { type: "line", row },
 				);
 				const skippedBefore = Math.max(0, context[0]!.seq - startCursor);
 				this.cursor = Math.max(this.cursor, context[context.length - 1]!.seq + 1);
@@ -993,7 +1008,9 @@ export function createLogToolDefinition(
 
 					// 串口在这里才真打开:前面任何一步抛错都不该留下一个开着的设备。
 					// 拿到的 fd 立刻交给 LogCapture,从此由它负责关(见 LogCaptureOptions.hold)。
-					const hold = serial ? await withPortHints(() => prepareSerial(serial!.device, serial!.baud)) : undefined;
+					// const 别名:`serial` 是 let,闭包里收窄不掉,直接用要补两个 `!`。
+					const opening = serial;
+					const hold = opening ? await withPortHints(() => prepareSerial(opening.device, opening.baud)) : undefined;
 					const started = new LogCapture(argv, label, file, env.cwd, { hold });
 					try {
 						await started.start();
@@ -1003,11 +1020,12 @@ export function createLogToolDefinition(
 						await started.stop();
 						throw error;
 					}
-					// Windows 上口是 PowerShell 开的,spawn 成功不代表口开成了。它要是当场死了
-					// 就把它自己那句话报出来 —— 否则模型拿着一句"Capturing …"去等一份永远不来
-					// 的日志,而 POSIX 那边("口被占着""口不在了")的那些话在这条路上全不会说。
-					if (serial && process.platform === "win32") {
-						await started.settle(WIN32_SERIAL_OPEN_MS);
+					// 有的系统上 spawn 成功并不代表口开成了(等多久由 serial.ts 说了算,它才认识
+					// 平台)。真当场死了就把它自己那句话报出来 —— 否则模型拿着一句"Capturing …"
+					// 去等一份永远不来的日志,而 prepareSerial 那些话在这条路上一句都不会说。
+					const confirmMs = serial ? serialOpenConfirmMs() : 0;
+					if (confirmMs > 0) {
+						await started.settle(confirmMs);
 						if (started.exited) {
 							const said = started.lines
 								.map((line) => line.text)

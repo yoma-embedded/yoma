@@ -322,6 +322,24 @@ describe("renderRows", () => {
 		const rows = foldLines([{ seq: 0, t: 5, text: "Error: no probe found", err: true }]);
 		expect(renderRows([{ type: "line", row: rows[0]! }])).toBe("[+0.005] ! Error: no probe found");
 	});
+
+	// 嵌入式串口上文本日志天然跟在二进制帧后面,于是命中点常常在行尾。从行首裁就会把命中
+	// 的那一段裁掉 —— wait 一边断言"匹配了"、一边一个字的证据都不给,而这个工具自己的规矩
+	// 是"没有日志行证明就别说固件打印过"。实测在真板子上撞到过:B-G431B-ESC1 波形帧刷屏
+	// 时复位,命中行 491 字符、"initialized" 落在第 467 位,而上限是 400。
+	it("超长行按命中点开窗裁,不是从行首裁", () => {
+		const noise = "U�".repeat(233);
+		const rows = foldLines([{ seq: 0, t: 4, text: `${noise}Debug system initialized` }]);
+		const windowed = renderRows([{ type: "line", row: rows[0]!, marked: true, matchAt: noise.length }]);
+		expect(windowed).toContain("Debug system initialized");
+		expect(windowed).toContain("chars before");
+		expect(windowed).toContain("← match");
+
+		// 没有命中点时行为一个字都没变:从行首裁,尾巴指向日志文件。
+		const fromHead = renderRows([{ type: "line", row: rows[0]! }]);
+		expect(fromHead).not.toContain("Debug system initialized");
+		expect(fromHead).toContain("chars, full line in the log file");
+	});
 });
 
 // ─── 采集器 ──────────────────────────────────────────────────────────────────
