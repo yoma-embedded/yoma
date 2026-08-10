@@ -33,7 +33,10 @@ import type { Job } from "./job.ts"
 /** idle 之后再等这么久没有新状态,才认为一轮真的结束(躲开自动压缩的第二段)。 */
 const SETTLE_MS = 700
 
-/** 轮次内部的硬上限:防止事件流因为某种原因永不静默,把整个任务吊死。 */
+/**
+ * 轮次内部的硬上限。**这不是预算** —— 它防的是"事件流因为某种原因永不静默",
+ * 那会让进程带着一个永远不 resolve 的 await 挂在那儿。花多少钱不归它管。
+ */
 const TURN_HARD_TIMEOUT_MS = 60 * 60 * 1000
 
 export interface TurnOptions {
@@ -51,8 +54,6 @@ export interface TurnOptions {
   prompt: string
   /** 事件旁路,用来打印进度。 */
   onEvent?: (event: KernelEvent) => void
-  /** 预算看门狗:每次 token 计数变化时问一次,返回 stop 的理由就中断本轮。 */
-  shouldStop?: (usage: TurnUsage) => string | undefined
   /** 测试注入 faux provider。 */
   resolveModels?: Parameters<typeof createKernelHost>[0]["resolveModels"]
   /**
@@ -165,11 +166,6 @@ export async function runTurn(options: TurnOptions): Promise<TurnResult> {
         const assistant = message as AssistantMessage
         usageByMessage.set(assistant.id, { tokens: assistant.tokens, cost: assistant.cost })
         if (assistant.error) errors.push(`${assistant.error.name}: ${assistant.error.data.message}`)
-        const verdict = options.shouldStop?.(totals())
-        if (verdict && !stopReason) {
-          stopReason = verdict
-          void abortNow()
-        }
         break
       }
       case "message.part.updated": {

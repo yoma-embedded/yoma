@@ -99,9 +99,9 @@ describe("mailbox 闭环", () => {
       expect(done.verdict.outcome).toBe("passed")
       expect(done.verdict.rounds).toBe(2)
       expect(done.verdict.totalRunnerTokens).toBe(2400) // 两轮 (1000+200)×2
-      // 三次分析:开局 + 轮 1 + 轮 2。开局那次不写 decision,只有本地账本记得它 ——
-      // 账本正是为此存在(见 mother.ts 的 spentTokens),没有它这里会少算一整轮。
-      expect(done.verdict.totalMotherTokens).toBe(10200) // (3000+400)×3
+      // 只数写进 decision 的那两次(轮 1、轮 2)。开局那轮不写 decision,它的花费
+      // 不进终报 —— 终报里的 token 是给人看的近似值,没有任何门限依赖它。
+      expect(done.verdict.totalMotherTokens).toBe(6800) // (3000+400)×2
       expect(done.verdict.decidedBy).toBe("mother")
     }
     expect((await runnerStep(runnerOptions)).kind).toBe("finalized") // 工位端看到 verdict 收尾退场

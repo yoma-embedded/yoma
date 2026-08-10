@@ -7,9 +7,10 @@
  *
  * ## 谁裁决
  *
- * **模型裁决"做完没做完"**:它读工位端的自述,决定 continue / done / fail。
- * 代码只管**预算** —— 轮数、token、墙钟三个上限,任何一个到顶就终局 failed,
- * 记 `by: "policy"`。花钱不归模型管,其余都归。
+ * **全归模型**:它读工位端的自述,决定 continue / done / fail —— 包括什么时候停。
+ * 没有轮数/token/墙钟上限。代码只在一种情况下越过它:决定 JSON 连着两次读不出来,
+ * 那时终局 `fail` 并记 `by: "policy"` —— 那不是裁决,是"没法把它的话变成动作"。
+ * 要提前收工就在桌面端按停止。
  *
  * ## 附件由代码拷,不由 agent 写
  *
@@ -109,16 +110,6 @@ interface MotherLocalState {
   sessionID?: string
   /** 项目仓上的任务基线。第一次开轮时定,之后每轮的 patch 都相对它。 */
   baseCommit?: string
-  /**
-   * 跨轮累计花费的本地账本,**每轮分析结束立刻记、先于任何推送**。
-   *
-   * 信箱里的 `decision.usage` 是它的持久副本,但那份只在 push 成功后才存在。
-   * push 失败而 fetch 正常时(远端只读、凭据过期),下一次同步的 `pullReset` 会
-   * `reset --hard` 掉本地那条 decision 提交 —— 于是这笔花费从一切账目蒸发,
-   * 预算守卫永远看不到它,而守护循环只有退避没有放弃条件:每轮都真跑一次模型分析,
-   * 无界烧钱。预算守卫取两本账的最大值。
-   */
-  spentTokens?: number
   /** 终局收尾(交付 push)是否已做过。 */
   finalized?: boolean
 }
@@ -390,16 +381,8 @@ async function decide(
     run: options.gitRun,
   }
 
-  // 两本账取大:信箱里的(push 成功才有)与本地的(push 前就记)。见 spentTokens 的注释。
-  const local = await readLocalState(options.clone)
-  const motherTokensBefore = Math.max(sumMotherTokens(allRounds), local.spentTokens ?? 0)
-  const tokensTotal = result.spentTokens + motherTokensBefore
-  const budget = {
-    roundsUsed: round,
-    maxRounds: job.budget.maxRounds,
-    tokensSpent: tokensTotal,
-    maxTokens: job.budget.maxTokens,
-  }
+  // 只进终报,不做任何门限判断。
+  const motherTokensBefore = sumMotherTokens(allRounds)
 
   const policyDecision = (decision: DecisionKind, reason: string): RoundDecision => ({
     round,
@@ -411,24 +394,7 @@ async function decide(
   const terminal = (decision: RoundDecision, outcome: MailboxVerdict["outcome"], reason: string) =>
     settleTerminal(options, mailboxJob, allRounds, decision, outcome, reason, result.spentTokens, motherTokensBefore)
 
-  // ── 预算守卫:唯一不问模型的三件事。到顶就终局,理由记 by:"policy"。 ─────────
-  if (round >= job.budget.maxRounds) {
-    const reason = `轮数预算 ${job.budget.maxRounds} 用尽`
-    return terminal(policyDecision("fail", reason), "failed", reason)
-  }
-  if (tokensTotal >= job.budget.maxTokens) {
-    const reason = `token 预算 ${job.budget.maxTokens} 耗尽(两侧合计 ${tokensTotal})`
-    return terminal(policyDecision("fail", reason), "failed", reason)
-  }
-  // 墙钟从第 1 轮指令下发时刻起算,粒度是"裁决点"—— 不是分钟级抢占(轮内自有
-  // TURN_HARD_TIMEOUT 兜底),但保证闭环不会在无人看的机器上连跑十几个小时。
-  const startedAt = Date.parse(allRounds[0]?.instruction?.at ?? "")
-  if (now() - startedAt >= job.budget.wallClockMin * 60 * 1000) {
-    const reason = `墙钟预算 ${job.budget.wallClockMin} 分钟耗尽`
-    return terminal(policyDecision("fail", reason), "failed", reason)
-  }
-
-  // ── 剩下的全是模型的判断:做完了没有、下一步改哪儿、还是认输。 ────────────────
+  // 全是模型的判断:做完了没有、下一步改哪儿、还是认输。
   progress(`第 ${round} 轮结果已回填,研发端处理中…`)
   const prepared = await prepareProjectBranch(options, mailboxJob, workspace)
   if (!prepared.ok) return { kind: "blocked", detail: prepared.error }
@@ -439,7 +405,6 @@ async function decide(
     instruction,
     result,
     rounds: allRounds,
-    budget,
   })
   const usage = analysed.usage
   if (!analysed.ok) {
@@ -655,7 +620,6 @@ async function analyse(
   const run = options.runTurn ?? runTurn
   const state = await readLocalState(options.clone)
   const job = motherTurnJob(mailboxJob, workspace)
-  const maxTokens = mailboxJob.mailbox.mother.maxTokensPerAnalysis
   const zero: TurnUsage = { tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, cost: 0 }
 
   const turnOnce = async (prompt: string, sessionID?: string): Promise<TurnResult> =>
@@ -669,20 +633,14 @@ async function analyse(
       resolveModels: options.resolveModels,
       sessionID,
       prompt,
-      shouldStop: (usage) =>
-        usage.tokens.input + usage.tokens.output >= maxTokens
-          ? `研发端单次分析预算 ${maxTokens} tokens 耗尽`
-          : undefined,
     })
 
   await ensureLocalDir(options.clone)
   let usage = zero
   let sessionID = state.sessionID
-  let ledger = state.spentTokens ?? 0
   const book = async (turnUsage: TurnUsage) => {
     usage = addUsage(usage, turnUsage)
-    ledger += turnUsage.tokens.input + turnUsage.tokens.output
-    await saveLocalState(options.clone, { ...(await readLocalState(options.clone)), sessionID, spentTokens: ledger })
+    await saveLocalState(options.clone, { ...(await readLocalState(options.clone)), sessionID })
   }
 
   let turn: TurnResult

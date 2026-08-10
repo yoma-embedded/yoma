@@ -25,7 +25,6 @@ const INPUT_ROW = "flex flex-col gap-1"
 const LOG_LINE = "whitespace-pre-wrap break-all font-mono text-[11px] leading-[1.6] text-v2-text-text-muted"
 
 type Tab = "config" | "task" | "progress" | "report"
-type Tier = "quick" | "standard" | "thorough"
 
 export default function BenchPage() {
   const platform = usePlatform()
@@ -40,7 +39,7 @@ export default function BenchPage() {
     busy: false,
     notice: undefined as { error: boolean; text: string } | undefined,
     form: { remote: "", role: "runner" as MailboxRoleView, branch: "", pollSeconds: "", projectDir: "" },
-    task: { templatePath: "", description: "", tier: "standard" as Tier, title: "" },
+    task: { templatePath: "", description: "", title: "" },
   })
 
   const t = (key: string) => language.t(key as never)
@@ -134,7 +133,6 @@ export default function BenchPage() {
       mailbox.composeJob({
         templatePath: state.task.templatePath.trim(),
         description: state.task.description,
-        tier: state.task.tier,
         title: state.task.title.trim() || undefined,
       }),
     )
@@ -317,16 +315,6 @@ export default function BenchPage() {
                   />
                 </div>
                 <div class="flex gap-3">
-                  <div class={`${INPUT_ROW} flex-1`}>
-                    <span class={LABEL}>{t("bench.task.tier")}</span>
-                    <SelectV2
-                      options={["quick", "standard", "thorough"] as Tier[]}
-                      current={state.task.tier}
-                      value={(tier) => tier}
-                      label={(tier) => t(`bench.task.tier.${tier}`)}
-                      onSelect={(tier) => tier && setState("task", "tier", tier)}
-                    />
-                  </div>
                   <div class={`${INPUT_ROW} flex-1`}>
                     <span class={LABEL}>{t("bench.task.title")}</span>
                     <TextInputV2

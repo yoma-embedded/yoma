@@ -21,11 +21,8 @@
  * `mailbox` 段里只放**两侧协作**才需要的东西(研发端的模型与分析预算、轮询间隔、
  * 附件上限);任务本身的字段(硬件、预算、模型)在 Job 里,信箱模式没有改变它们的语义。
  *
- * 预算三旋钮全在 `job.budget` 里,也全部由 mother 在**裁决点**强制:
- * - `maxRounds` 轮数上限;
- * - `maxTokens` 按**两侧合计**(runner 花的 + mother 花的);
- * - `wallClockMin` 粒度是轮,不是分钟级抢占(轮内另有单轮硬超时兜底)——
- *   没有它,闭环会在没人看的机器上连跑十几个小时。
+ * **没有预算上限**。跑多少轮、花多少 token,由研发端 agent 自己判断 —— 它判 `done`
+ * 或 `fail` 才收工。要提前停就在桌面端按停止(或杀掉守护进程)。
  */
 
 import { readTextFile } from "../fsx.ts"
@@ -34,12 +31,6 @@ import { parseJob, JobSpecError, type Job } from "../job.ts"
 export interface MailboxMotherConfig {
   /** 母 agent 用的模型。要么 providerID+modelID 齐,要么整个不填(落到 job.model → 内核默认)。 */
   model?: { providerID?: string; modelID?: string }
-  /**
-   * 单次分析的 token 上限。母 agent 只做判断不做实验,预算应远小于调试轮 ——
-   * 但注意口径:计的是 input+output,而 mother 会话跨轮延续,后期轮单次 input 里
-   * 含全部会话历史。设得太小会在最接近收尾的轮误触发"分析被中断"。缺省 20 万够用。
-   */
-  maxTokensPerAnalysis: number
 }
 
 export interface MailboxConfig {
@@ -59,7 +50,6 @@ export interface MailboxJob {
   mailbox: MailboxConfig
 }
 
-export const DEFAULT_MOTHER_ANALYSIS_TOKENS = 200_000
 export const DEFAULT_POLL_SECONDS = 15
 export const DEFAULT_MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
 
@@ -84,9 +74,6 @@ export function parseMailboxJob(raw: unknown): MailboxJob {
   const motherRaw = isObject(mailboxRaw.mother) ? mailboxRaw.mother : {}
   const modelRaw = isObject(motherRaw.model) ? motherRaw.model : undefined
 
-  const maxTokensPerAnalysis = num(motherRaw.maxTokensPerAnalysis) ?? DEFAULT_MOTHER_ANALYSIS_TOKENS
-  if (maxTokensPerAnalysis < 1) issues.push("mailbox.mother.maxTokensPerAnalysis 至少为 1")
-
   const pollSeconds = num(mailboxRaw.pollSeconds) ?? DEFAULT_POLL_SECONDS
   if (pollSeconds < 1) issues.push("mailbox.pollSeconds 至少为 1")
 
@@ -98,10 +85,7 @@ export function parseMailboxJob(raw: unknown): MailboxJob {
   return {
     job,
     mailbox: {
-      mother: {
-        model: modelRaw ? { providerID: str(modelRaw.providerID), modelID: str(modelRaw.modelID) } : undefined,
-        maxTokensPerAnalysis,
-      },
+      mother: { model: modelRaw ? { providerID: str(modelRaw.providerID), modelID: str(modelRaw.modelID) } : undefined },
       pollSeconds,
       maxArtifactBytes,
     },

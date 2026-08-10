@@ -90,8 +90,6 @@ export interface MotherPromptInput {
   instruction: RoundInstruction
   result: RoundResultFile
   rounds: RoundFiles[]
-  /** 预算余量,由代码算好递进来 —— 不让模型自己做算术。 */
-  budget: { roundsUsed: number; maxRounds: number; tokensSpent: number; maxTokens: number }
 }
 
 /** 研发端的角色说明 —— 开局和分析轮共用同一段,保证两条路径说的是同一件事。 */
@@ -125,13 +123,15 @@ function motherRole(): string {
 - **不碰硬件。** 板子根本不在这台机器上,\`flash\`/\`gdb\`/\`log\` 在你这儿只会得到
   "探针没找到"。要做的硬件动作写进指令。
 
-## 怎么判断任务完成了
+## 什么时候停,也归你
 
-你只有一份证据:**工位端的自述**。它是照着你的指令做的,但它可能看错、可能只做了一半、
-也可能烧录失败了却接着测。所以指令要带**自证**:让它报出的数字本身能说明问题
-(版本指纹、计数器增量、原文照抄的日志),而不是让它回答"好了吗"。
+**没有轮数上限、没有 token 上限、没有时间上限。** 闭环跑到你说 \`done\` 或 \`fail\` 为止。
+"还有没有下一步值得试"完全是你的判断 —— 假设空间穷尽了就 \`fail\`,别靠换个说法再试
+一遍来拖时间,那只是在烧钱。
 
-证据够了就 \`done\`,不够就再来一轮。
+判断"做完了"时你只有一份证据:**工位端的自述**。它是照着你的指令做的,但它可能看错、
+可能只做了一半、也可能烧录失败了却接着测。所以指令要带**自证**:让它报出的数字本身能
+说明问题(版本指纹、计数器增量、原文照抄的日志),而不是让它回答"好了吗"。
 
 ## 你每轮的输出:先分析,最后一个 \`\`\`json 围栏是唯一被机器读取的部分
 
@@ -171,8 +171,6 @@ ${job.task}
 信箱里还没有任何轮次,你来定开局。常见的开法是先让工位端**复现并取证**(不改代码,
 先看清楚现象),但要不要先加一条日志再让它烧,由你判断。
 
-预算:最多 ${job.budget.maxRounds} 轮,token 上限 ${job.budget.maxTokens.toLocaleString()}(两侧合计)。
-
 先写两三句你的开局思路,最后给出 \`\`\`json 围栏(decision 必须是 \`continue\`)。`
 }
 
@@ -194,11 +192,9 @@ export function motherFollowUpPrompt(input: MotherPromptInput): string {
 }
 
 function renderRoundBrief(input: MotherPromptInput): string {
-  const { round, instruction, result, budget, rounds } = input
+  const { round, instruction, result, rounds } = input
   const sections: string[] = []
-  sections.push(`# 第 ${round} 轮结果已回填,等你处理
-
-预算:轮次 ${budget.roundsUsed}/${budget.maxRounds},token ${budget.tokensSpent.toLocaleString()}/${budget.maxTokens.toLocaleString()}(两侧合计)。`)
+  sections.push(`# 第 ${round} 轮结果已回填,等你处理`)
 
   sections.push(
     `## 本轮下发的指令(你上次写的)\n\n${quote(clip(instruction.prompt, 1200))}${renderArtifactList(instruction.artifacts)}`,

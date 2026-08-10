@@ -23,6 +23,9 @@ import { loadMailboxJob } from "./spec.ts"
 import { readVerdict, scanMailbox, REPORT_FILE, type MailboxVerdict } from "./store.ts"
 import { ensureClone, initBareMailbox, pullReset } from "./sync.ts"
 
+/** 单机模拟的看门狗上限(分钟)。见 SimOptions.timeoutMin。 */
+const DEFAULT_SIM_TIMEOUT_MIN = 60
+
 export interface SimOptions {
   jobFile: string
   /**
@@ -38,7 +41,13 @@ export interface SimOptions {
   branch?: string
   /** 两个子进程的轮询间隔(秒),默认 3 —— 单机模拟不需要客气。 */
   pollSeconds?: number
-  /** 整个模拟的墙钟上限(分钟),默认取 job.budget.wallClockMin。 */
+  /**
+   * 模拟的墙钟上限(分钟),默认 60。
+   *
+   * 这是**演练台的看门狗**,不是产品预算 —— 生产闭环没有时间上限(跑到 agent
+   * 自己收工为止),但单机模拟得能在 CI 里保证收敛,否则一个不肯认输的剧本会把
+   * 流水线挂住。
+   */
   timeoutMin?: number
   /** 清掉上次模拟从头来(本地裸仓会一起消失)。缺省是续跑。 */
   fresh?: boolean
@@ -171,7 +180,7 @@ export async function runSim(options: SimOptions): Promise<SimResult> {
   process.on("SIGINT", onSignal)
   process.on("SIGTERM", onSignal)
 
-  const timeoutMin = options.timeoutMin ?? job.budget.wallClockMin
+  const timeoutMin = options.timeoutMin ?? DEFAULT_SIM_TIMEOUT_MIN
   const exits = children.map(
     (child) =>
       new Promise<number | null>((resolve) => {

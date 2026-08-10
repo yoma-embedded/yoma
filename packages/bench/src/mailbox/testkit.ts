@@ -74,8 +74,7 @@ export function rawMailboxJob(overrides: Record<string, unknown> = {}): Record<s
     title: "测试任务",
     task: "修 bug",
     repo: { name: "m-1" },
-    budget: { maxRounds: 3, maxTokens: 100_000, wallClockMin: 60 },
-    mailbox: { pollSeconds: 1, mother: { maxTokensPerAnalysis: 50_000 } },
+    mailbox: { pollSeconds: 1 },
     ...overrides,
   }
 }

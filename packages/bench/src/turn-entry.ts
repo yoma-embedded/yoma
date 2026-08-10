@@ -51,10 +51,6 @@ const result: TurnResult = await runTurn({
       if (part.state.status === "error") say(`  ✗ ${part.tool}:${part.state.error}`)
     }
   },
-  shouldStop: (usage) => {
-    const spent = input.spentTokens + usage.tokens.input + usage.tokens.output
-    return spent >= input.maxTokens ? `token 预算 ${input.maxTokens} 耗尽` : undefined
-  },
 })
 
 await writeFile(outputFile, JSON.stringify(result, null, 2))

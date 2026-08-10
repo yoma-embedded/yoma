@@ -23,12 +23,8 @@
  *
  * ## 本地状态
  *
- * `<workRoot>/<jobId>/session.json`:会话指针 + token 账本。
- *
- * 账本的持久副本是信箱里每轮 result 的 `spentTokens`(累计值),换台工位机续跑不会归零;
- * 但本地这份**先于推送**写下,补的是另一个洞:push 失败而 fetch 正常时(远端只读、
- * 凭据过期),下一次同步的 `pullReset` 会 `reset --hard` 掉本地那条 result 提交,
- * 于是这一轮的花费从账目蒸发、板子却真的动过了。预算守卫取两本账的最大值。
+ * `<workRoot>/<jobId>/session.json` 只存会话指针。跨轮的 token 累计不落地 ——
+ * 它只进终报,真相是信箱里每轮 result 的 `spentTokens`(累计值)。
  */
 
 import { copyFile, mkdir, readdir, writeFile } from "node:fs/promises"
@@ -97,7 +93,6 @@ function jobRoot(options: MailboxRunnerOptions, jobId: string): string {
 
 interface RunnerLocalState {
   sessionID?: string
-  spentTokens?: number
 }
 
 async function readLocalState(root: string): Promise<RunnerLocalState> {
@@ -131,22 +126,12 @@ async function stageIncoming(clone: string, round: number, workspace: string): P
   return staged
 }
 
-/** 工位端跨轮累计的 token —— 真相在信箱里(每轮 result 存的是累计值)。 */
+/** 工位端跨轮累计的 token,只进终报。真相在信箱里(每轮 result 存的是累计值)。 */
 function runnerTokensSoFar(rounds: RoundFiles[]): number {
   for (const entry of [...rounds].reverse()) {
     if (entry.result) return entry.result.spentTokens
   }
   return 0
-}
-
-/** mother 跨轮累计花费。 */
-function motherTokensSoFar(rounds: RoundFiles[]): number {
-  let total = 0
-  for (const { decision } of rounds) {
-    if (!decision?.usage) continue
-    total += decision.usage.tokens.input + decision.usage.tokens.output
-  }
-  return total
 }
 
 /** 轮询一步。守护进程就是"这个函数 → 睡一觉"的循环。 */
@@ -188,12 +173,10 @@ async function runRound(
   const round = instruction.round
   const root = jobRoot(options, job.id)
   const workspace = path.join(root, "work")
-  const local = await readLocalState(root)
-  let sessionID = local.sessionID
-  // 两本账取大 —— 理由见文件头"本地状态"。
-  const spentBefore = Math.max(runnerTokensSoFar(rounds), local.spentTokens ?? 0)
+  let sessionID = (await readLocalState(root)).sessionID
+  const spentBefore = runnerTokensSoFar(rounds)
 
-  progress(`─── 信箱轮 ${round}/${job.budget.maxRounds} ───`)
+  progress(`─── 信箱轮 ${round} ───`)
 
   const finishWithError = async (error: string): Promise<RunnerStepOutcome> => {
     await writeRoundResult(options.clone, {
@@ -207,12 +190,6 @@ async function runRound(
     const pushed = await commitPush(sync, `round ${round}: 工位端失败回填 —— ${error.slice(0, 80)}`)
     if (!pushed.pushed) return { kind: "blocked", detail: pushed.detail ?? "结果推不上去" }
     return { kind: "ran", round, error }
-  }
-
-  // 预算按**两侧合计**算 —— 研发端的分析也是这份预算花出去的钱。
-  const spentCombined = spentBefore + motherTokensSoFar(rounds)
-  if (spentCombined >= job.budget.maxTokens) {
-    return finishWithError(`token 预算 ${job.budget.maxTokens} 已耗尽(合计 ${spentCombined})`)
   }
 
   await mkdir(workspace, { recursive: true })
@@ -230,9 +207,6 @@ async function runRound(
       role: sessionID ? undefined : benchRolePrompt(job, workspace),
       incoming,
     }),
-    maxTokens: job.budget.maxTokens,
-    // 轮内看门狗也按两侧合计:研发端花掉的部分同样压缩本轮的可用余量。
-    spentTokens: spentCombined,
     turnEntry: options.turnEntry,
     configDir: options.configDir,
     faux: options.fauxTurns?.[round - 1],
@@ -243,14 +217,13 @@ async function runRound(
     turn = await (options.runTurn ?? runTurnInChildProcess)(input, { onProgress: progress })
   } catch (error) {
     // 会话可能已不在(sessionsRoot 被清、桌面端删了会话)。丢掉延续指针,下一轮重开。
-    await saveLocalState(root, { spentTokens: spentBefore })
+    await saveLocalState(root, {})
     return finishWithError(`agent 轮执行失败:${(error as Error).message}`)
   }
 
   sessionID = turn.sessionID
+  await saveLocalState(root, { sessionID })
   const spentAfter = spentBefore + turn.usage.tokens.input + turn.usage.tokens.output
-  // 先记账再推送:推不上去时这一轮会被 pullReset 丢掉重跑,花费不能跟着蒸发。
-  await saveLocalState(root, { sessionID, spentTokens: spentAfter })
 
   const result: RoundResultFile = {
     round,

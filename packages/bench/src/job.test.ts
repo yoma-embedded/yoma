@@ -26,8 +26,6 @@ describe("parseJob · 必填", () => {
   test("最小合法 job 能解析,缺省值就位", () => {
     const job = parseJob(base())
     expect(job.repo.branch).toBe("agent/j-1")
-    expect(job.budget.maxRounds).toBeGreaterThan(0)
-    expect(job.budget.maxTokens).toBeGreaterThan(0)
     expect(job.deliver?.remote).toBe("origin")
   })
 
@@ -50,18 +48,16 @@ describe("parseJob · 必填", () => {
 })
 
 describe("parseJob · 预算", () => {
-  test("预算不接受 0 或负数 —— 无界迭代是烧钱和变砖的组合", () => {
-    expect(issuesOf(base({ budget: { maxRounds: 0 } }))[0]).toContain("至少为 1")
-  })
 })
 
 describe("parseJob · 报错质量", () => {
   test("一次报出全部问题,而不是一次一个", () => {
-    const issues = issuesOf({ id: "bad id", budget: { maxRounds: 0, maxTokens: 0 } })
-    expect(issues.length).toBeGreaterThan(2)
+    // id 非法 + task 缺失 —— 两处都要在同一次里报出来。
+    const issues = issuesOf({ id: "bad id" })
+    expect(issues.length).toBe(2)
   })
 
-  test("错误消息里带字段路径", () => {
-    expect(issuesOf(base({ budget: { maxTokens: 0 } }))[0]).toContain("budget.maxTokens")
+  test("错误消息里带字段名", () => {
+    expect(issuesOf({ id: "j-1" }).join("\n")).toContain("task")
   })
 })

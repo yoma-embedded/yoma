@@ -27,8 +27,6 @@ export interface TurnInput {
   enginesDir?: string
   sessionID?: string
   prompt: string
-  maxTokens: number
-  spentTokens: number
   /**
    * 打包态的子进程入口(esbuild 产物 mailbox-turn-entry.mjs 的绝对路径),由宿主
    * 显式传入,**不猜**。缺省只在 bun 运行时合法(直跑 turn-entry.ts 源码);
@@ -119,7 +117,7 @@ export async function runTurnInChildProcess(
 ): Promise<TurnResult> {
   const dir = path.join(input.workspace, ".bench", "turns")
   await mkdir(dir, { recursive: true })
-  const stamp = `${input.job.id}-${input.spentTokens}-${input.prompt.length}`
+  const stamp = `${input.job.id}-${input.prompt.length}`
   const inputFile = path.join(dir, `turn-${stamp}.json`)
   const outputFile = path.join(dir, `turn-${stamp}.result.json`)
   await writeFile(inputFile, JSON.stringify(input, null, 2))

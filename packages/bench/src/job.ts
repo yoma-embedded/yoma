@@ -2,13 +2,12 @@
  * job spec:一个文件即一个任务。
  *
  * 校验是手写的而不是 zod —— bench 直接跑源码不打包,少一个依赖少一处 install graph 的
- * 风险;而且这里要的不只是"类型对",是**把人能犯的错在开跑前说清楚**(预算填 0、
+ * 风险;而且这里要的不只是"类型对",是**把人能犯的错在开跑前说清楚**(id 里带斜杠、
  * 任务描述空着),错误消息要指名道姓到字段路径。
  *
  * `task` 是这份 spec 的心脏 —— 它是 agent 唯一的任务来源。通过与否由研发端 agent
- * 读工位端回填的证据来判断,没有独立的判据机制。
- *
- * 预算三个上限都有默认值,但 **maxRounds 没有无限档** —— 无界迭代是烧钱和变砖的组合。
+ * 读工位端回填的证据来判断,没有独立的判据机制;**什么时候停也归它判断**,
+ * 没有轮数/token/墙钟上限。要提前收工就在桌面端按停止。
  */
 
 import path from "node:path"
@@ -41,14 +40,6 @@ export interface JobBench {
   probe?: string
 }
 
-export interface JobBudget {
-  /** 轮数上限(一轮 = 一次指令 → 一次执行 → 一次裁决)。 */
-  maxRounds: number
-  /** 两侧合计的 token 上限。 */
-  maxTokens: number
-  wallClockMin: number
-}
-
 export interface JobDeliver {
   /** 通过后是否推分支。 */
   push?: boolean
@@ -64,12 +55,9 @@ export interface Job {
   bench: JobBench
   /** 交给 agent 的任务描述:现象、复现步骤、期望行为、工位与安全约束。 */
   task: string
-  budget: JobBudget
   deliver?: JobDeliver
   model?: { providerID?: string; modelID?: string }
 }
-
-export const DEFAULT_BUDGET: JobBudget = { maxRounds: 8, maxTokens: 2_000_000, wallClockMin: 90 }
 
 export class JobSpecError extends Error {
   constructor(readonly issues: string[]) {
@@ -84,10 +72,6 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 function str(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() !== "" ? value : undefined
-}
-
-function num(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined
 }
 
 /** 解析并校验 job spec。**不** 碰文件系统 —— 路径是否存在由调用方在准备阶段查(带上下文更好报错)。 */
@@ -105,16 +89,6 @@ export function parseJob(raw: unknown): Job {
 
   const repoRaw = isObject(raw.repo) ? raw.repo : undefined
   const benchRaw = isObject(raw.bench) ? raw.bench : {}
-
-  const budgetRaw = isObject(raw.budget) ? raw.budget : {}
-  const budget: JobBudget = {
-    maxRounds: num(budgetRaw.maxRounds) ?? DEFAULT_BUDGET.maxRounds,
-    maxTokens: num(budgetRaw.maxTokens) ?? DEFAULT_BUDGET.maxTokens,
-    wallClockMin: num(budgetRaw.wallClockMin) ?? DEFAULT_BUDGET.wallClockMin,
-  }
-  if (budget.maxRounds < 1) issues.push("budget.maxRounds 至少为 1(无界迭代是烧钱和变砖的组合)")
-  if (budget.maxTokens < 1) issues.push("budget.maxTokens 至少为 1")
-  if (budget.wallClockMin < 1) issues.push("budget.wallClockMin 至少为 1")
 
   if (issues.length) throw new JobSpecError(issues)
 
@@ -136,7 +110,6 @@ export function parseJob(raw: unknown): Job {
       probe: str(benchRaw.probe),
     },
     task: task!,
-    budget,
     deliver: {
       push: deliverRaw.push === true,
       mr: deliverRaw.mr === true,

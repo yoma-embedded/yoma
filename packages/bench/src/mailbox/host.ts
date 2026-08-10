@@ -88,7 +88,7 @@ export type MailboxUiState =
 
 export interface MailboxUiSnapshot {
   state: MailboxUiState
-  job?: { id: string; title: string; directory: string; maxRounds: number; maxTokens: number; wallClockMin: number }
+  job?: { id: string; title: string; directory: string }
   rounds: RoundFiles[]
   /** 终局后附上的 report.md 原文(截断过)—— 终报页直接渲染,不再回信箱取。 */
   report?: string
@@ -311,9 +311,6 @@ function trimSnapshot(
         id: snapshot.job.job.id,
         title: snapshot.job.job.title,
         directory: directoryFor(snapshot.job.job.id),
-        maxRounds: snapshot.job.job.budget.maxRounds,
-        maxTokens: snapshot.job.job.budget.maxTokens,
-        wallClockMin: snapshot.job.job.budget.wallClockMin,
       }
     : undefined
   const rounds = snapshot.rounds.map((entry) => ({

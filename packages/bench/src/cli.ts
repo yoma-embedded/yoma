@@ -53,9 +53,6 @@ function defaultEnginesDir(): string | undefined {
 async function commandCheck(jobFile: string): Promise<void> {
   const { job } = await loadMailboxJob(jobFile)
   say(`${GREEN}✓${RESET} 任务书合法:${job.title} ${DIM}(${job.id})${RESET}`)
-  say(
-    `${DIM}  预算 ${job.budget.maxRounds} 轮 / ${job.budget.maxTokens.toLocaleString()} tokens / ${job.budget.wallClockMin} 分钟${RESET}`,
-  )
   if (job.bench.chip) say(`${DIM}  板卡 ${job.bench.board ?? "—"} · 芯片 ${job.bench.chip}${RESET}`)
 
   const enginesDir = defaultEnginesDir()
@@ -178,7 +175,6 @@ async function commandMailbox(sub: string | undefined, rest: string[]): Promise<
     if (snapshot.job) {
       const job = snapshot.job.job
       say(`${BOLD}${job.title}${RESET} ${DIM}(${job.id})${RESET}`)
-      say(`${DIM}轮数上限 ${job.budget.maxRounds} · token 预算 ${job.budget.maxTokens.toLocaleString()}${RESET}`)
     }
     for (const round of snapshot.rounds) {
       const bench = round.result?.error

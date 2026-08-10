@@ -133,23 +133,6 @@ describe("runTurn", () => {
     expect(result.text).toContain("看过了")
   })
 
-  test("shouldStop 触发时中断本轮并给出理由", async () => {
-    const workspace = tempDir("bench-ws-")
-    writeFileSync(path.join(workspace, "main.c"), "int main(void){return 0;}\n")
-    const result = await runTurn(
-      turnOptions(
-        workspace,
-        [
-          fauxAssistantMessage([fauxToolCall("read", { path: "main.c" })]),
-          fauxAssistantMessage([fauxText("还没说完")]),
-        ],
-        { shouldStop: () => "token 预算耗尽" },
-      ),
-    )
-
-    expect(result.stopReason).toBe("token 预算耗尽")
-  })
-
   test("provider 抽风时轮次不会提前结束 —— 内核重试完才算跑完", async () => {
     // 这是 bench 最贵的一种静默错误:失败那一轮结束时若状态落回 idle,settle 计时器
     // 会在 2s 退避窗口里认定"跑完了",runner 随即去跑判据 —— 而 agent 正要重试,

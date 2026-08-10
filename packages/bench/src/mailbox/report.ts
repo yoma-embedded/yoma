@@ -22,8 +22,8 @@ export interface MailboxReportInput {
 }
 
 export function renderMailboxReport(input: MailboxReportInput): string {
-  const { mailboxJob, verdict, rounds } = input
-  const job = mailboxJob.job
+  const job = input.mailboxJob.job
+  const { verdict, rounds } = input
   const sections: string[] = []
 
   sections.push(`# 信箱闭环报告:${job.title}
@@ -33,7 +33,7 @@ export function renderMailboxReport(input: MailboxReportInput): string {
 | | |
 |---|---|
 | 任务 | \`${job.id}\` |
-| 轮次 | ${verdict.rounds} / ${job.budget.maxRounds} |
+| 轮次 | ${verdict.rounds} |
 | 终局裁决 | ${verdict.decidedBy === "policy" ? "预算守卫(代码)" : "研发端"} |
 | 用量 | 工位端 ${verdict.totalRunnerTokens.toLocaleString()} tokens · 研发端 ${verdict.totalMotherTokens.toLocaleString()} tokens |
 | 板卡 | ${job.bench.board ?? "—"}${job.bench.chip ? ` (${job.bench.chip})` : ""} |`)

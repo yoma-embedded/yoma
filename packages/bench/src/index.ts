@@ -20,8 +20,8 @@
  *   mailbox/       信箱闭环:协议、两侧守护、同步、话术、终报
  */
 
-export { loadJob, parseJob, JobSpecError, DEFAULT_BUDGET, resolveWorkspace } from "./job.ts"
-export type { Job, JobBudget, JobBench, JobRepo, JobDeliver } from "./job.ts"
+export { loadJob, parseJob, JobSpecError, resolveWorkspace } from "./job.ts"
+export type { Job, JobBench, JobRepo, JobDeliver } from "./job.ts"
 
 export { runTurn } from "./turn.ts"
 export type { TurnOptions, TurnResult, TurnToolCall, TurnUsage } from "./turn.ts"

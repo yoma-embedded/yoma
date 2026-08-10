@@ -269,50 +269,6 @@ describe("mailbox mother", () => {
     expect(decision.usage?.tokens.input).toBe(200)
   })
 
-  test("轮数用尽 → 守卫终局 failed", async () => {
-    const { target, mailbox } = await fixtureAfterRound({
-      job: { budget: { maxRounds: 1, maxTokens: 100_000, wallClockMin: 60 } },
-    })
-    let asked = 0
-    const outcome = await motherStep(
-      motherOptions(mailbox.motherClone, target, {
-        runTurn: async () => {
-          asked += 1
-          return fakeTurn()
-        },
-      }),
-    )
-    expect(asked).toBe(0) // 预算不归模型管
-    expect(outcome.kind).toBe("done")
-    if (outcome.kind === "done") {
-      expect(outcome.verdict.outcome).toBe("failed")
-      expect(outcome.verdict.reason).toContain("轮数预算")
-      expect(outcome.verdict.decidedBy).toBe("policy")
-    }
-  })
-
-  test("token 预算(两侧合计)耗尽 → 守卫终局 failed", async () => {
-    const { target, mailbox } = await fixtureAfterRound({
-      turn: fakeTurn({ usage: usage(90_000, 10_000) }),
-      job: { budget: { maxRounds: 8, maxTokens: 100_000, wallClockMin: 60 } },
-    })
-    let asked = 0
-    const outcome = await motherStep(
-      motherOptions(mailbox.motherClone, target, {
-        runTurn: async () => {
-          asked += 1
-          return fakeTurn()
-        },
-      }),
-    )
-    expect(asked).toBe(0)
-    expect(outcome.kind).toBe("done")
-    if (outcome.kind === "done") {
-      expect(outcome.verdict.outcome).toBe("failed")
-      expect(outcome.verdict.reason).toContain("token 预算")
-    }
-  })
-
   test("等工位端时空转", async () => {
     const target = await makeTargetRepo(temp)
     const mailbox = await makeMailbox(temp)
@@ -323,26 +279,6 @@ describe("mailbox mother", () => {
     expect(outcome.kind).toBe("idle")
   })
 
-  test("墙钟从第 1 轮指令起算,耗尽即终局 failed", async () => {
-    const { target, mailbox, mailboxJob } = await fixtureAfterRound({})
-    const wallClockMs = mailboxJob.job.budget.wallClockMin * 60 * 1000
-    let asked = 0
-    const outcome = await motherStep(
-      motherOptions(mailbox.motherClone, target, {
-        now: () => Date.now() + wallClockMs + 60_000,
-        runTurn: async () => {
-          asked += 1
-          return fakeTurn()
-        },
-      }),
-    )
-    expect(asked).toBe(0)
-    expect(outcome.kind).toBe("done")
-    if (outcome.kind === "done") {
-      expect(outcome.verdict.outcome).toBe("failed")
-      expect(outcome.verdict.reason).toContain("墙钟")
-    }
-  })
 })
 
 describe("mailbox init 恢复", () => {

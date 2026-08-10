@@ -63,16 +63,8 @@ export interface MailboxComposeInput {
   /** 项目模板(<项目>/.bench/mailbox.template.json)—— 本身就是一份少了 task 的任务书。 */
   templatePath: string
   description: string
-  tier: keyof typeof BUDGET_TIERS
   title?: string
 }
-
-/** 预算三档。数值是决策:轮数管闭环长度,token 双侧合计,墙钟由 mother 在裁决点强制。 */
-export const BUDGET_TIERS = {
-  quick: { maxRounds: 4, maxTokens: 300_000, wallClockMin: 45 },
-  standard: { maxRounds: 8, maxTokens: 1_000_000, wallClockMin: 120 },
-  thorough: { maxRounds: 12, maxTokens: 2_500_000, wallClockMin: 360 },
-} as const
 
 /** 停机宽限:SIGTERM 之后守护要转杀孙进程,给它这么久,超时补硬杀。 */
 const STOP_GRACE_MS = 10_000
@@ -244,8 +236,6 @@ async function composeJob(
   input: MailboxComposeInput,
   mailboxDir: string,
 ): Promise<{ ok: boolean; jobFile?: string; projectDir?: string; message?: string }> {
-  const tier = BUDGET_TIERS[input.tier]
-  if (!tier) return { ok: false, message: `预算档不认识:${String(input.tier)}` }
   if (!input.description.trim()) return { ok: false, message: "任务描述是空的 —— agent 不该猜要修什么" }
 
   let template: Record<string, unknown>
@@ -264,8 +254,6 @@ async function composeJob(
   const rawId = typeof template.id === "string" && template.id.trim() ? template.id.trim() : "job"
   const baseId = rawId.replace(/[^A-Za-z0-9._-]/g, "-")
   const id = `${baseId}-${stamp}`
-  const templateBudget =
-    typeof template.budget === "object" && template.budget !== null ? (template.budget as Record<string, unknown>) : {}
   const templateMailbox =
     typeof template.mailbox === "object" && template.mailbox !== null
       ? (template.mailbox as Record<string, unknown>)
@@ -295,9 +283,6 @@ async function composeJob(
     // 工程名默认取**模板的 id**(不是加了时间戳的任务 id):它要在两台机器上对号
     // 入座,而"哪个工程"这件事不随每次出题变化。
     repo: { name: baseId, ...repoRest },
-    // 三个旋钮全在 budget 里 —— maxRounds 曾经住在 mailbox 段,放错地方 parseJob
-    // 读不到,界面上选"快速(4 轮)"实际会拿到模板值或默认 8,而且一声不吭。
-    budget: { ...templateBudget, maxRounds: tier.maxRounds, maxTokens: tier.maxTokens, wallClockMin: tier.wallClockMin },
     mailbox: templateMailbox,
   }
 
@@ -357,6 +342,9 @@ function buildHostConfig(
       root: join(mailboxDir, "rehearsal", "sim"),
       fresh: task.fresh,
       pollSeconds: 2,
+      // 演练台的看门狗:剧本是假模型两轮,10 分钟跑不完就是卡住了。生产闭环没有
+      // 时间上限,但内置演练必须能自己收场 —— 它跑在用户的 app 里。
+      timeoutMin: 10,
       // 内置演练是假模型:脚本与任务书一起生成(见 makeRehearsalJob)。
       faux: task.jobFile ? undefined : REHEARSAL_FAUX,
       // **故意不传 projectDir**:演练的工作树是自己生成的一次性目标仓(任务书里
@@ -443,7 +431,6 @@ function makeRehearsalJob(mailboxDir: string): string {
         title: "本机演练:假模型闭环",
         task: "演练:创建 proof.txt(假模型,不联网不碰硬件)",
         repo: { directory: target },
-        budget: { maxRounds: 3, maxTokens: 100_000, wallClockMin: 5 },
         mailbox: { mother: { maxTokensPerAnalysis: 50_000 } },
       },
       null,

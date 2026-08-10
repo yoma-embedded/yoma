@@ -127,7 +127,7 @@ export type MailboxUiStateView =
 
 export interface MailboxSnapshotView {
   state: MailboxUiStateView
-  job?: { id: string; title: string; directory: string; maxRounds: number; maxTokens: number; wallClockMin: number }
+  job?: { id: string; title: string; directory: string }
   rounds: MailboxRoundView[]
   /** 终局后附上的 report.md 原文(截断过)。 */
   report?: string
@@ -158,6 +158,5 @@ export interface MailboxComposeInputView {
   templatePath: string
   /** 任务的自然语言描述 —— 进 job.task;硬件事实与安全约束来自模板,不由描述生成。 */
   description: string
-  tier: "quick" | "standard" | "thorough"
   title?: string
 }

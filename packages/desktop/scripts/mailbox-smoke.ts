@@ -76,7 +76,6 @@ writeFileSync(
       title: "打包冒烟:本机演练",
       task: "演练:创建 proof.txt",
       repo: { directory: target },
-      budget: { maxRounds: 3, maxTokens: 100_000, wallClockMin: 5 },
       mailbox: { mother: { maxTokensPerAnalysis: 50_000 } },
     },
     null,

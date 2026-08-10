@@ -175,34 +175,6 @@ describe("mailbox runner", () => {
     expect(prompts[1]).not.toContain("你是这个调试闭环的工位端")
   })
 
-  test("token 预算已耗尽:拒绝开轮,error 回填", async () => {
-    const { mailbox } = await fixture()
-    await issue(mailbox, 1, "复现")
-    let turns = 0
-    const opts = options(mailbox.runnerClone, temp.dir("work-"), {
-      runTurn: async () => {
-        turns += 1
-        return fakeTurn({ usage: usage(90_000, 10_000) }) // 轮 1 一把烧光 10 万预算
-      },
-    })
-    await runnerStep(opts)
-
-    await writeDecision(mailbox.motherClone, {
-      round: 1,
-      by: "mother",
-      decision: "continue",
-      at: new Date(0).toISOString(),
-    })
-    await issue(mailbox, 2, "继续")
-
-    const outcome = await runnerStep(opts)
-    expect(outcome.kind).toBe("ran")
-    expect(turns).toBe(1) // 轮 2 没真跑
-    const verify = await freshClone(temp, mailbox.bare)
-    const result = (await Bun.file(path.join(verify, "rounds", "002", "result.json")).json()) as RoundResultFile
-    expect(result.error).toContain("预算")
-  })
-
   test("信箱空着(还没 init)就空转", async () => {
     const mailbox = await makeMailbox(temp)
     const outcome = await runnerStep(options(mailbox.runnerClone, temp.dir("work-")))
@@ -229,36 +201,6 @@ describe("mailbox runner", () => {
     const verify = await freshClone(temp, mailbox.bare)
     const result = (await Bun.file(path.join(verify, "rounds", "002", "result.json")).json()) as RoundResultFile
     expect(result.spentTokens).toBe(600)
-  })
-
-  test("预算按两侧合计:研发端花掉的部分会让工位拒绝开轮", async () => {
-    const { mailbox } = await fixture()
-    await issue(mailbox, 1, "复现")
-    let turns = 0
-    const opts = options(mailbox.runnerClone, temp.dir("work-"), {
-      runTurn: async () => {
-        turns += 1
-        return fakeTurn({ usage: usage(40_000, 10_000) }) // 轮 1 花 5 万
-      },
-    })
-    await runnerStep(opts)
-
-    // 研发端的分析烧掉 6 万(记在 decision.usage),两侧合计 11 万 > 10 万预算。
-    await writeDecision(mailbox.motherClone, {
-      round: 1,
-      by: "mother",
-      decision: "continue",
-      usage: usage(50_000, 10_000),
-      at: new Date(0).toISOString(),
-    })
-    await issue(mailbox, 2, "继续")
-
-    const outcome = await runnerStep(opts)
-    expect(outcome.kind).toBe("ran")
-    expect(turns).toBe(1) // 轮 2 没真跑
-    const verify = await freshClone(temp, mailbox.bare)
-    const result = (await Bun.file(path.join(verify, "rounds", "002", "result.json")).json()) as RoundResultFile
-    expect(result.error).toContain("110000")
   })
 
   test("轮执行失败:error 如实回填,会话指针丢掉,下一轮重开会话", async () => {

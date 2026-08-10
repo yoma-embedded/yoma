@@ -33,7 +33,7 @@ function makeMain(): MailboxMain {
 }
 
 describe("composeJob", () => {
-  test("模板+描述+预算档合成任务书;不带绝对路径,项目根单独回给本机", async () => {
+  test("模板+描述合成任务书;不带绝对路径,项目根单独回给本机", async () => {
     const project = tempDir("proj-")
     const benchDir = path.join(project, ".bench")
     mkdirSync(benchDir, { recursive: true })
@@ -60,9 +60,6 @@ describe("composeJob", () => {
     expect((job.repo as { directory?: string }).directory).toBeUndefined()
     expect((job.repo as { name: string }).name).toBe("foc")
     expect(composed.projectDir).toBe(project)
-    expect((job.budget as { maxTokens: number }).maxTokens).toBe(300_000)
-    // 三个旋钮全在 budget 里 —— 放进 mailbox 段 parseJob 读不到,界面选的档会静默失效。
-    expect((job.budget as { maxRounds: number }).maxRounds).toBe(4)
     // 模板里没写的字段原样保留(判据永远来自模板)。
     expect((job.success as { checks: unknown[] }).checks).toHaveLength(1)
   })
