@@ -1,7 +1,6 @@
 import { type Accessor, createEffect, createResource } from "solid-js"
 import type { PromptInputState } from "@/components/prompt-input"
 import { getSessionHandoff, setSessionHandoff } from "@/pages/session/handoff"
-import type { SessionComposerController } from "./session-composer-state"
 
 export type SessionComposerFollowupDock = {
   items: { id: string; text: string }[]
@@ -11,7 +10,7 @@ export type SessionComposerFollowupDock = {
 }
 
 /**
- * 组合区（权限门 + 排队追问 + 输入框）的容器控制器。
+ * 组合区（排队追问 + 输入框）的容器控制器。
  *
  * 相对 opencode 删掉的:
  *  - todo dock 和它那套开合弹簧动画 —— my-pi 没有 todowrite;
@@ -20,13 +19,11 @@ export type SessionComposerFollowupDock = {
  *  - parentID / child / openParent —— 没有子会话。
  */
 export function createSessionComposerRegionController(input: {
-  state: SessionComposerController
   sessionKey: Accessor<string>
   sessionID: Accessor<string | undefined>
   prompt: PromptInputState
   centered: Accessor<boolean>
   followup: Accessor<SessionComposerFollowupDock | undefined>
-  onResponseSubmit: () => void
   setPromptRef: (el: HTMLDivElement) => void
   setDockRef: (el: HTMLDivElement) => void
 }) {
@@ -52,13 +49,10 @@ export function createSessionComposerRegionController(input: {
   )
 
   return {
-    state: input.state,
     centered: input.centered,
     followup: input.followup,
-    onResponseSubmit: input.onResponseSubmit,
     setPromptRef: input.setPromptRef,
     setDockRef: input.setDockRef,
-    showComposer: () => !input.state.blocked(),
     handoffPrompt: () => getSessionHandoff(input.sessionKey())?.prompt,
     promptReady: () => input.prompt.ready() || promptReady(),
   }

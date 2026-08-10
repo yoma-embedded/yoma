@@ -15,7 +15,7 @@
 
 import { DEFAULT_COMPACTION_SETTINGS, estimateContextTokens, shouldCompact, type AgentMessage } from "@yoma/my-pi"
 
-export type CompactionReason = "no_usage" | "just_compacted" | "under_threshold" | "over_threshold"
+export type CompactionReason = "no_usage" | "just_compacted" | "no_context_window" | "under_threshold" | "over_threshold"
 
 export interface CompactionDecision {
   compact: boolean
@@ -48,7 +48,10 @@ export function shouldAutoCompact(
   }
 
   // 模型没报 contextWindow 就不压 —— 拿一个编出来的窗口去判阈值,只会在错误的时候压。
-  if (!contextWindow || contextWindow <= 0) return { compact: false, tokens: estimate.tokens, reason: "under_threshold" }
+  // 单独一个 reason:报成 under_threshold 会让人以为"算过了,没到线",而其实压根没算。
+  if (!contextWindow || contextWindow <= 0) {
+    return { compact: false, tokens: estimate.tokens, reason: "no_context_window" }
+  }
 
   return shouldCompact(estimate.tokens, contextWindow, DEFAULT_COMPACTION_SETTINGS)
     ? { compact: true, tokens: estimate.tokens, reason: "over_threshold" }

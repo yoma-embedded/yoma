@@ -38,7 +38,6 @@ import { LanguageProvider, type Locale, useLanguage } from "@/context/language"
 import { LayoutProvider } from "@/context/layout"
 import { ModelsProvider } from "@/context/models"
 import { NotificationProvider, useNotification } from "@/context/notification"
-import { PermissionProvider } from "@/context/permission"
 import { usePlatform } from "@/context/platform"
 import { PromptProvider } from "@/context/prompt"
 import { ServerConnection, ServerProvider, serverName, useServer } from "@/context/server"
@@ -180,7 +179,7 @@ function TargetSessionPage() {
 }
 
 // Wraps the non-draft routes. They are gated on (and keyed to) the globally selected
-// server via ServerKey, then provide the server-scoped shell (Permission/Layout/
+// server via ServerKey, then provide the server-scoped shell (Layout/
 // Notification/Models + the visual Layout) for that server.
 function SelectedServerProviders(props: ParentProps) {
   return (
@@ -326,11 +325,9 @@ type ServerScopedShellProps = ParentProps<{
 // Server-scoped providers for the routes that are not bound to one directory.
 function ServerScopedProviders(props: ParentProps) {
   return (
-    <PermissionProvider>
-      <LayoutProvider>
-        <ModelsProvider>{props.children}</ModelsProvider>
-      </LayoutProvider>
-    </PermissionProvider>
+    <LayoutProvider>
+      <ModelsProvider>{props.children}</ModelsProvider>
+    </LayoutProvider>
   )
 }
 
@@ -346,10 +343,10 @@ function NewAppLayout(props: ParentProps) {
 
 function TargetServerScopedProviders(props: ServerScopedShellProps) {
   return (
-    <PermissionProvider directory={props.directory}>
+    <>
       <MarkSessionNotificationsViewed sessionID={props.sessionID} />
       <ModelsProvider directory={props.directory}>{props.children}</ModelsProvider>
-    </PermissionProvider>
+    </>
   )
 }
 

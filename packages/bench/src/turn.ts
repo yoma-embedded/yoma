@@ -4,43 +4,41 @@
  * ## 为什么嵌 createKernelHost() 而不是自己装配 harness
  *
  * 裸装配(example/99-headless-run.ts 那条路)省下的只是几十行代码,要重建的却是
- * 权限门、投影器、自动压缩、工具装配、事件协议这一整层。而 `KernelHostOptions` 的
- * sessionsRoot / stateDir / enginesDir / permissionPolicy / onEvents 全是注入位 ——
- * 它本来就是为"第二个宿主"准备的形状。附带白得两件事:
+ * 投影器、自动压缩、工具装配、事件协议这一整层。而 `KernelHostOptions` 的
+ * sessionsRoot / stateDir / enginesDir / onEvents 全是注入位 —— 它本来就是为
+ * "第二个宿主"准备的形状。附带白得两件事:
  *   1. sessionsRoot 指向 desktop 的会话目录时,desktop 打开就能回放整个调试过程;
  *   2. P2 给 host 加 WebSocket 入口后,desktop 能实时 attach 观战,协议帧一个字不用改。
  *
- * ## 为什么一轮一个子进程(runner 那边 spawn 本文件的 CLI 形态)
+ * ## 为什么一轮一个子进程(调用方 spawn turn-entry)
  *
  * my-pi 的探针租约、gdb 会话表、log 采集器都是**模块级全局**,还挂着 process 退出钩子。
  * 进程边界 = 免费且可靠的清理:agent 轮结束时探针、串口、gdb server 一定被收干净,
- * 于是 grader 去烧录/采日志时不会撞上"探针被上一轮占着"。崩溃也不会留下孤儿。
- * 会话是落盘的 JSONL,下一轮换个进程接着跑,历史一条不丢。
+ * 下一轮不会撞上"探针被上一轮占着"。崩溃也不会留下孤儿。会话是落盘的 JSONL,
+ * 下一轮换个进程接着跑,历史一条不丢。
  *
  * ## 一轮"跑完了"怎么判定
  *
  * `session.prompt` 立刻返回,轮次结束只能看事件。状态机是 busy → idle,但自动压缩
  * 会在 idle 之后再来一次 compacting → idle。所以判据是 **idle 静默一小段时间**,
- * 而不是"第一个 idle" —— 后者会让 grader 和压缩抢同一个会话。
+ * 而不是"第一个 idle"。
  */
 
 import { createKernelHost, type KernelHost } from "@yoma-desktop/kernel/host"
 import type { KernelEvent } from "@yoma-desktop/kernel"
-import type { AssistantMessage, PermissionRequest, Session, Tokens } from "@yoma-desktop/kernel"
+import type { AssistantMessage, Session, Tokens } from "@yoma-desktop/kernel"
 
 import type { Job } from "./job.ts"
-import { createPolicy, type PolicyRole } from "./policy.ts"
-import type { PermissionDecision, PolicyProvider } from "@yoma-desktop/kernel/host"
 
 /** idle 之后再等这么久没有新状态,才认为一轮真的结束(躲开自动压缩的第二段)。 */
 const SETTLE_MS = 700
 
-/** 轮次内部的硬上限:防止事件流因为某种原因永不静默,把整个 job 吊死。 */
+/** 轮次内部的硬上限:防止事件流因为某种原因永不静默,把整个任务吊死。 */
 const TURN_HARD_TIMEOUT_MS = 60 * 60 * 1000
 
 export interface TurnOptions {
   job: Job
-  /** 工作树(agent 的 cwd)。 */
+  /** agent 的 cwd。 */
   workspace: string
   /** 会话 JSONL 根目录。指向 desktop 的 userData/sessions 就能在桌面端回放。 */
   sessionsRoot: string
@@ -51,12 +49,6 @@ export interface TurnOptions {
   sessionID?: string
   /** 本轮要说的话。 */
   prompt: string
-  /** 信箱闭环的分工边界(见 policy.ts 的 PolicyRole)。单机模式不传。 */
-  role?: PolicyRole
-  /** 权限升级的处理者。不给则一律拒绝(真无人值守且没人接的场景)。 */
-  onEscalation?: (request: PermissionRequest) => Promise<"once" | "always" | "reject">
-  /** 决策审计出口。 */
-  onDecision?: (decision: PermissionDecision) => void
   /** 事件旁路,用来打印进度。 */
   onEvent?: (event: KernelEvent) => void
   /** 预算看门狗:每次 token 计数变化时问一次,返回 stop 的理由就中断本轮。 */
@@ -91,7 +83,6 @@ export interface TurnResult {
   text: string
   toolCalls: TurnToolCall[]
   usage: TurnUsage
-  decisions: PermissionDecision[]
   /** 非空表示本轮是被中断/出错结束的。 */
   stopReason?: string
   errors: string[]
@@ -103,7 +94,6 @@ const ZERO_TOKENS: Tokens = { input: 0, output: 0, reasoning: 0, cache: { read: 
 export async function runTurn(options: TurnOptions): Promise<TurnResult> {
   const started = Date.now()
   const settleMs = options.settleMs ?? SETTLE_MS
-  const decisions: PermissionDecision[] = []
   const errors: string[] = []
   /** 每条 assistant 消息的最新用量。同一轮里会有多条(工具循环),按 id 取最后一次。 */
   const usageByMessage = new Map<string, TurnUsage>()
@@ -139,27 +129,6 @@ export async function runTurn(options: TurnOptions): Promise<TurnResult> {
     return { tokens, cost }
   }
 
-  /**
-   * 没人接管时把 escalate 转成 deny —— **不是**让权限门去 ask 再自动拒。
-   *
-   * 差别全在审计上:走 ask 流的拒绝会记成 `by: "human"`,而当时根本没有人。
-   * 决策日志是无人值守模式唯一的事后依据,记错了责任人比记漏还糟。转成 deny 之后
-   * 记录是 `by: "policy"`,rule 保留,理由里写明"没有人接管",研发一眼看得出
-   * 这条路是被策略挡的、不是谁点了拒绝。
-   */
-  const policy = createPolicy({ job: options.job, workspace: options.workspace, role: options.role })
-  const effectivePolicy: PolicyProvider = options.onEscalation
-    ? policy
-    : async (call) => {
-        const decision = await policy(call)
-        if (decision?.action !== "escalate") return decision
-        return {
-          action: "deny",
-          rule: decision.rule,
-          reason: `需要人工裁决,但本次是无人接管的运行 —— ${call.tool} 被拒绝`,
-        }
-      }
-
   const host: KernelHost = createKernelHost({
     sessionsRoot: options.sessionsRoot,
     stateDir: options.stateDir,
@@ -167,11 +136,6 @@ export async function runTurn(options: TurnOptions): Promise<TurnResult> {
     configDir: options.configDir,
     version: "bench",
     resolveModels: options.resolveModels,
-    permissionPolicy: effectivePolicy,
-    onPermissionDecision: (decision) => {
-      decisions.push(decision)
-      options.onDecision?.(decision)
-    },
     onEvents: (batch) => {
       for (const event of batch) handleEvent(event)
     },
@@ -231,39 +195,20 @@ export async function runTurn(options: TurnOptions): Promise<TurnResult> {
       case "kernel.error":
         errors.push(event.message)
         break
-      case "permission.asked":
-        void handleEscalation(event.request)
-        break
       default:
         break
     }
   }
 
-  async function handleEscalation(request: PermissionRequest) {
-    if (!options.onEscalation) {
-      await host.handle("permission.respond", { id: request.id, response: "reject" })
-      return
-    }
-    // 等人的时候不能算静默 —— 否则 runner 会以为这一轮跑完了。
-    cancelSettle()
-    const response = await options.onEscalation(request).catch(() => "reject" as const)
-    await host.handle("permission.respond", { id: request.id, response })
-  }
-
   async function abortNow() {
-    try {
-      await host.handle("session.abort", { sessionID })
-    } catch {
-      // abort 失败不该盖住真正的停止原因。
-    }
+    await host.handle("session.abort", { sessionID }).catch(() => {})
   }
 
   // 内核的事件批处理定时器是 unref 的(kernel host/stream.ts,为了不吊住
   // utilityProcess 退出),而本函数的完成恰恰**依赖**那批事件送达。纯 node 下若
-  // 进程没有别的 ref 句柄(mother 的进程内分析轮正是如此;turn-entry 侥幸有 stdin
-  // 监听兜着),事件还没冲出来事件循环就空了,进程带着未决的 await 直接退出
-  // (实测:打包冒烟里 mother 走到"分析中"就消失)。bun 的存活语义不同,开发态
-  // 从不暴露 —— 所以这里必须显式抓一个 ref 句柄,离开时归还。
+  // 进程没有别的 ref 句柄,事件还没冲出来事件循环就空了,进程带着未决的 await
+  // 直接退出(实测:打包冒烟里 mother 走到"分析中"就消失)。bun 的存活语义不同,
+  // 开发态从不暴露 —— 所以这里必须显式抓一个 ref 句柄,离开时归还。
   const keepalive = setInterval(() => {}, 60_000)
   let sessionID = options.sessionID ?? ""
   try {
@@ -304,7 +249,6 @@ export async function runTurn(options: TurnOptions): Promise<TurnResult> {
     text: [...textByPart.values()].join("\n").trim(),
     toolCalls: [...toolCalls.values()],
     usage: totals(),
-    decisions,
     stopReason,
     errors,
     elapsedMs: Date.now() - started,

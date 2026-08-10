@@ -99,7 +99,8 @@ function attach(port: MessagePortLike): void {
   port.start?.()
   ports.add(port)
 
-  // 新端口挂上就重同步:重推未决权限请求,否则关掉窗口再开就是一个永久卡住的会话。
+  // 新端口挂上就重同步:补发 kernel.connected,否则窗口 reload 之后的 renderer
+  // 等不到握手,界面停在"连接中"。
   host?.resync()
 }
 
@@ -126,13 +127,6 @@ if (parentPort) {
     if (data?.type === "attach") {
       const port = event.ports?.[0]
       if (port) attach(port)
-      return
-    }
-    if (data?.type === "mailbox-active") {
-      // 探针互斥走控制通道:锁归 main 管,renderer 无解锁能力。host 未 start 时丢弃 ——
-      // main 在任务活跃期间会于内核 ready 后重申一次(见 main/mailbox.ts)。
-      const command = data as { type: "mailbox-active"; active: boolean; reason?: string }
-      void host?.handle("mailbox.setActive", { active: command.active, reason: command.reason })
       return
     }
     if (data?.type === "stop") {

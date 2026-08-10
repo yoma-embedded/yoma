@@ -135,10 +135,6 @@ export const dict: Record<string, string> = {
   "ui.common.next": "Далі",
   "ui.common.submit": "Надіслати",
 
-  "ui.permission.deny": "Заборонити",
-  "ui.permission.allowAlways": "Дозволяти завжди",
-  "ui.permission.allowOnce": "Дозволити один раз",
-
   "ui.message.expand": "Розгорнути повідомлення",
   "ui.message.collapse": "Згорнути повідомлення",
   "ui.message.copy": "Копіювати",

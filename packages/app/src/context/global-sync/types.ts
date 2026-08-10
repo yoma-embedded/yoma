@@ -1,4 +1,4 @@
-import type { Message, Part, PermissionRequest, Session, SessionStatus, VcsInfo } from "@yoma-desktop/kernel"
+import type { Message, Part, Session, SessionStatus, VcsInfo } from "@yoma-desktop/kernel"
 import { NormalizedProviderListResponse } from "@yoma-desktop/session-ui/context"
 
 /**
@@ -15,9 +15,9 @@ export type Path = {
 /**
  * 应用配置。
  *
- * opencode 的 config 是后端下发的(provider 设置、agent 定义、权限规则、MCP 服务器…)。
- * my-pi 没有配置服务;真正还需要的只有权限规则,它走 kernel.permission.rules()。
- * 这个类型保留是为了让还在读 config 的调用点先编译过去,收尾时逐个清掉。
+ * opencode 的 config 是后端下发的(provider 设置、agent 定义、MCP 服务器…)。
+ * my-pi 没有配置服务,所以这里是空对象;这个类型保留是为了让还在读 config 的调用点
+ * 先编译过去,收尾时逐个清掉。
  */
 export type Config = Record<string, never>
 import type { Accessor } from "solid-js"
@@ -49,9 +49,6 @@ export type State = {
     [sessionID: string]: SessionStatus
   }
   session_working(id: string): boolean
-  permission: {
-    [sessionID: string]: PermissionRequest[]
-  }
   vcs: VcsInfo | undefined
   limit: number
   message: {

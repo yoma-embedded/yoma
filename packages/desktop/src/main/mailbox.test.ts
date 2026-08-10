@@ -28,7 +28,6 @@ function makeMain(): MailboxMain {
     sessionsRoot: path.join(userData, "sessions"),
     bundleDir: userData,
     broadcast: () => {},
-    setHardwareLock: () => {},
     persistence: { get: () => undefined, set: () => {} },
   })
 }
@@ -62,7 +61,8 @@ describe("composeJob", () => {
     expect((job.repo as { name: string }).name).toBe("foc")
     expect(composed.projectDir).toBe(project)
     expect((job.budget as { maxTokens: number }).maxTokens).toBe(300_000)
-    expect((job.mailbox as { maxRounds: number }).maxRounds).toBe(4)
+    // 三个旋钮全在 budget 里 —— 放进 mailbox 段 parseJob 读不到,界面选的档会静默失效。
+    expect((job.budget as { maxRounds: number }).maxRounds).toBe(4)
     // 模板里没写的字段原样保留(判据永远来自模板)。
     expect((job.success as { checks: unknown[] }).checks).toHaveLength(1)
   })

@@ -3,22 +3,19 @@
  *
  * 它在研发机上,手里是工程的完整检出和构建环境;板子不在这儿。每一轮它读工位端回填的
  * 证据,动手改代码、构建,把产物当附件塞进下一轮,再用大白话写指令。硬件动作全部
- * 委托给工位端 —— `flash`/`gdb`/`log` 由 `role: "dev"` 直接拒(见 policy.ts)。
+ * 委托给工位端(板子根本不在这台机器上)。
  *
- * ## 决策分两层,层序即权力边界
+ * ## 谁裁决
  *
- * 1. **确定性守卫(代码)先裁。** 判据全过 → 终局 passed;预算(轮数/token/墙钟)耗尽
- *    → 终局 failed;轮级失败与环境错误 → 挂起。这些不问模型 —— 判据与预算不归模型管,
- *    对工位端 agent 如此,对研发端同样如此。守卫的裁决记 `by: "policy"`。
- * 2. **剩下的才是真判断**:判据没过、预算还有、环境正常 —— 改哪儿、怎么验、还是认输。
- *    这一步跑一轮真的 yoma 内核会话,工作区是**项目仓**,决定必须落在结尾的
- *    ```json 围栏里。
+ * **模型裁决"做完没做完"**:它读工位端的自述,决定 continue / done / fail。
+ * 代码只管**预算** —— 轮数、token、墙钟三个上限,任何一个到顶就终局 failed,
+ * 记 `by: "policy"`。花钱不归模型管,其余都归。
  *
  * ## 附件由代码拷,不由 agent 写
  *
- * agent 只在决定里声明 `artifacts: ["build/xxx.elf"]`,拷贝、边界检查、大小上限都在
- * 这里做。这样策略不必给它开一个信箱目录的写权限,而且"附件是不是真的在"有机器保证:
- * 声明了但文件不存在是一个能被逮住的错误,不是一个空目录。
+ * agent 只在决定里声明 `artifacts: ["build/xxx.elf"]`,拷贝与边界检查在这里做。
+ * 工位端**没有项目检出**,附件是它拿到任何东西的唯一通道 —— 声明了但文件不存在
+ * 是一个能被逮住的错误,不是一个空目录。
  *
  * ## 为什么研发端的轮不进子进程
  *
@@ -26,10 +23,10 @@
  * 工具,进程边界在这里没有要清理的东西;runTurn 每次建 host、用完 dispose,进程内
  * 已经是干净的生命周期。
  *
- * ## 解析失败的终点是 parked,不是无限重试
+ * ## 解析失败的终点是终局,不是无限重试
  *
- * 决定 JSON 不合法时重试一次;再失败就把闭环挂起(by:"policy",理由写明)。守护进程
- * 的轮询循环里没有"这次不算"—— 每次重试都是真实的模型花费,烧钱等不来正确性。
+ * 决定 JSON 不合法时重试一次;再失败就终局(by:"policy",理由写明)。守护进程的
+ * 轮询循环里没有"这次不算"—— 每次重试都是真实的模型花费,烧钱等不来正确性。
  */
 
 import { mkdir, writeFile } from "node:fs/promises"
@@ -113,10 +110,13 @@ interface MotherLocalState {
   /** 项目仓上的任务基线。第一次开轮时定,之后每轮的 patch 都相对它。 */
   baseCommit?: string
   /**
-   * 跨轮累计花费的本地账本。信箱里的 decision.usage 是它的持久副本,但那份只在 push
-   * 成功后存在 —— push 失败/中途崩溃时若只靠信箱账本,这笔花费会从一切账目蒸发,
-   * blocked 重试循环就成了无界烧钱(实测证据链见审查记录)。
-   * 每次分析轮结束**先记账再推送**;预算守卫取两本账的最大值。
+   * 跨轮累计花费的本地账本,**每轮分析结束立刻记、先于任何推送**。
+   *
+   * 信箱里的 `decision.usage` 是它的持久副本,但那份只在 push 成功后才存在。
+   * push 失败而 fetch 正常时(远端只读、凭据过期),下一次同步的 `pullReset` 会
+   * `reset --hard` 掉本地那条 decision 提交 —— 于是这笔花费从一切账目蒸发,
+   * 预算守卫永远看不到它,而守护循环只有退避没有放弃条件:每轮都真跑一次模型分析,
+   * 无界烧钱。预算守卫取两本账的最大值。
    */
   spentTokens?: number
   /** 终局收尾(交付 push)是否已做过。 */
@@ -176,14 +176,8 @@ export function parseMotherDecision(
   }
   const record = parsed as Record<string, unknown>
   const decision = record.decision
-  if (decision === "success") {
-    return {
-      ok: false,
-      error: `"success" 不是你能给的决定 —— 判据由工位端独立执行,全绿时闭环自动终止。可选:continue / fail / park`,
-    }
-  }
-  if (decision !== "continue" && decision !== "fail" && decision !== "park") {
-    return { ok: false, error: `decision "${String(decision)}" 不认识,可选:continue / fail / park` }
+  if (decision !== "continue" && decision !== "done" && decision !== "fail") {
+    return { ok: false, error: `decision "${String(decision)}" 不认识,可选:continue / done / fail` }
   }
   const str = (key: string): string | undefined =>
     typeof record[key] === "string" && (record[key] as string).trim() !== ""
@@ -214,8 +208,8 @@ export function parseMotherDecision(
 }
 
 /**
- * 研发端跑内核轮所用的合成 job:工作区是**项目仓**,角色是 dev(硬件工具全拒)。
- * 分支沿用 job 声明的那条 —— 代码归研发端写,交付的就是这条分支。
+ * 研发端跑内核轮所用的合成 job:工作区是**项目仓**。分支沿用 job 声明的那条 ——
+ * 代码归研发端写,交付的就是这条分支。
  */
 function motherTurnJob(mailboxJob: MailboxJob, workspace: string): Job {
   const job = mailboxJob.job
@@ -340,13 +334,13 @@ async function kickoff(
     const decision: RoundDecision = {
       round: 0,
       by: "policy",
-      decision: "park",
+      decision: "fail",
       reason,
       usage: analysed.usage,
       motherSessionID: analysed.sessionID,
       at: new Date(now()).toISOString(),
     }
-    return settleTerminal(options, mailboxJob, [], decision, "parked", reason, 0, 0)
+    return settleTerminal(options, mailboxJob, [], decision, "failed", reason, 0, 0)
   }
 
   const payload = analysed.payload
@@ -363,16 +357,7 @@ async function kickoff(
       at: new Date(now()).toISOString(),
     }
     progress(`研发端开局就终止:${payload.decision} —— ${reason}`)
-    return settleTerminal(
-      options,
-      mailboxJob,
-      [],
-      decision,
-      payload.decision === "fail" ? "failed" : "parked",
-      reason,
-      0,
-      0,
-    )
+    return settleTerminal(options, mailboxJob, [], decision, payload.decision === "done" ? "passed" : "failed", reason, 0, 0)
   }
 
   const issued = await issueInstruction(options, mailboxJob, workspace, 1, payload, progress)
@@ -405,13 +390,13 @@ async function decide(
     run: options.gitRun,
   }
 
-  // 两本账取大:信箱里的 decision.usage(push 成功才有)与本地账本(push 前就记)。
+  // 两本账取大:信箱里的(push 成功才有)与本地的(push 前就记)。见 spentTokens 的注释。
   const local = await readLocalState(options.clone)
   const motherTokensBefore = Math.max(sumMotherTokens(allRounds), local.spentTokens ?? 0)
   const tokensTotal = result.spentTokens + motherTokensBefore
   const budget = {
     roundsUsed: round,
-    maxRounds: mailboxJob.mailbox.maxRounds,
+    maxRounds: job.budget.maxRounds,
     tokensSpent: tokensTotal,
     maxTokens: job.budget.maxTokens,
   }
@@ -426,51 +411,9 @@ async function decide(
   const terminal = (decision: RoundDecision, outcome: MailboxVerdict["outcome"], reason: string) =>
     settleTerminal(options, mailboxJob, allRounds, decision, outcome, reason, result.spentTokens, motherTokensBefore)
 
-  // ── 第一层:确定性守卫。判据与预算不归模型管。 ──────────────────────────────
-  // 轮级失败先于"判据通过"判:环境坏掉的轮判据可能照样绿,但证据不可信,
-  // 这时宣布 success 会交付一个没被真正验证过的"修复"。
-  if (result.error) {
-    if (tokensTotal >= job.budget.maxTokens) {
-      const reason = `token 预算 ${job.budget.maxTokens} 耗尽(${result.error})`
-      return terminal(policyDecision("fail", reason), "failed", reason)
-    }
-    const reason = `第 ${round} 轮轮级失败:${result.error}`
-    progress(`⚠ ${reason} —— 挂起给人`)
-    return terminal(policyDecision("park", reason), "parked", reason)
-  }
-  if (result.grade?.passed) {
-    const reason = `第 ${round} 轮判据全部通过`
-    progress(`✓ ${reason} —— 终局 passed(守卫裁决,不问模型)`)
-    return terminal(policyDecision("success", reason), "passed", reason)
-  }
-  if (result.turn?.stopReason) {
-    if (tokensTotal >= job.budget.maxTokens) {
-      const reason = `token 预算 ${job.budget.maxTokens} 耗尽`
-      return terminal(policyDecision("fail", reason), "failed", reason)
-    }
-    const reason = `第 ${round} 轮被中断:${result.turn.stopReason}`
-    return terminal(policyDecision("park", reason), "parked", reason)
-  }
-  // provider 级失败的轮长这样:text 空、没有工具调用、errors 非空 —— 内核把失败当
-  // 数据,轮"正常"结束。不拦的话研发端会对着"什么都没做"的轮持续 continue,
-  // 空轮 token≈0,一路烧到轮数上限,终局理由还会写成"轮数用尽"(补审逮住过)。
-  if (
-    result.turn &&
-    !result.turn.text &&
-    Object.keys(result.turn.toolCounts).length === 0 &&
-    result.turn.errors.length
-  ) {
-    const reason = `第 ${round} 轮空转(provider 级错误):${result.turn.errors[0]}`
-    return terminal(policyDecision("park", reason), "parked", reason)
-  }
-  if (result.grade?.hasEnvironmentError) {
-    const summary =
-      [result.grade.build, ...result.grade.checks].find((check) => check?.outcome === "error")?.summary ?? ""
-    const reason = `判据没跑成(环境问题):${summary}`
-    return terminal(policyDecision("park", reason), "parked", reason)
-  }
-  if (round >= mailboxJob.mailbox.maxRounds) {
-    const reason = `轮数预算 ${mailboxJob.mailbox.maxRounds} 用尽,判据仍未通过`
+  // ── 预算守卫:唯一不问模型的三件事。到顶就终局,理由记 by:"policy"。 ─────────
+  if (round >= job.budget.maxRounds) {
+    const reason = `轮数预算 ${job.budget.maxRounds} 用尽`
     return terminal(policyDecision("fail", reason), "failed", reason)
   }
   if (tokensTotal >= job.budget.maxTokens) {
@@ -480,13 +423,13 @@ async function decide(
   // 墙钟从第 1 轮指令下发时刻起算,粒度是"裁决点"—— 不是分钟级抢占(轮内自有
   // TURN_HARD_TIMEOUT 兜底),但保证闭环不会在无人看的机器上连跑十几个小时。
   const startedAt = Date.parse(allRounds[0]?.instruction?.at ?? "")
-  if (Number.isFinite(startedAt) && now() - startedAt >= job.budget.wallClockMin * 60 * 1000) {
+  if (now() - startedAt >= job.budget.wallClockMin * 60 * 1000) {
     const reason = `墙钟预算 ${job.budget.wallClockMin} 分钟耗尽`
     return terminal(policyDecision("fail", reason), "failed", reason)
   }
 
-  // ── 第二层:真判断。改代码、构建、附产物,然后给决定。 ──────────────────────
-  progress(`第 ${round} 轮判据未过,研发端处理中…`)
+  // ── 剩下的全是模型的判断:做完了没有、下一步改哪儿、还是认输。 ────────────────
+  progress(`第 ${round} 轮结果已回填,研发端处理中…`)
   const prepared = await prepareProjectBranch(options, mailboxJob, workspace)
   if (!prepared.ok) return { kind: "blocked", detail: prepared.error }
 
@@ -501,8 +444,8 @@ async function decide(
   const usage = analysed.usage
   if (!analysed.ok) {
     const reason = `研发端未能给出合法决定:${analysed.error}`
-    const decision: RoundDecision = { ...policyDecision("park", reason), usage, motherSessionID: analysed.sessionID }
-    return terminal(decision, "parked", reason)
+    const decision: RoundDecision = { ...policyDecision("fail", reason), usage, motherSessionID: analysed.sessionID }
+    return terminal(decision, "failed", reason)
   }
 
   const payload = analysed.payload
@@ -519,7 +462,7 @@ async function decide(
   progress(`研发端裁决:${payload.decision}${payload.analysis ? ` —— ${payload.analysis.slice(0, 100)}` : ""}`)
 
   if (payload.decision !== "continue") {
-    return terminal(decision, payload.decision === "fail" ? "failed" : "parked", payload.reason!)
+    return terminal(decision, payload.decision === "done" ? "passed" : "failed", payload.reason!)
   }
 
   const issued = await issueInstruction(options, mailboxJob, workspace, round + 1, payload, progress)
@@ -678,8 +621,7 @@ async function prepareProjectBranch(
 }
 
 /**
- * 终局收尾 —— 代码在研发端,所以交付 push 在这里。回刷 known-good 归工位端
- * (硬件动作只发生在有板子的那台机器上)。幂等,失败如实返回交给退避循环重试。
+ * 终局收尾 —— 代码在研发端,所以交付 push 在这里。幂等,失败如实返回交给退避循环重试。
  */
 async function finalize(
   options: MailboxMotherOptions,
@@ -725,7 +667,6 @@ async function analyse(
       enginesDir: options.enginesDir,
       configDir: options.configDir,
       resolveModels: options.resolveModels,
-      role: "dev",
       sessionID,
       prompt,
       shouldStop: (usage) =>
@@ -737,7 +678,6 @@ async function analyse(
   await ensureLocalDir(options.clone)
   let usage = zero
   let sessionID = state.sessionID
-  /** 本地账本:每跑完一轮就记账,**先于**任何推送。花费不因产出没推上去而消失。 */
   let ledger = state.spentTokens ?? 0
   const book = async (turnUsage: TurnUsage) => {
     usage = addUsage(usage, turnUsage)
@@ -745,21 +685,16 @@ async function analyse(
     await saveLocalState(options.clone, { ...(await readLocalState(options.clone)), sessionID, spentTokens: ledger })
   }
 
-  const openingPrompt = () => (input ? motherPrompt(input) : motherKickoffPrompt(mailboxJob))
-  const continuingPrompt = () => (input ? motherFollowUpPrompt(input) : motherKickoffPrompt(mailboxJob))
-
   let turn: TurnResult
   try {
-    turn = await turnOnce(sessionID ? continuingPrompt() : openingPrompt(), sessionID)
+    turn = await turnOnce(
+      sessionID ? (input ? motherFollowUpPrompt(input) : motherKickoffPrompt(mailboxJob)) : input ? motherPrompt(input) : motherKickoffPrompt(mailboxJob),
+      sessionID,
+    )
   } catch (error) {
-    if (!sessionID) return { ok: false, error: `研发端轮执行失败:${(error as Error).message}`, usage }
-    // 旧会话可能已不在(sessionsRoot 换了、文件被清)。丢掉延续,用完整提示词重来一次。
-    sessionID = undefined
-    try {
-      turn = await turnOnce(openingPrompt())
-    } catch (retryError) {
-      return { ok: false, error: `研发端轮执行失败:${(retryError as Error).message}`, usage }
-    }
+    // 会话可能已不在(sessionsRoot 换了、文件被清)。丢掉延续指针,下次轮询重开。
+    await saveLocalState(options.clone, { ...(await readLocalState(options.clone)), sessionID: undefined })
+    return { ok: false, error: `研发端轮执行失败:${(error as Error).message}`, usage }
   }
   sessionID = turn.sessionID
   await book(turn.usage)

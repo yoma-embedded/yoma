@@ -6,8 +6,9 @@
  * inline,内核或 bench 的一次重构可以零编译错误地把守护进程弄死。这里用
  * Electron + ELECTRON_RUN_AS_NODE(打包 app 里 main 起守护的同一条路)跑
  * sim 角色:守护自我 spawn 两个角色子进程 → 各自跑真内核 host → 假模型两轮
- * (第 1 轮判据失败 → mother 裁 continue → 第 2 轮 write 工具创建判据要的
- * 文件 → 守卫终局 passed)。不要 key、不要网络、不碰硬件。
+ * (第 1 轮工位端报"东西不在" → 研发端 write 修复并把产物**当附件**下发 →
+ * 第 2 轮工位端在自己的一次性工作目录里读到它 → 研发端裁 done)。
+ * 不要 key、不要网络、不碰硬件。
  *
  * 用法:
  *   bun packages/desktop/scripts/mailbox-smoke.ts
@@ -15,7 +16,7 @@
  */
 
 import { execFileSync, spawn } from "node:child_process"
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -66,8 +67,6 @@ writeFileSync(join(target, "main.c"), "int main(void){return 0;}\n")
 git("add", "-A")
 git("commit", "-q", "-m", "init")
 
-const checkCommand =
-  process.platform === "win32" ? "cmd /c if exist proof.txt (exit 0) else (exit 1)" : "test -f proof.txt"
 const jobFile = join(root, "job.json")
 writeFileSync(
   jobFile,
@@ -77,10 +76,8 @@ writeFileSync(
       title: "打包冒烟:本机演练",
       task: "演练:创建 proof.txt",
       repo: { directory: target },
-      success: { checks: [{ type: "bash", command: checkCommand }] },
-      policy: "unattended",
-      budget: { maxIterations: 3, maxTokens: 100_000, wallClockMin: 5 },
-      mailbox: { maxRounds: 3, mother: { maxTokensPerAnalysis: 50_000 } },
+      budget: { maxRounds: 3, maxTokens: 100_000, wallClockMin: 5 },
+      mailbox: { mother: { maxTokensPerAnalysis: 50_000 } },
     },
     null,
     2,
@@ -101,22 +98,32 @@ writeFileSync(
       configDir: join(root, "my-pi-config"),
       turnEntry: turnBundle,
       hostEntry: hostBundle,
-      // 假模型脚本:分工与生产一致 —— **代码归研发端,工位端只观察**。
-      // 研发端开局下指令(不改代码)→ 第 1 轮判据必然失败 → 研发端 write 修复并下
-      // 第 2 轮(改动由 issueInstruction 提交到项目仓 agent 分支)→ 第 2 轮判据过。
-      // 工位端**不能**写文件:role "bench" 在 bench 的 policy 里直接拒 edit/write。
+      // 假模型脚本:分工与生产一致 —— **代码归研发端,工位端只观察**,而且工位端
+      // 没有项目检出,东西全靠附件过去。剧本覆盖的正是这条链:改码 → 构建产物当
+      // 附件下发 → 工位端在自己的一次性工作目录里拿到 → 研发端读自述判定 done。
       faux: {
-        turns: [[[{ text: "上板看了一圈:proof.txt 不在,现象复现" }]], [[{ text: "换上新产物再复现一次:现象消失" }]]],
+        turns: [
+          [[{ text: "上板看了一圈:工作目录里没有 proof.txt,现象复现" }]],
+          [[{ text: "收到附件了,读出来是 bench-ok" }]],
+        ],
         mother: [
           [
             {
-              text: '开局先确认现状。\n```json\n{"decision":"continue","analysis":"还没有任何观测","instruction":"上板复现一次,报告现象"}\n```',
+              text: '开局先确认现状。\n```json\n{"decision":"continue","analysis":"还没有任何观测","instruction":"上板复现一次,报告你看到了什么"}\n```',
             },
           ],
+          // 研发端读完第 1 轮结果:先在项目仓里改代码……
           [{ tool: "write", input: { path: "proof.txt", content: "bench-ok\n" } }],
+          // ……再把产物**当附件**下发。工位端没有项目检出,附件是它拿到东西的唯一通道。
           [
             {
-              text: '缺的东西补上了。\n```json\n{"decision":"continue","analysis":"第 1 轮确认了缺失,已补上","instruction":"换上新产物再复现一次"}\n```',
+              text: '缺的东西补上了,产物随这一轮附过去。\n```json\n{"decision":"continue","analysis":"第 1 轮确认了缺失,已补上","instruction":"附件里有 proof.txt,确认它到了你的工作目录并把内容报回来","artifacts":["proof.txt"]}\n```',
+            },
+          ],
+          // 第 2 轮回填之后:研发端自己判断做完了 —— 没有独立判据,done 是模型说的。
+          [
+            {
+              text: '证据够了。\n```json\n{"decision":"done","analysis":"工位端确认收到并读出了 bench-ok","reason":"proof.txt 已送达工位端并被读出,内容正确"}\n```',
             },
           ],
         ],
@@ -222,7 +229,7 @@ const check = (name: string, ok: boolean, detail?: string) => {
 
 check("守护进程退出码 0", code === 0, `实际 ${code}`)
 check("收到 done 事件且终局 passed", done?.verdict?.outcome === "passed", JSON.stringify(done))
-check("终局由守卫裁决(判据不归模型管)", done?.verdict?.decidedBy === "policy", done?.verdict?.decidedBy)
+check("终局由研发端裁决(通过与否归模型)", done?.verdict?.decidedBy === "mother", done?.verdict?.decidedBy)
 check("子进程的结构化事件穿透上来了", sawChildHello)
 
 let proof = ""
@@ -232,6 +239,15 @@ try {
   // 留空,下面的 check 报
 }
 check("proof.txt 已提交在目标仓 agent 分支上", proof.trim() === "bench-ok", proof.slice(0, 80))
+
+// 附件是工位端拿到任何东西的**唯一**通道 —— 这条链断了整个闭环就是哑的,必须钉住。
+let attached = ""
+try {
+  attached = readFileSync(join(root, "sim", "mother-clone", "rounds", "002", "instruction.json"), "utf8")
+} catch {
+  // 留空,下面的 check 报
+}
+check("第 2 轮指令带上了 proof.txt 附件", attached.includes('"name": "proof.txt"'), attached.slice(0, 200))
 
 if (failed === 0) rmSync(root, { recursive: true, force: true })
 else console.error(`现场保留在 ${root} 供排查`)

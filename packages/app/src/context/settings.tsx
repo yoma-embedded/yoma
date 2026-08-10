@@ -5,15 +5,12 @@ import { persisted } from "@/utils/persist"
 
 export interface NotificationSettings {
   agent: boolean
-  permissions: boolean
   errors: boolean
 }
 
 export interface SoundSettings {
   agentEnabled: boolean
   agent: string
-  permissionsEnabled: boolean
-  permissions: string
   errorsEnabled: boolean
   errors: string
 }
@@ -39,9 +36,6 @@ export interface Settings {
     terminal: string
   }
   keybinds: Record<string, string>
-  permissions: {
-    autoApprove: boolean
-  }
   notifications: NotificationSettings
   sounds: SoundSettings
 }
@@ -120,19 +114,13 @@ const defaultSettings: Settings = {
     terminal: "",
   },
   keybinds: {},
-  permissions: {
-    autoApprove: false,
-  },
   notifications: {
     agent: true,
-    permissions: true,
     errors: false,
   },
   sounds: {
     agentEnabled: true,
     agent: "staplebops-01",
-    permissionsEnabled: true,
-    permissions: "staplebops-02",
     errorsEnabled: true,
     errors: "nope-03",
   },
@@ -277,20 +265,10 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
           setStore("keybinds", reconcile({}))
         },
       },
-      permissions: {
-        autoApprove: withFallback(() => store.permissions?.autoApprove, defaultSettings.permissions.autoApprove),
-        setAutoApprove(value: boolean) {
-          setStore("permissions", "autoApprove", value)
-        },
-      },
       notifications: {
         agent: withFallback(() => store.notifications?.agent, defaultSettings.notifications.agent),
         setAgent(value: boolean) {
           setStore("notifications", "agent", value)
-        },
-        permissions: withFallback(() => store.notifications?.permissions, defaultSettings.notifications.permissions),
-        setPermissions(value: boolean) {
-          setStore("notifications", "permissions", value)
         },
         errors: withFallback(() => store.notifications?.errors, defaultSettings.notifications.errors),
         setErrors(value: boolean) {
@@ -305,17 +283,6 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
         agent: withFallback(() => store.sounds?.agent, defaultSettings.sounds.agent),
         setAgent(value: string) {
           setStore("sounds", "agent", value)
-        },
-        permissionsEnabled: withFallback(
-          () => store.sounds?.permissionsEnabled,
-          defaultSettings.sounds.permissionsEnabled,
-        ),
-        setPermissionsEnabled(value: boolean) {
-          setStore("sounds", "permissionsEnabled", value)
-        },
-        permissions: withFallback(() => store.sounds?.permissions, defaultSettings.sounds.permissions),
-        setPermissions(value: string) {
-          setStore("sounds", "permissions", value)
         },
         errorsEnabled: withFallback(() => store.sounds?.errorsEnabled, defaultSettings.sounds.errorsEnabled),
         setErrorsEnabled(value: boolean) {

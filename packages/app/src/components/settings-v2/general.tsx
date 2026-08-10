@@ -6,7 +6,6 @@ import { Switch } from "@yoma-desktop/ui/v2/switch-v2"
 import { TextInputV2 } from "@yoma-desktop/ui/v2/text-input-v2"
 import { useTheme, type ColorScheme } from "@yoma-desktop/ui/theme/context"
 import { useLanguage } from "@/context/language"
-import { usePermission } from "@/context/permission"
 import { usePlatform } from "@/context/platform"
 import { useServerSync } from "@/context/server-sync"
 import { useServerSDK } from "@/context/server-sdk"
@@ -79,12 +78,9 @@ const playDemoSound = (id: string | undefined) => {
   }, 100)
 }
 
-export const SettingsGeneralV2: Component<{
-  sessionID?: string
-}> = (props) => {
+export const SettingsGeneralV2: Component = () => {
   const theme = useTheme()
   const language = useLanguage()
-  const permission = usePermission()
   const platform = usePlatform()
   const settings = useSettings()
   const serverSync = useServerSync()
@@ -93,27 +89,6 @@ export const SettingsGeneralV2: Component<{
 
   const updater = useUpdaterAction()
 
-  const dir = createMemo(() => {
-    if (!props.sessionID) return undefined
-    return serverSync().session.get(props.sessionID)?.directory
-  })
-  const accepting = createMemo(() => {
-    const value = dir()
-    if (!value || !props.sessionID) return false
-    return permission.isAutoAccepting(props.sessionID, value)
-  })
-
-  const toggleAccept = (checked: boolean) => {
-    const value = dir()
-    if (!value || !props.sessionID) return
-
-    if (checked) {
-      permission.enableAutoAccept(props.sessionID, value)
-      return
-    }
-
-    permission.disableAutoAccept(props.sessionID, value)
-  }
   const desktop = createMemo(() => platform.platform === "desktop")
 
   const themeOptions = createMemo<ThemeOption[]>(() => theme.ids().map((id) => ({ id, name: theme.name(id) })))
@@ -237,15 +212,6 @@ export const SettingsGeneralV2: Component<{
             label={(o) => o.label}
             onSelect={(option) => option && language.setLocale(option.value)}
           />
-        </SettingsRowV2>
-
-        <SettingsRowV2
-          title={language.t("command.permissions.autoaccept.enable")}
-          description={language.t("toast.permissions.autoaccept.on.description")}
-        >
-          <div data-action="settings-auto-accept-permissions">
-            <Switch checked={accepting()} disabled={!dir()} onChange={toggleAccept} />
-          </div>
         </SettingsRowV2>
 
         <SettingsRowV2
@@ -514,18 +480,6 @@ export const SettingsGeneralV2: Component<{
         </SettingsRowV2>
 
         <SettingsRowV2
-          title={language.t("settings.general.notifications.permissions.title")}
-          description={language.t("settings.general.notifications.permissions.description")}
-        >
-          <div data-action="settings-notifications-permissions">
-            <Switch
-              checked={settings.notifications.permissions()}
-              onChange={(checked) => settings.notifications.setPermissions(checked)}
-            />
-          </div>
-        </SettingsRowV2>
-
-        <SettingsRowV2
           title={language.t("settings.general.notifications.errors.title")}
           description={language.t("settings.general.notifications.errors.description")}
         >
@@ -557,24 +511,6 @@ export const SettingsGeneralV2: Component<{
               () => settings.sounds.agent(),
               (value) => settings.sounds.setAgentEnabled(value),
               (id) => settings.sounds.setAgent(id),
-            )}
-            placement="bottom-end"
-            gutter={6}
-          />
-        </SettingsRowV2>
-
-        <SettingsRowV2
-          title={language.t("settings.general.sounds.permissions.title")}
-          description={language.t("settings.general.sounds.permissions.description")}
-        >
-          <SelectV2
-            appearance="inline"
-            data-action="settings-sounds-permissions"
-            {...soundSelectProps(
-              () => settings.sounds.permissionsEnabled(),
-              () => settings.sounds.permissions(),
-              (value) => settings.sounds.setPermissionsEnabled(value),
-              (id) => settings.sounds.setPermissions(id),
             )}
             placement="bottom-end"
             gutter={6}

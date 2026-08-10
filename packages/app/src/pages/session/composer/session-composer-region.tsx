@@ -1,6 +1,5 @@
 import { Show, type JSX } from "solid-js"
 import { useSettings } from "@/context/settings"
-import { SessionPermissionDock } from "@/pages/session/composer/session-permission-dock"
 import { SessionFollowupDock } from "@/pages/session/composer/session-followup-dock"
 import type { SessionComposerRegionController } from "./session-composer-region-controller"
 
@@ -27,38 +26,21 @@ export function SessionComposerRegion(props: {
           "md:max-w-200 md:mx-auto 2xl:max-w-[1000px]": controller.centered(),
         }}
       >
-        <Show when={controller.state.permissionRequest()} keyed>
-          {(request) => (
-            <div>
-              <SessionPermissionDock
-                request={request}
-                responding={controller.state.permissionResponding()}
-                onDecide={(response) => {
-                  controller.onResponseSubmit()
-                  controller.state.decide(response)
-                }}
-              />
-            </div>
-          )}
-        </Show>
-
-        <Show when={controller.showComposer()}>
-          <div
-            classList={{
-              "relative z-[70]": true,
-            }}
-          >
-            <Show when={controller.followup()?.items.length}>
-              <SessionFollowupDock
-                items={controller.followup()!.items}
-                sending={controller.followup()!.sending}
-                onSend={controller.followup()!.onSend}
-                onEdit={controller.followup()!.onEdit}
-              />
-            </Show>
-            <Show when={!controller.state.blocked()}>{props.promptInput}</Show>
-          </div>
-        </Show>
+        <div
+          classList={{
+            "relative z-[70]": true,
+          }}
+        >
+          <Show when={controller.followup()?.items.length}>
+            <SessionFollowupDock
+              items={controller.followup()!.items}
+              sending={controller.followup()!.sending}
+              onSend={controller.followup()!.onSend}
+              onEdit={controller.followup()!.onEdit}
+            />
+          </Show>
+          {props.promptInput}
+        </div>
       </div>
     </div>
   )

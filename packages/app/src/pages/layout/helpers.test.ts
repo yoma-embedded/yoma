@@ -5,7 +5,6 @@ import {
   displayName,
   effectiveWorkspaceOrder,
   errorMessage,
-  hasProjectPermissions,
   homeProjectNavigation,
   homeProjectDirectories,
   homeSessionServerStatus,
@@ -64,29 +63,6 @@ describe("layout workspace helpers", () => {
     )
 
     expect(result?.id).toBe("workspace")
-  })
-
-  test("detects project permissions with a filter", () => {
-    const result = hasProjectPermissions(
-      {
-        root: [{ id: "perm-root" }, { id: "perm-hidden" }],
-        child: [{ id: "perm-child" }],
-      },
-      (item) => item.id === "perm-child",
-    )
-
-    expect(result).toBe(true)
-  })
-
-  test("ignores project permissions filtered out", () => {
-    const result = hasProjectPermissions(
-      {
-        root: [{ id: "perm-root" }],
-      },
-      () => false,
-    )
-
-    expect(result).toBe(false)
   })
 
   test("ignores archived sessions when finding latest root session", () => {

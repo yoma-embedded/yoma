@@ -42,7 +42,6 @@ import { useSettingsCommand } from "@/components/settings-dialog"
 import { type FollowupDraft, sendFollowupDraft } from "@/components/prompt-input/submit"
 import {
   createPromptInputController,
-  createSessionComposerController,
   createSessionComposerRegionController,
   SessionComposerRegion,
 } from "@/pages/session/composer"
@@ -118,7 +117,6 @@ export default function Page() {
     },
   })
 
-  const composer = createSessionComposerController()
   const inputController = createPromptInputController({
     sessionKey,
     sessionID: () => params.id,
@@ -571,7 +569,6 @@ export default function Page() {
     }
 
     if (event.key.length === 1 && event.key !== "Unidentified" && !(event.ctrlKey || event.metaKey)) {
-      if (composer.blocked()) return
       inputRef?.focus()
     }
   }
@@ -1055,7 +1052,7 @@ export default function Page() {
   const queueEnabled = createMemo(() => {
     const id = params.id
     if (!id) return false
-    return settings.general.followup() === "queue" && busy(id) && !composer.blocked()
+    return settings.general.followup() === "queue" && busy(id)
   })
 
   const followupText = (item: FollowupDraft) => {
@@ -1126,7 +1123,6 @@ export default function Page() {
     if (followupBusy(sessionID)) return
     if (followup.failed[sessionID] === item.id) return
     if (followup.paused[sessionID]) return
-    if (composer.blocked()) return
     if (busy(sessionID)) return
 
     void sendFollowup(sessionID, item.id)
@@ -1201,7 +1197,6 @@ export default function Page() {
 
   const composerRegion = () => {
     const controller = createSessionComposerRegionController({
-      state: composer,
       sessionKey,
       sessionID: () => params.id,
       prompt,
@@ -1215,7 +1210,6 @@ export default function Page() {
               onEdit: editFollowup,
             }
           : undefined,
-      onResponseSubmit: resumeScroll,
       setPromptRef: (el) => {
         inputRef = el
       },

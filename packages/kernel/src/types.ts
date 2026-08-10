@@ -399,33 +399,6 @@ export function sessionNotFound(sessionID: string): Error & { data: SessionNotFo
 }
 
 // ---------------------------------------------------------------------------
-// 权限
-// ---------------------------------------------------------------------------
-
-/**
- * my-pi 内核 **没有** 权限系统 —— 这一整套是 host 用 harness.on("tool_call") 钩子新建的。
- * 对一个会跑 flash download / gdb / bash 的产品,这不是可选项。
- */
-export interface PermissionRequest {
-  id: string
-  sessionID: string
-  messageID: string
-  callID: string
-  tool: string
-  input: Record<string, unknown>
-  /** 人话描述,直接显示在弹窗里。 */
-  title: string
-  time: { created: number }
-}
-
-export type PermissionResponse = "once" | "always" | "reject"
-
-/** deny:不问直接拦。规则表和无人值守策略共用这套动词(策略另有 escalate,见 host/permission.ts)。 */
-export type PermissionAction = "ask" | "allow" | "deny"
-
-export type PermissionRules = Partial<Record<ToolName, PermissionAction>> & Record<string, PermissionAction | undefined>
-
-// ---------------------------------------------------------------------------
 // 模型目录
 // ---------------------------------------------------------------------------
 

@@ -1,10 +1,10 @@
 /**
  * 信箱调试台 main 托管的端到端(e2e:ipc 同款,不开窗口):
  *
- * 1. 真 out/main/kernel.js:`mailbox.setActive` 协议往返 —— 探针互斥的下发通道
- *    必须在打包产物上活着(内核 inline 的漂移只有这种真跑抓得住)。
+ * 1. 真 out/main/kernel.js:`model.list` 协议往返 —— 本脚本唯一真打到打包产物的
+ *    一步,my-pi 被整个 inline 进 bundle,它那边的重构只有这种真跑抓得住。
  * 2. 真 createMailboxMain 接线 + **假守护脚本**喂 @@event:开跑 → 事件到达 →
- *    快照进 status → 硬件锁拨动 → 停止时孙进程一并死掉(SIGTERM 链)。
+ *    快照进 status → 停止时孙进程一并死掉(SIGTERM 链)。
  * 3. 锁冲突(退出码 3)必须translated成人话,不进重启循环。
  *
  * 用法:bun run e2e:mailbox(先 bun run build 产出 kernel.js)。
@@ -79,7 +79,7 @@ app.whenReady().then(async () => {
     return dir
   }
 
-  // ── 1. 真内核 bundle 的 mailbox.setActive 往返 ──────────────────────────────
+  // ── 1. 真内核 bundle 的协议往返 ─────────────────────────────────────────────
   const child = utilityProcess.fork(join(desktop, "out", "main", "kernel.js"), [], {
     serviceName: "yoma-kernel-e2e-mailbox",
     stdio: "pipe",
@@ -122,23 +122,27 @@ app.whenReady().then(async () => {
         port.postMessage({ kind: "request", id, method, params })
       })
 
-    const on = (await request("mailbox.setActive", { active: true, reason: "e2e" })) as { active?: boolean }
-    check("mailbox.setActive(true) 在真内核 bundle 上走通", on?.active === true, JSON.stringify(on))
-    const off = (await request("mailbox.setActive", { active: false })) as { active?: boolean }
-    check("mailbox.setActive(false) 撤锁", off?.active === false, JSON.stringify(off))
+    // model.list 走的是 SessionManager.providers() → my-pi 的 resolveModel + pi-ai 的
+    // 模型表:无凭据时降级成可配置目录,有凭据时是真注册表 —— 两条路都必须交出
+    // 非空的 provider 列表,而这段代码在 bundle 里是 inline 进来的 my-pi。
+    const providers = (await request("model.list", undefined)) as { id?: string }[]
+    check(
+      "model.list 在真内核 bundle 上走通",
+      Array.isArray(providers) && providers.length > 0 && providers.every((item) => typeof item.id === "string"),
+      `${Array.isArray(providers) ? providers.length : 0} 个 provider`,
+    )
   } catch (error) {
-    check("mailbox.setActive 协议往返", false, (error as Error).message)
+    check("model.list 协议往返", false, (error as Error).message)
   }
   child.kill()
 
-  // ── 2. 真 main 接线 + 假守护:开跑/事件/锁/停止杀树 ─────────────────────────
+  // ── 2. 真 main 接线 + 假守护:开跑/事件/停止杀树 ─────────────────────────────
   {
     const userData = temp("mb-e2e-userdata-")
     const bundleDir = temp("mb-e2e-bundle-")
     const project = temp("mb-e2e-project-")
     writeFileSync(join(bundleDir, "mailbox-host.mjs"), FAKE_DAEMON_LONG)
 
-    const locks: boolean[] = []
     const events: MailboxPublicEvent[] = []
     let saved: MailboxSettings | undefined
     const mailbox = createMailboxMain({
@@ -146,7 +150,6 @@ app.whenReady().then(async () => {
       sessionsRoot: join(userData, "sessions"),
       bundleDir,
       broadcast: (event) => events.push(event),
-      setHardwareLock: (active) => locks.push(active),
       persistence: {
         get: () => saved,
         set: (settings) => {
@@ -161,7 +164,6 @@ app.whenReady().then(async () => {
 
     const started = mailbox.controller.start({ kind: "runner" })
     check("start 接受 runner 任务", started.ok === true, JSON.stringify(started))
-    check("runner 任务活跃即上探针锁", locks[0] === true, JSON.stringify(locks))
 
     // 守护配置是真写到盘上的那一份:本机工程目录必须穿到守护那头,否则第一轮才
     // 在守护日志里报"没配工程目录",而 UI 上看着一切正常。
@@ -188,7 +190,6 @@ app.whenReady().then(async () => {
     mailbox.controller.stop()
     const stopped = await waitFor(() => mailbox.controller.status().phase === "idle")
     check("停止后回到 idle", stopped, mailbox.controller.status().phase)
-    check("停止即撤锁", locks[locks.length - 1] === false, JSON.stringify(locks))
     const grandDead = await waitFor(() => grandPid > 0 && !alive(grandPid), 5_000)
     check("孙进程随 SIGTERM 链一并死掉(停止 = 整棵树)", grandDead, `pid ${grandPid}`)
   }
@@ -205,7 +206,6 @@ app.whenReady().then(async () => {
       sessionsRoot: join(userData, "sessions"),
       bundleDir,
       broadcast: () => {},
-      setHardwareLock: () => {},
       persistence: {
         get: () => saved,
         set: (settings) => {
@@ -243,7 +243,6 @@ app.whenReady().then(async () => {
       sessionsRoot: join(userData, "sessions"),
       bundleDir,
       broadcast: () => {},
-      setHardwareLock: () => {},
       persistence: {
         get: () => saved,
         set: (settings) => {

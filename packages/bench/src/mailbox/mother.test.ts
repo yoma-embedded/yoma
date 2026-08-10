@@ -10,7 +10,7 @@ import { runnerStep } from "./runner.ts"
 import { parseMailboxJob } from "./spec.ts"
 import { scanMailbox, writeInstruction, type RoundDecision, type RoundInstruction } from "./store.ts"
 import { commitPush } from "./sync.ts"
-import { fakeGrade, fakeTurn, freshClone, makeMailbox, makeTargetRepo, rawMailboxJob, Temp, usage } from "./testkit.ts"
+import { fakeTurn, freshClone, makeMailbox, makeTargetRepo, rawMailboxJob, Temp, usage } from "./testkit.ts"
 
 const temp = new Temp()
 afterEach(() => temp.cleanup())
@@ -23,16 +23,19 @@ describe("parseMotherDecision", () => {
     if (parsed.ok) expect(parsed.payload.decision).toBe("continue")
   })
 
-  test("success 被明确拒绝 —— 判据不归模型管", () => {
+  test("不认识的 decision 被点名拒绝,可选项写进错误里", () => {
     const parsed = parseMotherDecision('```json\n{"decision":"success"}\n```')
     expect(parsed.ok).toBe(false)
-    if (!parsed.ok) expect(parsed.error).toContain("判据")
+    if (!parsed.ok) {
+      expect(parsed.error).toContain("不认识")
+      expect(parsed.error).toContain("continue / done / fail")
+    }
   })
 
   test("continue 没有 instruction、fail 没有 reason 都不合法", () => {
     expect(parseMotherDecision('```json\n{"decision":"continue"}\n```').ok).toBe(false)
     expect(parseMotherDecision('```json\n{"decision":"fail"}\n```').ok).toBe(false)
-    expect(parseMotherDecision('```json\n{"decision":"park","reason":"要人看"}\n```').ok).toBe(true)
+    expect(parseMotherDecision('```json\n{"decision":"done","reason":"证据齐了"}\n```').ok).toBe(true)
   })
 
   test("没有围栏、不是 JSON、不是对象,报错各说各的", () => {
@@ -53,11 +56,7 @@ describe("parseMotherDecision", () => {
 })
 
 /** 布景:init + 第 1 轮指令已下发 + 工位端跑完第 1 轮,留下 awaiting-mother 的信箱。 */
-async function fixtureAfterRound(overrides: {
-  job?: Record<string, unknown>
-  grade?: ReturnType<typeof fakeGrade>
-  turn?: ReturnType<typeof fakeTurn>
-}) {
+async function fixtureAfterRound(overrides: { job?: Record<string, unknown>; turn?: ReturnType<typeof fakeTurn> }) {
   const target = await makeTargetRepo(temp)
   const mailbox = await makeMailbox(temp)
   const mailboxJob = parseMailboxJob(rawMailboxJob(overrides.job ?? {}))
@@ -74,13 +73,9 @@ async function fixtureAfterRound(overrides: {
 
   const ran = await runnerStep({
     clone: mailbox.runnerClone,
-    projectDir: target,
+    workRoot: temp.dir("work-"),
     sessionsRoot: temp.dir("sessions-"),
     runTurn: async () => overrides.turn ?? fakeTurn(),
-    grade: async () => {
-      const grade = overrides.grade ?? fakeGrade(false)
-      return { passed: grade.passed, rounds: [grade] }
-    },
   })
   expect(ran.kind).toBe("ran")
   return { target, mailbox, mailboxJob }
@@ -106,9 +101,8 @@ describe("mailbox mother · 开局", () => {
       motherOptions(mailbox.motherClone, target, {
         runTurn: async (options: TurnOptions) => {
           prompts.push(options.prompt)
-          // 研发端的工作区是**项目仓**,角色是 dev(硬件工具会被策略拒掉)。
+          // 研发端的工作区是**项目仓** —— 它改代码、构建,产物随下一轮的附件走。
           expect(options.workspace).toBe(target)
-          expect(options.role).toBe("dev")
           writeFileSync(path.join(target, "fix.c"), "int fixed = 1;\n")
           writeFileSync(path.join(target, "fw.elf"), "ELF")
           return fakeTurn({
@@ -161,25 +155,26 @@ describe("mailbox mother · 开局", () => {
 })
 
 describe("mailbox mother", () => {
-  test("判据全过 → 守卫直接终局 passed,不问模型", async () => {
-    const { target, mailbox } = await fixtureAfterRound({ grade: fakeGrade(true) })
-    let asked = 0
+  test("研发端裁 done → 终局 passed,裁决者记 mother", async () => {
+    const { target, mailbox } = await fixtureAfterRound({})
     const outcome = await motherStep(
       motherOptions(mailbox.motherClone, target, {
-        runTurn: async () => {
-          asked += 1
-          return fakeTurn()
-        },
+        runTurn: async () =>
+          fakeTurn({
+            text: '```json\n{"decision":"done","analysis":"版本指纹对上了","reason":"工位端读到的计数器已按新逻辑递增"}\n```',
+          }),
       }),
     )
     expect(outcome.kind).toBe("done")
-    if (outcome.kind === "done") expect(outcome.verdict.outcome).toBe("passed")
-    expect(asked).toBe(0)
+    if (outcome.kind === "done") {
+      expect(outcome.verdict.outcome).toBe("passed")
+      expect(outcome.verdict.decidedBy).toBe("mother")
+    }
 
     const verify = await freshClone(temp, mailbox.bare)
     const decision = (await Bun.file(path.join(verify, "rounds", "001", "decision.json")).json()) as RoundDecision
-    expect(decision.by).toBe("policy")
-    expect(decision.decision).toBe("success")
+    expect(decision.by).toBe("mother")
+    expect(decision.decision).toBe("done")
     expect(await Bun.file(path.join(verify, "report.md")).text()).toContain("决策链")
   })
 
@@ -196,17 +191,17 @@ describe("mailbox mother", () => {
     await commitPush({ clone: mailbox.motherClone, author: { name: "t", email: "t@e.c" } }, "第 1 轮")
     await runnerStep({
       clone: mailbox.runnerClone,
-      projectDir: target,
+      workRoot: temp.dir("work-"),
       sessionsRoot: temp.dir("sessions-"),
       runTurn: async () => fakeTurn(),
-      grade: async () => ({ passed: true, rounds: [fakeGrade(true)] }),
     })
-    // 研发端得先在分支上待过(交付推的是这条分支)。
-    await runGitReal(["checkout", "-q", "-b", "agent/m-1"], target)
 
-    const opts = motherOptions(mailbox.motherClone, target)
+    const opts = motherOptions(mailbox.motherClone, target, {
+      runTurn: async () => fakeTurn({ text: '```json\n{"decision":"done","reason":"证据够了"}\n```' }),
+    })
     const outcome = await motherStep(opts)
     expect(outcome.kind).toBe("done")
+    if (outcome.kind === "done") expect(outcome.verdict.outcome).toBe("passed")
     expect((await runGitReal(["rev-parse", "--verify", "agent/m-1"], upstream)).ok).toBe(true)
 
     // 幂等:再走一步不会重复推(已 finalized)。
@@ -220,7 +215,6 @@ describe("mailbox mother", () => {
       motherOptions(mailbox.motherClone, target, {
         runTurn: async (options: TurnOptions) => {
           prompts.push(options.prompt)
-          expect(options.role).toBe("dev")
           return fakeTurn({
             sessionID: "ses-mother",
             text: '分析:日志显示 ORE 没清。\n```json\n{"decision":"continue","analysis":"ORE 未清导致接收停摆","instruction":"在 usart 中断里先清 ORE,再重试接收;用日志自证"}\n```',
@@ -231,9 +225,9 @@ describe("mailbox mother", () => {
     )
     expect(outcome.kind).toBe("decided")
 
-    // 首轮分析带完整角色说明,且判据证据在场。
+    // 首轮分析带完整角色说明,且工位端的自述在场。
     expect(prompts[0]).toContain("研发端")
-    expect(prompts[0]).toContain("assertion failed at main.c:42")
+    expect(prompts[0]).toContain("工位端的自述")
 
     const verify = await freshClone(temp, mailbox.bare)
     const decision = (await Bun.file(path.join(verify, "rounds", "001", "decision.json")).json()) as RoundDecision
@@ -250,7 +244,7 @@ describe("mailbox mother", () => {
     expect((await scanMailbox(verify)).state.kind).toBe("awaiting-runner")
   })
 
-  test("决定不合法:同一会话重试一次,第二次才认输挂起", async () => {
+  test("决定不合法:同一会话重试一次,第二次才认输终局", async () => {
     const { target, mailbox } = await fixtureAfterRound({})
     const prompts: string[] = []
     const outcome = await motherStep(
@@ -265,7 +259,7 @@ describe("mailbox mother", () => {
     expect(prompts[1]).toContain("没法被机器读取")
     expect(outcome.kind).toBe("done")
     if (outcome.kind === "done") {
-      expect(outcome.verdict.outcome).toBe("parked")
+      expect(outcome.verdict.outcome).toBe("failed")
       expect(outcome.verdict.reason).toContain("研发端未能给出合法决定")
     }
     const verify = await freshClone(temp, mailbox.bare)
@@ -276,35 +270,31 @@ describe("mailbox mother", () => {
   })
 
   test("轮数用尽 → 守卫终局 failed", async () => {
-    const { target, mailbox } = await fixtureAfterRound({ job: { mailbox: { maxRounds: 1, mother: {} } } })
-    const outcome = await motherStep(motherOptions(mailbox.motherClone, target))
+    const { target, mailbox } = await fixtureAfterRound({
+      job: { budget: { maxRounds: 1, maxTokens: 100_000, wallClockMin: 60 } },
+    })
+    let asked = 0
+    const outcome = await motherStep(
+      motherOptions(mailbox.motherClone, target, {
+        runTurn: async () => {
+          asked += 1
+          return fakeTurn()
+        },
+      }),
+    )
+    expect(asked).toBe(0) // 预算不归模型管
     expect(outcome.kind).toBe("done")
     if (outcome.kind === "done") {
       expect(outcome.verdict.outcome).toBe("failed")
       expect(outcome.verdict.reason).toContain("轮数预算")
+      expect(outcome.verdict.decidedBy).toBe("policy")
     }
   })
 
-  test("轮级失败(工位自检没过等)→ 守卫挂起", async () => {
-    const target = await makeTargetRepo(temp)
-    const mailbox = await makeMailbox(temp)
-    const mailboxJob = parseMailboxJob(rawMailboxJob({ bench: { chip: "STM32G431KB", knownGoodElf: "无.elf" } }))
-    await initMailbox({ clone: mailbox.motherClone, mailboxJob })
-    await writeInstruction(mailbox.motherClone, { round: 1, prompt: "复现", issuedBy: "mother", at: new Date().toISOString() })
-    await commitPush({ clone: mailbox.motherClone, author: { name: "t", email: "t@e.c" } }, "第 1 轮")
-    await runnerStep({ clone: mailbox.runnerClone, projectDir: target, sessionsRoot: temp.dir("sessions-") })
-
-    const outcome = await motherStep(motherOptions(mailbox.motherClone, target))
-    expect(outcome.kind).toBe("done")
-    if (outcome.kind === "done") {
-      expect(outcome.verdict.outcome).toBe("parked")
-      expect(outcome.verdict.reason).toContain("known-good")
-    }
-  })
-
-  test("provider 级空转轮(text 空、无工具、errors 非空)→ 守卫挂起,不让研发端对空轮 continue", async () => {
+  test("token 预算(两侧合计)耗尽 → 守卫终局 failed", async () => {
     const { target, mailbox } = await fixtureAfterRound({
-      turn: fakeTurn({ text: "", toolCalls: [], errors: ["API Error: 401 Unauthorized"], usage: usage(0, 0) }),
+      turn: fakeTurn({ usage: usage(90_000, 10_000) }),
+      job: { budget: { maxRounds: 8, maxTokens: 100_000, wallClockMin: 60 } },
     })
     let asked = 0
     const outcome = await motherStep(
@@ -318,29 +308,9 @@ describe("mailbox mother", () => {
     expect(asked).toBe(0)
     expect(outcome.kind).toBe("done")
     if (outcome.kind === "done") {
-      expect(outcome.verdict.outcome).toBe("parked")
-      expect(outcome.verdict.reason).toContain("401")
+      expect(outcome.verdict.outcome).toBe("failed")
+      expect(outcome.verdict.reason).toContain("token 预算")
     }
-  })
-
-  test("判据没跑成(环境错误)→ 守卫挂起而不是让模型瞎猜", async () => {
-    const { target, mailbox } = await fixtureAfterRound({
-      grade: fakeGrade(false, {
-        hasEnvironmentError: true,
-        checks: [
-          {
-            check: { type: "bash", command: "no-such" },
-            outcome: "error",
-            summary: "命令不存在",
-            evidence: "",
-            elapsedMs: 1,
-          },
-        ],
-      }),
-    })
-    const outcome = await motherStep(motherOptions(mailbox.motherClone, target))
-    expect(outcome.kind).toBe("done")
-    if (outcome.kind === "done") expect(outcome.verdict.outcome).toBe("parked")
   })
 
   test("等工位端时空转", async () => {
@@ -351,40 +321,6 @@ describe("mailbox mother", () => {
     await commitPush({ clone: mailbox.motherClone, author: { name: "t", email: "t@e.c" } }, "第 1 轮")
     const outcome = await motherStep(motherOptions(mailbox.motherClone, target))
     expect(outcome.kind).toBe("idle")
-  })
-
-  test("push 持续失败不无界烧钱:花费先落本地账本,预算守卫看得见", async () => {
-    const { target, mailbox } = await fixtureAfterRound({})
-    // 远端可读不可写:push 一律失败,其余照常。
-    const readOnly: typeof runGitReal = (args, cwd) =>
-      args[0] === "push" ? Promise.resolve({ ok: false, stdout: "", stderr: "403 只读" }) : runGitReal(args, cwd)
-
-    let analyses = 0
-    const opts = motherOptions(mailbox.motherClone, target, {
-      gitRun: readOnly,
-      runTurn: async () => {
-        analyses += 1
-        return fakeTurn({
-          text: '```json\n{"decision":"continue","instruction":"继续"}\n```',
-          usage: usage(60_000, 10_000), // 单次 7 万,预算 10 万
-        })
-      },
-    })
-
-    const first = await motherStep(opts)
-    expect(first.kind).toBe("blocked")
-    expect(analyses).toBe(1)
-
-    // 第二个轮询:pullReset 丢掉没推上去的 decision,但本地账本记着 7 万;
-    // 加上工位端的 150,尚未超预算 —— 会再烧一次(7+7=14 万 > 10 万)。
-    const second = await motherStep(opts)
-    expect(second.kind).toBe("blocked")
-    expect(analyses).toBe(2)
-
-    // 第三个轮询:两本账取大 → 14 万 > 10 万,预算守卫直接终局,不再碰模型。
-    const third = await motherStep(opts)
-    expect(third.kind).toBe("blocked") // 终局也推不上去,但……
-    expect(analyses).toBe(2) // ……模型没有被再叫起来,烧钱收敛了
   })
 
   test("墙钟从第 1 轮指令起算,耗尽即终局 failed", async () => {

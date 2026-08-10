@@ -47,8 +47,6 @@ import {
 
 import type { KernelEvent, PromptInput } from "../protocol.ts"
 import type {
-  PermissionRequest,
-  PermissionRules,
   ProviderInfo,
   Session as ViewSession,
   SessionStatus,
@@ -56,7 +54,6 @@ import type {
 import { Identifier } from "../ids.ts"
 import { sessionNotFound } from "../types.ts"
 import { SessionProjection } from "./projector.ts"
-import { PermissionGate, type PermissionDecision, type PolicyProvider } from "./permission.ts"
 import { shouldAutoCompact } from "./compaction.ts"
 import { retryDelayMs, retrySleep, shouldAutoRetry } from "./retry.ts"
 import { CONFIGURABLE_PROVIDERS, migrateLegacyPiAuth, myPiConfigDir, removeAuthKey, writeAuthKey } from "./auth.ts"
@@ -112,17 +109,12 @@ export interface SessionManagerOptions {
   sessionsRoot: string
   enginesDir?: string
   emit(events: KernelEvent[]): void
-  permissionRules?: PermissionRules
   /**
    * 上下文文件与技能的全局目录,默认 `~/.my-pi` —— 与 my-pi 的 ACP 适配器同一份,
    * 于是同一份技能在 Zed 和桌面端都生效。测试用它隔离开发机上的真实目录
    * (**注意** bun 的 homedir() 在进程启动时定死,改 process.env.HOME 无效)。
    */
   configDir?: string
-  /** 无人值守策略与审计出口(bench 注入);desktop 不传,行为与从前一致。 */
-  permissionPolicy?: PolicyProvider
-  onPermissionDecision?(decision: PermissionDecision): void
-  permissionTimeoutMs?: number
   /**
    * 模型目录的来源。默认复用 my-pi 的 resolveModel()(读 ~/.pi/agent/auth.json)。
    * 可注入是为了两件事:测试用 pi-ai 的 faux provider 跑完整一轮而不需要网络和 key;
@@ -136,7 +128,6 @@ export class SessionManager {
   private readonly repo: JsonlSessionRepo
   private readonly entries = new Map<string, Entry>()
   private readonly options: SessionManagerOptions
-  readonly permissions: PermissionGate
   /** 凭据、技能、上下文文件共用的一个目录,与 my-pi ACP 的 CONFIG_DIR 同义。 */
   private readonly configDir: string
 
@@ -149,13 +140,6 @@ export class SessionManager {
     this.configDir = options.configDir ?? myPiConfigDir()
     this.env = new NodeExecutionEnv({ cwd: process.cwd() })
     this.repo = new JsonlSessionRepo({ fs: this.env, sessionsRoot: options.sessionsRoot })
-    this.permissions = new PermissionGate({
-      rules: options.permissionRules,
-      emit: (event) => options.emit([event]),
-      policy: options.permissionPolicy,
-      onDecision: options.onPermissionDecision,
-      timeoutMs: options.permissionTimeoutMs,
-    })
   }
 
   // -------------------------------------------------------------------------
@@ -476,10 +460,6 @@ export class SessionManager {
     })
     entry.projection = projection
 
-    // 权限门。tool_call 是 emitHook,是 harness 上少数几个真的会触发的 on() 之一;
-    // 返回 {block:true} 就能拦下 flash download / gdb / bash。
-    this.permissions.attach(harness, entry.id, () => projection.snapshot().at(-1)?.info.id ?? "")
-
     entry.unsubscribe = harness.subscribe((event) => {
       this.options.emit(this.project(entry!, event))
     })
@@ -540,7 +520,7 @@ export class SessionManager {
       case "settled":
       case "agent_end":
         // 要重试就压住 idle:整段重试(含 2s/4s/8s 退避)必须是一个连续的 busy,
-        // 否则退避窗口里会出现一个"看起来跑完了"的会话 —— bench 会当真去跑判据,
+        // 否则退避窗口里会出现一个"看起来跑完了"的会话 —— bench 会当真去回填结果,
         // 而 agent 正要重试,两边同时动板子。压缩也一并推迟到重试真正结束之后。
         if (entry.retryPending) return []
         // 一轮结束后按阈值自动压缩。内核不做这件事,不补就是聊长了直接撞上下文窗口。
@@ -710,7 +690,6 @@ export class SessionManager {
     entry.aborter?.abort()
     await entry.harness.abort()
     await entry.harness.waitForIdle()
-    this.permissions.rejectAllFor(sessionID, "会话已中断")
     entry.status = { type: "idle" }
     this.options.emit([{ type: "session.status", sessionID, status: { type: "idle" } }])
   }
@@ -763,10 +742,7 @@ export class SessionManager {
   private async dispose(entry: Entry): Promise<void> {
     entry.unsubscribe?.()
     entry.unsubscribe = undefined
-    if (entry.harness) {
-      await entry.harness.abort().catch(() => {})
-      this.permissions.detach(entry.id)
-    }
+    if (entry.harness) await entry.harness.abort().catch(() => {})
     entry.harness = undefined
     entry.projection = undefined
     entry.session = undefined
@@ -808,4 +784,3 @@ function toMillis(value: string | number | undefined): number {
   return Date.now()
 }
 
-export type { PermissionRequest }

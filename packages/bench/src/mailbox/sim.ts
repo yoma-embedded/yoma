@@ -27,7 +27,8 @@ export interface SimOptions {
   jobFile: string
   /**
    * **这台机器上**的工程目录。演练也走机器无关那条路 —— job 文件里可以没有
-   * directory(它本来就该没有),由这里提供。两个角色子进程用同一个值。
+   * directory(它本来就该没有),由这里提供。只有 mother 子进程收得到它:
+   * 工位端在生产形态下根本没有项目检出,演练必须复现这一点,否则演练是假的。
    */
   projectDir?: string
   /** 模拟根目录,默认 `<目标仓>/.bench/mailbox-sim/<jobId>`。 */
@@ -54,7 +55,7 @@ export interface SimSpawnContext {
   root: string
   branch: string
   pollSeconds: number
-  /** 定下来的本机工程目录,原样传给两个角色子进程。 */
+  /** 定下来的本机工程目录 —— 只给 mother(工位端没有项目检出)。 */
   projectDir: string
 }
 
@@ -62,7 +63,7 @@ export interface SimResult {
   verdict?: MailboxVerdict
   mailboxDir: string
   reportFile?: string
-  /** 0 = 终局 passed;2 = 终局 failed/parked(闭环走完了,结论是没修好);1 = 没有 verdict 的异常;124 = 墙钟超时。 */
+  /** 0 = 终局 passed;2 = 终局 failed(闭环走完了,结论是没修好);1 = 没有 verdict 的异常;124 = 墙钟超时。 */
   exitCode: number
   detail: string
 }
@@ -132,11 +133,10 @@ export async function runSim(options: SimOptions): Promise<SimResult> {
     // 必须由宿主注入 spawnRole —— 静默走缺省会 spawn 出一个必死的进程。
     if (!process.versions.bun) throw new Error("非 bun 运行时跑 sim 必须注入 spawnRole(打包态由 mailbox-host 自我 spawn)")
     const cliEntry = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "cli.ts")
-    return spawn(
-      process.execPath,
-      [cliEntry, "mailbox", role, clone, "--interval", String(pollSeconds), "--branch", branch],
-      { stdio: ["ignore", "pipe", "pipe"], cwd: root },
-    )
+    const argv = [cliEntry, "mailbox", role, clone, "--interval", String(pollSeconds), "--branch", branch]
+    // 工程目录只给研发端 —— 工位端没有检出,这是生产形态的事实,演练要一致。
+    if (role === "mother") argv.push("--project", workspace)
+    return spawn(process.execPath, argv, { stdio: ["ignore", "pipe", "pipe"], cwd: root })
   }
   const spawnRole = (role: "runner" | "mother", clone: string): ChildProcess => {
     const child = options.spawnRole
@@ -210,7 +210,7 @@ export async function runSim(options: SimOptions): Promise<SimResult> {
   const reportFile = path.join(motherClone, REPORT_FILE)
   const hasReport = await fileExists(reportFile)
 
-  // 先读终局再定性:failed/parked 是设计内的终局,子进程按约定以非零码退出,
+  // 先读终局再定性:failed 是设计内的终局,子进程按约定以非零码退出,
   // 不能报成"子进程异常"(那会盖掉真正的终局理由,契约里 0 就该是"拿到 verdict")。
   let exitCode = 0
   let detail = ""

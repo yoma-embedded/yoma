@@ -19,7 +19,6 @@ const PREFIXES = {
   session: "ses",
   message: "msg",
   part: "prt",
-  permission: "per",
 } as const
 
 export type IdPrefix = keyof typeof PREFIXES

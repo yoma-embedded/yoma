@@ -57,7 +57,6 @@ function makeHost(steps: unknown[], options: { enginesDir?: string; workspace?: 
     version: "test",
     onEvents: (batch) => events.push(...batch),
     // 全放行,免得冒烟测试卡在权限弹窗上。权限本身有独立测试。
-    permissionRules: { bash: "allow", edit: "allow", write: "allow" },
     resolveModels: async () => harnessWith(steps),
   })
   return { host, events, workspace }

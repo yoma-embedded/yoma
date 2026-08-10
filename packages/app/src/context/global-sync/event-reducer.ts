@@ -18,8 +18,6 @@ const SESSION_CONTENT_EVENTS = new Set<KernelEvent["type"]>([
   "message.part.updated",
   "message.part.removed",
   "message.part.delta",
-  "permission.asked",
-  "permission.replied",
 ])
 
 export function applyGlobalEvent(input: { event: KernelEvent; refresh: () => void }) {
@@ -50,7 +48,6 @@ export function cleanupDroppedSessionCaches(
   const keep = new Set(next.map((item) => item.id))
   const stale = [
     ...Object.keys(store.message),
-    ...Object.keys(store.permission),
     ...Object.keys(store.session_status),
     ...Object.values(store.part)
       .map((parts) => parts?.find((part) => !!part?.sessionID)?.sessionID)
@@ -80,7 +77,6 @@ export function applyDirectoryEvent(input: {
   vcsCache?: VcsCache
   retainedLimit?: number
   sessionContent?: boolean
-  permission?: State["permission"]
 }) {
   const event = input.event
   if (input.sessionContent === false && SESSION_CONTENT_EVENTS.has(event.type)) return
@@ -95,7 +91,7 @@ export function applyDirectoryEvent(input: {
       }
       const next = input.store.session.slice()
       next.splice(result.index, 0, info)
-      const trimmed = trimSessions(next, { limit, permission: input.permission ?? input.store.permission })
+      const trimmed = trimSessions(next, { limit })
       input.setStore("session", reconcile(trimmed, { key: "id" }))
       cleanupDroppedSessionCaches(input.store, input.setStore, trimmed)
       input.setStore("sessionTotal", (value) => value + 1)
@@ -125,7 +121,7 @@ export function applyDirectoryEvent(input: {
       }
       const next = input.store.session.slice()
       next.splice(result.index, 0, info)
-      const trimmed = trimSessions(next, { limit, permission: input.permission ?? input.store.permission })
+      const trimmed = trimSessions(next, { limit })
       input.setStore("session", reconcile(trimmed, { key: "id" }))
       cleanupDroppedSessionCaches(input.store, input.setStore, trimmed)
       break
@@ -272,46 +268,6 @@ export function applyDirectoryEvent(input: {
       if (!event.info) break
       input.setStore("vcs", reconcile(event.info))
       if (input.vcsCache) input.vcsCache.setStore("value", event.info)
-      break
-    }
-    case "permission.asked": {
-      const permission = event.request
-      const permissions = input.store.permission[permission.sessionID]
-      if (!permissions) {
-        input.setStore("permission", permission.sessionID, [permission])
-        break
-      }
-      const result = Binary.search(permissions, permission.id, (p) => p.id)
-      if (result.found) {
-        input.setStore("permission", permission.sessionID, result.index, reconcile(permission))
-        break
-      }
-      input.setStore(
-        "permission",
-        permission.sessionID,
-        produce((draft) => {
-          draft.splice(result.index, 0, permission)
-        }),
-      )
-      break
-    }
-    case "permission.replied": {
-      // 内核的 permission.replied 只带请求 id(host 侧全局唯一),不带 sessionID,
-      // 所以按 id 反查它挂在哪个会话下。每个会话的数组都按 id 有序,可以二分。
-      for (const sessionID of Object.keys(input.store.permission)) {
-        const permissions = input.store.permission[sessionID]
-        if (!permissions) continue
-        const result = Binary.search(permissions, event.id, (p) => p.id)
-        if (!result.found) continue
-        input.setStore(
-          "permission",
-          sessionID,
-          produce((draft) => {
-            draft.splice(result.index, 1)
-          }),
-        )
-        break
-      }
       break
     }
   }

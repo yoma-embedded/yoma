@@ -19,8 +19,9 @@ export interface MailboxSettingsView {
   branch?: string
   pollSeconds?: number
   /**
-   * **这台机器上**的工程目录。信箱里的任务书不带绝对路径(它在别人机器上没意义),
-   * 两侧各自配自己的检出位置 —— 这是"同一份任务书跨 Mac/Windows"的支点。
+   * **这台机器上**的工程目录。只有研发端(mother)需要 —— 代码在它那儿。
+   * 信箱里的任务书不带绝对路径(它在别人机器上没意义),这是"同一份任务书跨
+   * Mac/Windows"的支点。工位端没有项目检出,留空即可。
    */
   projectDir?: string
 }
@@ -36,22 +37,6 @@ export interface MailboxTaskRequestView {
 export interface MailboxUsageView {
   tokens: Tokens
   cost: number
-}
-
-export interface MailboxCheckView {
-  /** 判据定义本体(bash/build/log_wait/log_absent 联合)。UI 只展示 summary,不解构。 */
-  check: unknown
-  outcome: "pass" | "fail" | "error" | "skip"
-  summary: string
-  evidence: string
-  elapsedMs: number
-}
-
-export interface MailboxGradeView {
-  passed: boolean
-  build?: MailboxCheckView
-  checks: MailboxCheckView[]
-  hasEnvironmentError: boolean
 }
 
 /** 随一轮指令穿过信箱的附件(新固件等)。内容在 `rounds/NNN/artifacts/` 下。 */
@@ -87,28 +72,19 @@ export interface MailboxRoundGitView {
   commits: string[]
 }
 
-/** 工位端仓库的状态。它不该改代码,`dirty` 非空就是证据。 */
-export interface MailboxRoundWorkspaceView {
-  head: string
-  dirty: string[]
-}
-
 export interface MailboxRoundResultView {
   round: number
   sessionID?: string
   turn?: MailboxTurnSummaryView
-  grade?: MailboxGradeView
-  denied: { tool: string; title: string; rule?: string }[]
-  /** 本轮附件在工位机上的落点(相对工程根)。 */
+  /** 本轮附件在工位机上的落点(相对它那个一次性工作目录)。 */
   incoming?: string[]
-  workspace?: MailboxRoundWorkspaceView
   spentTokens: number
   error?: string
   at: string
   elapsedMs: number
 }
 
-export type MailboxDecisionKindView = "continue" | "success" | "fail" | "park"
+export type MailboxDecisionKindView = "continue" | "done" | "fail"
 
 export interface MailboxDecisionView {
   round: number
@@ -180,7 +156,7 @@ export type MailboxEventView = { type: "host"; event: MailboxHostEventView } | {
 export interface MailboxComposeInputView {
   /** 项目模板(<项目>/.bench/mailbox.template.json)的绝对路径。 */
   templatePath: string
-  /** 任务的自然语言描述 —— 进 job.task,判据永远来自模板,不由描述生成。 */
+  /** 任务的自然语言描述 —— 进 job.task;硬件事实与安全约束来自模板,不由描述生成。 */
   description: string
   tier: "quick" | "standard" | "thorough"
   title?: string

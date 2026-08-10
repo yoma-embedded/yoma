@@ -117,10 +117,6 @@ export const dict = {
   "ui.common.next": "Suivant",
   "ui.common.submit": "Soumettre",
 
-  "ui.permission.deny": "Refuser",
-  "ui.permission.allowAlways": "Toujours autoriser",
-  "ui.permission.allowOnce": "Autoriser une fois",
-
   "ui.message.expand": "Développer le message",
   "ui.message.collapse": "Réduire le message",
   "ui.message.copy": "Copier",

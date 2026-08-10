@@ -21,8 +21,6 @@ import type {
 import type {
   FileDiff,
   FileEntry,
-  PermissionResponse,
-  PermissionRules,
   ProviderInfo,
   Session,
   SessionStatus,
@@ -69,11 +67,6 @@ export interface KernelClient {
       modelID: string
       thinking?: string
     }): Promise<Session>
-  }
-  permission: {
-    respond(id: string, response: PermissionResponse): Promise<void>
-    rules(): Promise<PermissionRules>
-    setRules(rules: PermissionRules): Promise<PermissionRules>
   }
   model: {
     list(): Promise<ProviderInfo[]>
@@ -128,11 +121,6 @@ export function createKernelClient(transport: KernelTransport): KernelClient {
       compact: (sessionID) => call("session.compact", { sessionID }),
       navigate: (sessionID, messageID) => call("session.navigate", { sessionID, messageID }),
       setModel: (params) => call("session.setModel", params),
-    },
-    permission: {
-      respond: (id, response) => call("permission.respond", { id, response }),
-      rules: () => call("permission.rules", undefined),
-      setRules: (rules) => call("permission.setRules", { rules }),
     },
     model: {
       list: () => call("model.list", undefined),

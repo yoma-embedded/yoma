@@ -1,5 +1,5 @@
 /**
- * 会话内容的**服务器级**缓存:info / status / permission / message / part。
+ * 会话内容的**服务器级**缓存:info / status / message / part。
  *
  * 相对 opencode 删掉的四块,以及原因:
  *   session_diff  my-pi 没有文件快照,也就没有"这一轮改了哪些文件"的差异
@@ -13,7 +13,7 @@
 
 import { Binary } from "@yoma-desktop/util/binary"
 import { retry } from "@yoma-desktop/util/retry"
-import type { KernelEvent, Message, Part, PermissionRequest, Session, SessionStatus } from "@yoma-desktop/kernel"
+import type { KernelEvent, Message, Part, Session, SessionStatus } from "@yoma-desktop/kernel"
 import { batch } from "solid-js"
 import { createStore, produce, reconcile } from "solid-js/store"
 import type { Sdk } from "@/utils/server"
@@ -134,7 +134,6 @@ export function createServerSession(client: Sdk, options?: { retry?: typeof retr
   const [data, setData] = createStore({
     info: {} as Record<string, Session | undefined>,
     session_status: {} as Record<string, SessionStatus>,
-    permission: {} as Record<string, PermissionRequest[]>,
     message: {} as Record<string, Message[]>,
     part: {} as Record<string, Part[]>,
     part_text_accum_delta: {} as Record<string, string>,
@@ -376,9 +375,6 @@ export function createServerSession(client: Sdk, options?: { retry?: typeof retr
       ...inflight.keys(),
       ...messageLoads.keys(),
       ...optimistic.keys(),
-      ...Object.entries(data.permission)
-        .filter(([, items]) => items.length > 0)
-        .map(([sessionID]) => sessionID),
       ...Object.entries(data.session_status)
         .filter(([, status]) => status.type !== "idle")
         .map(([sessionID]) => sessionID),
@@ -585,7 +581,6 @@ export function createServerSession(client: Sdk, options?: { retry?: typeof retr
    *
    * 原来是在 `properties` 上按 sessionID / info.sessionID / part.sessionID 反射着猜;
    * 内核事件是扁平的判别联合,直接 switch 就有类型,猜不错也漏不掉。
-   * `permission.replied` 只带 requestID,故意不在这里返回 —— 它不该触发 resolve。
    */
   const eventSessionID = (event: KernelEvent) => {
     switch (event.type) {
@@ -602,8 +597,6 @@ export function createServerSession(client: Sdk, options?: { retry?: typeof retr
         return event.message.sessionID
       case "message.part.updated":
         return event.part.sessionID
-      case "permission.asked":
-        return event.request.sessionID
     }
   }
 
@@ -831,38 +824,6 @@ export function createServerSession(client: Sdk, options?: { retry?: typeof retr
             part.text = (part.text ?? "") + props.delta
           }),
         )
-        return
-      }
-      case "permission.asked": {
-        const permission = event.request
-        const permissions = data.permission[permission.sessionID]
-        if (!permissions) {
-          setData("permission", permission.sessionID, [permission])
-          return
-        }
-        const result = Binary.search(permissions, permission.id, (item) => item.id)
-        if (result.found) setData("permission", permission.sessionID, result.index, reconcile(permission))
-        if (!result.found)
-          setData(
-            "permission",
-            permission.sessionID,
-            produce((draft) => void draft.splice(result.index, 0, permission)),
-          )
-        return
-      }
-      case "permission.replied": {
-        // 内核只回请求 id(权限 id 全局唯一),不带 sessionID —— 反查它挂在哪个会话下。
-        // 未决权限最多只有个位数条,线性扫比让 host 多带一个字段更省事。
-        for (const [sessionID, requests] of Object.entries(data.permission)) {
-          const result = Binary.search(requests, event.id, (item) => item.id)
-          if (!result.found) continue
-          setData(
-            "permission",
-            sessionID,
-            produce((draft) => void draft.splice(result.index, 1)),
-          )
-          return
-        }
         return
       }
     }

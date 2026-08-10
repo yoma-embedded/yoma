@@ -10,7 +10,7 @@
  *   rounds/001/artifacts/*      研发端 → 工位端:本轮附件(新构建的固件、脚本…)
  *   rounds/001/patch.diff       研发端为本轮做的代码改动(审计与终报用)
  *   rounds/001/result.json      工位端 → 研发端:轮结果(最后写 —— 它的存在 = 本轮完成)
- *   rounds/001/decision.json    本轮裁决(研发端 mother 或确定性守卫)
+ *   rounds/001/decision.json    本轮裁决(研发端 mother 或预算守卫)
  *   verdict.json                终局(出现即整个任务结束)
  *   report.md                   终报(与 verdict 同一次提交写入)
  * ```
@@ -27,6 +27,9 @@
  * 状态机:一个轮次都没有 → 等研发端开第一轮(kickoff);instruction 有而 result 无
  * → 等工位端;result 有而 decision 无 → 等研发端裁决;verdict 有 → 结束。
  *
+ * 工位端**没有项目检出** —— 它的工作目录是一次性的,内容全部来自附件。所以这条邮路
+ * 不只是通信,它同时是工位端拿到一切东西(固件、脚本、数据)的唯一途径。
+ *
  * ## 写入顺序即协议
  *
  * 工位端一轮的产物里 **result.json 必须最后写**;研发端的 decision + 下轮 instruction
@@ -37,11 +40,8 @@
 import { copyFile, mkdir, readdir, stat, writeFile } from "node:fs/promises"
 import path from "node:path"
 
-import type { PermissionDecision } from "@yoma-desktop/kernel/host"
-
 import { fileExists, readJsonFile } from "../fsx.ts"
 
-import type { GradeResult } from "../grader.ts"
 import type { TurnUsage } from "../turn.ts"
 import { parseMailboxJob, type MailboxJob } from "./spec.ts"
 
@@ -56,7 +56,7 @@ export interface RoundArtifact {
 
 export interface RoundInstruction {
   round: number
-  /** 交给工位端 agent 的完整指令文本。收件端会在其后自动附上附件清单与上一轮判据证据。 */
+  /** 交给工位端 agent 的完整指令文本。收件端会在其前面自动附上附件清单。 */
   prompt: string
   issuedBy: "init" | "mother"
   /** 本轮随指令一起穿过来的附件(内容在同目录的 `artifacts/` 下)。 */
@@ -84,40 +84,27 @@ export interface RoundGit {
   commits: string[]
 }
 
-/**
- * 工位端仓库的状态。新分工下工位端**不改代码**,所以它既不开分支也不提交 ——
- * 但要如实报告:`dirty` 非空说明那边的 agent 动了工作树,这是证据不是小事。
- */
-export interface RoundWorkspace {
-  head: string
-  dirty: string[]
-}
-
 export interface RoundResultFile {
   round: number
   sessionID?: string
   turn?: RoundTurnSummary
-  grade?: GradeResult
-  /** 只带被拒的裁决 —— 研发端要知道哪些路工位端 agent 走不通。 */
-  denied: { tool: string; title: string; rule?: string }[]
-  /** 本轮附件在工位机上被放到了哪儿(相对仓库根),由调试台落盘、不经模型。 */
+  /** 本轮附件在工位机上被放到了哪儿(相对工作目录),由调试台落盘、不经模型。 */
   incoming?: string[]
-  workspace?: RoundWorkspace
   /** 工位端跨轮累计的 token(含本轮)。预算强制的输入。 */
   spentTokens: number
-  /** 轮级失败(环境没过、子进程没产出结果)。有它时 turn/grade 可能缺失。 */
+  /** 轮级失败(子进程没产出结果)。有它时 turn 缺失。 */
   error?: string
   at: string
   elapsedMs: number
 }
 
-export type DecisionKind = "continue" | "success" | "fail" | "park"
+export type DecisionKind = "continue" | "done" | "fail"
 
 export interface RoundDecision {
   round: number
   /**
-   * 裁决者。`policy` = 确定性守卫(判据通过、预算耗尽、环境错误)—— 代码定的,
-   * 不是模型;`mother` = 研发端 agent 真判断过。审计不能伪造裁决者,这里同理。
+   * 裁决者。`policy` = 预算守卫(轮数/token/墙钟到顶)—— 代码定的,不是模型;
+   * `mother` = 研发端 agent 真判断过。裁决者不能伪造。
    */
   by: "mother" | "policy"
   decision: DecisionKind
@@ -132,7 +119,7 @@ export interface RoundDecision {
 }
 
 export interface MailboxVerdict {
-  outcome: "passed" | "failed" | "parked"
+  outcome: "passed" | "failed"
   reason: string
   rounds: number
   totalRunnerTokens: number
@@ -188,11 +175,10 @@ export function roundArtifactsDir(root: string, round: number): string {
 /**
  * 把研发端的产物拷进本轮的 `artifacts/`。
  *
- * 拷贝由**代码**做,不是 agent 自己往信箱目录里写:研发端 agent 的工作区是项目仓,
- * 它只在决定里声明"把这几个文件附上",存在性、大小、落地文件名都由这里核实。
- * 好处是策略不必给 agent 开一个信箱目录的写权限,而且"附件是不是真的在"这件事
- * 有机器保证 —— agent 说附了但文件不存在,是一个能被逮住的错误而不是空目录。
+ * 附件是工位端拿到东西的**唯一**通道 —— 它没有项目检出,新固件、临时脚本、参考数据
+ * 全靠这条路过去。agent 在决定里声明要附哪些文件,拷贝由代码做:声明是判断,执行是代码。
  *
+ * 大小上限不是不信任 agent,是 git 的物理性质:信箱不忘事,附错一次大文件它会一直大下去。
  * 同名附件后来者覆盖(同一轮里重复声明同一个文件是笔误,不是两件东西)。
  */
 export async function attachArtifacts(
@@ -205,20 +191,19 @@ export async function attachArtifacts(
   const artifacts: RoundArtifact[] = []
   let total = 0
   for (const entry of entries) {
-    let bytes: number
-    try {
-      const info = await stat(entry.source)
-      if (!info.isFile()) return { ok: false, error: `${entry.from ?? entry.source} 不是文件,附不了` }
-      bytes = info.size
-    } catch {
+    const bytes = await stat(entry.source)
+      .then((info) => info.size)
+      .catch(() => undefined)
+    if (bytes === undefined) {
       return { ok: false, error: `要附的文件不存在:${entry.from ?? entry.source}(先构建出来再附)` }
     }
     total += bytes
     if (total > maxBytes) {
       return {
         ok: false,
-        error: `本轮附件合计 ${(total / 1024 / 1024).toFixed(1)}MB,超过上限 ${(maxBytes / 1024 / 1024).toFixed(0)}MB —— ` +
-          `信箱是个 git 仓,每轮都塞大文件会一直长大。只附这一轮真正要用的东西`,
+        error:
+          `本轮附件合计 ${(total / 1024 / 1024).toFixed(1)}MB,超过上限 ${(maxBytes / 1024 / 1024).toFixed(0)}MB —— ` +
+          `信箱是个 git 仓,塞进去的大文件永远瘦不回来。只附这一轮真正要用的东西`,
       }
     }
     await mkdir(dir, { recursive: true })
@@ -324,11 +309,4 @@ export function sumMotherTokens(rounds: RoundFiles[]): number {
     total += decision.usage.tokens.input + decision.usage.tokens.output
   }
   return total
-}
-
-/** 把 TurnResult 级的裁决压成 mother 需要的"哪些路被拒了"。 */
-export function summarizeDenied(decisions: PermissionDecision[]): RoundResultFile["denied"] {
-  return decisions
-    .filter((decision) => decision.verdict === "deny")
-    .map((decision) => ({ tool: decision.tool, title: decision.title, rule: decision.rule }))
 }

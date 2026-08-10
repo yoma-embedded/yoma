@@ -1,16 +1,14 @@
 /**
  * 信箱调试台的任务控制器 —— main 侧纯逻辑,不 import electron。
  *
- * updater-controller 同款分层:spawn / 杀树 / 硬件锁 / 广播 / 持久化全部注入,
- * 单测直接跑。控制器管四件事:
+ * updater-controller 同款分层:spawn / 杀树 / 广播 / 持久化全部注入,
+ * 单测直接跑。控制器管三件事:
  *
  * 1. **一次一个任务**:一个信箱一个任务、每角色单实例是协议前提(引擎有 pid 锁,
  *    这里是产品层的第一道闸 —— 用户连点"开跑"不该走到锁冲突那么深)。
  * 2. **崩溃重启带退避**,但只对常驻角色(runner/mother):它们的协议天然可续。
  *    锁冲突(退出码 3)不重启 —— 活着的持有者在别处,轮询式抢锁只会刷屏。
- * 3. **探针互斥的生命周期**:runner 任务活跃(含重启间隙)= 交互内核的硬件工具
- *    锁着;终局/停止才撤。sim(本机演练)是假模型,不碰硬件,不锁。
- * 4. **事件转发**:守护的 @@event 原样广播(全是普通对象,能过 contextBridge),
+ * 3. **事件转发**:守护的 @@event 原样广播(全是普通对象,能过 contextBridge),
  *    快照与终局缓存在 status 里,renderer 随时拉得到当前真相。
  */
 
@@ -76,8 +74,6 @@ export interface MailboxControllerDeps {
   ): MailboxLaunchHandle
   /** 停守护:必须是**整棵进程树**的语义(Windows 上 taskkill /T)。 */
   stopProcess(handle: MailboxLaunchHandle, force: boolean): void
-  /** 探针互斥开关(驱动交互内核的 mailbox.setActive)。 */
-  setHardwareLock(active: boolean): void
   broadcast(event: MailboxPublicEvent): void
   persistence: { get(): MailboxSettings | undefined; set(settings: MailboxSettings): void }
   /** 把任务请求补全成守护配置(clone 目录、bundle 路径这些只有接线层知道)。 */
@@ -102,7 +98,7 @@ export function restartDelayMs(restarts: number): number {
  * 连续这么多次"起来就死"之后放弃重启。
  *
  * 退避重启假设故障是瞬时的(网络、远端抽风);产物缺失、node 加载失败这类
- * **永久性**故障永远重试不好,而重试期间 phase 一直是 running、探针锁一直扣着,
+ * **永久性**故障永远重试不好,而重试期间 phase 一直是 running,
  * 屏幕上只有一句 code 1 —— 用户看到的是"任务在跑",实际什么都没发生。
  */
 const MAX_RESTARTS = 5
@@ -130,7 +126,6 @@ export class MailboxController {
   private phase: MailboxStatus["phase"] = "idle"
   private snapshot?: MailboxUiSnapshot
   private message?: string
-  private lockActive = false
 
   constructor(deps: MailboxControllerDeps) {
     this.deps = deps
@@ -148,11 +143,6 @@ export class MailboxController {
       done: this.task?.done,
       message: this.message,
     }
-  }
-
-  /** 探针互斥当前该不该锁着 —— 内核进程重启后接线层用它重申。 */
-  hardwareLockActive(): boolean {
-    return this.lockActive
   }
 
   /** 本机工程目录的实际取值。没注入解析器时就是已保存的那一项。 */
@@ -193,15 +183,14 @@ export class MailboxController {
         message: `本机角色是${label(this.settings.role)},不能起${label(request.kind)}守护 —— 去配置页改角色再来`,
       }
     }
-    // 常驻角色要在**本机**的工程检出上干活,而任务书里没有路径。缺了就在这里说
+    // 研发端要在**本机**的工程检出上改代码,而任务书里没有路径。缺了就在这里说
     // 人话:不然守护起得来、轮询也在跑,直到第一轮才在守护日志里报"没配工程目录"。
-    if (request.kind === "runner" || request.kind === "mother") {
-      const projectDir = this.effectiveProjectDir()
-      if (!projectDir) {
-        return {
-          ok: false,
-          message: "这台机器上还没配工程目录 —— 去配置页填「工程目录(本机)」。信箱里的任务书不带绝对路径,它在别人机器上没意义,所以每台机器各配各的",
-        }
+    // 工位端不需要 —— 它没有项目检出,拿到的东西全是信箱附件。
+    if (request.kind === "mother" && !this.effectiveProjectDir()) {
+      return {
+        ok: false,
+        message:
+          "研发端要在本机的工程检出上改代码,但还没配工程目录 —— 去配置页填「工程目录(仅研发端)」。信箱里的任务书不带绝对路径,它在别人机器上没意义,所以每台机器各配各的",
       }
     }
     const now = (this.deps.now ?? Date.now)()
@@ -216,9 +205,6 @@ export class MailboxController {
     this.snapshot = undefined
     this.message = undefined
     this.phase = "running"
-    // 探针互斥只跟 runner 走:工位任务真的会占探针;mother/init 不碰硬件,
-    // sim 是假模型演练。锁在重启间隙保持 —— 孙进程可能还活着。
-    this.setLock(request.kind === "runner")
     this.spawn()
     this.pushStatus()
     return { ok: true }
@@ -248,10 +234,9 @@ export class MailboxController {
       })
     } catch (error) {
       // launch 同步抛(产物路径不可写、spawn 参数非法)时不会有 onExit,
-      // 不接住就是 phase 永远卡在 running、锁永远扣着。
+      // 不接住就是 phase 永远卡在 running。
       this.phase = "error"
       this.message = `守护进程起不来:${(error as Error).message}`
-      this.setLock(false)
       this.task = undefined
       this.pushStatus()
     }
@@ -287,7 +272,6 @@ export class MailboxController {
       // 正常终局(passed/failed/parked)。runner 的收尾(回刷/交付)已经做完才有 verdict。
       this.phase = "done"
       this.message = undefined
-      this.setLock(false)
       this.pushStatus()
       return
     }
@@ -296,7 +280,6 @@ export class MailboxController {
       const role = this.settings.role
       this.phase = "idle"
       this.task = undefined
-      this.setLock(false)
       const started = this.start({ kind: role })
       if (!started.ok) {
         this.phase = "error"
@@ -309,7 +292,6 @@ export class MailboxController {
       // 单实例锁冲突:活着的持有者在别的进程/别的 Yoma 实例。轮询抢锁只会刷屏。
       this.phase = "error"
       this.message = `另一个 Yoma 实例正在跑这个信箱(${done.detail})—— 关掉那边或等它结束`
-      this.setLock(false)
       this.pushStatus()
       return
     }
@@ -317,7 +299,6 @@ export class MailboxController {
       // 一次性任务:退出即终局,失败如实报,不自动重跑。
       this.phase = done && done.exitCode === 0 ? "done" : "error"
       this.message = done?.detail ?? `守护进程异常退出(code ${code ?? "?"})`
-      this.setLock(false)
       this.pushStatus()
       return
     }
@@ -328,12 +309,11 @@ export class MailboxController {
     task.restarts = now - task.spawnedAt >= HEALTHY_MS ? 1 : task.restarts + 1
     if (task.restarts > MAX_RESTARTS) {
       // 起来就死重复这么多次,故障是永久性的(产物缺失、node 加载失败……),
-      // 继续退避只是把锁一直扣着、把 phase 一直显示成 running。
+      // 继续退避只是把 phase 一直显示成 running。
       this.phase = "error"
       this.message = `守护进程连续 ${MAX_RESTARTS} 次起来就退出(最后一次 code ${code ?? "?"})—— 不再重试。${
         done?.detail ?? "看日志:userData/logs"
       }`
-      this.setLock(false)
       this.pushStatus()
       return
     }
@@ -355,15 +335,8 @@ export class MailboxController {
   private finishStopped(): void {
     this.phase = "idle"
     this.message = "已停止"
-    this.setLock(false)
     this.task = undefined
     this.pushStatus()
-  }
-
-  private setLock(active: boolean): void {
-    if (this.lockActive === active) return
-    this.lockActive = active
-    this.deps.setHardwareLock(active)
   }
 
   private pushStatus(): void {

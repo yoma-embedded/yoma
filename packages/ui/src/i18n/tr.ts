@@ -123,10 +123,6 @@ export const dict = {
   "ui.common.next": "İleri",
   "ui.common.submit": "Gönder",
 
-  "ui.permission.deny": "Reddet",
-  "ui.permission.allowAlways": "Her zaman izin ver",
-  "ui.permission.allowOnce": "Bir kez izin ver",
-
   "ui.message.expand": "Mesajı genişlet",
   "ui.message.collapse": "Mesajı daralt",
   "ui.message.copy": "Kopyala",

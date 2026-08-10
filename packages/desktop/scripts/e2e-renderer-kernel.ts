@@ -148,7 +148,7 @@ app.whenReady().then(async () => {
     check("preload 注入了 window.api.mailbox", await win.webContents.executeJavaScript(`!!window.api?.mailbox?.subscribe`))
     ipcMain.handle("mailbox-status", () => ({
       phase: "done",
-      done: { exitCode: 0, detail: "e2e", verdict: { outcome: "passed", reason: "判据全过", decidedBy: "policy" } },
+      done: { exitCode: 0, detail: "e2e", verdict: { outcome: "passed", reason: "研发端判定已解决", decidedBy: "mother" } },
     }))
     const statusThrough = await win.webContents.executeJavaScript(`
       window.api.mailbox.status().then(
@@ -156,7 +156,7 @@ app.whenReady().then(async () => {
         (e) => ({ error: e && e.message }),
       )
     `)
-    check("mailbox.status 的嵌套 verdict 穿桥不丢", statusThrough?.outcome === "passed" && statusThrough?.by === "policy", JSON.stringify(statusThrough))
+    check("mailbox.status 的嵌套 verdict 穿桥不丢", statusThrough?.outcome === "passed" && statusThrough?.by === "mother", JSON.stringify(statusThrough))
 
     await win.webContents.executeJavaScript(`
       window.__mailboxEvent = new Promise((resolve) => {

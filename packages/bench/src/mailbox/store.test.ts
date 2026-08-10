@@ -22,7 +22,7 @@ const temp = new Temp()
 afterEach(() => temp.cleanup())
 
 function result(round: number, overrides: Partial<RoundResultFile> = {}): RoundResultFile {
-  return { round, denied: [], spentTokens: 150, at: new Date(0).toISOString(), elapsedMs: 5, ...overrides }
+  return { round, spentTokens: 150, at: new Date(0).toISOString(), elapsedMs: 5, ...overrides }
 }
 
 describe("mailbox store", () => {

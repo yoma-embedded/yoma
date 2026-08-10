@@ -139,7 +139,7 @@ export function normalizeRemote(url: string): string {
  * 不拦的后果比"报错难看"严重得多 —— 是**照着别的任务的指令去动板子**:
  * `pullReset` 在 `origin/<新分支>` 不存在时什么都不做(那是首推前的合法状态),
  * 于是工作树还是旧分支的内容,扫描器照常读到**上一个任务**的 job.json 与待执行轮,
- * 工位端真的会烧片、跑判据、回刷 known-good,跑完一整轮才在 push 那一下报
+ * 工位端真的会烧片、动板子,跑完一整轮才在 push 那一下报
  * `src refspec <新分支> does not match any`。子 agent 的调查脚本实测复现过:
  * 硬件动作真的发生了,提示词里是另一个任务的指令。
  *
@@ -148,8 +148,6 @@ export function normalizeRemote(url: string): string {
 async function assertOnBranch(context: MailboxSyncContext): Promise<void> {
   const branch = branchOf(context)
   const current = await git(context, "branch", "--show-current")
-  // 读不出来(极老的 git、或根本不是仓库)就不拦 —— 后面的 fetch 会给出真报错。
-  if (!current.ok) return
   if (current.stdout === branch) return
   throw new Error(
     `${context.clone} 停在分支 ${current.stdout || "(游离 HEAD)"},而要跑的是 ${branch} —— ` +
@@ -250,15 +248,15 @@ async function pushWithRetry(
   context: MailboxSyncContext,
   branch: string,
 ): Promise<{ pushed: boolean; detail?: string }> {
+  let last = ""
   for (let attempt = 1; attempt <= PUSH_RETRIES; attempt += 1) {
     const push = await git(context, "push", "-q", "-u", "origin", `${branch}:${branch}`)
     if (push.ok) return { pushed: true }
-    if (attempt === PUSH_RETRIES) return { pushed: false, detail: `push 三次仍失败:${push.stderr}` }
+    last = push.stderr
     // 对方刚说过话 —— 把我们的发言叠上去再推。路径按协议不相交,rebase 必然干净。
     // 远端分支还不存在(信箱首推的瞬时失败)时没有可叠的东西,原样直接重试。
     await git(context, "fetch", "-q", "origin")
-    const remoteExists = (await git(context, "rev-parse", "--verify", "-q", `origin/${branch}`)).ok
-    if (!remoteExists) continue
+    if (!(await git(context, "rev-parse", "--verify", "-q", `origin/${branch}`)).ok) continue
     const rebase = await git(context, "pull", "-q", "--rebase", "origin", branch)
     if (!rebase.ok) {
       await git(context, "rebase", "--abort")
@@ -266,5 +264,5 @@ async function pushWithRetry(
       return { pushed: false, detail: `pull --rebase 失败:${rebase.stderr}` }
     }
   }
-  return { pushed: false, detail: "unreachable" }
+  return { pushed: false, detail: `push ${PUSH_RETRIES} 次仍失败:${last}` }
 }

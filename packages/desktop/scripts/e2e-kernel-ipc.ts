@@ -150,9 +150,6 @@ app.whenReady().then(async () => {
     const vcs = await request("vcs.info", { directory: workspace })
     check("vcs.info 对非 git 目录不报错", vcs && vcs.dirty === false)
 
-    const rules = await request("permission.rules", undefined)
-    check("权限规则默认拦住 flash", rules?.flash === "ask", JSON.stringify({ flash: rules?.flash, read: rules?.read }))
-
     // 内核进程主动推事件(session.created)是"流式能到 renderer"的最小证据。
     await new Promise((resolve) => setTimeout(resolve, 300))
     const created = pushes.flat().some((e: any) => e?.type === "session.created")

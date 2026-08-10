@@ -1,4 +1,4 @@
-import type { PermissionRequest, Session } from "@yoma-desktop/kernel"
+import type { Session } from "@yoma-desktop/kernel"
 import { cmp } from "./utils"
 import { SESSION_RECENT_LIMIT, SESSION_RECENT_WINDOW } from "./types"
 
@@ -34,13 +34,9 @@ export function takeRecentSessions(sessions: Session[], limit: number, cutoff: n
  * 裁剪目录 store 里保留的会话。
  *
  * 内核里会话之间没有父子关系(树在单个 session 内部),所以原来的 root/child 两段逻辑
- * 塌成一段:按最近活动取 limit 条,再补一批最近窗口内的,外加任何还挂着未决权限请求的
- * 会话 —— 弹窗还开着的会话被裁掉会直接丢掉待回答的请求。
+ * 塌成一段:按最近活动取 limit 条,再补一批最近窗口内的。
  */
-export function trimSessions(
-  input: Session[],
-  options: { limit: number; permission: Record<string, PermissionRequest[]>; now?: number },
-) {
+export function trimSessions(input: Session[], options: { limit: number; now?: number }) {
   const limit = Math.max(0, options.limit)
   const cutoff = (options.now ?? Date.now()) - SESSION_RECENT_WINDOW
   const all = input
@@ -51,7 +47,5 @@ export function trimSessions(
   const base = ordered.slice(0, limit)
   const recent = takeRecentSessions(ordered.slice(limit), SESSION_RECENT_LIMIT, cutoff)
   const keep = [...base, ...recent]
-  const keepIds = new Set(keep.map((s) => s.id))
-  const pending = all.filter((s) => !keepIds.has(s.id) && (options.permission[s.id]?.length ?? 0) > 0)
-  return [...keep, ...pending].sort((a, b) => cmp(a.id, b.id))
+  return keep.sort((a, b) => cmp(a.id, b.id))
 }

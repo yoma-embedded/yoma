@@ -3,11 +3,9 @@
  *
  * ## 纪律
  *
- * - **绝不动主干**:准备阶段就切到 `agent/<jobId>`,agent 全程在这条分支上干活。
- *   策略层同时禁掉了 agent 自己跑 `git checkout/push/reset`(见 policy.ts),
- *   分支状态只有 runner 一个写者。
- * - **每次过判据提交一次**:commit 是审计点 —— 它证明"这个状态下判据是绿的"。
- *   不 squash:研发 review 时能看到假设的演进,那正是最有价值的部分。
+ * - **绝不动主干**:准备阶段就切到 `agent/<jobId>`,研发端全程在这条分支上干活。
+ * - **每轮提交一次**:commit 是审计点 —— 它把"这一轮下发的固件"和"这一轮的代码"
+ *   钉在一起。不 squash:研发 review 时能看到假设的演进,那正是最有价值的部分。
  * - **绝不 push 主干、绝不强推**:push 只推 job 声明的那条 agent 分支。
  *
  * 所有 git 调用都是 argv 直接 spawn 不过 shell —— 分支名和路径可能含中文和空格。
@@ -57,7 +55,7 @@ export async function isClean(context: GitContext): Promise<boolean> {
 }
 
 /**
- * 被改动的**已跟踪**文件。未跟踪文件(`??`)不算 —— agent 顺手写个日志、判据落个
+ * 被改动的**已跟踪**文件。未跟踪文件(`??`)不算 —— agent 顺手写个日志、工具落个
  * 临时文件都会出现在那一栏,而工位端真正要防的是"源码被动过"。
  */
 export async function dirtyTrackedFiles(context: GitContext): Promise<string[]> {

@@ -2,7 +2,7 @@
  * 守护宿主(host.ts)—— 桌面端产品形态的引擎侧入口。
  *
  * 压轴的是 sim 自我 spawn 的假模型全闭环:两个真子进程(bun 跑 host-entry.ts)、
- * 真 git 信箱、真内核 host、真权限门、真 write 工具、真判据 —— 只有模型是脚本。
+ * 真 git 信箱、真内核 host、真 write 工具、真附件邮路 —— 只有模型是脚本。
  * 它钉住的与 P1 打包冒烟(纯 node 对 esbuild 产物)是同一条代码路径,两边只差
  * 运行时;这里绿了而冒烟红了,问题必然在打包管线而不是引擎。
  */
@@ -76,7 +76,6 @@ describe("faux 脚本穿过真 turn-entry 子进程", () => {
       prompt: "演练:创建 proof.txt",
       maxTokens: 100_000,
       spentTokens: 0,
-      unattended: true,
       faux: [
         [{ tool: "write", input: { path: "proof.txt", content: "bench-ok\n" } }],
         [{ text: "已创建 proof.txt" }],
@@ -103,9 +102,7 @@ describe("sim 自我 spawn:假模型全闭环", () => {
   test("两轮走到 verdict passed,代码改动落在研发端的 agent 分支上", async () => {
     const target = await makeTargetRepo(temp)
     const root = temp.dir("sim-root-")
-    const jobFile = await writeJobFile(temp.dir("job-"), {
-      success: { checks: [{ type: "bash", command: "test -f proof.txt" }] },
-    })
+    const jobFile = await writeJobFile(temp.dir("job-"))
 
     const { events, emit } = collect()
     const code = await runMailboxHost(
@@ -121,19 +118,27 @@ describe("sim 自我 spawn:假模型全闭环", () => {
         configDir: temp.dir("config-"),
         hostEntry: path.join(import.meta.dir, "host-entry.ts"),
         faux: {
-          // 工位端只观察不动手(新分工下它连 write 都会被策略拒)。
-          turns: [[[{ text: "上电看了一圈,没有 proof.txt" }]], [[{ text: "研发端给的东西已就位,再看一遍" }]]],
-          // 研发端一条共享队列:开局 → 改代码(write)+ 附产物。
+          // 工位端只观察、只汇报 —— 它没有项目检出,手上只有附件。
+          turns: [
+            [[{ text: "上电看了一圈,工作目录里没有 proof.txt" }]],
+            [[{ text: "研发端给的 proof.txt 已就位,内容是 bench-ok" }]],
+          ],
+          // 研发端一条共享队列:开局取证 → 改代码(write)+ 附产物 → 读证据收工。
           mother: [
             [
               {
-                text: '还没有任何证据,先让工位端看一眼。\n```json\n{"decision":"continue","analysis":"开局先取证","instruction":"看看工程根下有没有 proof.txt,把结果说回来"}\n```',
+                text: '还没有任何证据,先让工位端看一眼。\n```json\n{"decision":"continue","analysis":"开局先取证","instruction":"看看工作目录里有没有 proof.txt,把结果说回来"}\n```',
               },
             ],
             [{ tool: "write", input: { path: "proof.txt", content: "bench-ok\n" } }],
             [
               {
-                text: '我把 proof.txt 建好了,顺手附给你。\n```json\n{"decision":"continue","analysis":"缺的就是这个文件","instruction":"东西在附件里,再验一次","artifacts":["proof.txt"]}\n```',
+                text: '我把 proof.txt 建好了,顺手附给你。\n```json\n{"decision":"continue","analysis":"缺的就是这个文件","instruction":"东西在附件里,再验一次并把内容原文贴回来","artifacts":["proof.txt"]}\n```',
+              },
+            ],
+            [
+              {
+                text: '工位端读到的内容和我发过去的一致。\n```json\n{"decision":"done","analysis":"附件已到位且内容对得上","reason":"工位端原文回报 bench-ok,与研发端构建的产物一致"}\n```',
               },
             ],
           ],
@@ -152,14 +157,14 @@ describe("sim 自我 spawn:假模型全闭环", () => {
     // 终局真相从模拟根里研发端的克隆读(runSim 收尾时已对齐远端)。
     const verdict = await readVerdict(path.join(root, "sim", "mother-clone"))
     expect(verdict?.outcome).toBe("passed")
-    expect(verdict?.decidedBy).toBe("policy")
+    expect(verdict?.decidedBy).toBe("mother")
 
     // 目标仓:agent 分支上有提交,proof.txt 是被**研发端**提交的,不是散落的工作区文件。
     const show = await runGitReal(["show", "agent/m-1:proof.txt"], target)
     expect(show.ok).toBe(true)
     expect(show.stdout.trim()).toBe("bench-ok")
 
-    // 附件真的穿过了信箱,落在工位端的 incoming 目录里。
-    expect(await readFile(path.join(target, ".bench", "incoming", "proof.txt"), "utf8")).toBe("bench-ok\n")
+    // 附件真的穿过了信箱,落在工位端那个一次性工作目录里(它没有项目检出)。
+    expect(await readFile(path.join(root, "sim", "work", "m-1", "work", "proof.txt"), "utf8")).toBe("bench-ok\n")
   }, 180_000)
 })

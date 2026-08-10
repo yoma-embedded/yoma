@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { AssistantMessage, Message, Part, PermissionRequest, Session, VcsInfo } from "@yoma-desktop/kernel"
+import type { AssistantMessage, Message, Part, Session, VcsInfo } from "@yoma-desktop/kernel"
 import { createStore } from "solid-js/store"
 import type { State } from "./types"
 import { applyDirectoryEvent, applyGlobalEvent, cleanupDroppedSessionCaches } from "./event-reducer"
@@ -47,18 +47,6 @@ const textPart = (id: string, sessionID: string, messageID: string) =>
     text: id,
   }) satisfies Part
 
-const permissionRequest = (id: string, sessionID: string, title = id) =>
-  ({
-    id,
-    sessionID,
-    messageID: "msg_1",
-    callID: `call_${id}`,
-    tool: "bash",
-    input: {},
-    title,
-    time: { created: 1 },
-  }) satisfies PermissionRequest
-
 const baseState = (input: Partial<State> = {}) =>
   ({
     status: "complete",
@@ -73,7 +61,6 @@ const baseState = (input: Partial<State> = {}) =>
     sessionTotal: 0,
     session_status: {},
     session_working: () => false,
-    permission: {},
     vcs: undefined,
     limit: 10,
     message: {},
@@ -188,7 +175,6 @@ describe("applyDirectoryEvent", () => {
         sessionTotal: 2,
         message: { ses_1: [message] },
         part: { [message.id]: [textPart("prt_1", "ses_1", message.id)] },
-        permission: { ses_1: [] },
         session_status: { ses_1: { type: "busy" } },
       }),
     )
@@ -204,7 +190,6 @@ describe("applyDirectoryEvent", () => {
     expect(store.sessionTotal).toBe(1)
     expect(store.message.ses_1).toBeUndefined()
     expect(store.part[message.id]).toBeUndefined()
-    expect(store.permission.ses_1).toBeUndefined()
     expect(store.session_status.ses_1).toBeUndefined()
   })
 
@@ -217,7 +202,6 @@ describe("applyDirectoryEvent", () => {
           sessionTotal: 3,
           message: { [id]: [message] },
           part: { [message.id]: [textPart("prt_1", id, message.id)] },
-          permission: { [id]: [] },
           session_status: { [id]: { type: "busy" } },
         }),
       )
@@ -233,7 +217,6 @@ describe("applyDirectoryEvent", () => {
       expect(store.sessionTotal).toBe(2)
       expect(store.message[id]).toBeUndefined()
       expect(store.part[message.id]).toBeUndefined()
-      expect(store.permission[id]).toBeUndefined()
       expect(store.session_status[id]).toBeUndefined()
     }
   })
@@ -248,7 +231,6 @@ describe("applyDirectoryEvent", () => {
         session: [dropped],
         message: { [dropped.id]: [message] },
         part: { [message.id]: [textPart("prt_1", dropped.id, message.id)] },
-        permission: { [dropped.id]: [] },
         session_status: { [dropped.id]: { type: "busy" } },
       }),
     )
@@ -263,7 +245,6 @@ describe("applyDirectoryEvent", () => {
     expect(store.session.map((x) => x.id)).toEqual([kept.id])
     expect(store.message[dropped.id]).toBeUndefined()
     expect(store.part[message.id]).toBeUndefined()
-    expect(store.permission[dropped.id]).toBeUndefined()
     expect(store.session_status[dropped.id]).toBeUndefined()
   })
 
@@ -374,39 +355,6 @@ describe("applyDirectoryEvent", () => {
     })
 
     expect(store.part[messageID]).toBeUndefined()
-  })
-
-  test("tracks the permission request lifecycle", () => {
-    const sessionID = "ses_1"
-    const [store, setStore] = createStore(
-      baseState({
-        permission: { [sessionID]: [permissionRequest("perm_1", sessionID), permissionRequest("perm_3", sessionID)] },
-      }),
-    )
-
-    applyDirectoryEvent({
-      event: { type: "permission.asked", request: permissionRequest("perm_2", sessionID) },
-      store,
-      setStore,
-      directory: "/tmp",
-    })
-    expect(store.permission[sessionID]?.map((x) => x.id)).toEqual(["perm_1", "perm_2", "perm_3"])
-
-    applyDirectoryEvent({
-      event: { type: "permission.asked", request: permissionRequest("perm_2", sessionID, "updated") },
-      store,
-      setStore,
-      directory: "/tmp",
-    })
-    expect(store.permission[sessionID]?.find((x) => x.id === "perm_2")?.title).toBe("updated")
-
-    applyDirectoryEvent({
-      event: { type: "permission.replied", id: "perm_2", response: "once" },
-      store,
-      setStore,
-      directory: "/tmp",
-    })
-    expect(store.permission[sessionID]?.map((x) => x.id)).toEqual(["perm_1", "perm_3"])
   })
 
   test("replaces vcs info in store and cache", () => {

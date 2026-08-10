@@ -6,7 +6,6 @@ let createPromptSubmit: typeof import("./submit").createPromptSubmit
 const DIRECTORY = "/repo/main"
 
 const createdSessions: string[] = []
-const enabledAutoAccept: Array<{ sessionID: string; directory: string }> = []
 const sentPrompts: Array<{ sessionID: string; text: string; setModelCallsBefore: number }> = []
 const setModelCalls: Array<{ sessionID: string; providerID: string; modelID: string; thinking?: string }> = []
 const optimistic: Array<{
@@ -100,14 +99,6 @@ beforeAll(async () => {
         promote(directory: string, sessionID: string) {
           promoted.push({ directory, sessionID })
         },
-      },
-    }),
-  }))
-
-  mock.module("@/context/permission", () => ({
-    usePermission: () => ({
-      enableAutoAccept(sessionID: string, directory: string) {
-        enabledAutoAccept.push({ sessionID, directory })
       },
     }),
   }))
@@ -221,7 +212,6 @@ beforeAll(async () => {
 
 beforeEach(() => {
   createdSessions.length = 0
-  enabledAutoAccept.length = 0
   sentPrompts.length = 0
   setModelCalls.length = 0
   optimistic.length = 0
@@ -238,7 +228,6 @@ const baseInput = () => ({
   prompt,
   imageAttachments: () => [],
   commentCount: () => 0,
-  autoAccept: () => false,
   mode: () => "normal" as const,
   working: () => false,
   editor: () => undefined,
@@ -271,14 +260,6 @@ describe("prompt submit", () => {
     expect(createdSessions).toEqual([DIRECTORY])
     expect(promoted).toEqual([{ directory: DIRECTORY, sessionID: "session-1" }])
     expect(sentPrompts).toEqual([{ sessionID: "session-1", text: "ls", setModelCallsBefore: 1 }])
-  })
-
-  test("applies auto-accept to newly created sessions", async () => {
-    const submit = createPromptSubmit({ ...baseInput(), autoAccept: () => true, info: () => undefined })
-
-    await submit.handleSubmit(event())
-
-    expect(enabledAutoAccept).toEqual([{ sessionID: "session-1", directory: DIRECTORY }])
   })
 
   test("promotes drafts using the selected project's server", async () => {

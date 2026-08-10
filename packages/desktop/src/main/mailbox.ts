@@ -34,8 +34,6 @@ export interface MailboxMainOptions {
   /** 打包产物目录(out/main),mailbox-host.mjs / mailbox-turn-entry.mjs 住这里。 */
   bundleDir: string
   broadcast(event: MailboxPublicEvent): void
-  /** 探针互斥:驱动交互内核的 mailbox.setActive。内核没起来时可为空操作。 */
-  setHardwareLock(active: boolean): void
   persistence: { get(): MailboxSettings | undefined; set(settings: MailboxSettings): void }
   log?(line: string): void
 }
@@ -51,7 +49,7 @@ export interface MailboxMain {
   /** 配置页的连通自检:git ls-remote,报错原样给人看。凭据走系统 git,这里不代管。 */
   probe(remote: string): Promise<{ ok: boolean; message: string }>
   /**
-   * 任务页:项目模板 + 描述 + 预算档 → 生成任务书文件。判据永远来自模板。
+   * 任务页:项目模板 + 描述 + 预算档 → 生成任务书文件。硬件事实与安全约束永远来自模板。
    *
    * `projectDir` 是**本机**的工程根(从模板位置推导),不进任务书 —— 它只是这台
    * 机器上"工程目录"没配时的兜底(出题的机器天然就是工程所在的机器)。
@@ -59,8 +57,6 @@ export interface MailboxMain {
   composeJob(
     input: MailboxComposeInput,
   ): Promise<{ ok: boolean; jobFile?: string; projectDir?: string; message?: string }>
-  /** 内核进程(重)启动后重申探针锁 —— 锁状态在 main,内核只是执行者。 */
-  reassertHardwareLock(): void
 }
 
 export interface MailboxComposeInput {
@@ -100,7 +96,6 @@ export function createMailboxMain(options: MailboxMainOptions): MailboxMain {
   const controller = new MailboxController({
     persistence: options.persistence,
     broadcast: options.broadcast,
-    setHardwareLock: options.setHardwareLock,
     projectDir: resolveProjectDir,
 
     launch(config, io) {
@@ -180,9 +175,6 @@ export function createMailboxMain(options: MailboxMainOptions): MailboxMain {
       // 记下推导出的工程根:这台机器还没配"工程目录"时,守护就用它。
       if (composed.ok && composed.projectDir) composedProjectDir = composed.projectDir
       return composed
-    },
-    reassertHardwareLock() {
-      if (controller.hardwareLockActive()) options.setHardwareLock(true)
     },
     async stopAll(graceMs = 5_000) {
       // 先无条件 stop:任务可能正处在重启退避的间隙(没有子进程,但有一个定时器
@@ -303,8 +295,10 @@ async function composeJob(
     // 工程名默认取**模板的 id**(不是加了时间戳的任务 id):它要在两台机器上对号
     // 入座,而"哪个工程"这件事不随每次出题变化。
     repo: { name: baseId, ...repoRest },
-    budget: { ...templateBudget, maxTokens: tier.maxTokens, wallClockMin: tier.wallClockMin },
-    mailbox: { ...templateMailbox, maxRounds: tier.maxRounds },
+    // 三个旋钮全在 budget 里 —— maxRounds 曾经住在 mailbox 段,放错地方 parseJob
+    // 读不到,界面上选"快速(4 轮)"实际会拿到模板值或默认 8,而且一声不吭。
+    budget: { ...templateBudget, maxRounds: tier.maxRounds, maxTokens: tier.maxTokens, wallClockMin: tier.wallClockMin },
+    mailbox: templateMailbox,
   }
 
   const jobsDir = join(mailboxDir, "jobs")
@@ -388,37 +382,44 @@ function buildHostConfig(
 }
 
 /**
- * 内置演练的假模型脚本 —— 两轮,分工与生产一致:**代码归研发端,工位端只观察**。
+ * 内置演练的假模型脚本 —— 两轮,分工与生产一致:**代码归研发端,工位端只观察**,
+ * 而且工位端没有项目检出,东西全靠附件过去。
  *
- * 研发端开局下指令(不改代码)→ 第 1 轮判据必然失败 → 研发端改代码(write)并下
- * 第 2 轮 → 第 2 轮判据通过 → 守卫终局 passed。
- *
- * 工位端**不能**写文件:`role: "bench"` 在 bench 的 policy 里直接拒 edit/write。
- * 所以修复动作必须由 mother 侧脚本发出 —— 它的改动由 issueInstruction 提交到项目仓
- * 的 agent 分支上,这也正是"改动证据在研发端"的形态。
+ * 研发端开局下指令 → 工位端报"没有" → 研发端 write 修复并把产物**当附件**下发
+ * (改动由 issueInstruction 提交到项目仓 agent 分支)→ 工位端在自己的一次性工作目录
+ * 里读到它 → 研发端读自述判定 `done`。与打包冒烟同一个剧本。
  */
 const REHEARSAL_FAUX: MailboxHostConfig["faux"] = {
-  turns: [[[{ text: "上板看了一圈:proof.txt 不在,现象复现" }]], [[{ text: "换上新产物再复现一次:现象消失" }]]],
+  turns: [
+    [[{ text: "上板看了一圈:工作目录里没有 proof.txt,现象复现" }]],
+    [[{ text: "收到附件了,读出来是 bench-ok" }]],
+  ],
   mother: [
     [
       {
-        text: '开局先确认现状。\n```json\n{"decision":"continue","analysis":"还没有任何观测","instruction":"上板复现一次,报告现象"}\n```',
+        text: '开局先确认现状。\n```json\n{"decision":"continue","analysis":"还没有任何观测","instruction":"上板复现一次,报告你看到了什么"}\n```',
       },
     ],
-    // 研发端读完第 1 轮结果:先改代码……
+    // 研发端读完第 1 轮结果:先在项目仓里改代码……
     [{ tool: "write", input: { path: "proof.txt", content: "bench-ok\n" } }],
-    // ……再下第 2 轮指令(改动已在同一次 issueInstruction 里提交)。
+    // ……再把产物当附件下发(改动与附件在同一次 issueInstruction 里提交)。
     [
       {
-        text: '缺的东西补上了。\n```json\n{"decision":"continue","analysis":"第 1 轮确认了缺失,已补上","instruction":"换上新产物再复现一次"}\n```',
+        text: '缺的东西补上了,产物随这一轮附过去。\n```json\n{"decision":"continue","analysis":"第 1 轮确认了缺失,已补上","instruction":"附件里有 proof.txt,确认它到了你的工作目录并把内容报回来","artifacts":["proof.txt"]}\n```',
+      },
+    ],
+    // 第 2 轮回填之后:研发端自己判断做完了 —— 没有独立判据,done 是模型说的。
+    [
+      {
+        text: '证据够了。\n```json\n{"decision":"done","analysis":"工位端确认收到并读出了 bench-ok","reason":"proof.txt 已送达工位端并被读出,内容正确"}\n```',
       },
     ],
   ],
 }
 
 /**
- * 生成内置演练的布景:一个一次性 git 目标仓 + 任务书。判据是"proof.txt 存在",
- * 与打包冒烟同一个剧本 —— 用户第一次点"本机演练"跑的就是 CI 验过的那条路。
+ * 生成内置演练的布景:一个一次性 git 目标仓 + 任务书。与打包冒烟同一个剧本 ——
+ * 用户第一次点"本机演练"跑的就是 CI 验过的那条路。
  */
 function makeRehearsalJob(mailboxDir: string): string {
   const root = join(mailboxDir, "rehearsal")
@@ -433,8 +434,6 @@ function makeRehearsalJob(mailboxDir: string): string {
     git("add", "-A")
     git("commit", "-q", "-m", "init")
   }
-  const checkCommand =
-    process.platform === "win32" ? "cmd /c if exist proof.txt (exit 0) else (exit 1)" : "test -f proof.txt"
   const jobFile = join(root, "job.json")
   writeFileSync(
     jobFile,
@@ -444,10 +443,8 @@ function makeRehearsalJob(mailboxDir: string): string {
         title: "本机演练:假模型闭环",
         task: "演练:创建 proof.txt(假模型,不联网不碰硬件)",
         repo: { directory: target },
-        success: { checks: [{ type: "bash", command: checkCommand }] },
-        policy: "unattended",
-        budget: { maxIterations: 3, maxTokens: 100_000, wallClockMin: 5 },
-        mailbox: { maxRounds: 3, mother: { maxTokensPerAnalysis: 50_000 } },
+        budget: { maxRounds: 3, maxTokens: 100_000, wallClockMin: 5 },
+        mailbox: { mother: { maxTokensPerAnalysis: 50_000 } },
       },
       null,
       2,

@@ -2,32 +2,23 @@
   "id": "m-20260807-01",
   "title": "修复 CAN 掉帧(信箱闭环)",
   "repo": {
-    "directory": "/Users/you/projects/motor-fw",
+    "name": "motor-fw",
+    "ref": "develop",
     "branch": "agent/m-20260807-01"
   },
   "bench": {
     "board": "nucleo-g474re",
     "chip": "STM32G474RE",
-    "elf": "build/motor-fw.elf",
-    "knownGoodElf": "artifacts/main-ci.elf"
+    "probe": "0483:374b"
   },
-  "task": "上电约 30 秒后 CAN 开始掉帧。复现方法:烧录后用 100kbps 满载发送。期望:RX 计数与 TX 一致,自检打印 SELFTEST PASS。",
-  "success": {
-    "build": "make -j8",
-    "checks": [
-      { "type": "log_wait", "pattern": "SELFTEST PASS", "timeoutS": 90 },
-      { "type": "log_absent", "pattern": "HardFault|RX overrun", "windowS": 60 }
-    ],
-    "repeat": 1
-  },
+  "task": "上电约 30 秒后 CAN 开始掉帧。复现方法:烧录后用 100kbps 满载发送。期望:RX 计数与 TX 一致,自检打印 SELFTEST PASS。\n\n给研发端:构建命令 `make -j8`,产物 `build/motor-fw.elf` —— 构建通过后写进决定的 artifacts。工位端没有这个工程的源码,它需要的地址、符号名、期望值都要写进你的指令。",
   "budget": {
+    "maxRounds": 6,
     "maxTokens": 2000000,
     "wallClockMin": 120
   },
-  "policy": "unattended",
-  "maxDiffLines": 400,
+  "deliver": { "push": true, "remote": "origin" },
   "mailbox": {
-    "maxRounds": 6,
     "pollSeconds": 15,
     "mother": {
       "model": { "providerID": "deepseek", "modelID": "deepseek-chat" },

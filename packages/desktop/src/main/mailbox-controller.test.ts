@@ -1,5 +1,5 @@
 /**
- * 任务控制器的纯逻辑测试:状态机、退避重启、锁生命周期、锁冲突人话。
+ * 任务控制器的纯逻辑测试:状态机、退避重启、锁冲突人话。
  * spawn/杀树/广播全是假的 —— 真进程与杀树语义由 e2e-mailbox-ipc 在真 Electron 里钉。
  */
 
@@ -19,7 +19,6 @@ interface Harness {
   controller: MailboxController
   launches: { config: MailboxHostConfig; io: { onLine(line: string): void; onExit(code: number | null): void } }[]
   stops: { pid?: number; force: boolean }[]
-  locks: boolean[]
   events: MailboxPublicEvent[]
   saved: MailboxSettings | undefined
   timers: { fn: () => void; ms: number; cancelled: boolean }[]
@@ -35,7 +34,6 @@ function makeHarness(initial?: MailboxSettings): Harness {
   const harness: Partial<Harness> = {
     launches: [],
     stops: [],
-    locks: [],
     events: [],
     saved: initial,
     timers: [],
@@ -49,7 +47,6 @@ function makeHarness(initial?: MailboxSettings): Harness {
       return { pid: 1000 + harness.launches!.length } satisfies MailboxLaunchHandle
     },
     stopProcess: (handle, force) => harness.stops!.push({ pid: handle.pid, force }),
-    setHardwareLock: (active) => harness.locks!.push(active),
     broadcast: (event) => harness.events!.push(event),
     persistence: {
       get: () => harness.saved,
@@ -101,10 +98,9 @@ describe("配置", () => {
 })
 
 describe("任务生命周期", () => {
-  test("runner 起停:锁跟着任务走,停止是整棵树的语义", () => {
+  test("runner 起停:一次一个任务,停止是整棵树的语义", () => {
     const harness = makeHarness(SETTINGS)
     expect(harness.controller.start({ kind: "runner" })).toEqual({ ok: true })
-    expect(harness.locks).toEqual([true])
     expect(harness.launches[0]!.config.role).toBe("runner")
     expect(harness.controller.start({ kind: "runner" }).ok).toBe(false)
 
@@ -114,13 +110,11 @@ describe("任务生命周期", () => {
 
     harness.launches[0]!.io.onExit(143)
     expect(harness.controller.status().phase).toBe("idle")
-    expect(harness.locks).toEqual([true, false])
   })
 
-  test("mother 不锁探针;init 一次性失败即 error 不重启", () => {
+  test("mother 是常驻角色异常退出会重启;init 一次性失败即 error 不重启", () => {
     const harness = makeHarness({ ...SETTINGS, role: "mother" })
     harness.controller.start({ kind: "mother" })
-    expect(harness.locks).toEqual([])
 
     harness.launches[0]!.io.onExit(1)
     // mother 是常驻角色,异常退出应重启 —— 先把它停掉再试 init。
@@ -136,7 +130,7 @@ describe("任务生命周期", () => {
     expect(fresh.timers.filter((timer) => !timer.cancelled)).toHaveLength(0)
   })
 
-  test("快照与终局进 status;verdict 终局撤锁", () => {
+  test("快照与终局进 status", () => {
     const harness = makeHarness(SETTINGS)
     harness.controller.start({ kind: "runner" })
     emit(harness, 0, { type: "snapshot", snapshot: { state: { kind: "awaiting-mother", round: 1 }, rounds: [] } })
@@ -151,10 +145,9 @@ describe("任务生命周期", () => {
     harness.launches[0]!.io.onExit(0)
     expect(harness.controller.status().phase).toBe("done")
     expect(harness.controller.status().done?.verdict?.outcome).toBe("passed")
-    expect(harness.locks).toEqual([true, false])
   })
 
-  test("崩溃退避重启:锁保持;停止取消重启", () => {
+  test("崩溃退避重启;停止取消重启", () => {
     const harness = makeHarness(SETTINGS)
     harness.controller.start({ kind: "runner" })
     harness.launches[0]!.io.onExit(1)
@@ -162,8 +155,6 @@ describe("任务生命周期", () => {
     expect(harness.controller.status().message).toContain("重启")
     expect(harness.timers).toHaveLength(1)
     expect(harness.timers[0]!.ms).toBe(restartDelayMs(1))
-    // 崩溃间隙锁不撤 —— 孙进程可能还占着探针。
-    expect(harness.locks).toEqual([true])
 
     harness.timers[0]!.fn()
     expect(harness.launches).toHaveLength(2)
@@ -173,7 +164,6 @@ describe("任务生命周期", () => {
     harness.controller.stop()
     expect(harness.timers[1]!.cancelled).toBe(true)
     expect(harness.controller.status().phase).toBe("idle")
-    expect(harness.locks).toEqual([true, false])
   })
 
   test("锁冲突(退出码 3)给人话,不进重启循环", () => {
@@ -186,7 +176,6 @@ describe("任务生命周期", () => {
     expect(status.phase).toBe("error")
     expect(status.message).toContain("另一个 Yoma 实例")
     expect(harness.timers).toHaveLength(0)
-    expect(harness.locks).toEqual([true, false])
   })
 })
 
@@ -200,7 +189,7 @@ describe("退避曲线", () => {
 })
 
 describe("审查修复", () => {
-  test("永久性故障不无限重启:连续起来就死会放弃并撤锁", () => {
+  test("永久性故障不无限重启:连续起来就死会放弃", () => {
     const harness = makeHarness(SETTINGS)
     harness.controller.start({ kind: "runner" })
     // 每次都是"起来就死"(时钟不前进 → 活不到 HEALTHY_MS)。
@@ -214,7 +203,6 @@ describe("审查修复", () => {
     const status = harness.controller.status()
     expect(status.phase).toBe("error")
     expect(status.message).toContain("不再重试")
-    expect(harness.locks[harness.locks.length - 1]).toBe(false)
     // 5 次重启用完就收手:第 6 次死亡没有再排定时器(6 次 launch / 5 个定时器)。
     expect(harness.launches).toHaveLength(6)
     expect(harness.timers).toHaveLength(5)
@@ -234,7 +222,7 @@ describe("审查修复", () => {
     expect(harness.controller.status().task?.restarts).toBe(1)
   })
 
-  test("launch 同步抛不会把 phase 卡在 running,也不会扣着锁", () => {
+  test("launch 同步抛不会把 phase 卡在 running", () => {
     const harness = makeHarness(SETTINGS)
     harness.launchThrows = "spawn ENOENT"
     const started = harness.controller.start({ kind: "runner" })
@@ -243,7 +231,6 @@ describe("审查修复", () => {
     const status = harness.controller.status()
     expect(status.phase).toBe("error")
     expect(status.message).toContain("spawn ENOENT")
-    expect(harness.locks).toEqual([true, false])
     // 没有残留任务卡住下一次开跑。
     expect(harness.controller.start({ kind: "runner" }).ok).toBe(true)
   })
@@ -256,12 +243,11 @@ describe("审查修复", () => {
     emit(harness, 0, { type: "done", exitCode: 0, detail: "已入箱" })
     harness.launches[0]!.io.onExit(0)
 
-    // 第二个进程是本机角色的常驻守护,而且探针锁跟着它挂上了。
+    // 第二个进程是本机角色的常驻守护。
     expect(harness.launches).toHaveLength(2)
     expect(harness.launches[1]!.config.role).toBe("runner")
     expect(harness.controller.status().phase).toBe("running")
     expect(harness.controller.status().task?.kind).toBe("runner")
-    expect(harness.locks).toEqual([true])
   })
 
   test("init 失败不接力", () => {
@@ -293,14 +279,19 @@ describe("本机工程目录", () => {
     expect(harness.saved?.projectDir).toBe("/work/fw")
   })
 
-  test("常驻角色没配工程目录就拒绝开跑,而且说人话", () => {
-    const harness = makeHarness({ remote: "git@example.com:mail.git", role: "runner" })
-    const refused = harness.controller.start({ kind: "runner" })
+  test("研发端没配工程目录就拒绝开跑,而且说人话", () => {
+    const harness = makeHarness({ remote: "git@example.com:mail.git", role: "mother" })
+    const refused = harness.controller.start({ kind: "mother" })
     expect(refused.ok).toBe(false)
     expect(refused.ok === false && refused.message).toContain("工程目录")
+    // 拦在开跑之前,所以进程根本没起。
     expect(harness.launches).toHaveLength(0)
-    // 拦在开跑之前,所以既没起进程也没上探针锁。
-    expect(harness.locks).toEqual([])
+  })
+
+  test("工位端不需要工程目录 —— 它没有项目检出,东西全靠信箱附件", () => {
+    const harness = makeHarness({ remote: "git@example.com:mail.git", role: "runner" })
+    expect(harness.controller.start({ kind: "runner" })).toEqual({ ok: true })
+    expect(harness.launches[0]!.config.role).toBe("runner")
   })
 
   test("演练不需要工程目录 —— 它的工作树是自己生成的一次性目标仓", () => {

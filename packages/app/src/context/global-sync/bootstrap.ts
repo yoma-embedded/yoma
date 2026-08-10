@@ -2,10 +2,9 @@
  * 启动时的数据拉取。
  *
  * opencode 版本一口气拉十几样东西:config、providers、path、projects、agents、
- * session.status、project.current、vcs、command.list、references、permission.list、
- * question.list、mcp、mcp resources。my-pi 内核只有其中四样有对应物,其余要么是
- * opencode 特有的服务端概念(agent 定义、MCP、LSP、references),要么已经变成事件推送
- * (permission 由 host 在 resync 时重推,不需要轮询)。
+ * session.status、project.current、vcs、command.list、references、question.list、
+ * mcp、mcp resources。my-pi 内核只有其中四样有对应物,其余要么是 opencode 特有的
+ * 服务端概念(agent 定义、MCP、LSP、references),要么已经变成事件推送。
  *
  * 所以这里剩下的很短。删掉的每一项在下面都写了原因 —— 别照着 git 历史"补回来"。
  */
@@ -187,12 +186,11 @@ export async function bootstrapDirectory(input: {
 
     // 删掉的,以及原因:
     //   agents        my-pi 只有一个由 buildSystemPrompt 出来的系统提示词,没有 persona
-    //   config        内核没有配置服务;还需要的只有权限规则,走 kernel.permission.rules()
+    //   config        内核没有配置服务
     //   session.status  状态由 session.status 事件推送,不再轮询
     //   project.current 项目就是目录本身,上面已经直接 set 了
     //   command.list  斜杠命令改由 host 读 <cwd>/.my-pi/commands/*.md(尚未接入)
     //   references / question / mcp / mcp resources  内核完全没有这些概念
-    //   permission.list  改为 host 在 renderer 重连时重推未决请求,不需要拉
 
     await waitForPaint()
     const slowErrs = errors(await runAll(slow))

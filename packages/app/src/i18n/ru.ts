@@ -13,7 +13,6 @@ export const dict = {
   "command.category.model": "Модель",
   "command.category.mcp": "MCP",
   "command.category.agent": "Агент",
-  "command.category.permissions": "Разрешения",
   "command.category.workspace": "Рабочее пространство",
   "command.category.settings": "Настройки",
 
@@ -71,8 +70,6 @@ export const dict = {
   "command.model.variant.cycle.description": "Переключиться к следующему уровню усилий",
   "command.prompt.mode.shell": "Оболочка",
   "command.prompt.mode.normal": "Промпт",
-  "command.permissions.autoaccept.enable": "Автоматически принимать разрешения",
-  "command.permissions.autoaccept.disable": "Остановить автоматическое принятие разрешений",
   "command.workspace.toggle": "Переключить рабочие пространства",
   "command.workspace.toggle.description": "Включить или отключить несколько рабочих пространств в боковой панели",
   "command.session.undo": "Отменить",
@@ -406,11 +403,6 @@ export const dict = {
   "toast.theme.title": "Тема переключена",
   "toast.scheme.title": "Цветовая схема",
 
-  "toast.permissions.autoaccept.on.title": "Разрешения принимаются автоматически",
-  "toast.permissions.autoaccept.on.description": "Запросы на разрешения будут одобряться автоматически",
-  "toast.permissions.autoaccept.off.title": "Автоматическое принятие разрешений остановлено",
-  "toast.permissions.autoaccept.off.description": "Запросы на разрешения будут требовать одобрения",
-
   "toast.workspace.enabled.title": "Рабочие пространства включены",
   "toast.workspace.enabled.description": "В боковой панели теперь отображаются несколько рабочих деревьев",
   "toast.workspace.disabled.title": "Рабочие пространства отключены",
@@ -473,8 +465,6 @@ export const dict = {
   "error.chain.configInvalid": "Конфигурационный файл по адресу {{path}} невалиден",
   "error.chain.configInvalidWithMessage": "Конфигурационный файл по адресу {{path}} невалиден: {{message}}",
 
-  "notification.permission.title": "Требуется разрешение",
-  "notification.permission.description": "{{sessionTitle}} в {{projectName}} требуется разрешение",
   "notification.question.title": "Вопрос",
   "notification.question.description": "У {{sessionTitle}} в {{projectName}} есть вопрос",
   "notification.action.goToSession": "Перейти к сессии",
@@ -684,16 +674,11 @@ export const dict = {
   "settings.general.notifications.agent.title": "Агент",
   "settings.general.notifications.agent.description":
     "Показывать системное уведомление когда агент завершён или требует внимания",
-  "settings.general.notifications.permissions.title": "Разрешения",
-  "settings.general.notifications.permissions.description":
-    "Показывать системное уведомление когда требуется разрешение",
   "settings.general.notifications.errors.title": "Ошибки",
   "settings.general.notifications.errors.description": "Показывать системное уведомление когда происходит ошибка",
 
   "settings.general.sounds.agent.title": "Агент",
   "settings.general.sounds.agent.description": "Воспроизводить звук когда агент завершён или требует внимания",
-  "settings.general.sounds.permissions.title": "Разрешения",
-  "settings.general.sounds.permissions.description": "Воспроизводить звук когда требуется разрешение",
   "settings.general.sounds.errors.title": "Ошибки",
   "settings.general.sounds.errors.description": "Воспроизводить звук когда происходит ошибка",
 
@@ -732,46 +717,6 @@ export const dict = {
   "settings.commands.description": "Настройки команд будут доступны здесь.",
   "settings.mcp.title": "MCP",
   "settings.mcp.description": "Настройки MCP будут доступны здесь.",
-
-  "settings.permissions.title": "Разрешения",
-  "settings.permissions.description": "Контролируйте какие инструменты сервер может использовать по умолчанию.",
-  "settings.permissions.section.tools": "Инструменты",
-  "settings.permissions.toast.updateFailed.title": "Не удалось обновить разрешения",
-
-  "settings.permissions.action.allow": "Разрешить",
-  "settings.permissions.action.ask": "Спрашивать",
-  "settings.permissions.action.deny": "Запретить",
-
-  "settings.permissions.tool.read.title": "Чтение",
-  "settings.permissions.tool.read.description": "Чтение файла (по совпадению пути)",
-  "settings.permissions.tool.edit.title": "Редактирование",
-  "settings.permissions.tool.edit.description":
-    "Изменение файлов, включая редактирование, запись, патчи и мульти-редактирование",
-  "settings.permissions.tool.glob.title": "Glob",
-  "settings.permissions.tool.glob.description": "Сопоставление файлов по паттернам glob",
-  "settings.permissions.tool.grep.title": "Grep",
-  "settings.permissions.tool.grep.description": "Поиск по содержимому файлов с использованием регулярных выражений",
-  "settings.permissions.tool.list.title": "List",
-  "settings.permissions.tool.list.description": "Список файлов в директории",
-  "settings.permissions.tool.bash.title": "Bash",
-  "settings.permissions.tool.bash.description": "Запуск команд оболочки",
-  "settings.permissions.tool.task.title": "Task",
-  "settings.permissions.tool.task.description": "Запуск подагентов",
-  "settings.permissions.tool.skill.title": "Skill",
-  "settings.permissions.tool.skill.description": "Загрузка навыка по имени",
-  "settings.permissions.tool.lsp.title": "LSP",
-  "settings.permissions.tool.lsp.description": "Запросы к языковому серверу",
-  "settings.permissions.tool.todowrite.title": "Todo Write",
-  "settings.permissions.tool.todowrite.description": "Обновление списка задач",
-  "settings.permissions.tool.webfetch.title": "Web Fetch",
-  "settings.permissions.tool.webfetch.description": "Получение контента по URL",
-  "settings.permissions.tool.websearch.title": "Web Search",
-  "settings.permissions.tool.websearch.description": "Поиск в интернете",
-  "settings.permissions.tool.external_directory.title": "Внешняя директория",
-  "settings.permissions.tool.external_directory.description": "Доступ к файлам вне директории проекта",
-  "settings.permissions.tool.doom_loop.title": "Doom Loop",
-  "settings.permissions.tool.doom_loop.description":
-    "Обнаружение повторяющихся вызовов инструментов с одинаковыми входными данными",
 
   "session.delete.failed.title": "Не удалось удалить сессию",
   "session.delete.title": "Удалить сессию",

@@ -9,7 +9,6 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 
 import { runGitReal } from "../git.ts"
-import type { GradeResult } from "../grader.ts"
 import type { TurnResult, TurnUsage } from "../turn.ts"
 import { cloneMailbox, initBareMailbox } from "./sync.ts"
 
@@ -75,10 +74,8 @@ export function rawMailboxJob(overrides: Record<string, unknown> = {}): Record<s
     title: "测试任务",
     task: "修 bug",
     repo: { name: "m-1" },
-    success: { checks: [{ type: "bash", command: "true" }] },
-    policy: "unattended",
-    budget: { maxIterations: 3, maxTokens: 100_000, wallClockMin: 60 },
-    mailbox: { maxRounds: 3, pollSeconds: 1, mother: { maxTokensPerAnalysis: 50_000 } },
+    budget: { maxRounds: 3, maxTokens: 100_000, wallClockMin: 60 },
+    mailbox: { pollSeconds: 1, mother: { maxTokensPerAnalysis: 50_000 } },
     ...overrides,
   }
 }
@@ -93,26 +90,8 @@ export function fakeTurn(overrides: Partial<TurnResult> = {}): TurnResult {
     text: "我看了一圈",
     toolCalls: [],
     usage: usage(100),
-    decisions: [],
     errors: [],
     elapsedMs: 1000,
-    ...overrides,
-  }
-}
-
-export function fakeGrade(passed: boolean, overrides: Partial<GradeResult> = {}): GradeResult {
-  return {
-    passed,
-    checks: [
-      {
-        check: { type: "bash", command: "true" },
-        outcome: passed ? "pass" : "fail",
-        summary: passed ? "通过" : "退出码 1",
-        evidence: passed ? "" : "assertion failed at main.c:42",
-        elapsedMs: 10,
-      },
-    ],
-    hasEnvironmentError: false,
     ...overrides,
   }
 }

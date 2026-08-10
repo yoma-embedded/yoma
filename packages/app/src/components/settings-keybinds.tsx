@@ -62,13 +62,7 @@ function groupFor(id: string): KeybindGroup {
   if (id.startsWith("model.") || id.startsWith("agent.") || id.startsWith("mcp.")) return "Model and agent"
   if (id.startsWith("file.") || id.startsWith("fileTree.")) return "Navigation"
   if (id.startsWith("prompt.")) return "Prompt"
-  if (
-    id.startsWith("session.") ||
-    id.startsWith("message.") ||
-    id.startsWith("permissions.") ||
-    id.startsWith("steps.") ||
-    id.startsWith("review.")
-  )
+  if (id.startsWith("session.") || id.startsWith("message.") || id.startsWith("steps.") || id.startsWith("review."))
     return "Session"
 
   return "General"

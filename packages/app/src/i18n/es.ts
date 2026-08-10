@@ -13,7 +13,6 @@ export const dict = {
   "command.category.model": "Modelo",
   "command.category.mcp": "MCP",
   "command.category.agent": "Agente",
-  "command.category.permissions": "Permisos",
   "command.category.workspace": "Espacio de trabajo",
   "command.category.settings": "Ajustes",
 
@@ -71,8 +70,6 @@ export const dict = {
   "command.model.variant.cycle.description": "Cambiar al siguiente nivel de esfuerzo",
   "command.prompt.mode.shell": "Shell",
   "command.prompt.mode.normal": "Prompt",
-  "command.permissions.autoaccept.enable": "Aceptar permisos automáticamente",
-  "command.permissions.autoaccept.disable": "Dejar de aceptar permisos automáticamente",
   "command.workspace.toggle": "Alternar espacios de trabajo",
   "command.workspace.toggle.description": "Habilitar o deshabilitar múltiples espacios de trabajo en la barra lateral",
   "command.session.undo": "Deshacer",
@@ -411,11 +408,6 @@ export const dict = {
   "toast.workspace.disabled.title": "Espacios de trabajo deshabilitados",
   "toast.workspace.disabled.description": "Solo se muestra el worktree principal en la barra lateral",
 
-  "toast.permissions.autoaccept.on.title": "Aceptando permisos automáticamente",
-  "toast.permissions.autoaccept.on.description": "Las solicitudes de permisos se aprobarán automáticamente",
-  "toast.permissions.autoaccept.off.title": "Se dejó de aceptar permisos automáticamente",
-  "toast.permissions.autoaccept.off.description": "Las solicitudes de permisos requerirán aprobación",
-
   "toast.model.none.title": "Ningún modelo seleccionado",
   "toast.model.none.description": "Conecta un proveedor para resumir esta sesión",
 
@@ -473,8 +465,6 @@ export const dict = {
   "error.chain.configInvalid": "El archivo de configuración en {{path}} es inválido",
   "error.chain.configInvalidWithMessage": "El archivo de configuración en {{path}} es inválido: {{message}}",
 
-  "notification.permission.title": "Permiso requerido",
-  "notification.permission.description": "{{sessionTitle}} en {{projectName}} necesita permiso",
   "notification.question.title": "Pregunta",
   "notification.question.description": "{{sessionTitle}} en {{projectName}} tiene una pregunta",
   "notification.action.goToSession": "Ir a sesión",
@@ -687,16 +677,11 @@ export const dict = {
   "settings.general.notifications.agent.title": "Agente",
   "settings.general.notifications.agent.description":
     "Mostrar notificación del sistema cuando el agente termine o necesite atención",
-  "settings.general.notifications.permissions.title": "Permisos",
-  "settings.general.notifications.permissions.description":
-    "Mostrar notificación del sistema cuando se requiera un permiso",
   "settings.general.notifications.errors.title": "Errores",
   "settings.general.notifications.errors.description": "Mostrar notificación del sistema cuando ocurra un error",
 
   "settings.general.sounds.agent.title": "Agente",
   "settings.general.sounds.agent.description": "Reproducir sonido cuando el agente termine o necesite atención",
-  "settings.general.sounds.permissions.title": "Permisos",
-  "settings.general.sounds.permissions.description": "Reproducir sonido cuando se requiera un permiso",
   "settings.general.sounds.errors.title": "Errores",
   "settings.general.sounds.errors.description": "Reproducir sonido cuando ocurra un error",
 
@@ -736,45 +721,6 @@ export const dict = {
   "settings.commands.description": "La configuración de comandos estará disponible aquí.",
   "settings.mcp.title": "MCP",
   "settings.mcp.description": "La configuración de MCP estará disponible aquí.",
-
-  "settings.permissions.title": "Permisos",
-  "settings.permissions.description": "Controla qué herramientas puede usar el servidor por defecto.",
-  "settings.permissions.section.tools": "Herramientas",
-  "settings.permissions.toast.updateFailed.title": "Fallo al actualizar permisos",
-
-  "settings.permissions.action.allow": "Permitir",
-  "settings.permissions.action.ask": "Preguntar",
-  "settings.permissions.action.deny": "Denegar",
-
-  "settings.permissions.tool.read.title": "Leer",
-  "settings.permissions.tool.read.description": "Leer un archivo (coincide con la ruta del archivo)",
-  "settings.permissions.tool.edit.title": "Editar",
-  "settings.permissions.tool.edit.description":
-    "Modificar archivos, incluyendo ediciones, escrituras, parches y multi-ediciones",
-  "settings.permissions.tool.glob.title": "Glob",
-  "settings.permissions.tool.glob.description": "Coincidir archivos usando patrones glob",
-  "settings.permissions.tool.grep.title": "Grep",
-  "settings.permissions.tool.grep.description": "Buscar contenidos de archivo usando expresiones regulares",
-  "settings.permissions.tool.list.title": "Listar",
-  "settings.permissions.tool.list.description": "Listar archivos dentro de un directorio",
-  "settings.permissions.tool.bash.title": "Bash",
-  "settings.permissions.tool.bash.description": "Ejecutar comandos de shell",
-  "settings.permissions.tool.task.title": "Tarea",
-  "settings.permissions.tool.task.description": "Lanzar sub-agentes",
-  "settings.permissions.tool.skill.title": "Habilidad",
-  "settings.permissions.tool.skill.description": "Cargar una habilidad por nombre",
-  "settings.permissions.tool.lsp.title": "LSP",
-  "settings.permissions.tool.lsp.description": "Ejecutar consultas de servidor de lenguaje",
-  "settings.permissions.tool.todowrite.title": "Escribir Todo",
-  "settings.permissions.tool.todowrite.description": "Actualizar la lista de tareas",
-  "settings.permissions.tool.webfetch.title": "Web Fetch",
-  "settings.permissions.tool.webfetch.description": "Obtener contenido de una URL",
-  "settings.permissions.tool.websearch.title": "Búsqueda Web",
-  "settings.permissions.tool.websearch.description": "Buscar en la web",
-  "settings.permissions.tool.external_directory.title": "Directorio Externo",
-  "settings.permissions.tool.external_directory.description": "Acceder a archivos fuera del directorio del proyecto",
-  "settings.permissions.tool.doom_loop.title": "Bucle Infinito",
-  "settings.permissions.tool.doom_loop.description": "Detectar llamadas a herramientas repetidas con entrada idéntica",
 
   "session.delete.failed.title": "Fallo al eliminar sesión",
   "session.delete.title": "Eliminar sesión",

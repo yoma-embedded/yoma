@@ -3,13 +3,13 @@
  *
  * ## 这是什么
  *
- * 一份信箱任务 = 一份普通 bench job(工程标识、硬件、判据、预算、策略)+ 一个 `mailbox`
- * 段(轮数上限、研发端的模型与分析预算、轮询间隔、附件上限)。两个角色共用这一份文件:
+ * 一份信箱任务 = 一份普通 bench job(工程标识、硬件、任务描述、预算)+ 一个 `mailbox`
+ * 段(研发端的模型与分析预算、轮询间隔、附件上限)。两个角色共用这一份文件:
  *
  * - **mother**(研发端,有构建环境):读结果 → 改代码 → 构建 → 把产物当附件塞进本轮 →
  *   用大白话写指令;
  * - **runner**(工位端,连着板子):领指令与附件 → 上板(怎么上由它自己定)→ 观察复现 →
- *   判据由调试台亲跑 → 回填结果。
+ *   回填看到的现象。它**没有项目检出**,工作目录里只有附件。
  *
  * 两边只通过一个 git 仓库(信箱)通信,不共享文件系统、不开端口。
  *
@@ -18,17 +18,14 @@
  *
  * ## 为什么复用 Job 而不是另起一套
  *
- * 判据与策略在信箱模式下**语义不变**:判据仍由工位端调试台亲跑(研发端说"通过"也
- * 不算数),策略仍在每轮的子进程里生效。另起一套字段等于把这些不变式重新发明一遍,
- * 还会和单机模式漂移。
+ * `mailbox` 段里只放**两侧协作**才需要的东西(研发端的模型与分析预算、轮询间隔、
+ * 附件上限);任务本身的字段(硬件、预算、模型)在 Job 里,信箱模式没有改变它们的语义。
  *
- * 预算三旋钮的信箱语义:
- * - `maxTokens` 仍是跨轮硬上限,但按**两侧合计**(runner 花的 + mother 花的)强制,
- *   两侧守卫口径一致;
- * - `wallClockMin` 由 mother 在**裁决点**强制(粒度是轮,不是分钟级抢占;轮内另有
- *   单轮硬超时兜底)—— 没有它,闭环会在没人看的机器上连跑十几个小时;
- * - `maxIterations` **不用**(轮的结构被信箱轮取代),`mailbox.maxRounds` 顶上,
- *   缺省值取它 —— 一个旋钮,同一个意思:轮数上限。
+ * 预算三旋钮全在 `job.budget` 里,也全部由 mother 在**裁决点**强制:
+ * - `maxRounds` 轮数上限;
+ * - `maxTokens` 按**两侧合计**(runner 花的 + mother 花的);
+ * - `wallClockMin` 粒度是轮,不是分钟级抢占(轮内另有单轮硬超时兜底)——
+ *   没有它,闭环会在没人看的机器上连跑十几个小时。
  */
 
 import { readTextFile } from "../fsx.ts"
@@ -46,8 +43,6 @@ export interface MailboxMotherConfig {
 }
 
 export interface MailboxConfig {
-  /** 信箱轮数上限(一轮 = 一次指令 → 一次执行 → 一次裁决)。缺省取 budget.maxIterations。 */
-  maxRounds: number
   mother: MailboxMotherConfig
   /** 两侧守护进程的轮询间隔(秒)。CLI 的 --interval 可覆盖。 */
   pollSeconds: number
@@ -89,9 +84,6 @@ export function parseMailboxJob(raw: unknown): MailboxJob {
   const motherRaw = isObject(mailboxRaw.mother) ? mailboxRaw.mother : {}
   const modelRaw = isObject(motherRaw.model) ? motherRaw.model : undefined
 
-  const maxRounds = num(mailboxRaw.maxRounds) ?? job.budget.maxIterations
-  if (maxRounds < 1) issues.push("mailbox.maxRounds 至少为 1")
-
   const maxTokensPerAnalysis = num(motherRaw.maxTokensPerAnalysis) ?? DEFAULT_MOTHER_ANALYSIS_TOKENS
   if (maxTokensPerAnalysis < 1) issues.push("mailbox.mother.maxTokensPerAnalysis 至少为 1")
 
@@ -106,7 +98,6 @@ export function parseMailboxJob(raw: unknown): MailboxJob {
   return {
     job,
     mailbox: {
-      maxRounds,
       mother: {
         model: modelRaw ? { providerID: str(modelRaw.providerID), modelID: str(modelRaw.modelID) } : undefined,
         maxTokensPerAnalysis,

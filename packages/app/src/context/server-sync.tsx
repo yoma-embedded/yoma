@@ -199,10 +199,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     const meta = sessionMeta.get(key)
     const retainedLimit = Math.max(store.limit, options?.limit ?? 0, meta?.limit ?? 0)
     if (meta && meta.limit >= retainedLimit) {
-      const next = trimSessions(store.session, {
-        limit: retainedLimit,
-        permission: session.data.permission,
-      })
+      const next = trimSessions(store.session, { limit: retainedLimit })
       if (next.length !== store.session.length) {
         setStore("session", reconcile(next, { key: "id" }))
       }
@@ -224,10 +221,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
                 .filter((s) => !s.time?.archived)
                 .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
               const limit = Math.max(store.limit, options?.limit ?? 0, sessionMeta.get(key)?.limit ?? 0)
-              const next = trimSessions(nonArchived, {
-                limit,
-                permission: session.data.permission,
-              })
+              const next = trimSessions(nonArchived, { limit })
               batch(() => {
                 next.forEach(session.remember)
                 // 拿到的就是全部,不用再估算总数。
@@ -321,8 +315,6 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
         return session.get(event.message.sessionID)?.directory
       case "message.part.updated":
         return session.get(event.part.sessionID)?.directory
-      case "permission.asked":
-        return session.get(event.request.sessionID)?.directory
     }
   }
 
@@ -362,7 +354,6 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       setStore,
       retainedLimit: sessionMeta.get(key)?.limit,
       sessionContent: false,
-      permission: session.data.permission,
       vcsCache: children.vcsCache.get(key),
     })
   })

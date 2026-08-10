@@ -90,7 +90,7 @@ Bun workspace,`packages/` 下 7 个包:
 | `bun --cwd packages/desktop e2e:renderer` | 最后一跳:真窗口 + 真 preload + **真 contextBridge**(含 mailbox 桥三条) |
 | `bun --cwd packages/desktop smoke:mailbox` | 调试台冒烟:Electron RUN_AS_NODE 对打包产物跑完整**本机演练**(假模型,零 key 零硬件) |
 | `bun --cwd packages/desktop e2e:mailbox` | main 托管端到端:真 kernel.js 的 `mailbox.setActive` 往返 + 假守护喂 `@@event` + 停止杀树 + 锁冲突人话 |
-| `bun packages/bench/src/cli.ts run <job.json>` | 无人值守调试台:跑完整闭环(`check` 只校验,`grade` 只跑判据) |
+| `bun packages/bench/src/cli.ts check <job.json>` | 校验任务书 + 本机内核装配 |
 | `bun packages/bench/src/cli.ts mailbox sim <job.json> --project <工程目录>` | 信箱闭环单机模拟(`init`/`runner`/`mother`/`status` 是生产形态的四个子命令;工程目录是本机事实,任务书里没有) |
 
 后三个是 CI 里唯一能挡住"my-pi 一次重构悄悄搞死桌面端"的东西 —— 我们是把它整个 inline
@@ -162,15 +162,14 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
 3. `prompt()` 在 abort 后是 **resolve 而不是 reject**(中断是数据不是异常),
    要区分"取消"和"完成"只能自己拿 AbortController。
 
-### 我们补的、内核只给了机制的四件事
+### 我们补的、内核只给了机制的三件事
 
-- **权限门**(`host/permission.ts`)。内核没有权限系统,它自己的 ACP 适配器也从不注册
-  `tool_call` 钩子 —— 也就是说在 Zed 里 `flash download` 是无人值守直接擦片的。
-  内核对这个钩子 **没有任何超时**,所以三个兜底一个都不能少:超时自动拒绝、
-  abort 时拒绝该会话全部未决、renderer 重连时重推未决请求。
-  裁决分三层:注入的 `PolicyProvider`(bench 用)→ `rules` 表 → 问人;策略返回
-  `escalate` 会**越过** rules 直接问人,策略函数抛错也按 escalate 处理(崩了宁可问人,
-  绝不静默放行)。每个终局裁决都经 `onDecision` 吐出去 —— 那是无人值守模式的审计底线。
+> **没有权限系统。**2026-08-10 起整套权限保护(内核权限门、bench 三档策略与角色边界、
+> 桌面弹窗 UI、探针互斥锁)全部删除 —— 这是产品决定,不是遗漏。agent 想调什么工具就
+> 调什么工具,不问不拦。约束 agent 能做什么靠的是**它手上有什么**:工位端没有项目
+> 检出,不把脚本送过去它就跑不了(见"信箱闭环")。代价一并写在这:同机的交互会话与
+> 调试台任务可以同时抢探针,实测会撞 `0xe00002c5`。
+
 - **自动压缩**(`host/compaction.ts`)。内核只提供 `compact()`,什么时候压是应用层的事。
   两个 guard 一个不能少:没有真实 usage 数据时不猜(否则新会话一开口就被压)、
   刚压完不重压(否则一路压到没东西可压)。
@@ -212,48 +211,54 @@ provider 目录在无 key 时来自 `CONFIGURABLE_PROVIDERS`(my-pi `PROVIDERS` �
 ### 调试台(`packages/bench`)
 
 host 的**第二个宿主**:`createKernelHost()` 是纯 Node 装配(零 Electron 依赖),
-bench 直接 import 它跑无人值守任务,于是权限门、投影器、自动压缩、工具装配、会话协议
-全部白得。`sessionsRoot` 默认指向 desktop 的 userData —— 跑完在桌面端直接回放。
+bench 直接 import 它跑无人值守任务,于是投影器、自动压缩、工具装配、会话协议全部白得。
+`sessionsRoot` 默认指向 desktop 的 userData —— 跑完在桌面端直接回放。
 
-三条不变式,动这个包之前先读:
+两条不变式,动这个包之前先读:
 
-1. **判据由 runner 亲自跑,agent 说"修好了"不算数**(`grader.ts`)。日志判据自己起
-   采集进程,不复用 agent 写在 `.my-pi/logs/` 的文件 —— 那是考生自己填的答题卡。
-   所有命令 argv 直接 spawn **不过 shell**(判据不该被 `&&` 拼出第二个语义)。
-2. **一轮一个子进程**(`turn-entry.ts`)。my-pi 的探针租约/gdb 会话表/log 采集器都是
-   模块级全局,进程边界 = 免费且可靠的清理,grade 时不会撞上"探针被占着"。
-3. **审计不能伪造裁决者**。无人接管时策略把 `escalate` 转成 `deny`(`turn.ts` 的
-   `effectivePolicy`),而不是发一个注定被自动拒绝的 ask —— 后者会把决策记成
-   `by: "human"`,而当时根本没有人。`TurnInput.unattended` 就是为了把这件事传进子进程。
+1. **一轮一个子进程**(`turn-entry.ts`)。my-pi 的探针租约/gdb 会话表/log 采集器都是
+   模块级全局,进程边界 = 免费且可靠的清理,下一轮不会撞上"探针被占着"。
+   子进程协议是单向的:输入一个 JSON 文件、输出一个 JSON 文件、stdout 是进度。
+2. **只有预算是代码说了算**。轮数 / token / 墙钟三个上限由 mother 在裁决点强制,
+   记 `by:"policy"`;别的全归模型 —— 包括"这个任务算不算做完了"。
 
-三个实测踩过的坑:`.bench/` 必须自带 `.gitignore`(否则运行产物被 `git add -A` 卷进
-提交,研发打开 diff 看到五个内部文件加一处真改动);**`.my-pi/` 的运行产物同理**
-(gdb 会话日志/烧录状态 —— 信箱闭环首跑时 17 个改动文件里 16 个是它;由
-`ensureMyPiIgnore` 兜住,只忽略产物子路径,不碰用户自己提交的技能/上下文);
+两个实测踩过的坑:`.bench/` 必须自带 `.gitignore`(否则运行产物被 `git add -A` 卷进
+提交,研发打开 diff 看到五个内部文件加一处真改动;`.gitignore` 要**忽略它自己**,
+否则工作树永远不干净,而研发端每轮开局都要求树干净 —— 只有 `mailbox.template.json`
+白名单放行,那是项目配置);**`.my-pi/` 的运行产物同理**(gdb 会话日志/烧录状态 ——
+信箱闭环首跑时 17 个改动文件里 16 个是它,由 `ensureMyPiIgnore` 兜住)。
 `result.text` 只收 **assistant** 消息的非 synthetic text part(用户消息的 part 也是
-text part,不过滤的话提示词会原样出现在报告的"根因分析"里)。
+text part,不过滤的话提示词会原样出现在终报的"根因分析"里)。
 
 ### 信箱闭环(`bench/src/mailbox/`)
 
 跨机器多轮调试,唯一通道是一个 git 仓库(信箱)。两侧都是 yoma 内核跑的 agent。
 
-**分工(2026-08-08 起对调)**:角色字符串仍是 `mother`/`runner`,含义换了 ——
+**分工**:角色字符串是 `mother`/`runner` ——
 
 - **mother = 研发端**:有工程检出与构建环境。读证据 → 改代码 → 构建 → 把产物当
   **附件**塞进本轮 → 用大白话写指令。它在项目仓上开分支、每轮提交、终局推交付分支。
-  碰不到硬件(`role:"dev"` 直接拒 flash/gdb/log)。进程内跑,不需要子进程。
-- **runner = 工位端**:板子在这儿。领指令与附件 → **自己决定怎么上板**(probe 烧录 /
-  OTA 脚本 / 别的)→ 复现观察 → 判据由调试台亲跑 → 回填。它**不改源码**
-  (`role:"bench"` 拒 edit/write)、不开分支、不提交;工作树必须干净,脏了如实回填成
-  证据(`result.workspace.dirty`)。复用 turn-entry 子进程与 grader。
+  碰不到硬件(板子根本不在这台机器上)。进程内跑,不需要子进程。
+- **runner = 工位端**:板子在这儿,而且**只有板子**。领指令与附件 → 自己决定怎么
+  上板 → 复现观察 → 把看到的现象回填。
 
-对调的理由是**手上有什么**:改代码要工具链和完整检出,那在研发机;上板要探针,那在
-工位机。反过来的旧分工逼着工位端既改代码又验证,等于让考生自己出题。
+分工的依据是**手上有什么**:改代码要工具链和完整检出,那在研发机;上板要探针,那在工位机。
+
+**工位端没有项目代码**(2026-08-10 起)。它的工作目录是一个一次性目录,住在信箱克隆的
+**兄弟位置**(不能在克隆里 —— `pullReset` 的 `clean -fd` 会把附件删掉),内容全部来自
+附件。于是这一侧不需要 git、不需要构建工具链、不需要"工作树干净"这套纪律。
+
+两条由此而来的硬性话术要求(落在 `mailbox/prompts.ts`):
+
+1. **上下文由研发端补全**。工位端读不到源码,所以"这个地址是什么变量""这一版改了
+   什么""该盯哪个符号"必须写进指令。研发端的角色提示词专门交代了这一段。
+2. **附件是工位端拿到任何东西的唯一通道** —— 固件、诊断脚本、参考数据都走它。
+   要给 agent 加工具,就是往 `artifacts` 里多列一个文件,不需要改协议。
 
 - **协议里不预设"怎么把新固件弄上板"**:附件 + 一句人话就是全部机制。换成 OTA 或
   远端 CI 产物时,变的只是指令里那句话和工位端手上的脚本 —— 不用改协议。
-  代价是"它可能忘了烧却接着测",挡它的是**构建指纹判据**(板上读到的版本要对得上),
-  不是协议。
+  代价是"它可能忘了烧却接着测" —— 挡它的是研发端把**自证**写进指令(让工位端报出的
+  数字本身能说明版本,比如读构建指纹),不是协议。
 - **状态由文件存在性推断,不落状态文件**:零轮次 → `kickoff`(等研发端开第一轮,
   init 不再写死"只复现取证");instruction 有而 result 无 → 等工位端;result 有 →
   等研发端;`verdict.json` 出现 → 终局。工位端的 result.json **最后写**,研发端的
@@ -262,28 +267,16 @@ text part,不过滤的话提示词会原样出现在报告的"根因分析"里)�
   崩溃写了一半的文件在下次轮询自动消失,协议退回"重跑本步",没有恢复逻辑可写错。
   两侧的本地状态(会话指针、token 计数)住在自带 `.gitignore` 的目录里,clean 不删
   被 ignore 的文件,这是它们的护身符。
-- **裁决分两层,层序即权力边界**:判据全过 / 预算耗尽 / 环境错误由确定性守卫直接
-  终局(记 `by:"policy"`),模型只裁"判据没过且预算还有"的局面;研发端说 `success`
-  会被解析器拒绝 —— 判据不归模型管,对哪个模型都一样。
-- **硬件动作只在工位侧**:失败回刷 known-good 在 runner 的终局收尾里(只做一次 ——
-  轮与轮之间是延续,每轮回刷等于每轮白烧一次片);**交付 push 在研发端**(代码在
-  它那儿),而且必须在"刚写下 verdict"那一步就做 —— 守护循环见到 done 就返回退出,
-  留到下一轮等于永远不做(测试逮住过)。
-- **任务书里不许有绝对路径**:它要在两台机器上被读。工程目录由本机配置提供
+- **裁决:模型判对错,代码管预算**。研发端给 `continue` / `done` / `fail`;轮数、
+  token(两侧合计)、墙钟三个上限到顶时确定性守卫直接终局 `failed`(记 `by:"policy"`)。
+  没有独立判据机制 —— "通过"就是研发端读完工位端自述之后的判断。
+- **交付 push 在研发端**(代码在它那儿),而且必须在"刚写下 verdict"那一步就做 ——
+  守护循环见到 done 就返回退出,留到下一轮等于永远不做(测试逮住过)。
+- **任务书里不许有绝对路径**:它要在两台机器上被读。研发端的工程目录由本机配置提供
   (`resolveWorkspace(job, localDir)`;桌面端是配置页的"工程目录",CLI 是 `--project`),
-  `serializeMailboxJob` 会主动摘掉 `repo.directory`。判据同理:`{type:"script", path}`
-  的解释器由**跑判据的机器**当场解析(macOS 的 python3 / Windows 的 `py -3`),
-  probe-rs 路径与板卡事实由调试台经环境变量注入(`YOMA_PROBE_RS`/`YOMA_CHIP`/…,
-  见 grader.ts 的"判据的环境契约")。写死 `python3 …` 或绝对路径的判据,换台机器
-  一律"命令起不来",而那个报错长得和"板子没插"一模一样。
-- 附件落在工位机的 `.bench/incoming/<原名>`(被 `.bench/.gitignore` 挡住,不弄脏被测
-  仓库),所以 job 的 `bench.elf` 通常指那儿而不是 `build/…`——工位机不构建。
-  **不清空 incoming**:某轮没带附件不代表旧固件失效,板上跑的还是它。
-- **烧录新鲜度要有一条判据**,不然"agent 忘了烧却接着测"会变成假通过。最强的写法是
-  `probe-rs verify --chip X <elf>`(逐字节比对 flash 与 ELF),比读一个魔数常量强 ——
-  魔数只证明"某个带这个符号的固件在跑",不证明是哪一版。**但它内容不匹配时照样
-  exit 0**(实测:`Verification failed: contents do not match` / exit=0),所以判据脚本
-  必须认输出文本;只看退出码的话这条闸门永远不会响,比没有更糟。
+  `serializeMailboxJob` 会主动摘掉 `repo.directory`。工位端根本不需要这个配置。
+- 附件落在工位端工作目录的**根**,`result.incoming` 里是纯文件名。
+  **不清空**:某轮没带附件不代表旧固件失效,板上跑的还是它。
 - 单机模拟(`mailbox sim`)起 **两个真子进程 + 各自的克隆 + 本地裸仓**,与生产的
   差别只有远端 URL(`--remote` 换私有 GitHub 仓即是跨机器形态)。
 
@@ -291,28 +284,18 @@ text part,不过滤的话提示词会原样出现在报告的"根因分析"里)�
 
 - 引擎打包成两个纯 node 产物(`out/main/mailbox-host.mjs` 五角色一个入口 +
   `mailbox-turn-entry.mjs`,esbuild 见 `desktop/scripts/build-mailbox.ts`);
-  守护 stdout 上的 `@@event {json}` 行是唯一事件通道(与 `@@escalate` 同款)。
+  守护 stdout 上的 `@@event {json}` 行是唯一事件通道。
 - 桌面 main 托管守护(`main/mailbox-controller.ts` 纯逻辑 + `main/mailbox.ts` 接线;
   child_process.spawn + RUN_AS_NODE,**不用 utilityProcess.fork** —— 它的 kill 没有
   信号可选,POSIX 优雅停机依赖 SIGTERM 链);renderer 走 `window.api.mailbox`,
   app 页面在 `/bench`(四分区:配置/任务/进度/终报)。
-- **探针互斥是硬锁**,而且锁的边界是**取用**而不是"这个工具":runner 任务活跃时
-  main 经内核控制通道发 `mailbox.setActive`,权限门的任务级覆盖槽拒掉 flash/gdb/log
-  的取用动作。三条不能少的例外/纪律(都是审查逼出来的):
-  - **`stop`/`status` 必须放行** —— 它们释放或只读探针。一刀切拒掉会让"锁挂上之前
-    就在跑的采集/gdb 会话再也停不下来",锁反过来保护了冲突源。
-  - **log 的 command 模式判 escalate 而不是放行** —— 它确实不占探针,但能起任意
-    进程,而交互内核不注入 policy、rules 里 log 又是 allow:静默落回 rules 等于给锁
-    开一个后门(flash 被拒的模型改用 `log start command:"probe-rs …"` 就绕过去了)。
-  - **挂锁要清算在飞的未决弹窗** —— override 只在 tool_call 进入时问一次,锁之前
-    弹出的 flash 弹窗还挂着(超时 10 分钟),用户随手一点"允许"就在锁窗口内真的
-    烧了片。清算时裁决者记 `by:"policy"`,**不是** human(当时没有人点)。
-  锁不动用户 rules 表,renderer 无解锁能力,内核重启后 main 重申。
+- **配置页的"工程目录"只有研发端角色要填**(`mailbox-controller` 的开跑守卫按角色
+  分):工位端没有项目检出。
 - **退出 app 必须带走守护树**(`stopSidecars` → `mailboxMain.stopAll`):任务在飞时
   Cmd+Q 或自动更新 relaunch,守护与 turn 孙进程会变成**还在烧录/gdb 的孤儿**。
-  先 SIGTERM 让守护自己转杀孙进程,宽限后硬杀。同理,判据的 detached 子进程有
-  自己的信号转杀登记表(grader.ts)—— 它们在独立进程组里,父进程的 SIGTERM 到不了,
-  漏掉就是 `probe-rs attach` 攥着探针不放,而报错长得和"没插板子"一模一样。
+  先 SIGTERM 让守护自己转杀孙进程,宽限后硬杀。`runner.ts` 的 `activeTurnChildren`
+  是这条杀树链的中间一环 —— 漏掉就是 `probe-rs attach` 攥着探针不放,而报错长得和
+  "没插板子"一模一样。
 - 浏览器侧类型是 kernel 的 `mailbox-view.ts`(结构化复制,View 后缀),漂移由
   bench 的 `mailbox/view-check.ts` 约束式断言兜住 —— 与工具 details 同一套纪律。
 
@@ -369,10 +352,12 @@ text part,不过滤的话提示词会原样出现在报告的"根因分析"里)�
   实测:双机首跑三条判据全过,证据却是
   `xTickCount@0x200002a8: 24920 -> 25665 (?=745) | ????????` —— 退出码不受影响,
   所以裁决是对的,坏掉的恰恰是这套系统的产品:证据,而且一声不吭。
-  凡是要读中文输出的子进程,环境里钉死编码(grader.ts 注入
-  `PYTHONIOENCODING=utf-8` + `PYTHONUTF8=1`)。
+  凡是要读中文输出的子进程,环境里钉死编码(`PYTHONIOENCODING=utf-8` + `PYTHONUTF8=1`)。
+  **注意:2026-08-10 删掉判据层之后,我们这边已经没有强制它的落点了** —— 工位端 agent
+  现在是自己经 bash/my-pi 跑脚本的,那条路上没有我们注入的环境。这个坑还在,只是防线
+  没了;真撞上就在任务书里让脚本自己 `sys.stdout.reconfigure(encoding="utf-8")`。
   **它的测试不能写成"跑个打中文的脚本看花不花"** —— 开发机 locale 本来就是 UTF-8,
-  那是一个永远不会响的闸门(实测确认)。要断言的是机制:判据进程一定收到那两个变量。
+  那是一个永远不会响的闸门(实测确认)。
 - **bun 的 `spawnSync`/`spawn` 省略 `env` 时不认运行时改过的 `process.env.PATH`**,
   它按进程启动那一刻的环境解析 argv[0](与 `os.homedir()` 同一类)。想让子进程看到
   当前环境就得显式传 `env`。实测:改了 PATH 之后不传 env,解析到的仍是旧 PATH 上那个
@@ -406,15 +391,13 @@ text part,不过滤的话提示词会原样出现在报告的"根因分析"里)�
 
 ## 已知的未完成项
 
-- **信箱调试台桌面端只剩 P4**:P1(引擎可打包化)/ P2(main 托管 + 探针互斥)/
-  P3(`/bench` 四分区 UI)已完工并全链验收;2026-08-08 又做了**分工对调 + 机器无关**
-  (研发端改代码、工位端只上板;任务书不带绝对路径;script 判据)——
-  见"信箱闭环"一节与 `docs/施工指南-信箱调试台桌面端.md` 的施工记录。待办:
-  **在 Windows 上真跑一遍**
-  (打包冒烟 + taskkill 杀树验收)、双机验收剧本(exe 工位 + exe 决策对同一私有仓,
-  再验 exe ↔ CLI 混搭)、断网演练的 UI 呈现。仓里已有 Windows 出包 CI
-  (`.github/workflows/desktop-win.yml`,workflow_dispatch 一键出未签名 NSIS 包);
-  两台机器的上手步骤见 `docs/调试台-Windows双机上手.md`。
+- **信箱调试台:2026-08-10 大幅简化之后还没上过真板子。** 这一版删掉了判据层、
+  权限层与工位端的项目检出(见"信箱闭环"),`bun --cwd packages/desktop smoke:mailbox`
+  与单机 `mailbox sim` 都过了,但**双机真跑一次是必须的**:研发端能不能把上下文
+  写够、工位端在只有附件的目录里能不能干活,只有真跑才知道。同时补 Windows 侧
+  (打包冒烟 + taskkill 杀树)。仓里已有 Windows 出包 CI
+  (`.github/workflows/desktop-win.yml`);两台机器的上手步骤见
+  `docs/调试台-Windows双机上手.md`(**需按这一版重写**)。
 
 - `ServerConnection` / `ServerKey` 这套概念还散在 app 的路由与标签页里(现在只是空壳,
   `serverReady` 用占位值立刻 resolve)。清除它是独立一件事。

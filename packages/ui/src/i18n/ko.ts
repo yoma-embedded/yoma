@@ -117,10 +117,6 @@ export const dict = {
   "ui.common.next": "다음",
   "ui.common.submit": "제출",
 
-  "ui.permission.deny": "거부",
-  "ui.permission.allowAlways": "항상 허용",
-  "ui.permission.allowOnce": "한 번만 허용",
-
   "ui.message.expand": "메시지 펼치기",
   "ui.message.collapse": "메시지 접기",
   "ui.message.copy": "복사",

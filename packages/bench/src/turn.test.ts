@@ -1,9 +1,10 @@
 /**
- * 一轮 agent 执行的端到端:真 kernel host + 真 harness + 真权限门,只把模型换成
- * pi-ai 的 faux provider(不要网络、不要 key)。
+ * 一轮 agent 执行的端到端:真 kernel host + 真 harness,只把模型换成 pi-ai 的
+ * faux provider(不要网络、不要 key)。
  *
- * 这一条守的是 bench 最容易静默坏掉的地方:轮次结束判定。判早了 grader 会和自动压缩
- * 抢会话;判晚了每轮白等。所以这里专门断言"工具跑完之后仍然等到真 idle"。
+ * 这一条守的是 bench 最容易静默坏掉的地方:轮次结束判定。判早了调用方会拿着半截结果
+ * 往下走(而 agent 正要重试,两边同时动板子);判晚了每轮白等。所以这里专门断言
+ * "工具跑完之后仍然等到真 idle"。
  */
 
 import { afterEach, describe, expect, test } from "bun:test"
@@ -45,22 +46,19 @@ function models(steps: unknown[]) {
   }
 }
 
-function job(workspace: string, overrides: Record<string, unknown> = {}): Job {
+function job(workspace: string): Job {
   return parseJob({
     id: "j-test",
     title: "测试任务",
     task: "修一个 bug",
     repo: { directory: workspace },
-    bench: { chip: "STM32G474RE", knownGoodElf: "good.elf" },
-    success: { checks: [{ type: "bash", command: "true" }] },
-    policy: "unattended",
-    ...overrides,
+    bench: { chip: "STM32G474RE" },
   })
 }
 
 function turnOptions(workspace: string, steps: unknown[], overrides: Record<string, unknown> = {}) {
   return {
-    job: job(workspace, (overrides.jobOverrides as Record<string, unknown>) ?? {}),
+    job: job(workspace),
     workspace,
     sessionsRoot: tempDir("bench-sessions-"),
     stateDir: tempDir("bench-state-"),
@@ -133,83 +131,6 @@ describe("runTurn", () => {
     expect(read).toBeDefined()
     expect(read!.status).toBe("completed")
     expect(result.text).toContain("看过了")
-  })
-
-  test("策略放行的动作不产生升级", async () => {
-    const workspace = tempDir("bench-ws-")
-    writeFileSync(path.join(workspace, "main.c"), "int main(void){return 0;}\n")
-    const escalations: string[] = []
-    const result = await runTurn(
-      turnOptions(
-        workspace,
-        [
-          fauxAssistantMessage([fauxToolCall("read", { path: "main.c" })]),
-          fauxAssistantMessage([fauxText("done")]),
-        ],
-        { onEscalation: async (request: { tool: string }) => (escalations.push(request.tool), "reject" as const) },
-      ),
-    )
-
-    expect(escalations).toEqual([])
-    expect(result.decisions.map((d) => `${d.tool}:${d.verdict}`)).toContain("read:allow")
-  })
-
-  test("策略要升级时走 onEscalation,拒绝会让工具被拦下", async () => {
-    const workspace = tempDir("bench-ws-")
-    const asked: string[] = []
-    const result = await runTurn(
-      turnOptions(
-        workspace,
-        [
-          fauxAssistantMessage([fauxToolCall("bash", { command: "rm -rf /" })]),
-          fauxAssistantMessage([fauxText("被拦了")]),
-        ],
-        {
-          onEscalation: async (request: { tool: string }) => {
-            asked.push(request.tool)
-            return "reject" as const
-          },
-        },
-      ),
-    )
-
-    expect(asked).toEqual(["bash"])
-    const bash = result.decisions.find((d) => d.tool === "bash")
-    expect(bash?.verdict).toBe("deny")
-    expect(bash?.rule).toBe("bash.not-allowed")
-  })
-
-  test("没有 onEscalation 时一律拒绝,且审计要记成 policy 而不是 human", async () => {
-    const workspace = tempDir("bench-ws-")
-    const result = await runTurn(
-      turnOptions(workspace, [
-        fauxAssistantMessage([fauxToolCall("bash", { command: "curl http://evil" })]),
-        fauxAssistantMessage([fauxText("被拦了")]),
-      ]),
-    )
-
-    const bash = result.decisions.find((d) => d.tool === "bash")
-    expect(bash?.verdict).toBe("deny")
-    // 当时没有人在,记成 human 就是把责任安在不存在的人头上。
-    expect(bash?.by).toBe("policy")
-    expect(bash?.rule).toBe("bash.not-allowed")
-  })
-
-  test("job 的 allowCommands 写 ./x.sh 也能生效 —— 匹配端看的是 basename", async () => {
-    const workspace = tempDir("bench-ws-")
-    writeFileSync(path.join(workspace, "check.sh"), "#!/bin/sh\nexit 0\n")
-    const result = await runTurn(
-      turnOptions(
-        workspace,
-        [
-          fauxAssistantMessage([fauxToolCall("bash", { command: "./check.sh" })]),
-          fauxAssistantMessage([fauxText("跑过了")]),
-        ],
-        { jobOverrides: { allowCommands: ["./check.sh"] } },
-      ),
-    )
-
-    expect(result.decisions.find((d) => d.tool === "bash")?.verdict).toBe("allow")
   })
 
   test("shouldStop 触发时中断本轮并给出理由", async () => {

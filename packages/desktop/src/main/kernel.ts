@@ -25,12 +25,6 @@ export interface KernelProcessOptions {
 export interface KernelProcess {
   /** 把一个窗口接到内核上。窗口 reload 之后需要重新调用。 */
   attach(window: BrowserWindow): void
-  /**
-   * 调试台探针互斥:任务活跃时把交互内核的硬件工具锁成 deny(kernel 协议
-   * `mailbox.setActive`)。走控制通道而不是数据通道 —— 锁的持有者是 main
-   * (任务生命周期归它管),renderer 不该有解锁能力。
-   */
-  setMailboxActive(active: boolean, reason?: string): void
   stop(): Promise<void>
   readonly ready: Promise<void>
 }
@@ -84,9 +78,6 @@ export function spawnKernel(options: KernelProcessOptions): KernelProcess {
       const channel = new MessageChannelMain()
       child.postMessage({ type: "attach" }, [channel.port1])
       window.webContents.postMessage("kernel-port", null, [channel.port2])
-    },
-    setMailboxActive(active, reason) {
-      child.postMessage({ type: "mailbox-active", active, reason })
     },
     async stop() {
       child.postMessage({ type: "stop" })

@@ -117,10 +117,6 @@ export const dict = {
   "ui.common.next": "التالي",
   "ui.common.submit": "إرسال",
 
-  "ui.permission.deny": "رفض",
-  "ui.permission.allowAlways": "السماح دائمًا",
-  "ui.permission.allowOnce": "السماح مرة واحدة",
-
   "ui.message.expand": "توسيع الرسالة",
   "ui.message.collapse": "طي الرسالة",
   "ui.message.copy": "نسخ",

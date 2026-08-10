@@ -13,8 +13,6 @@ import { NodeExecutionEnv } from "@yoma/my-pi/node"
 import { createCodingToolDefinitions } from "@yoma/my-pi-coding-agent"
 
 import type { KernelEvent, KernelHandlers, KernelMethod, KernelParams, KernelResult } from "../protocol.ts"
-import type { PermissionRules } from "../types.ts"
-import { hardwareLockPolicy } from "./permission.ts"
 import { createEmbeddedTools, SessionManager, type SessionManagerOptions } from "./session-manager.ts"
 import { ProjectStore, listFiles, readFile, searchFiles, vcsDiff, vcsInfo } from "./services.ts"
 import { StreamSink } from "./stream.ts"
@@ -24,8 +22,6 @@ export type * from "./details-check.ts"
 
 export { SessionProjection } from "./projector.ts"
 export { SessionManager } from "./session-manager.ts"
-export { PermissionGate, DEFAULT_PERMISSION_RULES, hardwareLockPolicy } from "./permission.ts"
-export type { PolicyProvider, PolicyDecision, PermissionDecision, PermissionDecisionOrigin } from "./permission.ts"
 export { StreamSink } from "./stream.ts"
 
 export interface KernelHostOptions {
@@ -33,16 +29,11 @@ export interface KernelHostOptions {
   enginesDir?: string
   /** session JSONL 的根目录,通常是 Electron 的 userData/sessions。 */
   sessionsRoot: string
-  /** 存放 projects.json / permission 规则的目录。 */
+  /** 存放 projects.json 的目录。 */
   stateDir: string
   version?: string
   /** 技能与上下文文件的全局目录,默认 `~/.my-pi`(与 my-pi 的 ACP 适配器同一份)。 */
   configDir?: string
-  permissionRules?: PermissionRules
-  /** 无人值守策略与审计出口(bench 注入);desktop 不传,行为与从前一致。 */
-  permissionPolicy?: SessionManagerOptions["permissionPolicy"]
-  onPermissionDecision?: SessionManagerOptions["onPermissionDecision"]
-  permissionTimeoutMs?: number
   /** 模型目录的来源。默认复用 my-pi 的 resolveModel();测试注入 faux provider。 */
   resolveModels?: SessionManagerOptions["resolveModels"]
   /** 成批推事件出去。host 已经做过合并,这里拿到的就是最终批次。 */
@@ -62,10 +53,6 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     sessionsRoot: options.sessionsRoot,
     enginesDir: options.enginesDir,
     configDir: options.configDir,
-    permissionRules: options.permissionRules,
-    permissionPolicy: options.permissionPolicy,
-    onPermissionDecision: options.onPermissionDecision,
-    permissionTimeoutMs: options.permissionTimeoutMs,
     resolveModels: options.resolveModels,
     emit: (events) => sink.push(events),
   })
@@ -94,18 +81,6 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     "session.setModel": ({ sessionID, providerID, modelID, thinking }) =>
       sessions.setModel(sessionID, providerID, modelID, thinking),
 
-    "permission.respond": async ({ id, response }) => sessions.permissions.respond(id, response),
-    "permission.rules": async () => sessions.permissions.getRules(),
-    "permission.setRules": async ({ rules }) => sessions.permissions.setRules(rules),
-    // 调试台探针互斥:走覆盖策略槽,不碰用户的 rules 表(见 protocol.ts 注释)。
-    "mailbox.setActive": async ({ active, reason }) => {
-      sessions.permissions.setOverride(
-        active
-          ? hardwareLockPolicy(reason ?? "调试台任务活跃,探针被任务占用 —— 交互会话暂时不能动硬件工具")
-          : undefined,
-      )
-      return { active }
-    },
 
     "model.list": () => sessions.providers(),
     // 凭据落在 my-pi 读的那份 ~/.pi/agent/auth.json —— 应用内配的 key 和命令行配 pi /
@@ -132,12 +107,10 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
       if (!handler) throw new Error(`未知方法 ${method}`)
       return (await handler(params)) as never
     },
+    // 窗口 reload 与"start 晚于 attach"两条路都靠它重新宣告一次 connected ——
+    // 不重发的表现不是报错,是"点什么都没反应"。
     resync() {
-      const outstanding = sessions.permissions.outstanding()
-      sink.push([
-        { type: "kernel.connected", version: options.version ?? "0.0.0" },
-        ...outstanding.map((request) => ({ type: "permission.asked" as const, request })),
-      ])
+      sink.push([{ type: "kernel.connected", version: options.version ?? "0.0.0" }])
       sink.flushNow()
     },
     async dispose() {

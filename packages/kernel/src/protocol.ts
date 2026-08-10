@@ -19,9 +19,6 @@ import type {
   FileEntry,
   Message,
   Part,
-  PermissionRequest,
-  PermissionResponse,
-  PermissionRules,
   ProviderInfo,
   Session,
   SessionStatus,
@@ -75,16 +72,6 @@ export interface KernelMethods {
     result: Session
   }
 
-  "permission.respond": { params: { id: string; response: PermissionResponse }; result: void }
-  "permission.rules": { params: void; result: PermissionRules }
-  "permission.setRules": { params: { rules: PermissionRules }; result: PermissionRules }
-  /**
-   * 调试台任务活跃时锁硬件工具(flash/gdb 全拒,log 只拒 rtt 路)。探针租约是
-   * **进程内**的,交互内核与调试台的 turn 子进程会真撞探针(实测 0xe00002c5)——
-   * 跨进程互斥只能产品层做。这是硬锁不是提示;active:false 撤锁。不动 rules 表:
-   * 用户配的规则不该被任务生命周期改写。
-   */
-  "mailbox.setActive": { params: { active: boolean; reason?: string }; result: { active: boolean } }
 
   "model.list": { params: void; result: ProviderInfo[] }
   "auth.set": { params: { providerID: string; apiKey: string }; result: ProviderInfo[] }
@@ -142,8 +129,6 @@ export type KernelEvent =
    * 都会破坏这个不变式。
    */
   | { type: "message.part.delta"; sessionID: string; messageID: string; partID: string; field: "text"; delta: string }
-  | { type: "permission.asked"; request: PermissionRequest }
-  | { type: "permission.replied"; id: string; response: PermissionResponse }
   | { type: "vcs.updated"; directory: string; info: VcsInfo }
 
 export type KernelEventType = KernelEvent["type"]

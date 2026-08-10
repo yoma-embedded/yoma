@@ -1,7 +1,6 @@
 const prefixes = {
   session: "ses",
   message: "msg",
-  permission: "per",
   user: "usr",
   part: "prt",
   pty: "pty",

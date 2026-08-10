@@ -1,4 +1,4 @@
-import type { Message, Part, PermissionRequest, SessionStatus } from "@yoma-desktop/kernel"
+import type { Message, Part, SessionStatus } from "@yoma-desktop/kernel"
 
 export const SESSION_CACHE_LIMIT = 40
 
@@ -14,7 +14,6 @@ type SessionCache = {
   session_status: Record<string, SessionStatus | undefined>
   message: Record<string, Message[] | undefined>
   part: Record<string, Part[] | undefined>
-  permission: Record<string, PermissionRequest[] | undefined>
   part_text_accum_delta: Record<string, string | undefined>
 }
 
@@ -34,7 +33,6 @@ export function dropSessionCaches(store: SessionCache, sessionIDs: Iterable<stri
   for (const sessionID of stale) {
     delete store.message[sessionID]
     delete store.session_status[sessionID]
-    delete store.permission[sessionID]
   }
 }
 

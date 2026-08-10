@@ -180,10 +180,6 @@ export const dict = {
   "ui.common.next": "下一步",
   "ui.common.submit": "提交",
 
-  "ui.permission.deny": "拒绝",
-  "ui.permission.allowAlways": "始终允许",
-  "ui.permission.allowOnce": "允许一次",
-
   "ui.message.expand": "展开消息",
   "ui.message.collapse": "收起消息",
   "ui.message.copy": "复制",

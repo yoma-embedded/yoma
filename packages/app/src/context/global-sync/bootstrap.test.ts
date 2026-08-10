@@ -27,7 +27,6 @@ describe("bootstrapDirectory", () => {
       session_working(id: string) {
         return (this.session_status[id]?.type ?? "idle") !== "idle"
       },
-      permission: {},
       vcs: undefined,
       limit: 5,
       message: {},

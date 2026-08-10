@@ -12,7 +12,7 @@
  *
  * ## 事件协议:stdout 上的 `@@event {json}` 行
  *
- * 与 turn-entry 的 `@@escalate` 同款小而蠢:进程输出即事件,main 逐行解析转发给
+ * 小而蠢:进程输出即事件,main 逐行解析转发给
  * renderer。事件与错误全是**普通对象** —— 它们最终要过 contextBridge,Error 在那道
  * 序列化边界会被剥得只剩 message(根 CLAUDE.md"会咬人的地方")。
  *
@@ -29,11 +29,10 @@ import path from "node:path"
 import type { FauxScript } from "../faux.ts"
 import { fauxResolveModels } from "../faux.ts"
 import { readTextFile } from "../fsx.ts"
-import type { GradeResult } from "../grader.ts"
 import { initMailbox } from "./init.ts"
 import { loadMailboxJob } from "./spec.ts"
 import { runMailboxMother, type MotherStepOutcome } from "./mother.ts"
-import { runMailboxRunner, type RunnerStepOutcome } from "./runner.ts"
+import { runMailboxRunner, runnerWorkspaceFor, type RunnerStepOutcome } from "./runner.ts"
 import { runSim } from "./sim.ts"
 import { REPORT_FILE, scanMailbox, type MailboxSnapshot, type MailboxVerdict, type RoundFiles } from "./store.ts"
 import { ensureClone } from "./sync.ts"
@@ -55,10 +54,13 @@ export interface MailboxHostConfig {
   /** 技能/上下文/凭据全局目录。生产不传(默认 ~/.my-pi);演练与测试传临时目录。 */
   configDir?: string
   /**
-   * **这台机器上**的工程目录。信箱里的任务书不带绝对路径(它在别人机器上没意义),
-   * 两侧各自从本机配置拿它。runner/mother 必填(除非 job.json 自带 directory)。
+   * **这台机器上**的工程目录 —— 只有 `mother`(研发端)需要它:代码在它那儿。
+   * 信箱里的任务书不带绝对路径(它在别人机器上没意义),所以由本机配置提供。
+   * 工位端没有项目检出,这个字段对它无意义。
    */
   projectDir?: string
+  /** 工位端一次性工作目录的根。缺省是克隆的兄弟目录(见 MailboxRunnerOptions.workRoot)。 */
+  workRoot?: string
   /** 打包态 turn 子进程入口(mailbox-turn-entry.mjs 绝对路径)。非 bun 运行时必填。 */
   turnEntry?: string
   /** sim 自我 spawn 的宿主入口。缺省 process.argv[1](host-entry 场景天然正确)。 */
@@ -144,7 +146,11 @@ export async function runMailboxHost(config: MailboxHostConfig, emit: EmitMailbo
 
   const clone = path.resolve(required(config.clone, "clone"))
   if (config.remote) await ensureClone(config.remote, clone, { branch })
-  const emitSnapshot = makeSnapshotEmitter(clone, emit, config.projectDir)
+  // 观战跳转要用:会话路由是(目录, sessionID)二元组,而且必须是**本机**目录。
+  // 研发端的会话跑在项目仓里,工位端的跑在它那个一次性工作目录里。
+  const directoryFor = (jobId: string): string =>
+    config.role === "runner" ? runnerWorkspaceFor(clone, config.workRoot, jobId) : (config.projectDir ?? "")
+  const emitSnapshot = makeSnapshotEmitter(clone, emit, directoryFor)
 
   if (config.role === "status") {
     await emitSnapshot()
@@ -163,7 +169,7 @@ export async function runMailboxHost(config: MailboxHostConfig, emit: EmitMailbo
       clone,
       branch,
       sessionsRoot: required(config.sessionsRoot, "sessionsRoot"),
-      projectDir: config.projectDir,
+      workRoot: config.workRoot,
       enginesDir: config.enginesDir,
       configDir: config.configDir,
       turnEntry: config.turnEntry,
@@ -176,7 +182,7 @@ export async function runMailboxHost(config: MailboxHostConfig, emit: EmitMailbo
         void emitSnapshot()
       },
     })
-    await emitSnapshot(true)
+    await emitSnapshot()
     if (outcome.kind === "finalized") {
       return finish(outcome.verdict.outcome === "passed" ? 0 : 2, `终局 ${outcome.verdict.outcome}`, outcome.verdict)
     }
@@ -200,7 +206,7 @@ export async function runMailboxHost(config: MailboxHostConfig, emit: EmitMailbo
       void emitSnapshot()
     },
   })
-  await emitSnapshot(true)
+  await emitSnapshot()
   if (outcome.kind === "done") {
     return finish(outcome.verdict.outcome === "passed" ? 0 : 2, `终局 ${outcome.verdict.outcome}`, outcome.verdict)
   }
@@ -231,7 +237,8 @@ function selfSpawn(config: MailboxHostConfig) {
       branch: context.branch,
       pollSeconds: context.pollSeconds,
       sessionsRoot: config.sessionsRoot,
-      projectDir: context.projectDir,
+      // 工程目录只给研发端 —— 工位端没有项目检出。
+      projectDir: role === "mother" ? context.projectDir : undefined,
       enginesDir: config.enginesDir,
       configDir: config.configDir,
       turnEntry: config.turnEntry,
@@ -256,30 +263,19 @@ function selfSpawn(config: MailboxHostConfig) {
 }
 
 /**
- * 快照发射器:去重(内容不变不发)、防重入(扫描在飞就跳过,下一步会再扫)。
+ * 快照发射器:内容不变就不发,而且**串行** —— 扫描一个接一个排队。
  *
- * `force` 是给**终局那一发**用的:守护循环最后一步的 onStep 会 `void emitSnapshot()`,
- * 那次扫描往往还在飞,循环就返回了 —— 收尾的 `await emitSnapshot()` 撞上防重入门
- * 直接空转,于是"带 verdict 与终报的最后一张快照"永远发不出去,UI 停在倒数第二张。
- * force 会等在飞的那次跑完再扫一遍,保证终局状态一定送达。
+ * 串行是必需的:守护循环的每一步都 `void emitSnapshot()`,收尾还有一次 `await`。
+ * 并发扫描会让"带 verdict 与终报的最后一张"被一张更早的快照盖过去,UI 停在倒数第二张。
  */
-function makeSnapshotEmitter(clone: string, emit: EmitMailboxEvent, projectDir?: string): (force?: boolean) => Promise<void> {
+function makeSnapshotEmitter(
+  clone: string,
+  emit: EmitMailboxEvent,
+  directoryFor: (jobId: string) => string,
+): () => Promise<void> {
   let last = ""
-  let inflight: Promise<void> | undefined
-  const run = async (force?: boolean): Promise<void> => {
-    if (inflight) {
-      if (!force) return
-      await inflight.catch(() => {})
-    }
-    const started = doScan()
-    inflight = started
-    try {
-      await started
-    } finally {
-      if (inflight === started) inflight = undefined
-    }
-  }
-  const doScan = async (): Promise<void> => {
+  let chain: Promise<void> = Promise.resolve()
+  const scan = async (): Promise<void> => {
     try {
       const snapshot = await scanMailbox(clone)
       const report =
@@ -288,7 +284,7 @@ function makeSnapshotEmitter(clone: string, emit: EmitMailboxEvent, projectDir?:
               .then((text) => clip(text, REPORT_CAP))
               .catch(() => undefined)
           : undefined
-      const ui = trimSnapshot(snapshot, report, projectDir)
+      const ui = trimSnapshot(snapshot, report, directoryFor)
       const serialized = JSON.stringify(ui)
       if (serialized !== last) {
         last = serialized
@@ -298,23 +294,24 @@ function makeSnapshotEmitter(clone: string, emit: EmitMailboxEvent, projectDir?:
       // 快照失败不致命:信箱可能正被同步,下一步自然重扫。
     }
   }
-  return run
+  return () => (chain = chain.then(scan))
 }
 
 const PROMPT_CAP = 8000
 const TEXT_CAP = 8000
-const EVIDENCE_CAP = 1500
 const REPORT_CAP = 64_000
 
-function trimSnapshot(snapshot: MailboxSnapshot, report?: string, projectDir?: string): MailboxUiSnapshot {
+function trimSnapshot(
+  snapshot: MailboxSnapshot,
+  report: string | undefined,
+  directoryFor: (jobId: string) => string,
+): MailboxUiSnapshot {
   const job = snapshot.job
     ? {
         id: snapshot.job.job.id,
         title: snapshot.job.job.title,
-        // 观战跳转要用:会话路由是 (目录, sessionID) 二元组,而且必须是**本机**目录 ——
-        // 信箱里的任务书不带路径,快照是发给本机 UI 的,所以取本机配置。
-        directory: projectDir ?? snapshot.job.job.repo.directory ?? "",
-        maxRounds: snapshot.job.mailbox.maxRounds,
+        directory: directoryFor(snapshot.job.job.id),
+        maxRounds: snapshot.job.job.budget.maxRounds,
         maxTokens: snapshot.job.job.budget.maxTokens,
         wallClockMin: snapshot.job.job.budget.wallClockMin,
       }
@@ -326,7 +323,6 @@ function trimSnapshot(snapshot: MailboxSnapshot, report?: string, projectDir?: s
       ? {
           ...entry.result,
           turn: entry.result.turn ? { ...entry.result.turn, text: clip(entry.result.turn.text, TEXT_CAP) } : undefined,
-          grade: entry.result.grade ? trimGrade(entry.result.grade) : undefined,
         }
       : undefined,
   }))
@@ -347,15 +343,6 @@ function trimState(state: MailboxSnapshot["state"]): MailboxUiState {
       return { kind: "awaiting-runner", round: state.round }
     case "awaiting-mother":
       return { kind: "awaiting-mother", round: state.round }
-  }
-}
-
-function trimGrade(grade: GradeResult): GradeResult {
-  const trimCheck = <T extends { evidence: string }>(check: T): T => ({ ...check, evidence: clip(check.evidence, EVIDENCE_CAP) })
-  return {
-    ...grade,
-    build: grade.build ? trimCheck(grade.build) : undefined,
-    checks: grade.checks.map(trimCheck),
   }
 }
 

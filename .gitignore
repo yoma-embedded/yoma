@@ -30,3 +30,6 @@ engines/data/
 
 .idea/
 .vscode/
+
+# Claude Code 的临时工作树(harness 生成,不属于本仓)
+.claude/worktrees/

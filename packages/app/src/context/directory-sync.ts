@@ -9,14 +9,7 @@ import type { State } from "./global-sync/types"
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 // 会话内容住在服务器级的 session store 里,目录 store 只持有会话列表。
 // 删掉的 session_diff / todo / question:内核没有文件快照、没有 todo 工具、没有问答请求。
-const sessionFields = new Set([
-  "session_status",
-  "session_working",
-  "permission",
-  "message",
-  "part",
-  "part_text_accum_delta",
-])
+const sessionFields = new Set(["session_status", "session_working", "message", "part", "part_text_accum_delta"])
 
 export const createDirSyncContext = (
   directory: string,

@@ -1,7 +1,7 @@
 // 调试台:信箱闭环(研发端 mother ↔ 工位端 runner)的产品面。四个分区:配置 / 任务 / 进度 / 终报。
 // 两个角色同一套代码,角色只影响可见动作。Node 侧全部在 Electron main
 // (packages/desktop/src/main/mailbox.ts),这里只消费 platform.mailbox;web 平台显示提示。
-// 判据不归模型管、任务书由模板生成 —— 描述只进 task,判据永远来自模板。
+// 任务书由模板生成 —— 描述只进 task,硬件事实与安全约束永远来自模板。
 // 任务书**不带绝对路径**:工程目录是本机事实,由配置页的"工程目录"提供。
 import { For, Match, onCleanup, onMount, Show, Switch } from "solid-js"
 import { createStore } from "solid-js/store"
@@ -489,12 +489,6 @@ function StateBanner(props: { status?: MailboxStatusView; t: (key: string) => st
 
 function RoundCard(props: { round: MailboxRoundView; t: (key: string) => string; onWatch: (sessionID: string) => void }) {
   const t = props.t
-  const grade = () => props.round.result?.grade
-  const checks = () => {
-    const current = grade()
-    if (!current) return []
-    return current.build ? [current.build, ...current.checks] : current.checks
-  }
   return (
     <article data-component="bench-round" class={`${CARD} flex flex-col gap-2 p-4`}>
       <header class="flex items-center gap-2">
@@ -537,13 +531,6 @@ function RoundCard(props: { round: MailboxRoundView; t: (key: string) => string;
             <Show when={result().error}>
               <div class="text-[12px] text-v2-state-fg-danger">{result().error}</div>
             </Show>
-            {/* 工位端不该改代码:工作树脏了就是"证据要打折"的信号,必须显眼。 */}
-            <Show when={result().workspace?.dirty.length}>
-              <div class="text-[12px] text-v2-state-fg-danger">
-                {t("bench.progress.dirty")}({result().workspace!.dirty.length}):
-                {result().workspace!.dirty.slice(0, 5).join(" ")}
-              </div>
-            </Show>
             <Show when={result().incoming?.length}>
               <div class="text-[11px] text-v2-text-text-muted">
                 {t("bench.progress.incoming")}
@@ -563,34 +550,12 @@ function RoundCard(props: { round: MailboxRoundView; t: (key: string) => string;
                   .join(" ") || t("bench.progress.tools.none")}
                 {" · "}
                 {t("bench.progress.tokens")} {result().spentTokens}
-                <Show when={result().denied.length > 0}>
-                  {" · "}
-                  {t("bench.progress.denied")} {result().denied.length}
-                </Show>
                 <Show when={result().turn!.stopReason}>
                   {" · "}
                   {result().turn!.stopReason}
                 </Show>
               </div>
             </Show>
-            <For each={checks()}>
-              {(check) => (
-                <div class="flex items-baseline gap-2 text-[12px]">
-                  <span
-                    class={
-                      check.outcome === "pass"
-                        ? "text-v2-state-fg-success"
-                        : check.outcome === "skip"
-                          ? "text-v2-text-text-muted"
-                          : "text-v2-state-fg-danger"
-                    }
-                  >
-                    {check.outcome === "pass" ? "✓" : check.outcome === "skip" ? "–" : "✗"}
-                  </span>
-                  <span class="text-v2-text-text-base">{check.summary}</span>
-                </div>
-              )}
-            </For>
           </div>
         )}
       </Show>

@@ -22,7 +22,7 @@
  *
  * 失败的那一轮结束时 harness 照常发 `agent_end`,如果这时把会话置为 idle,
  * 2 秒退避窗口里就会出现一个"看起来跑完了"的会话 —— 桌面端 UI 闪一下无所谓,
- * 但 bench 会当真:它在 idle 静默后就去跑判据,而 agent 正要重试,两边同时动板子。
+ * 但 bench 会当真:它在 idle 静默后就认为这一轮跑完了,而 agent 正要重试。
  * 所以 SessionManager 在决定要重试时**压住 idle 不发**,整段重试是一个连续的 busy。
  */
 
@@ -32,8 +32,8 @@ export const RETRY_MAX_ATTEMPTS = 3
 export const RETRY_BASE_DELAY_MS = 2000
 
 /** 指数退避:2s / 4s / 8s。attempt 从 1 开始。 */
-export function retryDelayMs(attempt: number, baseDelayMs: number = RETRY_BASE_DELAY_MS): number {
-  return baseDelayMs * 2 ** (attempt - 1)
+export function retryDelayMs(attempt: number): number {
+  return RETRY_BASE_DELAY_MS * 2 ** (attempt - 1)
 }
 
 /**

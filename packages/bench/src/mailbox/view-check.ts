@@ -12,10 +12,8 @@
  */
 
 import type {
-  MailboxCheckView,
   MailboxDecisionView,
   MailboxEventView,
-  MailboxGradeView,
   MailboxHostEventView,
   MailboxInstructionView,
   MailboxRoundGitView,
@@ -28,7 +26,6 @@ import type {
   MailboxVerdictView,
 } from "@yoma-desktop/kernel"
 
-import type { CheckResult, GradeResult } from "../grader.ts"
 import type { TurnUsage } from "../turn.ts"
 import type { MailboxHostEvent, MailboxUiSnapshot, MailboxUiState } from "./host.ts"
 import type {
@@ -47,8 +44,6 @@ type Expect<_T extends true> = void
 type Assignable<From, To> = [From] extends [To] ? true : false
 
 export type Check_usage = Expect<Assignable<TurnUsage, MailboxUsageView>>
-export type Check_check = Expect<Assignable<CheckResult, MailboxCheckView>>
-export type Check_grade = Expect<Assignable<GradeResult, MailboxGradeView>>
 export type Check_instruction = Expect<Assignable<RoundInstruction, MailboxInstructionView>>
 export type Check_turnSummary = Expect<Assignable<RoundTurnSummary, MailboxTurnSummaryView>>
 export type Check_git = Expect<Assignable<RoundGit, MailboxRoundGitView>>

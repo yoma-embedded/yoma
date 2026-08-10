@@ -1,12 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import type { Message, Part, PermissionRequest, SessionStatus } from "@yoma-desktop/kernel"
+import type { Message, Part, SessionStatus } from "@yoma-desktop/kernel"
 import { dropSessionCaches, pickSessionCacheEvictions } from "./session-cache"
 
 type CacheShape = {
   session_status: Record<string, SessionStatus | undefined>
   message: Record<string, Message[] | undefined>
   part: Record<string, Part[] | undefined>
-  permission: Record<string, PermissionRequest[] | undefined>
   part_text_accum_delta: Record<string, string | undefined>
 }
 
@@ -34,7 +33,6 @@ describe("app session cache", () => {
       session_status: { ses_1: { type: "busy" } },
       message: {},
       part: { msg_1: [part("prt_1", "ses_1", "msg_1")] },
-      permission: { ses_1: [] },
       part_text_accum_delta: { prt_1: "streamed text" },
     }
 
@@ -44,7 +42,6 @@ describe("app session cache", () => {
     expect(store.part.msg_1).toBeUndefined()
     expect(store.part_text_accum_delta.prt_1).toBeUndefined()
     expect(store.session_status.ses_1).toBeUndefined()
-    expect(store.permission.ses_1).toBeUndefined()
   })
 
   test("dropSessionCaches clears message-backed parts", () => {
@@ -53,7 +50,6 @@ describe("app session cache", () => {
       session_status: {},
       message: { ses_1: [m] },
       part: { [m.id]: [part("prt_1", "ses_1", m.id)] },
-      permission: {},
       part_text_accum_delta: {},
     }
 
