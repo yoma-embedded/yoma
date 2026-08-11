@@ -1,10 +1,12 @@
 /**
- * `<工程>/.my-pi/.gitignore` 的边界:挡住运行产物,**放行 bench 的项目配置**。
+ * `<工程>/.my-pi/.gitignore` 的边界:挡住运行产物,**放行项目配置**(bench 的
+ * mailbox 模板、toolchain 的工具链声明)。
  *
  * 配置要跟着仓库走到另一台机器上;轮次输入输出、gdb 转录这类运行产物必须挡住 ——
  * 不挡的话研发打开 diff 看到的是一堆内部文件加一处真改动(实测:第一次真跑,
- * 17 个改动文件里 16 个是工具日志)。用真 git 的 check-ignore 来钉,因为这条规则的
- * 唯一裁判就是 git 自己。
+ * 17 个改动文件里 16 个是工具日志)。`toolchain.local.json` 是反过来的风险:
+ * 它长得像项目配置,内容却是本机路径,必须反向确认黑名单真的挡得住。
+ * 用真 git 的 check-ignore 来钉,因为这条规则的唯一裁判就是 git 自己。
  */
 
 import { afterEach, describe, expect, test } from "bun:test"
@@ -34,7 +36,7 @@ async function ignored(repo: string, relative: string): Promise<boolean> {
 }
 
 describe(".my-pi/.gitignore", () => {
-  test("挡住运行产物,放行 bench 的项目配置", async () => {
+  test("挡住运行产物,放行项目配置(bench 与 toolchain)", async () => {
     const repo = await makeRepo()
     await ensureYomaDir(repo)
     const yoma = path.join(repo, ".my-pi")
@@ -50,26 +52,34 @@ describe(".my-pi/.gitignore", () => {
     writeFileSync(path.join(yoma, "gdb", "s.mi"), "")
     writeFileSync(path.join(yoma, "logs", "l.txt"), "")
     writeFileSync(path.join(yoma, "flash-state.json"), "{}")
+    writeFileSync(path.join(yoma, "toolchain.json"), "{}")
+    writeFileSync(path.join(yoma, "toolchain.local.json"), "{}")
 
     // 项目配置跨机器靠它,必须放行 —— 而且不止模板一个文件。
     expect(await ignored(repo, ".my-pi/bench/mailbox.template.json")).toBe(false)
     expect(await ignored(repo, ".my-pi/bench/mailbox.shell-faults.json")).toBe(false)
+    // toolchain.json 是同一类东西:项目配置,git add 必须加得进去。
+    expect(await ignored(repo, ".my-pi/toolchain.json")).toBe(false)
     // 运行产物必须挡住 —— 否则 diff 里全是它们。
     expect(await ignored(repo, ".my-pi/bench/turns/turn-1.json")).toBe(true)
     expect(await ignored(repo, ".my-pi/bench/mailbox-sim/x.json")).toBe(true)
     expect(await ignored(repo, ".my-pi/gdb/s.mi")).toBe(true)
     expect(await ignored(repo, ".my-pi/logs/l.txt")).toBe(true)
     expect(await ignored(repo, ".my-pi/flash-state.json")).toBe(true)
+    // toolchain.local.json 是本机路径,绝不能进版本库 —— 跟 toolchain.json 长得像
+    // 项目配置,黑名单必须显式挡它,不能靠"没列出来就放行"的默认值蒙混过去。
+    expect(await ignored(repo, ".my-pi/toolchain.local.json")).toBe(true)
     // 忽略文件本身也要挡住:露出来就是一个未跟踪又不被忽略的文件,工作树因此
     // 永远"不干净",而开轮的第一道检查正是它(实测被自己挡死过)。
     expect(await ignored(repo, ".my-pi/.gitignore")).toBe(true)
 
-    // add -A 之后暂存区里只有配置,没有产物。
+    // add -A 之后暂存区里只有配置,没有产物,也没有本机路径。
     await runGitReal(["add", "-A"], repo)
     const staged = await runGitReal(["diff", "--cached", "--name-only"], repo)
     expect(staged.stdout.split("\n").filter((line) => line.startsWith(".my-pi/")).sort()).toEqual([
       ".my-pi/bench/mailbox.shell-faults.json",
       ".my-pi/bench/mailbox.template.json",
+      ".my-pi/toolchain.json",
     ])
   })
 
@@ -110,5 +120,24 @@ describe(".my-pi/.gitignore", () => {
     mkdirSync(path.join(yoma, "bench", "turns"), { recursive: true })
     writeFileSync(path.join(yoma, "bench", "turns", "turn-1.json"), "{}")
     expect(await ignored(repo, ".my-pi/bench/turns/turn-1.json")).toBe(true)
+  })
+
+  test("加 toolchain.local.json 规则之前的旧版也会被升级 —— 否则老仓库会把本机路径的覆盖文件漏进版本库", async () => {
+    // 这份是加 toolchain 规则之前、合并之后的版本(没有 toolchain.local.json 这一行)。
+    // 认第一行标志就敢覆盖,老仓库下一次 ensureYomaDir 会自动补上新规则。
+    const repo = await makeRepo()
+    const yoma = path.join(repo, ".my-pi")
+    mkdirSync(yoma, { recursive: true })
+    writeFileSync(
+      path.join(yoma, ".gitignore"),
+      "# yoma 在这个项目里的运行产物,不进版本库(含本文件);bench 的项目配置要跟着仓库走。\n.gitignore\ngdb/\nlogs/\nflash-state.json\nbench/turns/\nbench/mailbox-sim/\n",
+    )
+
+    await ensureYomaDir(repo)
+
+    writeFileSync(path.join(yoma, "toolchain.json"), "{}")
+    writeFileSync(path.join(yoma, "toolchain.local.json"), "{}")
+    expect(await ignored(repo, ".my-pi/toolchain.json")).toBe(false)
+    expect(await ignored(repo, ".my-pi/toolchain.local.json")).toBe(true)
   })
 })

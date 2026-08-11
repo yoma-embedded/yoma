@@ -6,9 +6,9 @@
  * 这正是 pi 用 ReadOperations/WriteOperations/BashOperations 那几套
  * 可插拔接口达成的目的,my-pi 用一个能力接口一次性覆盖。
  *
- * 装配面只有两个工厂:编码四件套 + 嵌入式六件套。按名挑选、聚合 Options、
- * grep(依赖外部 ripgrep,本仓永远不可用)等历史装配面在 2026-08 的精简中删除;
- * 单工具工厂仍然从各自模块导出,测试和特殊装配直接用它们。
+ * 装配面只有两个工厂:编码工具组(四件套 + toolchain)+ 嵌入式六件套。按名挑选、
+ * 聚合 Options、grep(依赖外部 ripgrep,本仓永远不可用)等历史装配面在 2026-08
+ * 的精简中删除;单工具工厂仍然从各自模块导出,测试和特殊装配直接用它们。
  */
 export {
 	type BashToolDetails,
@@ -177,6 +177,15 @@ export {
 	type Stm32ConfigToolInput,
 	type Stm32ConfigToolOptions,
 } from "./stm32config.ts";
+export {
+	createToolchainTool,
+	createToolchainToolDefinition,
+	TOOLCHAIN_ACTIONS,
+	type ToolchainAction,
+	type ToolchainToolDetails,
+	type ToolchainToolInput,
+	type ToolchainToolOptions,
+} from "./toolchain.ts";
 export { type ToolDefinition, wrapToolDefinition, wrapToolDefinitions } from "./types.ts";
 export {
 	createWriteTool,
@@ -195,18 +204,29 @@ import { createLogToolDefinition } from "./log.ts";
 import { createNetlistToolDefinition } from "./netlist.ts";
 import { createReadToolDefinition } from "./read.ts";
 import { createStm32ConfigToolDefinition } from "./stm32config.ts";
+import { createToolchainToolDefinition } from "./toolchain.ts";
 import type { ToolDefinition } from "./types.ts";
 import { createWriteToolDefinition } from "./write.ts";
 
 export type ToolDef = ToolDefinition<any, any>;
 
-/** 编码四件套,顺序与 pi 一致。 */
+/**
+ * 编码四件套 + toolchain,顺序前四与 pi 一致。toolchain 归在这一档而不是嵌入式
+ * 六件套:它解决的是"这台机器能不能编译/调试这个项目",跟 netlist/datasheet/
+ * flash/log/gdb 那条"板子在手上之后"的流水线是两回事,反而更接近 bash 会撞见的
+ * 那类问题(命令找不到)。不带 options 调用:configDir/side/platform/env 全部走
+ * 各自默认值(生产用真实 ~/.my-pi、真实 process.platform/env)。需要注入的调用方
+ * (测试、工位端)和 embedded 六件套的 enginesDir 同一个先例——不改这个聚合工厂
+ * 的签名,直接用 createToolchainToolDefinition(env, options) 自行装配
+ * (session-manager.ts 的 createEmbeddedTools 就是这么处理 enginesDir 的)。
+ */
 export function createCodingToolDefinitions(env: ExecutionEnv): ToolDef[] {
 	return [
 		createReadToolDefinition(env),
 		createBashToolDefinition(env),
 		createEditToolDefinition(env),
 		createWriteToolDefinition(env),
+		createToolchainToolDefinition(env),
 	];
 }
 

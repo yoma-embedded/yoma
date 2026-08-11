@@ -1,0 +1,131 @@
+// 样例清单:一台真实的 STM32G473(Cortex-M4)电机控制板项目
+// (ARM GCC + CMake/Ninja 构建,J-Link 烧录/RTT,threadx 作为 git submodule,
+// PC 侧 RTT 脚本走 Python + pylink-square)。字段值取自该项目的
+// CMakeLists.txt / CMakePresets.json / cmake/gcc-arm-none-eabi.cmake /
+// .vscode/settings.json / tools/scripts/flash.ps1 / tools/motor_gui/pyproject.toml
+// / .gitmodules —— 用来在测试里验证 schema.ts 在一份贴近真实的清单上到底解析出
+// 什么,而不是只喂手搓的最小样例。
+//
+// arm-gcc 和 arm-gdb 的 install 来源故意不对称:arm-gcc 自己给每个平台一条直接
+// 安装指引,arm-gdb 完全不写 install、靠 from 借 arm-gnu-toolchain 的 —— 这是
+// installHint() 的"回退到 provider"路径唯一会被走到的地方,真实原因见下面
+// arm-gnu-toolchain 那条 provider 的注释。
+{
+	"schema": "yoma/toolchain@1",
+	"providers": {
+		"arm-gnu-toolchain": {
+			"name": "Arm GNU Toolchain",
+			"install": {
+				// 官方分发把 gcc 和 gdb 装在同一棵目录树下,所以 arm-gdb 可以直接借用
+				// 这一条。Debian/Ubuntu 的包管理器不是这样:gcc-arm-none-eabi 包不带
+				// gdb,得单独装 gdb-multiarch —— 这正是 arm-gcc 不能也从这个 provider
+				// 借 install、必须自己单独写一条的原因(见下面 tools[0])。
+				"win32": "install the Windows package from the Arm GNU Toolchain downloads page (developer.arm.com) and let the installer add it to PATH",
+				"darwin": "install the .pkg from developer.arm.com; Homebrew's gcc-arm-embedded cask does not bundle gdb",
+				"linux": "gcc-arm-none-eabi (apt) does not include gdb — apt install gdb-multiarch, or install the full Arm GNU Toolchain from developer.arm.com"
+			}
+		}
+	},
+	"tools": [
+		{
+			"id": "arm-gcc",
+			"bin": ["arm-none-eabi-gcc", "arm-none-eabi-g++", "arm-none-eabi-objcopy", "arm-none-eabi-size"],
+			"version": ">=12",
+			"install": {
+				"win32": "winget install Arm.GnuArmEmbeddedToolchain, or download the installer from developer.arm.com",
+				"darwin": "brew install --cask gcc-arm-embedded",
+				"linux": "apt install gcc-arm-none-eabi (Debian/Ubuntu), or install the Arm GNU Toolchain from developer.arm.com"
+			},
+			"why": "cmake/gcc-arm-none-eabi.cmake 把 CMAKE_C_COMPILER/CXX_COMPILER/OBJCOPY/SIZE 全钉成 TOOLCHAIN_PREFIX=arm-none-eabi- 拼出来的名字;PATH 上没有,cmake --preset 在 configure 阶段就报找不到编译器,不是编译错误,是配置都起不来。"
+		},
+		{
+			"id": "arm-gdb",
+			"bin": ["arm-none-eabi-gdb", "gdb-multiarch", "gdb"],
+			"side": "runner",
+			"from": "arm-gnu-toolchain",
+			"env": ["MY_PI_GDB"],
+			"why": "gdb 工具(gdb.ts 的 resolveGdbPath)认的就是这三个候选名外加 MY_PI_GDB 覆盖;工位端上板复现才用得到,不在构建依赖链上,所以是 runner 而不是 mother。"
+		},
+		{
+			"id": "cmake",
+			"bin": ["cmake"],
+			"version": ">=3.22",
+			"why": "CMakeLists.txt 顶部 cmake_minimum_required(VERSION 3.22);CMakePresets.json 的 Debug/Release 两个 configurePreset 都靠它生成构建目录。",
+			"install": {
+				"win32": "winget install Kitware.CMake",
+				"darwin": "brew install cmake",
+				"linux": "apt install cmake (Debian/Ubuntu), or see cmake.org for other distros"
+			}
+		},
+		{
+			"id": "ninja",
+			"bin": ["ninja"],
+			"why": "CMakePresets.json 的 configurePresets 把 generator 钉死成 Ninja;没装 ninja 时 cmake --preset 在 configure 阶段就失败,不会退回 Makefiles。",
+			"install": {
+				"win32": "winget install Ninja-build.Ninja, or pip install ninja",
+				"darwin": "brew install ninja",
+				"linux": "apt install ninja-build (Debian/Ubuntu)"
+			}
+		},
+		{
+			"id": "jlink",
+			"bin": ["JLink"],
+			"side": "runner",
+			"exports": { "JLINK_EXE": "{bin}" },
+			"provides": ["JLinkARM.dll"],
+			"env": ["JLINK_EXE"],
+			"why": "tools/scripts/flash.ps1 用 JLink.exe 走 SWD 烧录(同一个脚本已经认 $env:JLINK_EXE 覆盖,这里的 env 只是把同一个约定搬进清单);tools/scripts/_rtt_session.py 用 pylink 打开 RTT,pylink 在运行时加载 JLinkARM.dll,装了 J-Link Software Pack 但没让它进 PATH 时才需要显式指出 dll 在哪。",
+			"install": {
+				"win32": "install the J-Link Software Pack from segger.com; the installer registers JLink.exe and JLinkARM.dll",
+				"darwin": "install the J-Link Software Pack .pkg from segger.com",
+				"linux": "install the J-Link Software Pack .deb/.rpm from segger.com"
+			}
+		},
+		{
+			"id": "python",
+			"bin": ["python3", "python"],
+			"version": ">=3.11",
+			"side": "both",
+			"runnerPackages": ["pylink-square"],
+			"why": "工位端复现主要靠 tools/scripts/rtt_cli.py(直接跑,不用装成包);它和 tools/motor_gui 都 import pylink,对应 PyPI 上的 pylink-square 发行名。mother 侧不需要 pylink,只是很多辅助脚本本身要用 python 跑。",
+			"install": {
+				"win32": "install from python.org (3.11+), or winget install Python.Python.3.12",
+				"darwin": "brew install python@3.12",
+				"linux": "apt install python3 python3-venv (Debian/Ubuntu)"
+			}
+		},
+		{
+			"id": "clangd",
+			"bin": ["clangd"],
+			"optional": true,
+			"why": ".vscode/settings.json 配的是 clangd.path 而不是 C_Cpp.intelliSenseEngine(后者被显式设成 disabled);没装它只是编辑器少了跳转/补全,不影响 cmake --build 出固件。",
+			"install": {
+				"win32": "winget install LLVM.LLVM (clangd ships inside), or install the LLVM installer from releases.llvm.org",
+				"darwin": "brew install llvm (clangd ships inside; add its bin to PATH)",
+				"linux": "apt install clangd (Debian/Ubuntu)"
+			}
+		},
+		{
+			"id": "stm32cubemx",
+			"optional": true,
+			"why": "BK64_motor.ioc 是 CubeMX 工程文件,Core/Drivers/Middlewares 是它生成的(AGENTS.md 明确说这几个目录不许手改)。日常改 Algo/App 用不到;只有要调整外设分配、重新生成初始化代码时才需要,所以没有 bin —— 它是个交互式 GUI 装完自己会用,不走 PATH 探测。",
+			"install": {
+				"win32": "download from st.com (free ST account required); no standard package-manager distribution",
+				"darwin": "download from st.com (free ST account required); no standard package-manager distribution",
+				"linux": "download from st.com (free ST account required); no standard package-manager distribution"
+			}
+		}
+	],
+	"setup": [
+		{
+			"run": "git submodule update --init --recursive",
+			"unless": "test -f Middlewares/Third_Party/threadx/common/inc/tx_api.h",
+			"why": ".gitmodules 只有一条(Middlewares/Third_Party/threadx),首次 clone 之后这棵目录是空的;CMakeLists.txt 用 file(GLOB) 收集 threadx/common/src/*.c,glob 到空目录不报错,而是在链接阶段少一堆符号,报错信息完全看不出来是漏了 submodule。"
+		},
+		{
+			"run": "uv sync",
+			"cwd": "tools/motor_gui",
+			"why": "tools/motor_gui/uv.lock 钉住了 pylink-square 等依赖的版本;runner 侧靠 rtt_cli.py/_rtt_session.py 走同一套依赖,版本漂了会表现成'能连上但读出来的 RTT 数据对不上'这类不好查的问题。"
+		}
+	]
+}

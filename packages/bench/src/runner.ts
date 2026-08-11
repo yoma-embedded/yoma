@@ -45,6 +45,8 @@ export interface TurnInput {
  * ```
  * <工程>/.my-pi/
  *   .gitignore                     本文件写的这一份
+ *   toolchain.json                 项目配置,**要跟着仓库走**(工具链声明,零绝对路径)
+ *   toolchain.local.json           本机覆盖,不提交(可能带绝对路径)
  *   gdb/  logs/  flash-state.json  工具的运行产物
  *   bench/
  *     mailbox.template.json        项目配置,**要跟着仓库走**
@@ -68,15 +70,19 @@ export interface TurnInput {
  *
  * 白名单(`*` + `!放行项`)对"新长出来的运行产物"更安全,但它的失效方向是**静默吞掉
  * 用户想提交的文件**;黑名单漏一条只会让一个产物露出来,一眼就能看见。这个目录里
- * 唯一要提交的就是 bench 的项目配置,列两条运行产物比列白名单更好读。
+ * 要提交的是项目配置(bench 的 mailbox 模板、toolchain 的工具链声明),列两条运行
+ * 产物比列白名单更好读。`toolchain.local.json` 是例外中的例外:它长得像项目配置
+ * (跟 toolchain.json 挨着放),内容却是本机路径 —— 必须显式拉黑,不能靠"没在黑名单里
+ * 就放行"的默认值蒙混过去。
  */
-const YOMA_IGNORE = `# yoma 在这个项目里的运行产物,不进版本库(含本文件);bench 的项目配置要跟着仓库走。
+const YOMA_IGNORE = `# yoma 在这个项目里的运行产物,不进版本库(含本文件);bench 与 toolchain 的项目配置要跟着仓库走。
 .gitignore
 gdb/
 logs/
 flash-state.json
 bench/turns/
 bench/mailbox-sim/
+toolchain.local.json
 `
 
 /** 认领标志:第一行是它的,就是我们写的,可以升级;别的一律当用户手写,不动。 */

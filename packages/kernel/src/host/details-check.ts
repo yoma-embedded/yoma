@@ -28,6 +28,7 @@ import type {
   NetlistToolDetails as PiNetlist,
   ReadToolDetails as PiRead,
   Stm32ConfigToolDetails as PiStm32Config,
+  ToolchainToolDetails as PiToolchain,
   WriteToolDetails as PiWrite,
 } from "@yoma/my-pi-coding-agent"
 
@@ -50,6 +51,7 @@ export type Check_read = Expect<Assignable<PiRead, ToolDetailsMap["read"]>>
 export type Check_bash = Expect<Assignable<PiBash, ToolDetailsMap["bash"]>>
 export type Check_edit = Expect<Assignable<PiEdit, ToolDetailsMap["edit"]>>
 export type Check_write = Expect<Assignable<PiWrite, ToolDetailsMap["write"]>>
+export type Check_toolchain = Expect<Assignable<PiToolchain, ToolDetailsMap["toolchain"]>>
 export type Check_stm32config = Expect<Assignable<PiStm32Config, ToolDetailsMap["stm32config"]>>
 export type Check_netlist = Expect<Assignable<PiNetlist, ToolDetailsMap["netlist"]>>
 export type Check_flash = Expect<Assignable<PiFlash, ToolDetailsMap["flash"]>>

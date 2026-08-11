@@ -31,7 +31,11 @@ import {
   createLogToolDefinition,
   createNetlistToolDefinition,
   createStm32ConfigToolDefinition,
+  promptSectionFor,
+  resolveToolchain,
+  shellEnvFor,
   wrapToolDefinitions,
+  type ToolchainResolution,
   type ToolDef,
 } from "@yoma/my-pi-coding-agent"
 import { buildSystemPrompt, collectToolPromptData } from "@yoma/my-pi-coding-agent/system-prompt"
@@ -423,12 +427,22 @@ export class SessionManager {
     entry.touched = Date.now()
     if (entry.harness) return entry
 
-    const { models, model } = await this.ensureModels()
+    // 工具链解析必须在 `new NodeExecutionEnv` **之前**拿到结果:shellEnv 只能通过
+    // 构造参数一次性灌进去(私有字段,建好之后没有 setter),而 bun 的 spawn 省略
+    // env 参数时认的是进程启动那一刻的 PATH——运行时再对着已经造好的 env 补 PATH
+    // 不会生效(根 CLAUDE.md「会咬人的地方」第一条,coding-agent/src/core/tools/
+    // serial.ts:176 是同一道疤)。
+    //
+    // 不能像 loadContextFiles/discoverSkills 那样并进它们那个 Promise.all——那两个
+    // 的入参正是 env,而 env 本身要等这次解析完才能造出来,凑一起就是循环依赖。
+    // 真正同类(不依赖 env、建会话时只读一次的快照)又能安全并发的是 ensureModels()。
+    const [{ models, model }, toolchain] = await Promise.all([this.ensureModels(), this.resolveToolchainSafe(entry)])
+
     const session = entry.session ?? (await this.repo.open(entry.meta))
     entry.session = session
     entry.title = (await session.getSessionName()) ?? entry.title
 
-    const env = new NodeExecutionEnv({ cwd: entry.cwd })
+    const env = new NodeExecutionEnv({ cwd: entry.cwd, shellEnv: shellEnvFor(toolchain, process.env) })
 
     // 资源发现:项目的 AGENTS.md/CLAUDE.md(全局 + 祖先链)与技能(全局 + .agents/skills)。
     // 走 my-pi 自己的 resources.ts,不重写:"从哪些目录找"是内核那边定的产品决策,
@@ -448,6 +462,17 @@ export class SessionManager {
         },
       ])
     }
+
+    // 工具链状态并进系统提示词:追加一条 contextFiles,不新增专门字段——
+    // BuildSystemPromptOptions 定义在 packages/coding-agent(my-pi 那侧),这次改动
+    // 范围只有 packages/kernel,加字段等于越界改别的包。path 给一个不会真实存在的
+    // 假名,模型才看得出这不是一份项目文件。promptSectionFor 对"没有清单"和"清单
+    // 存在但全部 ok(没有需要留意的工具)"都返回 undefined,所以绝大多数项目(没有
+    // .my-pi/toolchain.json)不追加任何东西,系统提示词字节不变。
+    const toolchainSection = promptSectionFor(toolchain)
+    const contextFilesWithToolchain = toolchainSection
+      ? [...contextFiles, { path: "<toolchain>", content: toolchainSection }]
+      : contextFiles
 
     // 工具定义必须过 wrapToolDefinitions 才能交给 harness;系统提示词由工具集反推
     // (collectToolPromptData 会把每个工具的使用指导拼进去)。这两步照抄 my-pi 自己的
@@ -474,7 +499,7 @@ export class SessionManager {
       systemPrompt: buildSystemPrompt({
         cwd: entry.cwd,
         ...collectToolPromptData(toolDefinitions),
-        contextFiles,
+        contextFiles: contextFilesWithToolchain,
         skills: discovered.skills,
       }),
       // harness.skill() 从 turn 快照的 resources 里查技能。
@@ -499,6 +524,30 @@ export class SessionManager {
 
     this.evictIdle()
     return entry
+  }
+
+  /**
+   * 工具链清单解析失败(清单文件在,但内容坏了——`schema` 不对/JSON 损坏/写了绝对
+   * 路径等,见 coding-agent 的 parseManifest)绝不能让会话开不起来:会话开不起来
+   * 比工具链没配好严重得多。resolveToolchain() 本身对"项目根本没有清单文件"已经是
+   * 静默返回一个空结果(tools: [], manifest: undefined);这里只是把"清单存在但解析
+   * 炸了"这一种情况也吞掉异常、发一条 kernel.error 诊断,折叠回同一种空结果——调用方
+   * (shellEnvFor / promptSectionFor)因此不用关心"没有清单"和"清单解析失败"是两回事,
+   * 统一按"当作没有清单"处理。
+   */
+  private async resolveToolchainSafe(entry: Entry): Promise<ToolchainResolution> {
+    try {
+      return await resolveToolchain({ projectDir: entry.cwd, configDir: this.configDir })
+    } catch (error) {
+      this.options.emit([
+        {
+          type: "kernel.error",
+          sessionID: entry.id,
+          message: `工具链清单解析失败:${(error as Error)?.message ?? String(error)}`,
+        },
+      ])
+      return { manifestPath: undefined, manifest: undefined, side: "mother", tools: [], ok: true, needsAttention: [] }
+    }
   }
 
   /**

@@ -207,6 +207,7 @@ export const TOOL_NAMES = [
   "bash",
   "edit",
   "write",
+  "toolchain",
   "grep",
   "stm32config",
   "netlist",
@@ -265,6 +266,35 @@ export interface WriteToolDetails {
   created: boolean
   oldContent: string | null
   newContent: string
+}
+
+/**
+ * resolveToolchain() 对单个声明工具的判定,从 coding-agent 的 ResolvedTool 结构化
+ * 复制(公共契约见 core/toolchain/resolve.ts)。还没有专门的工具卡片消费它 —— 现在
+ * 只是渲染成一段文本追加进系统提示词(session-manager.ts 的 promptSectionFor) ——
+ * 提前钉住这份形状是为了 P1 补渲染器时不用回头核对字段,漂移仍由 details-check.ts 兜底。
+ */
+export interface ToolchainResolvedTool {
+  id: string
+  status: "ok" | "version-mismatch" | "ambiguous" | "missing"
+  optional: boolean
+  bin: Record<string, string>
+  version?: string
+  wanted?: string
+  candidates?: string[]
+  source?: "local" | "ledger" | "env" | "path" | "well-known" | "registry"
+  hint?: string
+  why?: string
+}
+
+export interface ToolchainToolDetails {
+  action: "check" | "resolve" | "set"
+  ok: boolean
+  side?: "mother" | "runner"
+  /** check / resolve 才有:每个声明工具的完整解析结果。 */
+  tools?: ToolchainResolvedTool[]
+  /** set 才有:被记录的工具 id。 */
+  id?: string
 }
 
 export interface NetlistToolDetails {
@@ -353,6 +383,7 @@ export interface ToolDetailsMap {
   bash: BashToolDetails
   edit: EditToolDetails
   write: WriteToolDetails
+  toolchain: ToolchainToolDetails
   grep: GrepToolDetails
   stm32config: Stm32ConfigToolDetails
   netlist: NetlistToolDetails
