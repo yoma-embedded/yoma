@@ -37,11 +37,12 @@ export const THINKING_LEVELS: readonly string[] = THINKING_ORDER
 /**
  * 没人表态时要的那一档。
  *
- * 取 `high` 而不是 `max`:后者在多数模型上是"想到停不下来",按轮计费的无人值守
- * 场景里代价难估;`high` 是"会停下来想一想"的最低成本档。要更狠就在任务书里
- * 显式写 `model.thinking: "max"`。
+ * 取 `max` —— 无人值守时想得不够狠的代价是**多跑一轮**(再上一次板、再等一次构建),
+ * 那比多花的 token 贵得多。它与调试台的默认模型是一对:默认模型是 DeepSeek V4 Flash
+ * (bench 的 `DEFAULT_MODEL`),每 token 只有 V4 Pro 的三分之一,于是"最强档位"在这里
+ * 是负担得起的。要省就在任务书里显式写 `model.thinking`,包括写 `"off"` 关掉。
  */
-export const DEFAULT_THINKING_LEVEL = "high"
+export const DEFAULT_THINKING_LEVEL = "max"
 
 /**
  * 在 `levels` 里挑一档最接近 `want` 的。

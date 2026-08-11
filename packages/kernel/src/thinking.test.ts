@@ -20,10 +20,12 @@ function model(reasoning: boolean, map?: Record<string, string | null>): Model<s
 const DEEPSEEK = { minimal: null, low: null, medium: null, high: "high", max: "max" }
 
 describe("pickThinkingLevel", () => {
-  test("默认档是 high —— 不是 off", () => {
+  test("默认档是 max —— 不是 off", () => {
     // 这条测试就是这次改动的理由本身:reasoning 模型不该默认不思考。
-    expect(DEFAULT_THINKING_LEVEL).toBe("high")
-    expect(pickThinkingLevel(["off", "high", "max"])).toBe("high")
+    // 取最强的一档是因为无人值守时"想得不够"的代价是多跑一轮,比 token 贵;
+    // 而调试台的默认模型(V4 Flash)本来就便宜,配得起(见 bench 的 DEFAULT_MODEL)。
+    expect(DEFAULT_THINKING_LEVEL).toBe("max")
+    expect(pickThinkingLevel(["off", "high", "max"])).toBe("max")
   })
 
   test("非 reasoning 模型落回 off —— 不需要调用方分支", () => {
@@ -31,10 +33,12 @@ describe("pickThinkingLevel", () => {
   })
 
   test("要的档位没有就往上找,再没有才往下降", () => {
+    // want 写死成 high 而不是靠默认档:默认档一变(它变过),这两条就不再检验
+    // "往上找/往下降"了,而是变成两条永远绿的断言。
     // 只有 max:high 够不着,往上找到 max(宁可多想)。
-    expect(pickThinkingLevel(["off", "max"])).toBe("max")
+    expect(pickThinkingLevel(["off", "max"], "high")).toBe("max")
     // 只有 low:high 之上没有,往下降到 low。
-    expect(pickThinkingLevel(["off", "low"])).toBe("low")
+    expect(pickThinkingLevel(["off", "low"], "high")).toBe("low")
   })
 
   test("显式档位优先于默认,包括显式 off", () => {

@@ -2,10 +2,13 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { writeFileSync } from "node:fs"
 import path from "node:path"
 
+import { DEFAULT_THINKING_LEVEL } from "@yoma-desktop/kernel"
+
 import { runGitReal } from "../git.ts"
+import { DEFAULT_MODEL } from "../job.ts"
 import type { TurnOptions } from "../turn.ts"
 import { initMailbox } from "./init.ts"
-import { motherStep, parseMotherDecision, type MailboxMotherOptions } from "./mother.ts"
+import { motherStep, parseMotherDecision, resolveMotherModel, type MailboxMotherOptions } from "./mother.ts"
 import { runnerStep } from "./runner.ts"
 import { parseMailboxJob } from "./spec.ts"
 import { scanMailbox, writeInstruction, type RoundDecision, type RoundInstruction } from "./store.ts"
@@ -88,6 +91,33 @@ function motherOptions(
 ): MailboxMotherOptions {
   return { clone, projectDir, sessionsRoot: temp.dir("sessions-"), ...overrides }
 }
+
+/**
+ * 两端跑的是哪个模型。
+ *
+ * 这件事没有闸门的时候是**看不见**的:任务书不写模型,两侧各自回落到"本机第一个有
+ * 凭据的 provider 的默认模型",可以是两家不同的模型,而信箱里没有一处记着这回事。
+ */
+describe("resolveMotherModel", () => {
+  test("任务书什么都不写:研发端与工位端同一个默认模型、同一档思考", () => {
+    const job = parseMailboxJob(rawMailboxJob())
+    expect(resolveMotherModel(job)).toEqual({ ...DEFAULT_MODEL, thinking: DEFAULT_THINKING_LEVEL })
+    expect(resolveMotherModel(job)).toEqual(job.job.model!)
+  })
+
+  test("mother.model 齐了就只换研发端 —— 工位端还是任务书里的那个", () => {
+    const job = parseMailboxJob(
+      rawMailboxJob({ mailbox: { mother: { model: { providerID: "deepseek", modelID: "deepseek-v4-pro" } } } }),
+    )
+    expect(resolveMotherModel(job)?.modelID).toBe("deepseek-v4-pro")
+    expect(job.job.model?.modelID).toBe(DEFAULT_MODEL.modelID)
+  })
+
+  test("mother.model 只写档位:模型跟着 job.model,档位单独生效", () => {
+    const job = parseMailboxJob(rawMailboxJob({ mailbox: { mother: { model: { thinking: "off" } } } }))
+    expect(resolveMotherModel(job)).toEqual({ ...DEFAULT_MODEL, thinking: "off" })
+  })
+})
 
 describe("mailbox mother · 开局", () => {
   test("零轮次时研发端出第一轮:可以先改代码、附上产物,指令与附件同一次提交", async () => {

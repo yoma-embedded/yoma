@@ -197,6 +197,18 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
   这道闸门在 `thinking.test.ts` 里直接拿真 pi-ai 对答案。
   另:`setModel` 换模型之后**必须重钳当前档位** —— 构造期那次是按 `ensureModels()`
   的默认模型算的,而调用方紧接着要换成任务书钉的那个。
+- **调试台的默认模型**(`bench/src/job.ts` 的 `DEFAULT_MODEL`,`parseJob` 里落定)。
+  任务书不写模型时,两端都跑 `deepseek/deepseek-v4-flash`,档位 `max`
+  (`DEFAULT_THINKING_LEVEL` 因此从 `high` 提到 `max`:Flash 的单价只有 V4 Pro 的
+  三分之一,省下的换成想得更狠;想得不够的代价是多跑一轮,比 token 贵得多)。
+  **不落定的话它是看不见的**:两侧各自回落到内核的"本机第一个有凭据的 provider 的
+  默认模型",可以是两家不同的模型,而信箱里没有一处记着这回事。落定在 `parseJob`
+  是因为入箱的 `job.json` 本来就是"归一化后的 spec"(`init.ts`),工位端读到的于是
+  是答案本身而不是它那台机器的猜测。只填一半的 model **整个**落回默认,不猜另一半。
+  代价一并写在这:机器上没有 deepseek 凭据时,第一轮会硬报 `未知模型 deepseek/…`
+  —— 这是有意的,任务书里写 `model` 或配 key 就好;`yoma-bench check` 会把落定后的
+  两端模型印出来。faux 演练(`smoke:mailbox` / `sim`)例外:注入了 `resolveModels`
+  时 `turn.ts` 不下发模型,否则演练会撞上"注册表里只有假模型"。
 
 项目上下文与技能走 my-pi 的 `core/resources.ts`(`loadContextFiles` / `discoverSkills`),
 不重写:"从哪些目录找"是内核那边的产品决策,抄一份的结果是"Zed 读得到项目的 AGENTS.md、

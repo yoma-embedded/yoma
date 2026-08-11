@@ -30,7 +30,9 @@ import { parseJob, parseModelSpec, JobSpecError, type Job, type JobModel } from 
 
 export interface MailboxMotherConfig {
   /**
-   * 母 agent 用的模型。要么 providerID+modelID 齐,要么整个不填(落到 job.model → 内核默认)。
+   * 母 agent 用的模型。要么 providerID+modelID 齐,要么整个不填 —— 不填就跟着
+   * `job.model` 走,而它在 parseJob 里已经落定(任务书没写模型就是调试台的
+   * `DEFAULT_MODEL`,即 DeepSeek V4 Flash)。于是**两端默认同一个模型**。
    *
    * `thinking` 是个例外:它**单独生效**,不受"要么齐要么不填"的约束(见
    * mother.ts 的 motherJob)。研发端那侧才是做根因分析、写指令的,让它在同一个模型上

@@ -206,7 +206,10 @@ describe("runTurn · 思考档位", () => {
     }
   }
 
-  test("任务书没写档位时也在思考 —— 默认不是 off", async () => {
+  // 默认档是 max(kernel 的 DEFAULT_THINKING_LEVEL,那边有断言钉着),而 faux 模型的
+  // 档位表最高只到 high(fauxProvider 不收 thinkingLevelMap,实测),于是这里看到的是
+  // **往下降一档**之后的结果。两件事一起验:默认不是 off,且模型没有的档位不会把请求打死。
+  test("任务书没写档位时也在思考 —— 默认档落到该模型最强的一档", async () => {
     const workspace = tempDir("bench-ws-")
     const capture = capturing()
     await runTurn({ ...turnOptions(workspace, capture.steps), resolveModels: models(capture.steps, true) })

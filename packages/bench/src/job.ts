@@ -12,7 +12,7 @@
 
 import path from "node:path"
 
-import { THINKING_LEVELS } from "@yoma-desktop/kernel"
+import { DEFAULT_THINKING_LEVEL, THINKING_LEVELS } from "@yoma-desktop/kernel"
 
 import { readTextFile } from "./fsx.ts"
 
@@ -51,17 +51,44 @@ export interface JobDeliver {
 }
 
 export interface JobModel {
+  /** 要么和 modelID 一起填,要么整个不填(落到 {@link DEFAULT_MODEL})。 */
   providerID?: string
   modelID?: string
   /**
    * 思考档位:`off` / `minimal` / `low` / `medium` / `high` / `xhigh` / `max`。
    *
    * **不填不等于关掉** —— 落到调试台自己的默认(kernel 的 `DEFAULT_THINKING_LEVEL`,
-   * 即 `high`)。写 `"off"` 才是显式关掉。填了模型不支持的档位会被自动落到最近的一档,
+   * 即 `max`)。写 `"off"` 才是显式关掉。填了模型不支持的档位会被自动落到最近的一档,
    * 所以两侧机器换模型不会因此跑不起来。
    */
   thinking?: string
 }
+
+/**
+ * 任务书没写模型时,调试台用哪个 —— **研发端与工位端同一个默认**。
+ *
+ * ## 为什么调试台要自己表态
+ *
+ * 不表态的话落到内核的 `resolveModel()`:"第一个有凭据的 provider 的默认模型"。
+ * 那是给交互式用的兜底 —— 用户看得见模型对话框里写的是哪个,不满意当场换。无人值守
+ * 没有这一眼:两台机器上"第一个有凭据的 provider"可能根本不是同一家,于是研发端和
+ * 工位端跑着不同的模型,而任务书里没有任何一处看得出来。这和上一版
+ * {@link DEFAULT_THINKING_LEVEL} 的理由是同一个。
+ *
+ * ## 为什么是 V4 Flash 而不是 V4 Pro
+ *
+ * 两者的档位表一样(都支持 high/max),而 Flash 每 token 只要三分之一
+ * (0.14/0.28 对 0.435/0.87)。省下的那部分直接换成思考:默认档位因此敢开到 `max`。
+ * 2026-08-11 那场信箱闭环的账正好反过来 —— V4 Pro 跑了 5 轮、107 条 assistant 消息,
+ * reasoning token 是 0。**贵的模型不思考,不如便宜的模型往死里想。**
+ *
+ * 落成显式字段(见 parseJob)而不是留空到运行时再挑,是为了让它进信箱的 job.json:
+ * 工位端读到的是"用哪个模型"这件事的答案本身,不是它自己那台机器的猜测。
+ */
+export const DEFAULT_MODEL = {
+  providerID: "deepseek",
+  modelID: "deepseek-v4-flash",
+} as const
 
 export interface Job {
   id: string
@@ -102,6 +129,22 @@ export function parseModelSpec(raw: unknown, fieldPath: string, issues: string[]
   if (thinking && !THINKING_LEVELS.includes(thinking))
     issues.push(`${fieldPath}.thinking "${thinking}" 不是合法档位(${THINKING_LEVELS.join(" / ")})`)
   return { providerID: str(raw.providerID), modelID: str(raw.modelID), thinking }
+}
+
+/**
+ * `job.model` 的落定:模型**要么齐(providerID+modelID)要么整个落到默认**,
+ * 档位单独落 —— 与 `mailbox.mother.model` 的规矩同一套(见 mother.ts 的 motherTurnJob)。
+ *
+ * 只填一半的模型不去猜另一半:补出来的 `deepseek/<别家的模型>` 会在第一轮 setModel
+ * 上报"未知模型",而那时人已经离开了。落到默认反而是两端一致、跑得起来的那个。
+ */
+function resolveJobModel(model: JobModel | undefined): JobModel {
+  const pinned = model?.providerID && model.modelID ? model : undefined
+  return {
+    providerID: pinned?.providerID ?? DEFAULT_MODEL.providerID,
+    modelID: pinned?.modelID ?? DEFAULT_MODEL.modelID,
+    thinking: model?.thinking ?? DEFAULT_THINKING_LEVEL,
+  }
 }
 
 /** 解析并校验 job spec。**不** 碰文件系统 —— 路径是否存在由调用方在准备阶段查(带上下文更好报错)。 */
@@ -146,7 +189,7 @@ export function parseJob(raw: unknown): Job {
       mr: deliverRaw.mr === true,
       remote: str(deliverRaw.remote) ?? "origin",
     },
-    model,
+    model: resolveJobModel(model),
   }
 }
 

@@ -11,10 +11,10 @@ import path from "node:path"
 
 import { kernelSelfCheck } from "@yoma-desktop/kernel/host"
 
-import { JobSpecError } from "./job.ts"
+import { JobSpecError, type JobModel } from "./job.ts"
 import { activeRoleLocks } from "./mailbox/daemon.ts"
 import { initMailbox } from "./mailbox/init.ts"
-import { runMailboxMother } from "./mailbox/mother.ts"
+import { resolveMotherModel, runMailboxMother } from "./mailbox/mother.ts"
 import { cloneDirFor, defaultMailboxRoot } from "./mailbox/paths.ts"
 import { runMailboxRunner } from "./mailbox/runner.ts"
 import { runSim } from "./mailbox/sim.ts"
@@ -51,11 +51,21 @@ function defaultEnginesDir(): string | undefined {
   return path.join(path.resolve(import.meta.dir, "..", "..", ".."), "engines")
 }
 
+/** `deepseek/deepseek-v4-flash(思考 max)`。thinking 一定有值(parseJob 落定过)。 */
+function modelLabel(model?: JobModel): string {
+  if (!model?.providerID || !model.modelID) return "内核默认"
+  return `${model.providerID}/${model.modelID}(思考 ${model.thinking ?? "默认"})`
+}
+
 /** 只校验任务书与本机内核装配 —— 不碰信箱、不碰板子。 */
 async function commandCheck(jobFile: string): Promise<void> {
-  const { job } = await loadMailboxJob(jobFile)
+  const mailboxJob = await loadMailboxJob(jobFile)
+  const { job } = mailboxJob
   say(`${GREEN}✓${RESET} 任务书合法:${job.title} ${DIM}(${job.id})${RESET}`)
   if (job.bench.chip) say(`${DIM}  板卡 ${job.bench.board ?? "—"} · 芯片 ${job.bench.chip}${RESET}`)
+  // 模型是任务书里最容易"以为配上了"的一项:不填有默认,只填一半会整个落回默认。
+  // 把**落定之后**的两端印出来 —— 否则要跑完一轮、翻会话 JSONL 才看得出跑的是谁。
+  say(`${DIM}  研发端 ${modelLabel(resolveMotherModel(mailboxJob))} · 工位端 ${modelLabel(job.model)}${RESET}`)
 
   const enginesDir = defaultEnginesDir()
   try {

@@ -92,9 +92,7 @@ NSIS 安装包。
     "probe": "0483:374b:066DFF575154657287134352"
   },
   "task": "## 工位与安全约束(每个任务都适用)\n1. 绝不能让电机转动……\n5. 构建命令(研发端用):cmake --build build/Debug",
-  "model": { "providerID": "deepseek", "modelID": "deepseek-v4-pro" },
-  "deliver": { "push": true, "remote": "origin" },
-  "mailbox": { "mother": { "model": { "providerID": "deepseek", "modelID": "deepseek-v4-flash" } } }
+  "deliver": { "push": true, "remote": "origin" }
 }
 ```
 
@@ -110,9 +108,14 @@ NSIS 安装包。
   必须填 `probe`(格式 `VID:PID` 或 `VID:PID:Serial`),否则 agent 有可能挑错板子。
 - **`repo.name`** 给人看,也让两台机器对号入座;`repo.ref` 是研发端建分支时的起点;
   `repo.branch` 缺省是 `agent/<任务id>`。
-- **`model` / `mailbox.mother.model`**:两侧可以用不同模型。研发端要读代码、写补丁,
-  通常给强一点的;工位端主要是执行与观察。填了就要**填全**(providerID + modelID),
-  只填一半会被跳过、静默落回内核默认模型。
+- **`model` / `mailbox.mother.model`**:上面那份**一个都没写** —— 两端于是都跑调试台的
+  默认:`deepseek/deepseek-v4-flash`,思考档位 `max`。这个组合是有意的:Flash 每 token
+  只要 V4 Pro 的三分之一,省下的直接换成"想得更狠"(2026-08-11 那场闭环的教训正是
+  贵模型不思考,见 `packages/bench/src/job.ts` 的 `DEFAULT_MODEL`)。
+  要换就**填全**(providerID + modelID),只填一半整个落回默认;`thinking` 是例外,
+  可以单独写(`{"thinking":"high"}` 就是"同一个模型上省着点想")。
+  两侧可以不一样:`model` 是工位端的,`mailbox.mother.model` 是研发端的。
+  跑之前用 `yoma-bench check <任务书>` 印一眼,它会把落定之后的两端模型都打出来。
 - **`deliver.push`** 不开的话,终局通过时交付分支只留在研发机本地。这是显式开关。
 
 **模板里没有判据、没有权限白名单、没有 known-good 固件。** 2026-08-10 起这三样都不存在

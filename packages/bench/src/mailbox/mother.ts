@@ -35,7 +35,7 @@ import path from "node:path"
 
 import { fileExists, readJsonFile } from "../fsx.ts"
 import * as git from "../git.ts"
-import { resolveWorkspace, type Job } from "../job.ts"
+import { resolveWorkspace, type Job, type JobModel } from "../job.ts"
 import { ensureYomaDir } from "../runner.ts"
 import { runTurn, type TurnOptions, type TurnResult, type TurnUsage } from "../turn.ts"
 import { acquireRoleLock, backoffSeconds } from "./daemon.ts"
@@ -199,20 +199,31 @@ export function parseMotherDecision(
 }
 
 /**
+ * 研发端这一侧最终用的模型。
+ *
+ * 模型要么齐(providerID+modelID 都在),要么回落到 `job.model` —— 后者在 parseJob 里
+ * 已经落定(任务书没写就是调试台的 `DEFAULT_MODEL`),所以研发端与工位端天然同一个默认。
+ * 半拉子的 mother.model 不去补另一半:补出来的组合会在 setModel 上报未知模型。
+ *
+ * `thinking` 不受"要么齐要么不填"约束:它不参与上面那个跳过判断(那是 providerID+modelID
+ * 的事),而"同一个模型上让研发端想得更狠"是常见需求。
+ *
+ * 导出是给 `yoma-bench check` 用的 —— 印出来的和真跑的必须是同一套算法。
+ */
+export function resolveMotherModel(mailboxJob: MailboxJob): JobModel | undefined {
+  const mother = mailboxJob.mailbox.mother.model
+  const base = mother?.providerID && mother?.modelID ? mother : mailboxJob.job.model
+  const thinking = mother?.thinking ?? base?.thinking
+  return base || thinking ? { ...base, thinking } : undefined // (base || thinking) ? … —— || 优先于 ?:
+}
+
+/**
  * 研发端跑内核轮所用的合成 job:工作区是**项目仓**。分支沿用 job 声明的那条 ——
  * 代码归研发端写,交付的就是这条分支。
  */
 function motherTurnJob(mailboxJob: MailboxJob, workspace: string): Job {
   const job = mailboxJob.job
-  // 模型要么齐(providerID+modelID 都在),要么回落到 job.model —— 半拉子的
-  // mother.model 会让 setModel 被跳过,静默用内核默认模型,与 spec 承诺不符。
-  const motherModel = mailboxJob.mailbox.mother.model
-  const base = motherModel?.providerID && motherModel?.modelID ? motherModel : job.model
-  // thinking 不受"要么齐要么不填"约束:它不参与 setModel 的跳过判断(那是
-  // providerID+modelID 的事),而"同一个模型上让研发端想得更狠"是常见需求。
-  const thinking = motherModel?.thinking ?? base?.thinking
-  const model = base || thinking ? { ...base, thinking } : undefined // (base || thinking) ? … —— || 优先于 ?:
-  return { ...job, repo: { ...job.repo, directory: workspace }, model }
+  return { ...job, repo: { ...job.repo, directory: workspace }, model: resolveMotherModel(mailboxJob) }
 }
 
 /** 把 agent 声明的相对路径变成可拷贝的附件条目;边界与重名在这里挡掉。 */

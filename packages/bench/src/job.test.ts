@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
 
-import { JobSpecError, parseJob, resolveWorkspace } from "./job.ts"
+import { DEFAULT_THINKING_LEVEL } from "@yoma-desktop/kernel"
+
+import { DEFAULT_MODEL, JobSpecError, parseJob, resolveWorkspace } from "./job.ts"
 
 function base(overrides: Record<string, unknown> = {}) {
   return {
@@ -53,9 +55,23 @@ describe("parseJob · 模型与思考档位", () => {
     expect(job.model?.thinking).toBe("max")
   })
 
-  test("不填 thinking 不等于关掉 —— 落到调试台的默认,由 turn.ts 交给内核", () => {
+  test("不填 thinking 不等于关掉 —— 落定成调试台的默认档", () => {
     const job = parseJob(base({ model: { providerID: "deepseek", modelID: "deepseek-v4-pro" } }))
-    expect(job.model?.thinking).toBeUndefined()
+    expect(job.model?.thinking).toBe(DEFAULT_THINKING_LEVEL)
+  })
+
+  test("整个 model 不填:落定成调试台的默认模型 —— 研发端与工位端读的是同一份 job", () => {
+    // 不落定的话,两侧各自回落到"本机第一个有凭据的 provider 的默认模型",
+    // 可以是两家不同的模型,而任务书里没有一处看得出来。
+    const job = parseJob(base())
+    expect(job.model).toEqual({ ...DEFAULT_MODEL, thinking: DEFAULT_THINKING_LEVEL })
+  })
+
+  test("只填一半的 model 整个落回默认 —— 不去猜另一半", () => {
+    // 猜出来的 deepseek/<别家模型> 会在第一轮 setModel 上报未知模型,那时人已经走了。
+    expect(parseJob(base({ model: { modelID: "kimi-k3" } })).model?.modelID).toBe(DEFAULT_MODEL.modelID)
+    // 但档位不受"要么齐要么不填"约束:它单独生效。
+    expect(parseJob(base({ model: { modelID: "kimi-k3", thinking: "off" } })).model?.thinking).toBe("off")
   })
 
   test("显式 off 是合法的 —— 要关得关得掉", () => {

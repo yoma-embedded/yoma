@@ -17,12 +17,6 @@
     "remote": "origin"
   },
   "mailbox": {
-    "pollSeconds": 15,
-    "mother": {
-      "model": {
-        "providerID": "deepseek",
-        "modelID": "deepseek-chat"
-      }
-    }
+    "pollSeconds": 15
   }
 }

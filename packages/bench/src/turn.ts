@@ -222,11 +222,16 @@ export async function runTurn(options: TurnOptions): Promise<TurnResult> {
       sessionID = session.id
     }
 
-    if (options.job.model?.providerID && options.job.model.modelID) {
+    // 任务书钉的模型只对**真注册表**有意义。faux 演练(smoke:mailbox / sim --faux)注入
+    // 的注册表里只有假模型,照着任务书 setModel 会当场"未知模型 deepseek/…" —— 演练要验
+    // 的是装配与闭环,不是选型,所以这时用注入的那个。生产从不注入 resolveModels,于是
+    // parseJob 落定的模型(任务书没写就是 DEFAULT_MODEL)一定会被下发。
+    const model = options.resolveModels ? undefined : options.job.model
+    if (model?.providerID && model.modelID) {
       await host.handle("session.setModel", {
         sessionID,
-        providerID: options.job.model.providerID,
-        modelID: options.job.model.modelID,
+        providerID: model.providerID,
+        modelID: model.modelID,
       })
     }
 
