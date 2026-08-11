@@ -23,6 +23,9 @@ export type * from "./details-check.ts"
 export { SessionProjection } from "./projector.ts"
 export { SessionManager } from "./session-manager.ts"
 export { StreamSink } from "./stream.ts"
+// 全局配置目录的真源(凭据/技能/上下文)。导出它是为了让 bench 的 paths.ts 副本
+// 有个可断言的对手 —— 那份副本必须是叶子模块,不能反过来 import 这里。
+export { myPiConfigDir } from "./auth.ts"
 
 export interface KernelHostOptions {
   /** engines/bin + engines/data 的所在目录。生产环境是 process.resourcesPath/engines。 */

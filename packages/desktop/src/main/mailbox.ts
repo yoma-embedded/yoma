@@ -7,16 +7,23 @@
  * (守护转杀 turn 孙进程再退,bench/runner.ts 的 activeTurnChildren);
  * Windows 上两者都没有优雅可言,统一走 taskkill /T /F 杀整棵树。
  *
- * 守护配置文件、信箱克隆、演练布景全落在 userData/mailbox/ 下,跟着 app 数据走。
+ * 守护配置文件、信箱克隆、演练布景全落在 **`<configDir>/mailbox/`** 下(2026-08-11
+ * 之前是 userData/mailbox/)。搬家的理由是单实例锁:锁文件住在克隆目录里面,锁的是
+ * "这个物理目录"而不是"这个信箱",而命令行那侧的克隆从来不在 userData 里 —— 两边
+ * 落在不同目录时两把锁互不知情,同一个信箱同一个角色能被跑起来两个守护,同时推同一个
+ * 远端、同时抢同一块板子。位置的唯一实现在 bench 的 mailbox/paths.ts。
  */
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process"
-import { createHash } from "node:crypto"
 import { mkdirSync, writeFileSync } from "node:fs"
 import { readFile, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 
 import type { MailboxHostConfig } from "@yoma-desktop/bench"
+// 深引用叶子模块,**不要**改成从 `@yoma-desktop/bench` 主入口取:bench 在 desktop 的
+// devDependencies 里,electron-vite 会把它 inline,走主入口等于把整个内核拖进
+// out/main/index.js。理由写在 paths.ts 顶部。
+import { cloneDirFor } from "@yoma-desktop/bench/mailbox/paths"
 import {
   MailboxController,
   type MailboxLaunchHandle,
@@ -26,8 +33,12 @@ import {
 } from "./mailbox-controller.ts"
 
 export interface MailboxMainOptions {
-  /** userData 根(electron 的 app.getPath("userData"),测试传临时目录)。 */
-  userDataDir: string
+  /**
+   * 这台机器上 yoma agent 的全局目录(默认 `~/.my-pi`)—— 凭据、技能、上下文文件
+   * 住在这里,信箱克隆落在它下面的 `mailbox/`。**不是 userData**:命令行那侧也要
+   * 落在同一个目录,克隆目录一致才是单实例锁生效的前提。测试传临时目录隔离。
+   */
+  configDir: string
   /** 会话根 —— 与交互内核同一个目录,跑完直接在桌面端回放观战。 */
   sessionsRoot: string
   enginesDir?: string
@@ -70,7 +81,7 @@ export interface MailboxComposeInput {
 const STOP_GRACE_MS = 10_000
 
 export function createMailboxMain(options: MailboxMainOptions): MailboxMain {
-  const mailboxDir = join(options.userDataDir, "mailbox")
+  const mailboxDir = join(options.configDir, "mailbox")
   const children = new Map<MailboxLaunchHandle, ChildProcess>()
 
   /**
@@ -297,27 +308,6 @@ async function composeJob(
     return { ok: false, message: `任务书写不下去:${(error as Error).message}` }
   }
   return { ok: true, jobFile, projectDir }
-}
-
-/**
- * 克隆目录 = f(远端, 分支, 角色)。**分支必须进 key**。
- *
- * 克隆是"某个远端某条分支的工作副本",而 `ensureClone` 见到 `.git/HEAD` 就早返回、
- * 从不改分支。于是复用一个停在旧分支的克隆去跑新分支时,`cloneMailbox` 里那段孤儿
- * 分支逻辑根本不会跑,init 走到最后 `push -u origin <新分支>:<新分支>` 直接报
- * `src refspec <新分支> does not match any` —— 一个和"信箱配错了"毫无关系的 git 报错
- * (实测复现过)。换分支 = 换目录,是这条路上唯一不需要用户手动去删缓存的解法。
- *
- * 分支归一到 main:留空与显式写 main 是同一件事(sync.ts 的 `branchOf` 就这么定的),
- * 不归一的话同一条分支会有两个克隆,而且用户看不出为什么。
- * key 用 `\n` 分隔 —— 分支名不能含换行,所以 (远端, 分支) 的拼接不会撞车。
- */
-export function cloneDirFor(mailboxDir: string, remote: string, role: string, branch?: string): string {
-  const hash = createHash("sha1")
-    .update(`${remote}\n${branch?.trim() || "main"}`)
-    .digest("hex")
-    .slice(0, 10)
-  return join(mailboxDir, "clones", hash, role)
 }
 
 function buildHostConfig(

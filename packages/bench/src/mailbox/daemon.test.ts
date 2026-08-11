@@ -2,11 +2,37 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { writeFileSync } from "node:fs"
 import path from "node:path"
 
-import { acquireRoleLock, backoffSeconds } from "./daemon.ts"
+import { acquireRoleLock, activeRoleLocks, backoffSeconds } from "./daemon.ts"
 import { Temp } from "./testkit.ts"
 
 const temp = new Temp()
 afterEach(() => temp.cleanup())
+
+describe("activeRoleLocks(只读命令用来让开的那一眼)", () => {
+  test("没人占时是空的;守护占着就报出来;释放后回到空", async () => {
+    const clone = temp.dir("held-")
+    expect(await activeRoleLocks(clone)).toEqual([])
+
+    const lock = await acquireRoleLock(clone, "mother")
+    expect(lock.ok).toBe(true)
+    const held = await activeRoleLocks(clone)
+    expect(held).toHaveLength(1)
+    expect(held[0]).toContain("mother")
+    expect(held[0]).toContain(String(process.pid))
+
+    if (lock.ok) await lock.release()
+    expect(await activeRoleLocks(clone)).toEqual([])
+  })
+
+  test("尸体锁不算占用 —— 否则守护崩过一次,status 就永远不敢刷新了", async () => {
+    const clone = temp.dir("stale-")
+    const dir = path.join(clone, ".yoma-lock")
+    await acquireRoleLock(clone, "runner").then((l) => (l.ok ? l.release() : undefined))
+    // pid 1 之外找一个几乎不可能存在的 pid;写成尸体锁。
+    writeFileSync(path.join(dir, "runner.pid"), "999999\n")
+    expect(await activeRoleLocks(clone)).toEqual([])
+  })
+})
 
 describe("daemon 护具", () => {
   test("同角色第二个实例被拒;释放后能再抢到", async () => {

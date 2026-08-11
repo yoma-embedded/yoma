@@ -12,13 +12,15 @@ import path from "node:path"
 import { kernelSelfCheck } from "@yoma-desktop/kernel/host"
 
 import { JobSpecError } from "./job.ts"
+import { activeRoleLocks } from "./mailbox/daemon.ts"
 import { initMailbox } from "./mailbox/init.ts"
 import { runMailboxMother } from "./mailbox/mother.ts"
+import { cloneDirFor, defaultMailboxRoot } from "./mailbox/paths.ts"
 import { runMailboxRunner } from "./mailbox/runner.ts"
 import { runSim } from "./mailbox/sim.ts"
 import { loadMailboxJob } from "./mailbox/spec.ts"
 import { scanMailbox } from "./mailbox/store.ts"
-import { pullReset } from "./mailbox/sync.ts"
+import { ensureClone, pullReset } from "./mailbox/sync.ts"
 
 const RESET = "[0m"
 const DIM = "[2m"
@@ -115,23 +117,43 @@ async function pollSecondsOf(clone: string, flags: MailboxFlags): Promise<number
   return snapshot.job?.mailbox.pollSeconds ?? 15
 }
 
+/**
+ * 克隆目录的解析口径:**显式路径优先,否则按 `--remote` 落在规范位置并按需克隆。**
+ *
+ * 规范位置来自 `mailbox/paths.ts`,与桌面端是**同一个函数**。这一条不是整洁癖:
+ * 单实例锁 `.yoma-lock/<role>.pid` 住在克隆目录里面,锁的是"这个物理目录"而不是
+ * "这个信箱"。命令行和桌面端只要落在两个目录上,两把锁互不知情,同一个信箱同一个
+ * 角色就能被跑起来两个守护 —— 同时推同一个远端、同时抢同一块板子。
+ *
+ * 显式路径这条逃生舱留着:CI 和已有脚本里写死过路径,而且"我就是要放这儿"是合理需求。
+ */
+async function resolveClone(role: string, target: string | undefined, flags: MailboxFlags): Promise<string> {
+  if (target) return path.resolve(target)
+  if (!flags.remote) fail(`不给信箱克隆目录时必须给 --remote —— 会落在 ${defaultMailboxRoot()} 下`)
+  const clone = cloneDirFor(defaultMailboxRoot(), flags.remote!, role, flags.branch)
+  await ensureClone(flags.remote!, clone, { branch: flags.branch })
+  return clone
+}
+
 async function commandMailbox(sub: string | undefined, rest: string[]): Promise<void> {
   const { positionals, flags } = parseMailboxArgs(rest)
   const target = positionals[0]
-  if (!sub || !target) fail("用法:yoma-bench mailbox <init|runner|mother|status|sim> <目标> [旗标](不带参数看总用法)")
+  if (!sub) fail("用法:yoma-bench mailbox <init|runner|mother|status|sim> [目标] [旗标](不带参数看总用法)")
 
   if (sub === "init") {
-    const clone = positionals[1]
-    if (!clone) fail("用法:yoma-bench mailbox init <mailbox-job.json> <信箱克隆目录>(先 git clone 你的信箱仓)")
+    if (!target) fail("用法:yoma-bench mailbox init <mailbox-job.json> [信箱克隆目录] [--remote url]")
     const mailboxJob = await loadMailboxJob(target)
-    const outcome = await initMailbox({ clone: path.resolve(clone), branch: flags.branch, mailboxJob })
+    // 入箱发生在研发机上,而随后接手的守护是 mother —— 用它的克隆,别再建第二个。
+    const clone = await resolveClone("mother", positionals[1], flags)
+    const outcome = await initMailbox({ clone, branch: flags.branch, mailboxJob })
     if (!outcome.initialized) fail(outcome.detail)
     say(`${GREEN}✓${RESET} ${outcome.detail}`)
+    say(`${DIM}  克隆 ${clone}${RESET}`)
     return
   }
 
   if (sub === "runner") {
-    const clone = path.resolve(target)
+    const clone = await resolveClone("runner", target, flags)
     const outcome = await runMailboxRunner({
       clone,
       branch: flags.branch,
@@ -150,7 +172,7 @@ async function commandMailbox(sub: string | undefined, rest: string[]): Promise<
   }
 
   if (sub === "mother") {
-    const clone = path.resolve(target)
+    const clone = await resolveClone("mother", target, flags)
     const outcome = await runMailboxMother({
       clone,
       branch: flags.branch,
@@ -169,8 +191,18 @@ async function commandMailbox(sub: string | undefined, rest: string[]): Promise<
   }
 
   if (sub === "status") {
-    const clone = path.resolve(target)
-    await pullReset({ clone, branch: flags.branch, author: { name: "yoma-bench", email: "bench@yoma.local" } })
+    // **status 自己一个克隆**,绝不与守护共用目录:它要 pullReset,而 pullReset 是
+    // `reset --hard + clean -fd` —— 撞上正在写这一轮的守护就是把它还没提交的
+    // instruction/附件原地清掉,守护随后 commitPush 发现无改动,一整轮模型分析静默
+    // 作废(daemon.ts 顶部那段讲的就是这件事)。多一个几 MB 的克隆换掉这个,值。
+    const clone = await resolveClone("status", target, flags)
+    // 上面那条只保得住默认路径。显式传路径的人完全可能指到守护的克隆上,所以再看一眼锁。
+    const held = await activeRoleLocks(clone)
+    if (held.length > 0) {
+      say(`${YELLOW}这个克隆正被守护占着(${held.join("、")})—— 不碰它的工作树,下面是本地已有的状态${RESET}`)
+    } else {
+      await pullReset({ clone, branch: flags.branch, author: { name: "yoma-bench", email: "bench@yoma.local" } })
+    }
     const snapshot = await scanMailbox(clone)
     if (snapshot.job) {
       const job = snapshot.job.job
@@ -196,6 +228,7 @@ async function commandMailbox(sub: string | undefined, rest: string[]): Promise<
   }
 
   if (sub === "sim") {
+    if (!target) fail("用法:yoma-bench mailbox sim <mailbox-job.json> --project <工程目录> [--remote url]")
     const result = await runSim({
       jobFile: target,
       projectDir: flags.project,
@@ -224,14 +257,20 @@ if (!command || !jobFile) {
   yoma-bench check <mailbox-job.json>                          只校验任务书与本机内核装配
 
 跨机器多轮闭环(研发端决策与改码 ↔ 工位端上板,私有 git 仓当信箱):
-  yoma-bench mailbox init   <mailbox-job.json> <信箱克隆>      任务入箱
-  yoma-bench mailbox mother <信箱克隆> --project <工程目录>    研发端(有代码与构建环境)
-  yoma-bench mailbox runner <信箱克隆>                          工位端(有板子;不需要工程代码)
-  yoma-bench mailbox status <信箱克隆>                          看进度
+  yoma-bench mailbox init   <mailbox-job.json> [信箱克隆]      任务入箱
+  yoma-bench mailbox mother [信箱克隆] --project <工程目录>    研发端(有代码与构建环境)
+  yoma-bench mailbox runner [信箱克隆]                          工位端(有板子;不需要工程代码)
+  yoma-bench mailbox status [信箱克隆]                          看进度
   yoma-bench mailbox sim    <mailbox-job.json> [--remote url] [--fresh]
                                                                单机模拟整个闭环(两个真子进程,
                                                                只通过 git 通信;默认本地裸仓)
 
+  **信箱克隆目录可以不给** —— 那就用 --remote,克隆会落在规范位置并按需建出来:
+    ${defaultMailboxRoot()}/clones/<远端+分支哈希>/<角色>
+  这和桌面端是同一个位置。落在别处的代价是实打实的:单实例锁住在克隆目录里面,
+  两个目录 = 两把锁 = 同一个信箱同一个角色能被跑起来两个守护,同时抢同一块板子。
+
+  --remote URL   信箱远端(不给克隆目录时必填)
   --interval S   轮询间隔(缺省取任务书里的 mailbox.pollSeconds)
   --branch B     信箱分支(缺省 main)
   --once         runner/mother 只走一步就退(cron 场景)

@@ -12,6 +12,10 @@ import { app, BrowserWindow } from "electron"
 import { Deferred, Effect, Fiber } from "effect"
 import contextMenu from "electron-context-menu"
 
+// 深引用叶子模块 —— 走 `@yoma-desktop/bench` 主入口会把整个内核 inline 进
+// out/main/index.js(bench 在 devDependencies 里,externalizeDeps 不碰它)。
+import { defaultConfigDir } from "@yoma-desktop/bench/mailbox/paths"
+
 import type { ServerReadyData } from "../preload/types"
 import { checkAppExists, resolveAppPath } from "./apps"
 import { CHANNEL } from "./constants"
@@ -263,7 +267,10 @@ const main = Effect.gen(function* () {
   const updater = setupAutoUpdater(stopSidecars)
   // 信箱调试台:main 托管守护进程,renderer 走 window.api.mailbox。
   mailboxMain = createMailboxMain({
-    userDataDir: app.getPath("userData"),
+    // 信箱克隆跟着**全局配置目录**走(凭据/技能/上下文同一处),不跟 userData ——
+    // 命令行那侧也落在这里,同一个物理目录才让单实例锁真的是锁。
+    configDir: defaultConfigDir(),
+    // 会话仍在 userData:它是给桌面端回放看的,不是跨进程共享的 agent 状态。
     sessionsRoot: join(app.getPath("userData"), "sessions"),
     enginesDir: resolveEnginesDir(),
     // 打包后本文件在 asar 里,而守护 .mjs 被 asarUnpack 解出(electron-builder 配置)。

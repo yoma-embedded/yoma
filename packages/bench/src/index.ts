@@ -46,6 +46,9 @@ export type {
   DecisionKind,
 } from "./mailbox/store.ts"
 export { initBareMailbox, cloneMailbox, pullReset, commitPush } from "./mailbox/sync.ts"
+// 克隆位置只有一份实现(桌面端 main 直接深引用 `@yoma-desktop/bench/mailbox/paths`,
+// 绕开这个会把内核拖进它的 bundle —— 理由写在 paths.ts 顶部)。
+export { defaultConfigDir, defaultMailboxRoot, cloneDirFor } from "./mailbox/paths.ts"
 export { initMailbox, serializeMailboxJob } from "./mailbox/init.ts"
 export { runnerStep, runMailboxRunner, runnerWorkspaceFor } from "./mailbox/runner.ts"
 export type { MailboxRunnerOptions, RunnerStepOutcome } from "./mailbox/runner.ts"

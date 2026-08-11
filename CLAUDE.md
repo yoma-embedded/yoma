@@ -294,6 +294,20 @@ text part,不过滤的话提示词会原样出现在终报的"根因分析"里)�
   app 页面在 `/bench`(四分区:配置/任务/进度/终报)。
 - **配置页的"工程目录"只有研发端角色要填**(`mailbox-controller` 的开跑守卫按角色
   分):工位端没有项目检出。
+- **信箱克隆落在 `<configDir>/mailbox/clones/<远端+分支哈希>/<角色>`**(configDir 默认
+  `~/.my-pi`,与凭据/技能/上下文同一个目录),**不在 Electron 的 userData 里**
+  (2026-08-11 搬的)。理由是单实例锁:`.yoma-lock/<role>.pid` 住在**克隆目录里面**,
+  锁的是"这个物理目录"而不是"这个信箱" —— 桌面端在 userData、CLI 让你自己指路径,
+  两边落在不同目录时两把锁互不知情,同一个信箱同一个角色能被跑起来两个守护,同时推
+  同一个远端、同时抢同一块板子(实测撞过:CLI 跑 mother 的同时桌面端也能启动)。
+  位置只有**一份实现**:`bench/src/mailbox/paths.ts`,CLI 与桌面端都用它。
+  该文件必须保持**叶子模块**(只依赖 `node:crypto`/`node:os`/`node:path`)并经 bench 的
+  `./mailbox/paths` 深引用导出 —— desktop 的 main 要 import 它,而 bench 在 desktop 的
+  devDependencies 里,`externalizeDeps` 不碰它,走主入口等于把整个内核 inline 进
+  `out/main/index.js`(实测走叶子模块只涨 373 字节)。它与内核 `myPiConfigDir()` 的漂移
+  由 `paths.test.ts` 的断言兜住。
+  **会话(sessions)不跟着搬**,仍在 userData —— 它是给桌面端回放看的,不是跨进程共享的
+  agent 状态。
 - **退出 app 必须带走守护树**(`stopSidecars` → `mailboxMain.stopAll`):任务在飞时
   Cmd+Q 或自动更新 relaunch,守护与 turn 孙进程会变成**还在烧录/gdb 的孤儿**。
   先 SIGTERM 让守护自己转杀孙进程,宽限后硬杀。`runner.ts` 的 `activeTurnChildren`

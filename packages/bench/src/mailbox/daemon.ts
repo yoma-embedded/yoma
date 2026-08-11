@@ -58,6 +58,25 @@ export async function acquireRoleLock(clone: string, role: "runner" | "mother"):
   return { ok: false, detail: `抢 ${role} 锁失败(与另一实例撞了两次)` }
 }
 
+/**
+ * 这个克隆当前被哪些角色的守护占着(pid 还活着的才算)。
+ *
+ * 给**只读命令**用的。`mailbox status` 会 pullReset,而那是 `reset --hard + clean -fd`:
+ * 撞上正在写这一轮的守护,就是把它还没提交的 instruction/附件/patch 原地清掉 ——
+ * 守护随后 commitPush 发现无改动,一整轮模型分析静默作废,而报出来的是
+ * "第一轮指令推不上去",完全指不到真凶。这正是本文件顶部那段说的事,只是 status
+ * 不该去**抢**锁(它不是守护、不该把守护挤掉),而该看一眼就让开。
+ */
+export async function activeRoleLocks(clone: string): Promise<string[]> {
+  const held: string[] = []
+  for (const role of ["runner", "mother"] as const) {
+    const raw = await readTextFile(path.join(clone, LOCK_DIR, `${role}.pid`)).catch(() => "")
+    const holder = Number.parseInt(raw.trim(), 10)
+    if (Number.isFinite(holder) && holder > 0 && isAlive(holder)) held.push(`${role}(pid ${holder})`)
+  }
+  return held
+}
+
 function isAlive(pid: number): boolean {
   try {
     process.kill(pid, 0)

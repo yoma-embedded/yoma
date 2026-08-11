@@ -146,7 +146,7 @@ app.whenReady().then(async () => {
     const events: MailboxPublicEvent[] = []
     let saved: MailboxSettings | undefined
     const mailbox = createMailboxMain({
-      userDataDir: userData,
+      configDir: userData,
       sessionsRoot: join(userData, "sessions"),
       bundleDir,
       broadcast: (event) => events.push(event),
@@ -202,7 +202,7 @@ app.whenReady().then(async () => {
 
     let saved: MailboxSettings | undefined
     const mailbox = createMailboxMain({
-      userDataDir: userData,
+      configDir: userData,
       sessionsRoot: join(userData, "sessions"),
       bundleDir,
       broadcast: () => {},
@@ -239,7 +239,7 @@ app.whenReady().then(async () => {
 
     let saved: MailboxSettings | undefined
     const mailbox = createMailboxMain({
-      userDataDir: userData,
+      configDir: userData,
       sessionsRoot: join(userData, "sessions"),
       bundleDir,
       broadcast: () => {},
