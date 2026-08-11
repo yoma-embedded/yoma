@@ -223,11 +223,28 @@ bench 直接 import 它跑无人值守任务,于是投影器、自动压缩、�
    墙钟上限。代码只在"决定 JSON 连着两次读不出来"时终局(记 `by:"policy"`),
    那不是裁决,是没法把它的话变成动作。要提前收工就在桌面端按停止。
 
-两个实测踩过的坑:`.bench/` 必须自带 `.gitignore`(否则运行产物被 `git add -A` 卷进
-提交,研发打开 diff 看到五个内部文件加一处真改动;`.gitignore` 要**忽略它自己**,
-否则工作树永远不干净,而研发端每轮开局都要求树干净 —— 只有 `mailbox.template.json`
-白名单放行,那是项目配置);**`.my-pi/` 的运行产物同理**(gdb 会话日志/烧录状态 ——
-信箱闭环首跑时 17 个改动文件里 16 个是它,由 `ensureMyPiIgnore` 兜住)。
+**yoma 在用户项目里只有一个落脚点:`<工程>/.my-pi/`**(2026-08-11 起;从前是 `.bench/`
+与 `.my-pi/` 两个目录、两份 .gitignore、两套相反策略):
+
+```
+<工程>/.my-pi/
+  .gitignore                     ensureYomaDir 写的那一份(黑名单,含忽略自己)
+  gdb/  logs/  flash-state.json  工具运行产物
+  bench/
+    mailbox.template.json        项目配置,**要提交**
+    turns/  mailbox-sim/         调试台运行产物
+```
+
+它必须自带 `.gitignore`,否则运行产物被 `git add -A` 卷进提交(实测:信箱闭环首跑,
+17 个改动文件里 16 个是 `.my-pi/gdb/*.mi`);`.gitignore` 还要**忽略它自己**,否则
+工作树永远不干净,而研发端每轮开局都要求树干净(实测被自己挡死过)。
+`ensureYomaDir` **会升级自己写过的旧版**(认第一行的 `# yoma` 标志)—— 从前是"文件
+不存在才写",于是老仓库停在旧规则上,合并之后 `bench/turns/` 会照旧漏进版本库。
+用户手写的 .gitignore 一律不动。
+
+工程根从模板路径反推时**往上找 `.git`,不数目录层数**(`mailbox.ts` 的
+`inferProjectDir`)。写死 `dirname×2` 的那一版在模板深一层之后会把工程根推成
+`<工程>/.my-pi`,而且不报错 —— 症状是"agent 说它看不到代码"。
 `result.text` 只收 **assistant** 消息的非 synthetic text part(用户消息的 part 也是
 text part,不过滤的话提示词会原样出现在终报的"根因分析"里)。
 

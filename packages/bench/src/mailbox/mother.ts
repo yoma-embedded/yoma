@@ -36,7 +36,7 @@ import path from "node:path"
 import { fileExists, readJsonFile } from "../fsx.ts"
 import * as git from "../git.ts"
 import { resolveWorkspace, type Job } from "../job.ts"
-import { ensureBenchDir, ensureMyPiIgnore } from "../runner.ts"
+import { ensureYomaDir } from "../runner.ts"
 import { runTurn, type TurnOptions, type TurnResult, type TurnUsage } from "../turn.ts"
 import { acquireRoleLock, backoffSeconds } from "./daemon.ts"
 import { renderMailboxReport } from "./report.ts"
@@ -567,8 +567,7 @@ async function prepareProjectBranch(
 
   // 忽略文件要**先于**干净性检查就位:它们是调试台自己生成的,不忽略就成了
   // "未跟踪又不被忽略"的条目,prepareBranch 的第一道检查会被自己挡死。
-  await ensureBenchDir(path.join(workspace, ".bench"))
-  await ensureMyPiIgnore(workspace)
+  await ensureYomaDir(workspace)
 
   if (!state.baseCommit) {
     if (!(await git.isRepo(gitContext)))

@@ -301,7 +301,7 @@ export default function BenchPage() {
                   <TextInputV2
                     value={state.task.templatePath}
                     onInput={(event) => setState("task", "templatePath", event.currentTarget.value)}
-                    placeholder="/path/to/project/.bench/mailbox.template.json"
+                    placeholder="/path/to/project/.my-pi/bench/mailbox.template.json"
                   />
                   <span class="text-[11px] text-v2-text-text-muted">{t("bench.task.template.hint")}</span>
                 </div>

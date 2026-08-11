@@ -15,7 +15,7 @@
  */
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process"
-import { mkdirSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { readFile, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 
@@ -71,7 +71,7 @@ export interface MailboxMain {
 }
 
 export interface MailboxComposeInput {
-  /** 项目模板(<项目>/.bench/mailbox.template.json)—— 本身就是一份少了 task 的任务书。 */
+  /** 项目模板(<项目>/.my-pi/bench/mailbox.template.json)—— 本身就是一份少了 task 的任务书。 */
   templatePath: string
   description: string
   title?: string
@@ -87,7 +87,7 @@ export function createMailboxMain(options: MailboxMainOptions): MailboxMain {
   /**
    * composeJob 推导出的项目根 —— 本机"工程目录"没配时的兜底。
    *
-   * 出题的那台机器天然就是工程所在的机器(模板住在 `<项目>/.bench/` 里),所以
+   * 出题的那台机器天然就是工程所在的机器(模板住在 `<项目>/.my-pi/bench/` 里),所以
    * "写描述 → 入箱并开跑"这条主路不该逼用户先去配置页填一遍路径。工位机没有这条
    * 兜底,它必须自己配 —— 那正是机器无关任务书的代价,也是它该付的。
    */
@@ -273,7 +273,7 @@ async function composeJob(
     typeof template.repo === "object" && template.repo !== null ? (template.repo as Record<string, unknown>) : {}
   // repo.directory 被**摘掉**:任务书要在两台机器上被读,而绝对路径是本机事实
   // (出题机的 /Users/… 在工位机上不存在)。模板真写了它,就当本机工程目录的
-  // 建议值用 —— 模板约定住在 <项目>/.bench/ 里,没写就取模板所在的项目根。
+  // 建议值用;没写就从模板路径反推。
   const { directory: templateDirectory, ...repoRest } = templateRepo as { directory?: unknown } & Record<
     string,
     unknown
@@ -281,7 +281,7 @@ async function composeJob(
   const projectDir =
     typeof templateDirectory === "string" && templateDirectory.trim()
       ? templateDirectory.trim()
-      : dirname(dirname(input.templatePath))
+      : inferProjectDir(input.templatePath)
   // 模板的 task 字段是**项目级前置约束**(安全红线、目录禁区、已知现象),每个任务
   // 都带上 —— 不能指望每次描述都记得重写"电机绝不能转"这种事。
   const preamble = typeof template.task === "string" && template.task.trim() ? template.task.trim() : undefined
@@ -308,6 +308,33 @@ async function composeJob(
     return { ok: false, message: `任务书写不下去:${(error as Error).message}` }
   }
   return { ok: true, jobFile, projectDir }
+}
+
+/**
+ * 从模板路径反推工程根 —— **往上找 `.git`**,不数目录层数。
+ *
+ * 从前是 `dirname(dirname(模板路径))`,写死了"模板在工程根下面一层"。
+ * 2026-08-11 把 `.bench/` 并进 `.my-pi/bench/` 之后模板深了一层,那个写法会推出
+ * `<工程>/.my-pi` —— 而且**不报错**:研发端会在一个只有忽略文件的目录里开分支、
+ * 找源码,症状是"agent 说它看不到代码",完全指不到真凶。
+ *
+ * 找 `.git` 才是真正想要的东西:研发端本来就要求工程是 git 仓(prepareBranch 第一句
+ * 就是 isRepo),于是这个判据和下游的硬要求是同一个。层数从此不再是承重信息,
+ * 以后再挪模板也不用回来改这里。
+ *
+ * 找不到就退回老写法 —— 那种情况下研发端随后会以"不是 git 仓库"如实拒掉,
+ * 比在这里猜一个更早、更清楚。
+ */
+export function inferProjectDir(templatePath: string): string {
+  let dir = dirname(templatePath)
+  for (let depth = 0; depth < 8; depth += 1) {
+    // `.git` 可能是目录,也可能是 worktree 里的一个文件 —— existsSync 两者都认。
+    if (existsSync(join(dir, ".git"))) return dir
+    const parent = dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+  return dirname(dirname(templatePath))
 }
 
 function buildHostConfig(

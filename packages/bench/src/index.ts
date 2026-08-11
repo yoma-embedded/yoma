@@ -26,7 +26,7 @@ export type { Job, JobBench, JobRepo, JobDeliver } from "./job.ts"
 export { runTurn } from "./turn.ts"
 export type { TurnOptions, TurnResult, TurnToolCall, TurnUsage } from "./turn.ts"
 
-export { ensureBenchDir, ensureMyPiIgnore, runTurnInChildProcess } from "./runner.ts"
+export { ensureYomaDir, runTurnInChildProcess } from "./runner.ts"
 export type { TurnInput } from "./runner.ts"
 
 export * as git from "./git.ts"

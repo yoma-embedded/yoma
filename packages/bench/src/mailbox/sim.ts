@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url"
 
 import { fileExists } from "../fsx.ts"
 import { resolveWorkspace } from "../job.ts"
-import { ensureBenchDir } from "../runner.ts"
+import { ensureYomaDir } from "../runner.ts"
 import { initMailbox } from "./init.ts"
 import { loadMailboxJob } from "./spec.ts"
 import { readVerdict, scanMailbox, REPORT_FILE, type MailboxVerdict } from "./store.ts"
@@ -34,7 +34,7 @@ export interface SimOptions {
    * 工位端在生产形态下根本没有项目检出,演练必须复现这一点,否则演练是假的。
    */
   projectDir?: string
-  /** 模拟根目录,默认 `<目标仓>/.bench/mailbox-sim/<jobId>`。 */
+  /** 模拟根目录,默认 `<目标仓>/.my-pi/bench/mailbox-sim/<jobId>`。 */
   root?: string
   /** 已有远端(私有 GitHub 仓等)。不给就在模拟根下建本地裸仓。 */
   remote?: string
@@ -91,11 +91,11 @@ export async function runSim(options: SimOptions): Promise<SimResult> {
   const workspace = resolveWorkspace(job, options.projectDir)
   // root 必须先归一成绝对路径:它还会被当作两个子进程的 cwd,相对路径在子进程里
   // 会再按 cwd 解析一次,拼出双重路径(实测:blocked 无限重试直到墙钟耗尽)。
-  const root = path.resolve(options.root ?? path.join(workspace, ".bench", "mailbox-sim", job.id))
+  const root = path.resolve(options.root ?? path.join(workspace, ".my-pi", "bench", "mailbox-sim", job.id))
   const branch = options.branch ?? "main"
   const pollSeconds = options.pollSeconds ?? 3
 
-  await ensureBenchDir(path.join(workspace, ".bench"))
+  await ensureYomaDir(workspace)
 
   // 模拟根只认自己人:有 sim.json 的目录才敢续用或清理,别的目录一律拒绝 ——
   // rm -rf 不该指向一个我们没写过的地方。

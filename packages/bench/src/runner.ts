@@ -9,7 +9,7 @@
  */
 
 import { spawn } from "node:child_process"
-import { mkdir, rm, writeFile } from "node:fs/promises"
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -40,47 +40,65 @@ export interface TurnInput {
 }
 
 /**
- * 建 .bench/ 并让 git 忽略它的**运行产物**。
+ * `<工程>/.my-pi/` —— yoma 在这个项目里的**唯一**落脚点。
  *
- * 不忽略的话,轮次输入输出会被 `git add -A` 卷进提交 —— 研发打开 diff 看到的是
- * 几个 bench 内部文件加一处真改动,审阅体验直接毁掉(实测第一次真跑就中了)。
- * 忽略文件放在目录内部而不是改仓库的 .gitignore:那是用户的文件,调试台不该动它。
+ * ```
+ * <工程>/.my-pi/
+ *   .gitignore                     本文件写的这一份
+ *   gdb/  logs/  flash-state.json  工具的运行产物
+ *   bench/
+ *     mailbox.template.json        项目配置,**要跟着仓库走**
+ *     turns/  mailbox-sim/         调试台的运行产物
+ * ```
+ *
+ * 2026-08-11 之前是两个目录(`.bench/` 与 `.my-pi/`),各带一份 .gitignore、
+ * 两套相反的策略(前者白名单、后者黑名单)。合成一个的理由很直白:它们结构同构
+ * (项目配置 + 运行产物),而用户的项目根不该为同一个产品长出两个隐藏目录。
+ *
+ * ## 为什么必须忽略,以及为什么连 .gitignore 自己也忽略
+ *
+ * 不忽略运行产物,它们会被 `git add -A` 卷进提交 —— 实测第一次真跑,agent 分支的
+ * diff 里 17 个文件有 16 个是 `.my-pi/gdb/*.mi` 这类工具日志,真改动只有 1 个。
  *
  * `.gitignore` 自身也在忽略之列:它是调试台生成的,露出来就是一个"未跟踪又不被忽略"
  * 的条目,工作树因此永远不干净,而研发端每轮开局都要求树干净(实测:漏了这条,
  * 每一轮开局都被自己挡死)。被忽略不影响它生效 —— git 读 .gitignore 与它是否被跟踪无关。
- */
-const BENCH_IGNORE = `# 调试台的运行产物,不进版本库(含自身);任务模板是项目配置,要跟着仓库走。
-*
-!mailbox.template.json
-`
-
-export async function ensureBenchDir(benchDir: string): Promise<void> {
-  await mkdir(benchDir, { recursive: true })
-  const ignore = path.join(benchDir, ".gitignore")
-  if (!(await fileExists(ignore))) await writeFile(ignore, BENCH_IGNORE)
-}
-
-/**
- * 让 my-pi 工具的运行产物(gdb 会话日志、烧录状态、采集日志)不进版本库。
  *
- * 与 `.bench` 同一个教训的第二次上演:第一次真跑信箱闭环,agent 分支的 diff 里
- * 17 个文件有 16 个是 `.my-pi/gdb/*.mi` 这类工具日志,真正的代码改动只有 1 个文件。
- * 只忽略**运行产物**而不是整个目录 —— `.my-pi/` 里还可能住着用户自己提交的
- * 项目技能与上下文;已有 .gitignore 时不动它(那是用户的文件)。
+ * ## 为什么是黑名单
+ *
+ * 白名单(`*` + `!放行项`)对"新长出来的运行产物"更安全,但它的失效方向是**静默吞掉
+ * 用户想提交的文件**;黑名单漏一条只会让一个产物露出来,一眼就能看见。这个目录里
+ * 唯一要提交的就是 bench 的项目配置,列两条运行产物比列白名单更好读。
  */
-const MY_PI_IGNORE = `# yoma 调试工具的运行产物,不进版本库(技能等用户文件不受影响)
+const YOMA_IGNORE = `# yoma 在这个项目里的运行产物,不进版本库(含本文件);bench 的项目配置要跟着仓库走。
 .gitignore
 gdb/
 logs/
 flash-state.json
+bench/turns/
+bench/mailbox-sim/
 `
 
-export async function ensureMyPiIgnore(workspace: string): Promise<void> {
+/** 认领标志:第一行是它的,就是我们写的,可以升级;别的一律当用户手写,不动。 */
+const YOMA_IGNORE_MARK = "# yoma"
+
+/**
+ * 建 `<工程>/.my-pi/` 并放好忽略文件。
+ *
+ * **已有的会升级**(只要第一行带认领标志)—— 两个 ensure 函数从前都是"文件不存在
+ * 才写",于是老仓库永远停在旧规则上:合并之后 `bench/turns/` 会照着旧的 `.my-pi`
+ * 规则漏进版本库,而这正是当初加忽略要防的事。用户手写的 .gitignore 仍然不动。
+ */
+export async function ensureYomaDir(workspace: string): Promise<void> {
   const dir = path.join(workspace, ".my-pi")
   await mkdir(dir, { recursive: true })
   const ignore = path.join(dir, ".gitignore")
-  if (!(await fileExists(ignore))) await writeFile(ignore, MY_PI_IGNORE)
+  if (await fileExists(ignore)) {
+    const current = await readFile(ignore, "utf8").catch(() => "")
+    if (!current.trimStart().startsWith(YOMA_IGNORE_MARK)) return
+    if (current === YOMA_IGNORE) return
+  }
+  await writeFile(ignore, YOMA_IGNORE)
 }
 
 /**
@@ -115,7 +133,7 @@ export async function runTurnInChildProcess(
   input: TurnInput,
   handlers: { onProgress?: (message: string) => void },
 ): Promise<TurnResult> {
-  const dir = path.join(input.workspace, ".bench", "turns")
+  const dir = path.join(input.workspace, ".my-pi", "bench", "turns")
   await mkdir(dir, { recursive: true })
   const stamp = `${input.job.id}-${input.prompt.length}`
   const inputFile = path.join(dir, `turn-${stamp}.json`)

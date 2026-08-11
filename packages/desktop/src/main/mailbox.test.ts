@@ -10,7 +10,7 @@ import path from "node:path"
 
 // cloneDirFor 的用例搬去了 packages/bench/src/mailbox/paths.test.ts —— 函数本身
 // 搬到了 bench 的叶子模块,好让桌面端与命令行只有一份克隆位置的实现。
-import { createMailboxMain, type MailboxMain } from "./mailbox.ts"
+import { createMailboxMain, inferProjectDir, type MailboxMain } from "./mailbox.ts"
 
 const dirs: string[] = []
 afterEach(() => {
@@ -37,7 +37,8 @@ function makeMain(): MailboxMain {
 describe("composeJob", () => {
   test("模板+描述合成任务书;不带绝对路径,项目根单独回给本机", async () => {
     const project = tempDir("proj-")
-    const benchDir = path.join(project, ".bench")
+    mkdirSync(path.join(project, ".git"), { recursive: true })
+    const benchDir = path.join(project, ".my-pi", "bench")
     mkdirSync(benchDir, { recursive: true })
     const templatePath = path.join(benchDir, "mailbox.template.json")
     writeFileSync(
@@ -109,6 +110,37 @@ describe("composeJob", () => {
     writeFileSync(templatePath, "{}")
     const empty = await main.composeJob({ templatePath, description: "   ", tier: "quick" })
     expect(empty.ok).toBe(false)
+  })
+})
+
+describe("inferProjectDir", () => {
+  test("往上找 .git,层数不再是承重信息", () => {
+    // 从前写死 dirname×2,于是模板深一层(.bench → .my-pi/bench)就把工程根推成
+    // `<工程>/.my-pi` —— 而且不报错,症状是"agent 说它看不到代码"。
+    const project = tempDir("infer-")
+    mkdirSync(path.join(project, ".git"), { recursive: true })
+    const deep = path.join(project, ".my-pi", "bench")
+    mkdirSync(deep, { recursive: true })
+    expect(inferProjectDir(path.join(deep, "mailbox.template.json"))).toBe(project)
+    // 老布局(浅一层)照样对 —— 用户手上已经存在的 .bench 不能因为这次改动坏掉。
+    const shallow = path.join(project, ".bench")
+    mkdirSync(shallow, { recursive: true })
+    expect(inferProjectDir(path.join(shallow, "mailbox.template.json"))).toBe(project)
+  })
+
+  test("`.git` 是 worktree 里的文件时也认", () => {
+    const project = tempDir("infer-wt-")
+    writeFileSync(path.join(project, ".git"), "gitdir: /somewhere/else\n")
+    const deep = path.join(project, ".my-pi", "bench")
+    mkdirSync(deep, { recursive: true })
+    expect(inferProjectDir(path.join(deep, "mailbox.template.json"))).toBe(project)
+  })
+
+  test("找不到 .git 就退回老写法 —— 研发端随后会以'不是 git 仓库'如实拒掉", () => {
+    const loose = tempDir("infer-nogit-")
+    const dir = path.join(loose, "sub")
+    mkdirSync(dir, { recursive: true })
+    expect(inferProjectDir(path.join(dir, "t.json"))).toBe(loose)
   })
 })
 
