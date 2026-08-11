@@ -34,19 +34,36 @@ function tempDir(prefix: string): string {
 }
 
 let fauxCount = 0
+/** 最近一次 makeHost 建的 faux provider id —— setModel 要按名字点它。 */
+let currentFauxProvider = ""
 
-function harnessWith(steps: unknown[]) {
+/**
+ * `reasoningModel` 决定 faux 的**默认模型**能不能思考:pi-ai 的
+ * getSupportedThinkingLevels 对 `reasoning:false` 只给 `["off"]`,于是档位相关的
+ * 断言必须挑对模型。两个模型都注册,是为了测"换模型之后档位要重新钳位"。
+ */
+function harnessWith(steps: unknown[], reasoningModel = false) {
   const models = createModels()
   // 每个 faux provider 用不同 id —— 同一进程里多个测试并存时不会互相路由错。
-  const faux = fauxProvider({ provider: `faux-${++fauxCount}` })
+  const faux = fauxProvider({
+    provider: currentFauxProvider,
+    models: [
+      reasoningModel ? { id: "thinker", reasoning: true } : { id: "plain" },
+      reasoningModel ? { id: "plain" } : { id: "thinker", reasoning: true },
+    ],
+  })
   models.setProvider(faux.provider)
   faux.setResponses(steps as never)
   return { models, model: faux.getModel() as Model<string> }
 }
 
-function makeHost(steps: unknown[], options: { enginesDir?: string; workspace?: string } = {}) {
+function makeHost(
+  steps: unknown[],
+  options: { enginesDir?: string; workspace?: string; reasoningModel?: boolean; defaultThinkingLevel?: string } = {},
+) {
   const events: KernelEvent[] = []
   const workspace = options.workspace ?? tempDir("yoma-ws-")
+  currentFauxProvider = `faux-${++fauxCount}`
   const host = createKernelHost({
     sessionsRoot: tempDir("yoma-sessions-"),
     stateDir: tempDir("yoma-state-"),
@@ -55,9 +72,10 @@ function makeHost(steps: unknown[], options: { enginesDir?: string; workspace?: 
     // 测试结果就取决于跑测试的人机器上装了什么技能。
     configDir: tempDir("yoma-config-"),
     version: "test",
+    defaultThinkingLevel: options.defaultThinkingLevel,
     onEvents: (batch) => events.push(...batch),
     // 全放行,免得冒烟测试卡在权限弹窗上。权限本身有独立测试。
-    resolveModels: async () => harnessWith(steps),
+    resolveModels: async () => harnessWith(steps, options.reasoningModel),
   })
   return { host, events, workspace }
 }
@@ -298,6 +316,100 @@ describe("项目资源发现", () => {
 
     expect(systemPrompt).toContain("can-debug")
     expect(systemPrompt).toContain("CAN 总线掉帧")
+    await host.dispose()
+  })
+})
+
+/**
+ * 思考档位。
+ *
+ * 钉的是**真的发出去的那个 reasoning 参数** —— 不是 harness 内部字段。my-pi 把
+ * `"off"` 翻译成"请求里不带 reasoning"(agent-harness.ts:429),所以只有从 provider
+ * 这一侧看才知道模型到底思不思考。实测代价见 `../thinking.ts` 的头注释。
+ */
+describe("思考档位", () => {
+  /** 抓住本轮真正传给 provider 的 reasoning 档位。 */
+  function capturing(): { steps: unknown[]; seen: () => { called: boolean; reasoning?: string } } {
+    let called = false
+    let reasoning: string | undefined
+    return {
+      steps: [
+        (_context: unknown, options: { reasoning?: string } | undefined) => {
+          called = true
+          reasoning = options?.reasoning
+          return fauxAssistantMessage([fauxText("好")])
+        },
+      ],
+      seen: () => ({ called, reasoning }),
+    }
+  }
+
+  test("宿主不表态时保持 my-pi 的默认(off)—— 桌面端行为不许被这次改动带跑", async () => {
+    const capture = capturing()
+    const { host, workspace } = makeHost(capture.steps, { reasoningModel: true })
+    const session = (await host.handle("session.create", { directory: workspace })) as Session
+    await host.handle("session.prompt", { sessionID: session.id, input: { text: "你好" } })
+    await waitFor(() => capture.seen().called)
+
+    expect(capture.seen().reasoning).toBeUndefined()
+    await host.dispose()
+  })
+
+  test("宿主给了默认档位 → reasoning 模型真的带着它发请求", async () => {
+    const capture = capturing()
+    const { host, workspace } = makeHost(capture.steps, { reasoningModel: true, defaultThinkingLevel: "high" })
+    const session = (await host.handle("session.create", { directory: workspace })) as Session
+    await host.handle("session.prompt", { sessionID: session.id, input: { text: "你好" } })
+    await waitFor(() => capture.seen().called)
+
+    expect(capture.seen().reasoning).toBe("high")
+    await host.dispose()
+  })
+
+  test("非 reasoning 模型落回 off —— 默认档位不会被硬塞给不支持的模型", async () => {
+    const capture = capturing()
+    const { host, workspace } = makeHost(capture.steps, { defaultThinkingLevel: "high" })
+    const session = (await host.handle("session.create", { directory: workspace })) as Session
+    await host.handle("session.prompt", { sessionID: session.id, input: { text: "你好" } })
+    await waitFor(() => capture.seen().called)
+
+    expect(capture.seen().reasoning).toBeUndefined()
+    await host.dispose()
+  })
+
+  test("setModel 换到不支持该档的模型时重新钳位 —— 构造期那次是按默认模型算的", async () => {
+    // 这是 bench 的真实路径:harness 构造时用的是 ensureModels() 的默认模型(可能
+    // 支持 high),紧接着 setModel 换成任务书钉的那个(可能一档都不支持)。不重钳
+    // 就会拿着旧模型的档位去发新模型的请求,而报错要等到 provider 那边才出现。
+    const capture = capturing()
+    const { host, workspace } = makeHost(capture.steps, { reasoningModel: true, defaultThinkingLevel: "high" })
+    const session = (await host.handle("session.create", { directory: workspace })) as Session
+    await host.handle("session.setModel", {
+      sessionID: session.id,
+      providerID: currentFauxProvider,
+      modelID: "plain",
+    })
+    await host.handle("session.prompt", { sessionID: session.id, input: { text: "你好" } })
+    await waitFor(() => capture.seen().called)
+
+    expect(capture.seen().reasoning).toBeUndefined()
+    await host.dispose()
+  })
+
+  test("显式档位压过宿主默认,包括显式关掉", async () => {
+    const capture = capturing()
+    const { host, workspace } = makeHost(capture.steps, { reasoningModel: true, defaultThinkingLevel: "high" })
+    const session = (await host.handle("session.create", { directory: workspace })) as Session
+    await host.handle("session.setModel", {
+      sessionID: session.id,
+      providerID: currentFauxProvider,
+      modelID: "thinker",
+      thinking: "off",
+    })
+    await host.handle("session.prompt", { sessionID: session.id, input: { text: "你好" } })
+    await waitFor(() => capture.seen().called)
+
+    expect(capture.seen().reasoning).toBeUndefined()
     await host.dispose()
   })
 })

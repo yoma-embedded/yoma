@@ -52,6 +52,7 @@ import type {
   SessionStatus,
 } from "../types.ts"
 import { Identifier } from "../ids.ts"
+import { pickThinkingLevel } from "../thinking.ts"
 import { sessionNotFound } from "../types.ts"
 import { SessionProjection } from "./projector.ts"
 import { shouldAutoCompact } from "./compaction.ts"
@@ -121,6 +122,22 @@ export interface SessionManagerOptions {
    * 以及 P6 换成我们自己的凭据管理(Electron safeStorage)时不用改这里。
    */
   resolveModels?: () => Promise<{ models: Models; model: Model<string> }>
+  /**
+   * 没人显式选档位时用哪一档 —— **不给就沿用 my-pi 自己的默认(`off`)**。
+   *
+   * 这是应用层策略,和自动压缩、轮级重试同一类:内核只给 `setThinkingLevel` 这个
+   * 机制,什么时候用、用哪档归宿主决定。两个宿主的答案不一样,所以它必须是注入位
+   * 而不是写死的常量:
+   *
+   * - **桌面端不传**。它有模型对话框,档位是用户当场的选择,经 `setModel` 下发
+   *   (`app/src/components/prompt-input/submit.ts`)。悄悄改它的默认等于改产品行为。
+   * - **bench 传**。无人值守,没人看着那个"最强的档默认关掉"的开关 —— 实测代价见
+   *   `../thinking.ts` 的头注释。
+   *
+   * 值会经 `pickThinkingLevel` 按模型实际支持的档位落定,所以给一个该模型没有的
+   * 档位是安全的(非 reasoning 模型的档位表只有 `["off"]`,自然落回 off)。
+   */
+  defaultThinkingLevel?: string
 }
 
 export class SessionManager {
@@ -293,10 +310,14 @@ export class SessionManager {
     if (!model) throw new Error(`未知模型 ${providerID}/${modelID}`)
 
     await entry.harness!.setModel(model)
-    if (thinking) {
-      // 钳一下:模型不支持的档位直接设进去会等到发请求时才炸。
-      await entry.harness!.setThinkingLevel(clampThinkingLevel(model, thinking as never))
-    }
+    // 钳一下:模型不支持的档位直接设进去会等到发请求时才炸。
+    //
+    // 没给 thinking 时也要钳 —— 当前这一档是按**换之前那个模型**的支持表定的
+    // (构造期用的是 ensureModels 的默认模型,而调用方这一刻正要换成别的)。
+    // 不重钳就会拿着旧模型的档位去发新模型的请求。对桌面端这是恒等变换:
+    // 它没选过档位时当前值就是 "off",clamp("off") 在任何模型上都还是 "off"。
+    const level = thinking ?? entry.harness!.getThinkingLevel()
+    await entry.harness!.setThinkingLevel(clampThinkingLevel(model, level as never))
     entry.model = { providerID, modelID, thinking }
     entry.projection?.setModel(providerID, modelID)
     entry.updatedAt = Date.now()
@@ -441,6 +462,14 @@ export class SessionManager {
       session,
       models,
       model,
+      // 不给这个字段时 harness 落到 "off",于是 reasoning 模型的思考被静默关掉
+      // (见 ../thinking.ts)。宿主表过态就按它落定 —— 这里是唯一同时握着
+      // **解析后的 model** 和宿主策略的地方,所以放在构造期:调用方没钉模型
+      // (job.model 缺省 → 不调 setModel)的那条路也一并覆盖到。
+      // 之后 setModel 带 thinking 进来仍然赢,显式选择永远压过默认。
+      thinkingLevel: this.options.defaultThinkingLevel
+        ? (pickThinkingLevel(getSupportedThinkingLevels(model) as string[], this.options.defaultThinkingLevel) as never)
+        : undefined,
       tools: wrapToolDefinitions(toolDefinitions),
       systemPrompt: buildSystemPrompt({
         cwd: entry.cwd,

@@ -36,10 +36,15 @@ function tempDir(prefix: string): string {
 }
 
 let fauxCount = 0
-function models(steps: unknown[]) {
+function models(steps: unknown[], reasoning = false) {
   return async () => {
     const registry = createModels()
-    const faux = fauxProvider({ provider: `faux-bench-${++fauxCount}` })
+    const faux = fauxProvider({
+      provider: `faux-bench-${++fauxCount}`,
+      // 默认 faux 模型 reasoning:false,而 pi-ai 对这种模型只给 ["off"] 一档 ——
+      // 想断言档位真的生效就得挑一个会思考的。
+      models: [{ id: "faux", reasoning }],
+    })
     registry.setProvider(faux.provider)
     faux.setResponses(steps as never)
     return { models: registry, model: faux.getModel() as Model<string> }
@@ -174,5 +179,53 @@ describe("runTurn", () => {
 
     expect(second.sessionID).toBe(first.sessionID)
     expect(second.text).toContain("二")
+  })
+})
+
+/**
+ * 无人值守必须自己给思考档位。
+ *
+ * 断言的是**真正发给 provider 的 reasoning 参数**,不是配置字段:my-pi 把 `"off"`
+ * 翻译成"请求里不带 reasoning",所以只有从 provider 那一侧看才知道模型思不思考。
+ * 这条闸门守的是一个静默失效 —— 实测 2026-08-11 的信箱闭环,工位端 5 轮 107 条
+ * assistant 消息 reasoning token 为 0,而任务书和日志里没有任何地方看得出来。
+ */
+describe("runTurn · 思考档位", () => {
+  function capturing(): { steps: unknown[]; reasoning: () => { called: boolean; level?: string } } {
+    let called = false
+    let level: string | undefined
+    return {
+      steps: [
+        (_context: unknown, options: { reasoning?: string } | undefined) => {
+          called = true
+          level = options?.reasoning
+          return fauxAssistantMessage([fauxText("好")])
+        },
+      ],
+      reasoning: () => ({ called, level }),
+    }
+  }
+
+  test("任务书没写档位时也在思考 —— 默认不是 off", async () => {
+    const workspace = tempDir("bench-ws-")
+    const capture = capturing()
+    await runTurn({ ...turnOptions(workspace, capture.steps), resolveModels: models(capture.steps, true) })
+
+    expect(capture.reasoning().called).toBe(true)
+    expect(capture.reasoning().level).toBe("high")
+  })
+
+  test("任务书写了档位就听它的,包括显式关掉", async () => {
+    const workspace = tempDir("bench-ws-")
+    const capture = capturing()
+    const options = turnOptions(workspace, capture.steps)
+    await runTurn({
+      ...options,
+      job: { ...(options.job as Job), model: { thinking: "off" } },
+      resolveModels: models(capture.steps, true),
+    })
+
+    expect(capture.reasoning().called).toBe(true)
+    expect(capture.reasoning().level).toBeUndefined()
   })
 })

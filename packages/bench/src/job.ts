@@ -12,6 +12,8 @@
 
 import path from "node:path"
 
+import { THINKING_LEVELS } from "@yoma-desktop/kernel"
+
 import { readTextFile } from "./fsx.ts"
 
 export interface JobRepo {
@@ -48,6 +50,19 @@ export interface JobDeliver {
   remote?: string
 }
 
+export interface JobModel {
+  providerID?: string
+  modelID?: string
+  /**
+   * 思考档位:`off` / `minimal` / `low` / `medium` / `high` / `xhigh` / `max`。
+   *
+   * **不填不等于关掉** —— 落到调试台自己的默认(kernel 的 `DEFAULT_THINKING_LEVEL`,
+   * 即 `high`)。写 `"off"` 才是显式关掉。填了模型不支持的档位会被自动落到最近的一档,
+   * 所以两侧机器换模型不会因此跑不起来。
+   */
+  thinking?: string
+}
+
 export interface Job {
   id: string
   title: string
@@ -56,7 +71,7 @@ export interface Job {
   /** 交给 agent 的任务描述:现象、复现步骤、期望行为、工位与安全约束。 */
   task: string
   deliver?: JobDeliver
-  model?: { providerID?: string; modelID?: string }
+  model?: JobModel
 }
 
 export class JobSpecError extends Error {
@@ -74,6 +89,21 @@ function str(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() !== "" ? value : undefined
 }
 
+/**
+ * 解析一段 model 配置(`job.model` 与 `mailbox.mother.model` 同构)。
+ *
+ * 档位在**开跑前**校验:内核那边 `pickThinkingLevel` 会把不认识的值落到该模型的
+ * 第一档,于是任务书里的错字("hight")表现为"档位没生效",而不是报错 —— 这正是
+ * 最难归因的一类。`fieldPath` 进错误消息,让人知道该改哪一行。
+ */
+export function parseModelSpec(raw: unknown, fieldPath: string, issues: string[]): JobModel | undefined {
+  if (!isObject(raw)) return undefined
+  const thinking = str(raw.thinking)
+  if (thinking && !THINKING_LEVELS.includes(thinking))
+    issues.push(`${fieldPath}.thinking "${thinking}" 不是合法档位(${THINKING_LEVELS.join(" / ")})`)
+  return { providerID: str(raw.providerID), modelID: str(raw.modelID), thinking }
+}
+
 /** 解析并校验 job spec。**不** 碰文件系统 —— 路径是否存在由调用方在准备阶段查(带上下文更好报错)。 */
 export function parseJob(raw: unknown): Job {
   const issues: string[] = []
@@ -89,11 +119,12 @@ export function parseJob(raw: unknown): Job {
 
   const repoRaw = isObject(raw.repo) ? raw.repo : undefined
   const benchRaw = isObject(raw.bench) ? raw.bench : {}
+  // 放在 throw 之前:档位写错要和 id/task 的问题一起报出来,不然改完一处再撞一处。
+  const model = parseModelSpec(raw.model, "model", issues)
 
   if (issues.length) throw new JobSpecError(issues)
 
   const deliverRaw = isObject(raw.deliver) ? raw.deliver : {}
-  const modelRaw = isObject(raw.model) ? raw.model : undefined
 
   return {
     id: id!,
@@ -115,7 +146,7 @@ export function parseJob(raw: unknown): Job {
       mr: deliverRaw.mr === true,
       remote: str(deliverRaw.remote) ?? "origin",
     },
-    model: modelRaw ? { providerID: str(modelRaw.providerID), modelID: str(modelRaw.modelID) } : undefined,
+    model,
   }
 }
 

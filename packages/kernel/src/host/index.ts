@@ -39,6 +39,11 @@ export interface KernelHostOptions {
   configDir?: string
   /** 模型目录的来源。默认复用 my-pi 的 resolveModel();测试注入 faux provider。 */
   resolveModels?: SessionManagerOptions["resolveModels"]
+  /**
+   * 没人显式选档位时的思考档位。**不传就是 my-pi 的默认 `off`** —— 桌面端刻意不传
+   * (档位由模型对话框现场决定),bench 传(无人值守)。详见 SessionManagerOptions。
+   */
+  defaultThinkingLevel?: SessionManagerOptions["defaultThinkingLevel"]
   /** 成批推事件出去。host 已经做过合并,这里拿到的就是最终批次。 */
   onEvents(events: KernelEvent[]): void
 }
@@ -57,6 +62,7 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     enginesDir: options.enginesDir,
     configDir: options.configDir,
     resolveModels: options.resolveModels,
+    defaultThinkingLevel: options.defaultThinkingLevel,
     emit: (events) => sink.push(events),
   })
   const projects = new ProjectStore(path.join(options.stateDir, "projects.json"))

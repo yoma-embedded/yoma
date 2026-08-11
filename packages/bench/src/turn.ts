@@ -25,6 +25,7 @@
  */
 
 import { createKernelHost, type KernelHost } from "@yoma-desktop/kernel/host"
+import { DEFAULT_THINKING_LEVEL } from "@yoma-desktop/kernel"
 import type { KernelEvent } from "@yoma-desktop/kernel"
 import type { AssistantMessage, Session, Tokens } from "@yoma-desktop/kernel"
 
@@ -137,6 +138,11 @@ export async function runTurn(options: TurnOptions): Promise<TurnResult> {
     configDir: options.configDir,
     version: "bench",
     resolveModels: options.resolveModels,
+    // 无人值守必须自己表态:不传这一项时 harness 落到 "off",于是 reasoning 模型
+    // 的思考被静默关掉(实测 2026-08-11 那场信箱闭环,工位端 5 轮 107 条 assistant
+    // 消息 reasoning token 为 0,一步一句话)。桌面端刻意不传 —— 那边档位是用户
+    // 在模型对话框里的现场选择。任务书写了就听任务书的,包括显式写 "off"。
+    defaultThinkingLevel: options.job.model?.thinking ?? DEFAULT_THINKING_LEVEL,
     onEvents: (batch) => {
       for (const event of batch) handleEvent(event)
     },

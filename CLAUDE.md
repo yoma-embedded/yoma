@@ -162,7 +162,7 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
 3. `prompt()` 在 abort 后是 **resolve 而不是 reject**(中断是数据不是异常),
    要区分"取消"和"完成"只能自己拿 AbortController。
 
-### 我们补的、内核只给了机制的三件事
+### 我们补的、内核只给了机制的四件事
 
 > **没有权限系统。**2026-08-10 起整套权限保护(内核权限门、bench 三档策略与角色边界、
 > 桌面弹窗 UI、探针互斥锁)全部删除 —— 这是产品决定,不是遗漏。agent 想调什么工具就
@@ -182,6 +182,21 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
   当真去跑判据,而 agent 正要重试,两边同时动板子。
 - **模型目录**(`SessionManager.providers()`)。`thinkingLevels` 必须走 pi-ai 的
   `getSupportedThinkingLevels(model)` 去问,编错的后果是档位能选但发不出去。
+- **默认思考档位**(`src/thinking.ts` + `KernelHostOptions.defaultThinkingLevel`)。
+  my-pi 没人指定档位时落到 `"off"`(`agent-harness.ts:214`),而 `"off"` 会把
+  `reasoning` 整个从请求里摘掉(同文件 `:429`)—— 对 reasoning 模型这就是**最强的
+  那一档默认关掉,且没有任何地方提示**。这是注入位而不是常量,因为两个宿主的答案
+  不一样:**桌面端不传**(档位是模型对话框里的现场选择,经 `setModel` 下发),
+  **bench 传**(无人值守,没人看着那个开关)。实测代价:2026-08-11 的信箱闭环,
+  工位端跑 deepseek-v4-pro(支持 high/max)5 轮、107 条 assistant 消息,
+  reasoning token **0**,平均每条输出 146 token —— 一步一句话一个工具调用,
+  从不停下来想;同机交互式会话选 max 时同一家的更弱模型反而 4 倍的思考量。
+  档位由 `pickThinkingLevel` 按模型实际支持的表落定,所以给一个模型没有的档位是
+  安全的。它与 pi-ai 的 `clampThinkingLevel` **必须同解**(renderer 只拿得到
+  `ModelInfo.thinkingLevels` 字符串数组而不是 `Model`,所以另写了一份),
+  这道闸门在 `thinking.test.ts` 里直接拿真 pi-ai 对答案。
+  另:`setModel` 换模型之后**必须重钳当前档位** —— 构造期那次是按 `ensureModels()`
+  的默认模型算的,而调用方紧接着要换成任务书钉的那个。
 
 项目上下文与技能走 my-pi 的 `core/resources.ts`(`loadContextFiles` / `discoverSkills`),
 不重写:"从哪些目录找"是内核那边的产品决策,抄一份的结果是"Zed 读得到项目的 AGENTS.md、

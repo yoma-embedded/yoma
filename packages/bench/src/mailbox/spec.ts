@@ -26,11 +26,17 @@
  */
 
 import { readTextFile } from "../fsx.ts"
-import { parseJob, JobSpecError, type Job } from "../job.ts"
+import { parseJob, parseModelSpec, JobSpecError, type Job, type JobModel } from "../job.ts"
 
 export interface MailboxMotherConfig {
-  /** 母 agent 用的模型。要么 providerID+modelID 齐,要么整个不填(落到 job.model → 内核默认)。 */
-  model?: { providerID?: string; modelID?: string }
+  /**
+   * 母 agent 用的模型。要么 providerID+modelID 齐,要么整个不填(落到 job.model → 内核默认)。
+   *
+   * `thinking` 是个例外:它**单独生效**,不受"要么齐要么不填"的约束(见
+   * mother.ts 的 motherJob)。研发端那侧才是做根因分析、写指令的,让它在同一个模型上
+   * 想得更狠是常见需求,不该逼着连 providerID/modelID 一起抄一遍。
+   */
+  model?: JobModel
 }
 
 export interface MailboxConfig {
@@ -61,10 +67,6 @@ function num(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined
 }
 
-function str(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() !== "" ? value : undefined
-}
-
 /** 解析信箱任务:先过 parseJob(它管 job 部分的全部校验),再收 mailbox 段。 */
 export function parseMailboxJob(raw: unknown): MailboxJob {
   const job = parseJob(raw)
@@ -72,7 +74,7 @@ export function parseMailboxJob(raw: unknown): MailboxJob {
 
   const mailboxRaw = isObject(raw) && isObject((raw as Record<string, unknown>).mailbox) ? ((raw as Record<string, unknown>).mailbox as Record<string, unknown>) : {}
   const motherRaw = isObject(mailboxRaw.mother) ? mailboxRaw.mother : {}
-  const modelRaw = isObject(motherRaw.model) ? motherRaw.model : undefined
+  const motherModel = parseModelSpec(motherRaw.model, "mailbox.mother.model", issues)
 
   const pollSeconds = num(mailboxRaw.pollSeconds) ?? DEFAULT_POLL_SECONDS
   if (pollSeconds < 1) issues.push("mailbox.pollSeconds 至少为 1")
@@ -85,7 +87,7 @@ export function parseMailboxJob(raw: unknown): MailboxJob {
   return {
     job,
     mailbox: {
-      mother: { model: modelRaw ? { providerID: str(modelRaw.providerID), modelID: str(modelRaw.modelID) } : undefined },
+      mother: { model: motherModel },
       pollSeconds,
       maxArtifactBytes,
     },

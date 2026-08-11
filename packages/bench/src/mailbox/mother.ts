@@ -207,7 +207,11 @@ function motherTurnJob(mailboxJob: MailboxJob, workspace: string): Job {
   // 模型要么齐(providerID+modelID 都在),要么回落到 job.model —— 半拉子的
   // mother.model 会让 setModel 被跳过,静默用内核默认模型,与 spec 承诺不符。
   const motherModel = mailboxJob.mailbox.mother.model
-  const model = motherModel?.providerID && motherModel?.modelID ? motherModel : job.model
+  const base = motherModel?.providerID && motherModel?.modelID ? motherModel : job.model
+  // thinking 不受"要么齐要么不填"约束:它不参与 setModel 的跳过判断(那是
+  // providerID+modelID 的事),而"同一个模型上让研发端想得更狠"是常见需求。
+  const thinking = motherModel?.thinking ?? base?.thinking
+  const model = base || thinking ? { ...base, thinking } : undefined // (base || thinking) ? … —— || 优先于 ?:
   return { ...job, repo: { ...job.repo, directory: workspace }, model }
 }
 

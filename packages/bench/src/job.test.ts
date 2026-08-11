@@ -47,7 +47,33 @@ describe("parseJob · 必填", () => {
   })
 })
 
-describe("parseJob · 预算", () => {
+describe("parseJob · 模型与思考档位", () => {
+  test("model.thinking 解析出来", () => {
+    const job = parseJob(base({ model: { providerID: "deepseek", modelID: "deepseek-v4-pro", thinking: "max" } }))
+    expect(job.model?.thinking).toBe("max")
+  })
+
+  test("不填 thinking 不等于关掉 —— 落到调试台的默认,由 turn.ts 交给内核", () => {
+    const job = parseJob(base({ model: { providerID: "deepseek", modelID: "deepseek-v4-pro" } }))
+    expect(job.model?.thinking).toBeUndefined()
+  })
+
+  test("显式 off 是合法的 —— 要关得关得掉", () => {
+    expect(parseJob(base({ model: { thinking: "off" } })).model?.thinking).toBe("off")
+  })
+
+  test("档位写错当场报,而不是悄悄落到别的档", () => {
+    // 内核那边 pickThinkingLevel 会把不认识的值落到第一档,于是错字表现为
+    // "我明明配了 max 却没生效" —— 最难归因的一类。所以这里必须拦住。
+    const issues = issuesOf(base({ model: { thinking: "hight" } }))
+    expect(issues).toHaveLength(1)
+    expect(issues[0]).toContain("model.thinking")
+    expect(issues[0]).toContain("hight")
+  })
+
+  test("档位的问题和别的问题一起报出来", () => {
+    expect(issuesOf({ id: "j-1", model: { thinking: "巨能想" } })).toHaveLength(2)
+  })
 })
 
 describe("parseJob · 报错质量", () => {

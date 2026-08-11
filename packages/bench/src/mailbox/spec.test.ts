@@ -29,9 +29,21 @@ describe("mailbox spec", () => {
     expect(parsed.mailbox.mother.model).toEqual({ providerID: "deepseek", modelID: "deepseek-chat" })
   })
 
+  test("研发端可以只调档位,不必把模型再抄一遍", () => {
+    // 做根因分析、写指令的是研发端,让它在同一个模型上想得更狠是常见需求。
+    // 这一项刻意不受"model 要么齐要么不填"约束 —— 合并在 mother.ts 的 motherTurnJob。
+    const parsed = parseMailboxJob(rawMailboxJob({ mailbox: { mother: { model: { thinking: "max" } } } }))
+    expect(parsed.mailbox.mother.model?.thinking).toBe("max")
+    expect(parsed.mailbox.mother.model?.providerID).toBeUndefined()
+  })
+
   test("非法值指名道姓", () => {
     expect(() => parseMailboxJob(rawMailboxJob({ mailbox: { pollSeconds: 0 } }))).toThrow(JobSpecError)
     expect(() => parseMailboxJob(rawMailboxJob({ mailbox: { maxArtifactBytes: 0 } }))).toThrow(/maxArtifactBytes/)
+    // 档位错字要报出**是哪一段**的 model —— job.model 和 mailbox.mother.model 长得一样。
+    expect(() => parseMailboxJob(rawMailboxJob({ mailbox: { mother: { model: { thinking: "hi" } } } }))).toThrow(
+      /mailbox\.mother\.model\.thinking/,
+    )
   })
 
   test("job 部分的校验一个不少(task 必填等)", () => {
