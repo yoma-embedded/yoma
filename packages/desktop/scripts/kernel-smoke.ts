@@ -48,11 +48,14 @@ try {
 }
 
 // grep 已随 my-pi 2026-08 的装配面精简退役(视图侧仍认得它,只为重放旧会话)。
+// 对着**构建产物**核对:这个清单落后于内核装配面时,旧 out/ 会在这里如实报缺。
 const EXPECTED = [
   "read",
   "bash",
   "edit",
   "write",
+  "toolchain",
+  "examples",
   "netlist",
   "datasheet",
   "stm32config",

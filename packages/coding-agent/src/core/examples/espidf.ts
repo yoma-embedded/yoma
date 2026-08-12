@@ -41,7 +41,7 @@ export function parseSupportedTargets(readme: string): string[] {
 			.slice(label + 1)
 			.filter((cell) => cell !== "")
 			.map(normalizeEspTarget)
-			.filter((cell) => /^esp/.test(cell));
+			.filter((cell) => cell.startsWith("esp"));
 	}
 	return [];
 }
@@ -67,7 +67,7 @@ export function parseReadmeSummary(readme: string): { title?: string; summary?: 
 			current = [];
 			continue;
 		}
-		if (/^#/.test(line)) break;
+		if (line.startsWith("#")) break;
 		current.push(line.trim());
 	}
 	if (current.length > 0) paragraphs.push(current);
@@ -119,7 +119,7 @@ export function capabilitiesFromSource(source: string): string[] {
 		const stem = path.posix.basename(header).replace(/\.h$/, "");
 		const mapped = INCLUDE_CAPABILITIES[stem];
 		if (mapped) found.add(mapped);
-		if (/^esp_adc/.test(header) || stem.startsWith("adc_")) found.add("adc");
+		if (header.startsWith("esp_adc") || stem.startsWith("adc_")) found.add("adc");
 	}
 	return [...found].sort();
 }
