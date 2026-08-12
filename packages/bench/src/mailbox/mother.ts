@@ -318,6 +318,46 @@ async function ensureFinalized(
   return { kind: "done", verdict }
 }
 
+/**
+ * 两种裁决的构造。开局轮(round 0)与分析轮的这两副形状本来就逐字段相同,只差 round ——
+ * 而字段一旦漂移,信箱里两种轮次的 decision.json 就会长得不一样,终报和桌面端各读一半。
+ */
+function motherDecision(
+  round: number,
+  payload: MotherDecisionPayload,
+  analysed: { usage: TurnUsage; sessionID?: string },
+  at: string,
+): RoundDecision {
+  return {
+    round,
+    by: "mother",
+    decision: payload.decision,
+    analysis: payload.analysis,
+    reason: payload.reason,
+    usage: analysed.usage,
+    motherSessionID: analysed.sessionID,
+    at,
+  }
+}
+
+/** 拿不到它的决定时代它写的 —— 那不是裁决,见 RoundDecision.by。 */
+function policyFailDecision(
+  round: number,
+  reason: string,
+  analysed: { usage: TurnUsage; sessionID?: string },
+  at: string,
+): RoundDecision {
+  return {
+    round,
+    by: "policy",
+    decision: "fail",
+    reason,
+    usage: analysed.usage,
+    motherSessionID: analysed.sessionID,
+    at,
+  }
+}
+
 /** 开局:信箱里零轮次,由研发端出第一轮指令(可能先改代码、先构建、先附产物)。 */
 async function kickoff(
   options: MailboxMotherOptions,
@@ -335,31 +375,14 @@ async function kickoff(
   const analysed = await analyse(options, mailboxJob, workspace, undefined)
   if (!analysed.ok) {
     const reason = `研发端开局未能给出合法决定:${analysed.error}`
-    const decision: RoundDecision = {
-      round: 0,
-      by: "policy",
-      decision: "fail",
-      reason,
-      usage: analysed.usage,
-      motherSessionID: analysed.sessionID,
-      at: new Date(now()).toISOString(),
-    }
+    const decision = policyFailDecision(0, reason, analysed, new Date(now()).toISOString())
     return settleTerminal(options, mailboxJob, [], decision, "failed", reason, 0, 0)
   }
 
   const payload = analysed.payload
   if (payload.decision !== "continue") {
     const reason = payload.reason!
-    const decision: RoundDecision = {
-      round: 0,
-      by: "mother",
-      decision: payload.decision,
-      analysis: payload.analysis,
-      reason,
-      usage: analysed.usage,
-      motherSessionID: analysed.sessionID,
-      at: new Date(now()).toISOString(),
-    }
+    const decision = motherDecision(0, payload, analysed, new Date(now()).toISOString())
     progress(`研发端开局就终止:${payload.decision} —— ${reason}`)
     return settleTerminal(options, mailboxJob, [], decision, payload.decision === "done" ? "passed" : "failed", reason, 0, 0)
   }
@@ -391,13 +414,6 @@ async function decide(
   // 只进终报,不做任何门限判断。
   const motherTokensBefore = sumMotherTokens(allRounds)
 
-  const policyDecision = (decision: DecisionKind, reason: string): RoundDecision => ({
-    round,
-    by: "policy",
-    decision,
-    reason,
-    at: new Date(now()).toISOString(),
-  })
   const terminal = (decision: RoundDecision, outcome: MailboxVerdict["outcome"], reason: string) =>
     settleTerminal(options, mailboxJob, allRounds, decision, outcome, reason, result.spentTokens, motherTokensBefore)
 
@@ -413,24 +429,14 @@ async function decide(
     result,
     rounds: allRounds,
   })
-  const usage = analysed.usage
   if (!analysed.ok) {
     const reason = `研发端未能给出合法决定:${analysed.error}`
-    const decision: RoundDecision = { ...policyDecision("fail", reason), usage, motherSessionID: analysed.sessionID }
+    const decision = policyFailDecision(round, reason, analysed, new Date(now()).toISOString())
     return terminal(decision, "failed", reason)
   }
 
   const payload = analysed.payload
-  const decision: RoundDecision = {
-    round,
-    by: "mother",
-    decision: payload.decision,
-    analysis: payload.analysis,
-    reason: payload.reason,
-    usage,
-    motherSessionID: analysed.sessionID,
-    at: new Date(now()).toISOString(),
-  }
+  const decision = motherDecision(round, payload, analysed, new Date(now()).toISOString())
   progress(`研发端裁决:${payload.decision}${payload.analysis ? ` —— ${payload.analysis.slice(0, 100)}` : ""}`)
 
   if (payload.decision !== "continue") {

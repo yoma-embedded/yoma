@@ -175,6 +175,71 @@ describe("mailbox mother · 开局", () => {
     if (outcome.kind === "blocked") expect(outcome.detail).toContain("build/没构建.elf")
   })
 
+  // 开局轮的两条**终局**路径。它们从前一个用例都没有,而 kickoff 与 decide 的骨架
+  // 高度同构 —— 没有闸门就没法安全地把两边合并。
+  test("开局就裁 done:终局 passed,裁决者 mother,轮次记 0", async () => {
+    const target = await makeTargetRepo(temp)
+    const mailbox = await makeMailbox(temp)
+    await initMailbox({ clone: mailbox.motherClone, mailboxJob: parseMailboxJob(rawMailboxJob()) })
+
+    const outcome = await motherStep(
+      motherOptions(mailbox.motherClone, target, {
+        runTurn: async () =>
+          fakeTurn({
+            text: '```json\n{"decision":"done","analysis":"读了一遍就明白了","reason":"任务书描述的现象在最新固件上已经不存在"}\n```',
+            usage: usage(300, 40),
+          }),
+      }),
+    )
+
+    expect(outcome.kind).toBe("done")
+    if (outcome.kind !== "done") return
+    expect(outcome.verdict.outcome).toBe("passed")
+    expect(outcome.verdict.decidedBy).toBe("mother")
+    // 一轮硬件都没跑过:轮次 0,工位端花费 0。
+    expect(outcome.verdict.rounds).toBe(0)
+    expect(outcome.verdict.totalRunnerTokens).toBe(0)
+
+    const verify = await freshClone(temp, mailbox.bare)
+    expect((await scanMailbox(verify)).state.kind).toBe("done")
+    const decision = (await Bun.file(path.join(verify, "rounds", "000", "decision.json")).json()) as RoundDecision
+    expect(decision).toMatchObject({ round: 0, by: "mother", decision: "done" })
+    // 终局那一步就把终报写出来,和 verdict 同一次提交。
+    expect(await Bun.file(path.join(verify, "report.md")).text()).toContain("任务书描述的现象")
+    // 开局就终止 = 从没下发过指令。
+    expect(await Bun.file(path.join(verify, "rounds", "001", "instruction.json")).exists()).toBe(false)
+  })
+
+  test("开局的决定 JSON 重试后仍读不出来:终局 fail,裁决者记 policy(那不是裁决)", async () => {
+    const target = await makeTargetRepo(temp)
+    const mailbox = await makeMailbox(temp)
+    await initMailbox({ clone: mailbox.motherClone, mailboxJob: parseMailboxJob(rawMailboxJob()) })
+
+    const prompts: string[] = []
+    const outcome = await motherStep(
+      motherOptions(mailbox.motherClone, target, {
+        runTurn: async (options: TurnOptions) => {
+          prompts.push(options.prompt)
+          return fakeTurn({ text: "我觉得先看看再说吧,不给围栏" })
+        },
+      }),
+    )
+
+    // 只重试一次:一共两轮模型调用,第二轮的提示词就是那条错误信息。
+    expect(prompts).toHaveLength(2)
+    expect(prompts[1]).toContain("围栏")
+
+    expect(outcome.kind).toBe("done")
+    if (outcome.kind !== "done") return
+    expect(outcome.verdict.outcome).toBe("failed")
+    expect(outcome.verdict.decidedBy).toBe("policy")
+    expect(outcome.verdict.reason).toContain("开局未能给出合法决定")
+
+    const verify = await freshClone(temp, mailbox.bare)
+    const decision = (await Bun.file(path.join(verify, "rounds", "000", "decision.json")).json()) as RoundDecision
+    expect(decision).toMatchObject({ round: 0, by: "policy", decision: "fail" })
+  })
+
   test("本机没配工程目录:报人话", async () => {
     const mailbox = await makeMailbox(temp)
     await initMailbox({ clone: mailbox.motherClone, mailboxJob: parseMailboxJob(rawMailboxJob()) })
