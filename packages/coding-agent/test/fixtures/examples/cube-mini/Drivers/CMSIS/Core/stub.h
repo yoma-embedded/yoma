@@ -1,0 +1,1 @@
+#define CMSIS 1
