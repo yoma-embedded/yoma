@@ -134,8 +134,7 @@ export function probeVersion(bin: string): Promise<string | undefined> {
 				// 传一份不会有坏处,即使某个 bun 版本恰好对异步 spawn 不触发这条 ——
 				// 省略了就是把正确性押在"这个版本恰好没这个问题"上。
 				env: process.env,
-				// 桌面端是 GUI 进程,探测版本时不该在用户眼前闪一个控制台窗口
-				// (core/tools/engines.ts 的 runEngine 同一句注释)。
+				// 桌面端是 GUI 进程,探测版本时不该在用户眼前闪一个控制台窗口。
 				windowsHide: true,
 			});
 		} catch {

@@ -247,9 +247,6 @@ interface AcpSession {
 	/** 本会话发现的技能,/skill: 命令清单据此生成。 */
 	skills: Skill[];
 	pendingPrompt: AbortController | null;
-	/** 当前 prompt 的通知发送口;不在 prompt 中时为 undefined。 */
-	sink?: UpdateSink;
-	unsubscribe?: () => void;
 }
 
 export interface MyPiAcpAgentOptions {
@@ -280,10 +277,21 @@ export class MyPiAcpAgent {
 		};
 	}
 
-	/** 当前会话的 configOptions。响应和通知共用一处构造,防止两边漂移。 */
-	private configOptionsOf(sessionId: string): AcpSelectConfigOption[] {
+	/**
+	 * 内存里的会话表取一条,取不到就抛。
+	 *
+	 * 注意与 loadSession 里那条**同文案**的错误不是一回事:那条说的是"磁盘上没有这个
+	 * 会话文件",这条说的是"这个进程当前没开着它"。哪天要给其中一处挂 _tag,别当成一处改。
+	 */
+	private requireSession(sessionId: string): AcpSession {
 		const session = this.sessions.get(sessionId);
 		if (!session) throw new Error(`Session ${sessionId} not found`);
+		return session;
+	}
+
+	/** 当前会话的 configOptions。响应和通知共用一处构造,防止两边漂移。 */
+	private configOptionsOf(sessionId: string): AcpSelectConfigOption[] {
+		const session = this.requireSession(sessionId);
 		return buildConfigOptionsFor(
 			this.options.models,
 			session.harness.getModel(),
@@ -299,8 +307,7 @@ export class MyPiAcpAgent {
 	 * 两条路最终都落到 harness.setThinkingLevel()。
 	 */
 	private modesOf(sessionId: string) {
-		const session = this.sessions.get(sessionId);
-		if (!session) throw new Error(`Session ${sessionId} not found`);
+		const session = this.requireSession(sessionId);
 		const model = session.harness.getModel();
 		return {
 			currentModeId: session.harness.getThinkingLevel(),
@@ -313,7 +320,9 @@ export class MyPiAcpAgent {
 	}
 
 	async authenticate(_params: unknown) {
-		// key 由 pi-ai 的 provider 从环境变量读,ACP 这层不需要额外认证。
+		// 凭据由 pi-ai 的 provider 在每次请求时解析(auth.json 优先、环境变量兜底,
+		// 见 acp/models.ts 的 resolveModel / registerProvider);ACP 这层不签发凭证,
+		// 所以 initialize 的 authMethods 是空的。
 		return {};
 	}
 
@@ -469,10 +478,7 @@ export class MyPiAcpAgent {
 	 */
 	async setSessionConfigOption(params: any, cx: any): Promise<{ configOptions: AcpSelectConfigOption[] }> {
 		const sessionId: string = params?.sessionId;
-		const session = this.sessions.get(sessionId);
-		if (!session) {
-			throw new Error(`Session ${sessionId} not found`);
-		}
+		const session = this.requireSession(sessionId);
 		const value = String(params?.value ?? "");
 
 		switch (params?.configId) {
@@ -514,10 +520,7 @@ export class MyPiAcpAgent {
 	/** thinking 档位的 modes 表达。语义与 setSessionConfigOption 的 thought_level 分支相同。 */
 	async setSessionMode(params: any, cx: any): Promise<Record<string, never>> {
 		const sessionId: string = params?.sessionId;
-		const session = this.sessions.get(sessionId);
-		if (!session) {
-			throw new Error(`Session ${sessionId} not found`);
-		}
+		const session = this.requireSession(sessionId);
 		const modeId = String(params?.modeId ?? "");
 		const supported = getSupportedThinkingLevels(session.harness.getModel()) as ThinkingLevel[];
 		if (!supported.includes(modeId as ThinkingLevel)) {
@@ -532,10 +535,7 @@ export class MyPiAcpAgent {
 	}
 
 	async prompt(params: any, cx: any): Promise<{ stopReason: "end_turn" | "cancelled" }> {
-		const session = this.sessions.get(params.sessionId);
-		if (!session) {
-			throw new Error(`Session ${params.sessionId} not found`);
-		}
+		const session = this.requireSession(params.sessionId);
 
 		// 同一会话的新 prompt 顶替上一个,和 ACP 参考实现一致。只翻旗标不够:
 		// harness 还在 turn 相位,新 prompt 会撞相位守卫得到 busy —— 必须等它真停下来。
@@ -544,16 +544,16 @@ export class MyPiAcpAgent {
 			await session.harness.abort();
 		}
 
-		// 本轮的三件套一律用局部值;session 上的字段只是"当前活跃轮"的影子,
-		// finally 里先比对仍是自己那份再清理,重叠时旧轮不会误清新轮的状态。
+		// 本轮的状态一律用局部值。只有 pendingPrompt 需要挂到 session 上(cancel() 和
+		// 下一轮的顶替要够得着它),而它必须**先比对仍是自己那份再清**:重叠 prompt 时
+		// 旧轮的 finally 晚于新轮开始执行,直接置 null 会把新轮的 controller 清掉,
+		// 于是 cancel() 变成哑操作。
 		const controller = new AbortController();
 		const sink: UpdateSink = async (update) => {
 			await cx.notify("session/update", { sessionId: params.sessionId, update });
 		};
 		const unsubscribe = pipeHarnessToAcp(session.harness, sink);
 		session.pendingPrompt = controller;
-		session.sink = sink;
-		session.unsubscribe = unsubscribe;
 
 		const text = promptToText(params.prompt);
 		try {
@@ -589,8 +589,6 @@ export class MyPiAcpAgent {
 			throw error;
 		} finally {
 			unsubscribe();
-			if (session.unsubscribe === unsubscribe) session.unsubscribe = undefined;
-			if (session.sink === sink) session.sink = undefined;
 			if (session.pendingPrompt === controller) session.pendingPrompt = null;
 		}
 	}

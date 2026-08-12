@@ -16,6 +16,7 @@ import { delimiter, join } from "node:path";
 import { tmpdir } from "node:os";
 import {
 	expandGlobPath,
+	findEnvKey,
 	findOnPath,
 	parseInstallLocations,
 	registryCandidates,
@@ -35,6 +36,34 @@ afterEach(() => {
 });
 
 // ─── findOnPath ────────────────────────────────────────────────────────────
+
+describe("findEnvKey", () => {
+	it("返回的是 env 里那个**真实的键**,而不是要找的那个拼写", () => {
+		expect(findEnvKey({ Path: "x" }, "PATH")).toBe("Path");
+		expect(findEnvKey({ PATH: "x" }, "PATH")).toBe("PATH");
+		expect(findEnvKey({}, "PATH")).toBeUndefined();
+	});
+
+	// 这一条盯的是 Windows 上真 process.env 那个大小写不敏感代理:普通对象盖不到它,
+	// 而 shellEnvFor 拿到的恰恰是它。实现里"先扫 Object.keys、精确名只兜底"的顺序
+	// 就是为这条写的 —— 反过来写会返回 "PATH",而 {...base} 展开出来的键是 "Path",
+	// 于是输出里同时躺着两个 PATH,子进程认哪个是未定义行为。
+	it("大小写不敏感的代理上,仍然返回 Object.keys 给出的真实键", () => {
+		const proxy = new Proxy(
+			{ Path: "x" } as Record<string, string>,
+			{
+				get: (target, prop) =>
+					typeof prop === "string"
+						? target[Object.keys(target).find((k) => k.toLowerCase() === prop.toLowerCase()) ?? prop]
+						: undefined,
+				has: (target, prop) =>
+					typeof prop === "string" && Object.keys(target).some((k) => k.toLowerCase() === prop.toLowerCase()),
+			},
+		);
+		expect(proxy.PATH).toBe("x"); // 代理确实是大小写不敏感的
+		expect(findEnvKey(proxy, "PATH")).toBe("Path");
+	});
+});
 
 describe("findOnPath", () => {
 	it("env 里没有 PATHEXT 时是 POSIX 语义:直接拼裸文件名", () => {

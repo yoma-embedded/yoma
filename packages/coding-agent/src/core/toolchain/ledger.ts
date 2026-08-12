@@ -66,7 +66,41 @@ function isLedgerEntry(value: unknown): value is LedgerEntry {
 	return true;
 }
 
-function emptyLedger(): Ledger {
+/**
+ * 容错读一个 JSON 对象:文件不存在、JSON 损坏、顶层不是普通对象,一律返回 undefined。
+ * 账本和项目级覆盖两处共用 —— 两边都是"读不出来就当没有"的纯缓存语义。
+ *
+ * 同步 IO 是承重的,别换成 fs/promises:writeLedgerEntry 是"读 → 改 → 原子写"的
+ * 读改写,全同步意味着它在单进程内对其它 await 点是原子的;换成真异步就在读与写之间
+ * 开出一个让步窗口,同进程里两次 writeLedgerEntry 会互相踩丢更新。
+ */
+function readJsonObject(file: string): Record<string, unknown> | undefined {
+	let text: string;
+	try {
+		text = readFileSync(file, "utf8");
+	} catch {
+		return undefined;
+	}
+	try {
+		const parsed: unknown = JSON.parse(text);
+		return isPlainObject(parsed) ? parsed : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** 逐条按 isLedgerEntry 过滤 —— 坏掉的单条丢弃,不牵连整份文件。 */
+function collectEntries(raw: unknown): Record<string, LedgerEntry> {
+	if (!isPlainObject(raw)) return {};
+	const out: Record<string, LedgerEntry> = {};
+	for (const [id, value] of Object.entries(raw)) {
+		if (isLedgerEntry(value)) out[id] = value;
+	}
+	return out;
+}
+
+/** 空账本。resolve.ts 的 skipLedger 也用它 —— 别在别处内联 SCHEMA_TAG。 */
+export function emptyLedger(): Ledger {
 	return { schema: SCHEMA_TAG, entries: {} };
 }
 
@@ -87,33 +121,13 @@ export function ledgerPath(configDir: string = defaultConfigDir()): string {
  * 一个纯缓存变成一个新的失败点。
  */
 export async function readLedger(configDir?: string): Promise<Ledger> {
-	let text: string;
-	try {
-		text = readFileSync(ledgerPath(configDir), "utf8");
-	} catch {
-		return emptyLedger();
-	}
-
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(text);
-	} catch {
-		return emptyLedger();
-	}
-	if (!isPlainObject(parsed)) return emptyLedger();
+	const parsed = readJsonObject(ledgerPath(configDir));
+	if (!parsed) return emptyLedger();
 	// schema 标签必须匹配,不是"有就行":未来版本万一改了 entry 形状,旧代码把新
 	// 格式的文件当 v1 读会产出看似合法实则错位的字段。对不上就当没有,比对错更安全 ——
 	// 下一次 writeLedgerEntry 会用当前版本的形状把它覆盖回去。
 	if (parsed.schema !== SCHEMA_TAG) return emptyLedger();
-
-	const rawEntries = parsed.entries;
-	if (!isPlainObject(rawEntries)) return emptyLedger();
-
-	const entries: Record<string, LedgerEntry> = {};
-	for (const [id, value] of Object.entries(rawEntries)) {
-		if (isLedgerEntry(value)) entries[id] = value;
-	}
-	return { schema: SCHEMA_TAG, entries };
+	return { schema: SCHEMA_TAG, entries: collectEntries(parsed.entries) };
 }
 
 /**
@@ -169,24 +183,5 @@ export async function writeLedgerEntry(entry: LedgerEntry, configDir?: string): 
  * ——与 readLedger 同一套"逐条过滤"的理由。
  */
 export async function readLocalOverrides(projectDir: string): Promise<Record<string, LedgerEntry>> {
-	let text: string;
-	try {
-		text = readFileSync(path.join(projectDir, LOCAL_RELATIVE), "utf8");
-	} catch {
-		return {};
-	}
-
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(text);
-	} catch {
-		return {};
-	}
-	if (!isPlainObject(parsed)) return {};
-
-	const out: Record<string, LedgerEntry> = {};
-	for (const [id, value] of Object.entries(parsed)) {
-		if (isLedgerEntry(value)) out[id] = value;
-	}
-	return out;
+	return collectEntries(readJsonObject(path.join(projectDir, LOCAL_RELATIVE)));
 }

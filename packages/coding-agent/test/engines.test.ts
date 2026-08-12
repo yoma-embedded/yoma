@@ -117,6 +117,46 @@ describe("runEngine", () => {
 	});
 });
 
+// 四个引擎调用点的"超时/中断"话术从前是各抄两行,现在共用 assertEngineSettled ——
+// 而 label 是模型看得见的诊断串,合并之前**没有任何测试钉住它**,只能靠人眼逐字对。
+// 这一组就是那道缺失的闸门:抢先 abort 一个已经 aborted 的 signal,让 runEngine 走
+// aborted 分支,断言每个调用点报的是自己的名字。
+describe("engine settle labels", () => {
+	const aborted = () => AbortSignal.abort();
+
+	it("netlist controller_map / board_ir 各报自己的名字", async () => {
+		const enginesRoot = makeEnginesDir({ controller_map: ECHO_ARGS_KERNEL, board_ir: ECHO_ARGS_KERNEL, stm32kernel: ECHO_ARGS_KERNEL });
+		const cwd = createTempDir();
+		const tool = createNetlistToolDefinition(new NodeExecutionEnv({ cwd }), { enginesDir: enginesRoot });
+		writeFileSync(join(cwd, "board.NET"), "netlist content");
+
+		await expect(tool.execute("c1", { netlistPath: "board.NET" }, aborted())).rejects.toThrow(
+			"controller_map was aborted",
+		);
+		await expect(tool.execute("c2", { netlistPath: "board.NET", part: "STM32F405RGTx" }, aborted())).rejects.toThrow(
+			"board_ir was aborted",
+		);
+	});
+
+	it("stm32config 的 label 带上具体命令", async () => {
+		const enginesRoot = makeEnginesDir({ stm32kernel: ECHO_ARGS_KERNEL });
+		const tool = createStm32ConfigToolDefinition(new NodeExecutionEnv({ cwd: createTempDir() }), {
+			enginesDir: enginesRoot,
+		});
+		await expect(tool.execute("c1", { command: "list-mcus" }, aborted())).rejects.toThrow(
+			"stm32kernel list-mcus was aborted",
+		);
+	});
+
+	it("flash 的 label 带上具体动作,而且中断照样把探针租约还回去", async () => {
+		const enginesRoot = makeEnginesDir({ "probe-rs": ECHO_ARGS_KERNEL });
+		const tool = createFlashToolDefinition(new NodeExecutionEnv({ cwd: createTempDir() }), { enginesDir: enginesRoot });
+		await expect(tool.execute("c1", { action: "info" }, aborted())).rejects.toThrow("probe-rs info was aborted");
+		// 租约在 finally 里放,所以下一次还能拿到(拿不到会报 probe is held by)。
+		await expect(tool.execute("c2", { action: "info" }, aborted())).rejects.toThrow("probe-rs info was aborted");
+	});
+});
+
 describe("stm32config buildArgs", () => {
 	const dataDir = "/data";
 	const fwDir = "/data/fw";

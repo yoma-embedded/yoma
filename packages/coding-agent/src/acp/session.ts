@@ -142,6 +142,42 @@ function textOfContent(content: unknown): string {
 /** session/update 通知的发送口,由 acp.ts 用当前的客户端上下文填进来。 */
 export type UpdateSink = (update: Record<string, unknown>) => Promise<void>;
 
+// 下面两个构造函数是 replay(replayUpdatesOf)与 live(pipeHarnessToAcp)两条路的
+// **唯一**一份。从前两边各写一遍同样七个字段,只是取值来源不同(block.* / event.*)——
+// 每加一个字段就要在两处各写一次,而漏一次的代价见 toolCallEnd 里那条注释。
+
+function toolCallStart(toolCallId: unknown, toolName: string, args: unknown): Record<string, unknown> {
+	return {
+		sessionUpdate: "tool_call",
+		toolCallId,
+		title: toolTitleOf(toolName, args),
+		kind: toolKindOf(toolName),
+		status: "in_progress",
+		locations: toolLocationsOf(undefined, args),
+		rawInput: args,
+	};
+}
+
+function toolCallEnd(
+	toolCallId: unknown,
+	toolName: string,
+	details: unknown,
+	content: unknown,
+	isError: boolean | undefined,
+): Record<string, unknown> {
+	const text = textOfContent(content);
+	return {
+		sessionUpdate: "tool_call_update",
+		toolCallId,
+		status: isError ? "failed" : "completed",
+		// toolContentOf 的第 4 参必须传:实时路径漏了它的那一版,图片块(datasheet
+		// view_figure)只在重放时可见。合并之后这里是**唯一**还可能漏掉它的地方。
+		content: toolContentOf(toolName, details, text, content),
+		locations: toolLocationsOf(details, undefined),
+		rawOutput: { text },
+	};
+}
+
 /**
  * session/load 的历史重放:把已落盘的线性消息翻译成一串 session/update。
  * 纯函数,方便测试;真正的 notify 由 agent.ts 逐条发出。
@@ -179,27 +215,11 @@ export function replayUpdatesOf(messages: unknown[]): Record<string, unknown>[] 
 						content: { type: "text", text: block.thinking },
 					});
 				} else if (block.type === "toolCall") {
-					updates.push({
-						sessionUpdate: "tool_call",
-						toolCallId: block.id,
-						title: toolTitleOf(block.name, block.arguments),
-						kind: toolKindOf(block.name),
-						status: "in_progress",
-						locations: toolLocationsOf(undefined, block.arguments),
-						rawInput: block.arguments,
-					});
+					updates.push(toolCallStart(block.id, block.name, block.arguments));
 				}
 			}
 		} else if (message.role === "toolResult" && message.toolCallId && message.toolName) {
-			const text = textOfContent(message.content);
-			updates.push({
-				sessionUpdate: "tool_call_update",
-				toolCallId: message.toolCallId,
-				status: message.isError ? "failed" : "completed",
-				content: toolContentOf(message.toolName, message.details, text, message.content),
-				locations: toolLocationsOf(message.details, undefined),
-				rawOutput: { text },
-			});
+			updates.push(toolCallEnd(message.toolCallId, message.toolName, message.details, message.content, message.isError));
 		}
 	}
 	return updates;
@@ -240,15 +260,7 @@ export function pipeHarnessToAcp(harness: AgentHarness<any, any, any>, sink: Upd
 				return;
 			}
 			case "tool_execution_start": {
-				void sink({
-					sessionUpdate: "tool_call",
-					toolCallId: event.toolCallId,
-					title: toolTitleOf(event.toolName, event.args),
-					kind: toolKindOf(event.toolName),
-					status: "in_progress",
-					locations: toolLocationsOf(undefined, event.args),
-					rawInput: event.args,
-				});
+				void sink(toolCallStart(event.toolCallId, event.toolName, event.args));
 				return;
 			}
 			case "tool_execution_update": {
@@ -267,16 +279,9 @@ export function pipeHarnessToAcp(harness: AgentHarness<any, any, any>, sink: Upd
 				return;
 			}
 			case "tool_execution_end": {
-				const text = textOfContent(event.result?.content);
-				void sink({
-					sessionUpdate: "tool_call_update",
-					toolCallId: event.toolCallId,
-					status: event.isError ? "failed" : "completed",
-					// 第 4 参必须传:实时路径丢了它,图片块(datasheet view_figure)就只在重放时可见。
-					content: toolContentOf(event.toolName, event.result?.details, text, event.result?.content),
-					locations: toolLocationsOf(event.result?.details, undefined),
-					rawOutput: { text },
-				});
+				void sink(
+					toolCallEnd(event.toolCallId, event.toolName, event.result?.details, event.result?.content, event.isError),
+				);
 				return;
 			}
 			default:

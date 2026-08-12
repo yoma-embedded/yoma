@@ -48,9 +48,9 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { readLedger, readLocalOverrides } from "./ledger.ts";
+import { emptyLedger, readLedger, readLocalOverrides } from "./ledger.ts";
 import type { Ledger, LedgerEntry } from "./ledger.ts";
-import { findOnPath, registryCandidates, wellKnownCandidates } from "./locations.ts";
+import { findEnvKey, findOnPath, registryCandidates, wellKnownCandidates } from "./locations.ts";
 import { installHint, manifestForSide, MANIFEST_RELATIVE, parseManifest } from "./schema.ts";
 import type { ToolchainManifest, ToolSpec } from "./schema.ts";
 import { probeVersion, satisfies } from "./version.ts";
@@ -106,9 +106,8 @@ async function loadManifestText(projectDir: string, injected: string | undefined
 
 // ─── 单个候选位置的解析结果 ────────────────────────────────────────────────────
 
-interface Hit {
-	bin: Record<string, string>;
-}
+/** 一处候选位置解析出来的 `名字 → 绝对路径`。 */
+type Hit = Record<string, string>;
 
 /** entry.bin 里记录的每一条路径都还存在,才采信这条 entry —— 见文件头关于"半新半旧"的说明。 */
 function allPathsExist(bin: Record<string, string>): boolean {
@@ -131,16 +130,12 @@ function dedupe(items: string[]): string[] {
 
 // ─── 七档里的前四档:local / ledger / env / path,天然只产出一个候选 ─────────────
 
-function localHits(tool: ToolSpec, overrides: Record<string, LedgerEntry>): Hit[] {
-	const entry = overrides[tool.id];
-	if (!entry || !allPathsExist(entry.bin)) return [];
-	return [{ bin: entry.bin }];
-}
-
-function ledgerHits(tool: ToolSpec, ledger: Ledger): Hit[] {
-	const entry = ledger.entries[tool.id];
-	if (!entry || !allPathsExist(entry.bin)) return [];
-	return [{ bin: entry.bin }];
+/**
+ * local 与 ledger 同构:条目在、且记的每条路径都还存在,才算这一档命中 ——
+ * 见文件头「半新半旧」那段(整条 entry 要么全采信要么全作废,不做部分采信)。
+ */
+function entryHits(entry: LedgerEntry | undefined): Hit[] {
+	return entry && allPathsExist(entry.bin) ? [entry.bin] : [];
 }
 
 /** tool.env 按声明顺序尝试,第一个指向存在路径的变量就赢 —— alternation,不是"全部收集"。 */
@@ -152,7 +147,7 @@ function envHits(tool: ToolSpec, env: NodeJS.ProcessEnv): Hit[] {
 			// 优先用声明的第一个名字当 key(和 primaryBinPath 的选择口径一致),
 			// 真没有名字可用(tool.bin 为空)时退而用变量名本身,好过瞎编一个键。
 			const key = tool.bin?.[0] ?? varName;
-			return [{ bin: { [key]: value } }];
+			return [{ [key]: value }];
 		}
 	}
 	return [];
@@ -164,7 +159,7 @@ function pathHits(tool: ToolSpec, env: NodeJS.ProcessEnv): Hit[] {
 		const found = findOnPath(name, env);
 		if (found) bin[name] = found;
 	}
-	return Object.keys(bin).length > 0 ? [{ bin }] : [];
+	return Object.keys(bin).length > 0 ? [bin] : [];
 }
 
 // ─── 后两档:well-known / registry,同一档内可能产出多个候选目录 ────────────────
@@ -189,7 +184,7 @@ function wellKnownHits(tool: ToolSpec, platform: string, env: NodeJS.ProcessEnv)
 	const hits: Hit[] = [];
 	for (const dir of wellKnownCandidates(tool.id, platform)) {
 		const bin = resolveNamesInDirs(names, [dir], env);
-		if (bin) hits.push({ bin });
+		if (bin) hits.push(bin);
 	}
 	return hits;
 }
@@ -202,7 +197,7 @@ function registryHits(tool: ToolSpec, platform: string, env: NodeJS.ProcessEnv):
 		// InstallLocation 有的厂商就是可执行文件所在目录(SEGGER 的 J-Link),有的是
 		// 装了一堆子目录的安装根、可执行文件在它的 bin\ 下 —— 两种都试,不猜是哪种。
 		const bin = resolveNamesInDirs(names, [dir, path.join(dir, "bin")], env);
-		if (bin) hits.push({ bin });
+		if (bin) hits.push(bin);
 	}
 	return hits;
 }
@@ -227,8 +222,8 @@ async function resolveTool(tool: ToolSpec, ctx: ResolveCtx): Promise<ResolvedToo
 	// 便宜(glob 展开、reg.exe 子进程),真正需要的是"只在前面几档都没答案时才去
 	// 碰它们",提前算好等于白白替每个工具多跑两次昂贵探测。
 	const tiers: Array<[ResolveSource, () => Hit[]]> = [
-		["local", () => localHits(tool, ctx.localOverrides)],
-		["ledger", () => ledgerHits(tool, ctx.ledger)],
+		["local", () => entryHits(ctx.localOverrides[tool.id])],
+		["ledger", () => entryHits(ctx.ledger.entries[tool.id])],
 		["env", () => envHits(tool, ctx.env)],
 		["path", () => pathHits(tool, ctx.env)],
 		["well-known", () => wellKnownHits(tool, ctx.platform, ctx.env)],
@@ -247,9 +242,9 @@ async function resolveTool(tool: ToolSpec, ctx: ResolveCtx): Promise<ResolvedToo
 
 		const probed = await Promise.all(
 			hits.map(async (hit) => {
-				const primary = primaryBinPath(hit.bin, names);
+				const primary = primaryBinPath(hit, names);
 				const version = primary !== undefined ? await probeVersion(primary) : undefined;
-				return { bin: hit.bin, primary, version };
+				return { bin: hit, primary, version };
 			}),
 		);
 
@@ -327,6 +322,15 @@ async function resolveTool(tool: ToolSpec, ctx: ResolveCtx): Promise<ResolvedToo
 export async function resolveToolchain(opts: {
 	projectDir: string;
 	configDir?: string;
+	/**
+	 * 跳过账本读取,当作"这台机器还没确认过任何工具"重新探测一遍。
+	 *
+	 * 跳过的只是**读**:写回账本仍由调用方做(tools/toolchain.ts 的 rememberFreshResults)
+	 * —— resolve 动作的语义就是"不信旧记录,重新看一遍,再把新答案记下来"。
+	 * 从前调用方是伪造一个必然不存在的 tmpdir 当 configDir 来达到同样效果,那是把开关
+	 * 做在了错的深度:真正落盘用的还是原本的 configDir,两个 configDir 并存很容易读错。
+	 */
+	skipLedger?: boolean;
 	side?: "mother" | "runner";
 	platform?: string;
 	env?: NodeJS.ProcessEnv;
@@ -354,12 +358,19 @@ export async function resolveToolchain(opts: {
 	}
 
 	const manifest = manifestForSide(parsed.manifest, side);
-	const [localOverrides, ledger] = await Promise.all([readLocalOverrides(opts.projectDir), readLedger(opts.configDir)]);
+	const [localOverrides, ledger] = await Promise.all([
+		readLocalOverrides(opts.projectDir),
+		opts.skipLedger ? emptyLedger() : readLedger(opts.configDir),
+	]);
 
-	const tools: ResolvedTool[] = [];
-	for (const tool of manifest.tools) {
-		tools.push(await resolveTool(tool, { manifest, localOverrides, ledger, platform, env }));
-	}
+	// 工具之间并发:ctx 全只读、resolveTool 不写任何东西(账本要不要写是上层的决定,
+	// 见文件头),顺序由 Promise.all 保住。收益来自 probeVersion 与 well-known 的 glob;
+	// registry 那一档用的是 spawnSync(locations.ts),它阻塞事件循环,所以注册表探测
+	// 实际仍是串行 —— 别以为工具数一乘就线性变快。
+	// 这条路挂在用户等待上:kernel 的 session-manager 在 ensureOpen 里就 await 它,而
+	// 即使全部命中账本也照样每个工具起一次 --version。
+	const ctx: ResolveCtx = { manifest, localOverrides, ledger, platform, env };
+	const tools = await Promise.all(manifest.tools.map((tool) => resolveTool(tool, ctx)));
 
 	return {
 		manifestPath: loaded.filePath,
@@ -372,14 +383,6 @@ export async function resolveToolchain(opts: {
 }
 
 // ─── 子进程环境 ──────────────────────────────────────────────────────────────
-
-/** base 里已经存在的 PATH 键,不管大小写 —— 找不到就返回 undefined,让调用方决定默认键名。 */
-function findExistingPathKey(env: NodeJS.ProcessEnv): string | undefined {
-	for (const key of Object.keys(env)) {
-		if (key.toUpperCase() === "PATH") return key;
-	}
-	return undefined;
-}
 
 /**
  * 解析结果 -> 子进程环境:把每个 ok 工具的 bin 所在目录前置进 PATH,再按 exports
@@ -409,7 +412,7 @@ export function shellEnvFor(r: ToolchainResolution, base: NodeJS.ProcessEnv): No
 		// 展开成普通对象后大小写不再统一,见 locations.ts 的 readEnvVar 同一个坑)。
 		// 必须写回原来那个键 —— 如果凭空另开一个 "PATH",输出对象里会同时躺着
 		// "Path"(旧值)和"PATH"(新值)两个键,子进程实际认哪个是未定义行为。
-		const pathKey = findExistingPathKey(base) ?? "PATH";
+		const pathKey = findEnvKey(base, "PATH") ?? "PATH";
 		const current = out[pathKey] ?? "";
 		out[pathKey] = [...dirs, current].filter(Boolean).join(path.delimiter);
 	}

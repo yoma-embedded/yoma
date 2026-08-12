@@ -46,6 +46,7 @@ import {
 	describeProbeConflict,
 	type EnginePathOptions,
 	engineBin,
+	killOnHostExit,
 	killTree,
 	releaseProbe,
 	stamp,
@@ -403,24 +404,6 @@ function charBudgetFor(maxLines: number): number {
 
 /** 进程退出时兜底杀掉还活着的采集子进程 —— 否则 probe-rs 会一直握着探针。 */
 const liveCaptures = new Set<LogCapture>();
-let cleanupHooksInstalled = false;
-
-function installCleanupHooks(): void {
-	if (cleanupHooksInstalled) return;
-	cleanupHooksInstalled = true;
-	process.once("exit", () => {
-		for (const live of liveCaptures) live.killNow();
-	});
-	// 'exit' 不会因为信号而触发。只有在宿主没自己处理信号时才接管,
-	// 接管后照旧退出(128+n),不改变宿主的可观察行为。
-	for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
-		if (process.listenerCount(signal) > 0) continue;
-		process.once(signal, () => {
-			for (const live of liveCaptures) live.killNow();
-			process.exit(signal === "SIGINT" ? 130 : signal === "SIGTERM" ? 143 : 129);
-		});
-	}
-}
 
 export interface LogCaptureOptions {
 	maxBufferLines?: number;
@@ -546,7 +529,8 @@ export class LogCapture {
 		unref(child.stdout);
 		unref(child.stderr);
 		liveCaptures.add(this);
-		installCleanupHooks();
+		// 让位:宿主自己处理了信号就不接管(见 killOnHostExit)。
+		killOnHostExit(liveCaptures, { yieldToHost: true });
 	}
 
 	private consume(chunk: string, err: boolean): void {
@@ -619,10 +603,10 @@ export class LogCapture {
 		});
 	}
 
-	/** waitForChange 也会被"来了新行"叫醒,所以这里必须循环等到真的退出或到点。 */
-	private async waitForExit(timeoutMs: number): Promise<void> {
+	/** waitForChange 也会被"来了新行"叫醒,所以这里必须循环等到条件成立或到点。 */
+	private async waitUntil(done: () => boolean, timeoutMs: number): Promise<void> {
 		const deadline = Date.now() + timeoutMs;
-		while (!this.exited && Date.now() < deadline) {
+		while (!done() && Date.now() < deadline) {
 			await this.waitForChange(deadline - Date.now());
 		}
 	}
@@ -716,8 +700,8 @@ export class LogCapture {
 			});
 			if (options.signal?.aborted) return { kind: "aborted", ...preview() };
 			if (this.exited) {
-				// 'exit' 可能跑在最后一段 stdout 前面 —— 排干管道再判一次,
-				// 否则"最后一行正好是要等的那条"会被误报成"源退出了,没等到"。
+				// 'exit' 可能跑在最后一段 stdout 前面:排干再判一次,否则"最后一行正好是要等的那条"
+				// 会被误报成 exited(宽限值与来由见 EXIT_DRAIN_MS)。
 				if (!drainedAfterExit) {
 					drainedAfterExit = true;
 					await this.waitForChange(EXIT_DRAIN_MS);
@@ -733,15 +717,7 @@ export class LogCapture {
 
 	/** 等源自己退出,或者到点 —— 给"它到底起来了没"一个有界的答案。 */
 	async settle(timeoutMs: number): Promise<void> {
-		await this.waitForExit(timeoutMs);
-	}
-
-	/** 'close'(管道排干)才算收全;finish() 就挂在它上面。 */
-	private async waitForClose(timeoutMs: number): Promise<void> {
-		const deadline = Date.now() + timeoutMs;
-		while (!this.finished && Date.now() < deadline) {
-			await this.waitForChange(deadline - Date.now());
-		}
+		await this.waitUntil(() => !!this.exited, timeoutMs);
 	}
 
 	async stop(): Promise<void> {
@@ -752,11 +728,11 @@ export class LogCapture {
 				if (!this.exited) killTree(child, "SIGKILL");
 			}, FORCE_KILL_GRACE_MS);
 			force.unref();
-			await this.waitForExit(EXIT_WAIT_MS);
+			await this.waitUntil(() => !!this.exited, EXIT_WAIT_MS);
 			clearTimeout(force);
 		}
-		// 退出之后给管道一点排干时间,最后几行才不会连同 finish() 一起被丢掉。
-		if (this.exited) await this.waitForClose(EXIT_DRAIN_MS);
+		// 'exit' 之后还要等 'close'(管道排干),最后几行才不会连同 finish() 一起被丢掉。
+		if (this.exited) await this.waitUntil(() => this.finished, EXIT_DRAIN_MS);
 		this.finish();
 	}
 

@@ -65,78 +65,50 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	const contextFiles = providedContextFiles ?? [];
 	const skills = providedSkills ?? [];
 
-	if (customPrompt) {
-		let prompt = customPrompt;
-
-		if (appendSection) {
-			prompt += appendSection;
-		}
-
-		// Append project context files
-		if (contextFiles.length > 0) {
-			prompt += "\n\n<project_context>\n\n";
-			prompt += "Project-specific instructions and guidelines:\n\n";
-			for (const { path: filePath, content } of contextFiles) {
-				prompt += `<project_instructions path="${filePath}">\n${content}\n</project_instructions>\n\n`;
-			}
-			prompt += "</project_context>\n";
-		}
-
-		// Append skills section (only if read tool is available)
-		const customPromptHasRead = !selectedTools || selectedTools.includes("read");
-		if (customPromptHasRead && skills.length > 0) {
-			prompt += `\n\n${formatSkillsForSystemPrompt(skills)}`;
-		}
-
-		prompt += `\nCurrent working directory: ${promptCwd}`;
-
-		return prompt;
-	}
-
 	// Build tools list based on selected tools.
 	// Every registered tool must be listed so the model never has to guess its capabilities.
 	const tools = selectedTools || ["read", "bash", "edit", "write"];
-	const toolsList =
-		tools.length > 0
-			? tools.map((name) => (toolSnippets?.[name] ? `- ${name}: ${toolSnippets[name]}` : `- ${name}`)).join("\n")
-			: "(none)";
 
-	// Build guidelines based on which tools are actually available
-	const guidelinesList: string[] = [];
-	const guidelinesSet = new Set<string>();
-	const addGuideline = (guideline: string): void => {
-		if (guidelinesSet.has(guideline)) {
-			return;
+	// customPrompt 只替换正文;收尾四段(append / 项目上下文 / 技能 / cwd)两条路共用
+	// 下面**唯一**一份 —— 从前是各写一遍,而它们必须逐字节一致(这段文本决定模型看到的
+	// 项目指令和技能清单)。read 门控两边同解:selectedTools 缺省时落到含 read 的四件套,
+	// 给了空数组时两边都判 false,所以统一写成 tools.includes("read")。
+	let prompt: string;
+	if (customPrompt) {
+		prompt = customPrompt;
+	} else {
+		const toolsList =
+			tools.length > 0
+				? tools.map((name) => (toolSnippets?.[name] ? `- ${name}: ${toolSnippets[name]}` : `- ${name}`)).join("\n")
+				: "(none)";
+
+		// Build guidelines based on which tools are actually available.
+		// Set 保插入顺序,于是"去重且保序"不用自己再维护一个数组。
+		const guidelinesSet = new Set<string>();
+
+		// File exploration guidelines
+		const hasBash = tools.includes("bash");
+		const hasGrep = tools.includes("grep");
+		const hasFind = tools.includes("find");
+		const hasLs = tools.includes("ls");
+		if (hasBash && !hasGrep && !hasFind && !hasLs) {
+			guidelinesSet.add("Use bash for file operations like ls, rg, find");
 		}
-		guidelinesSet.add(guideline);
-		guidelinesList.push(guideline);
-	};
 
-	const hasBash = tools.includes("bash");
-	const hasGrep = tools.includes("grep");
-	const hasFind = tools.includes("find");
-	const hasLs = tools.includes("ls");
-	const hasRead = tools.includes("read");
-
-	// File exploration guidelines
-	if (hasBash && !hasGrep && !hasFind && !hasLs) {
-		addGuideline("Use bash for file operations like ls, rg, find");
-	}
-
-	for (const guideline of promptGuidelines ?? []) {
-		const normalized = guideline.trim();
-		if (normalized.length > 0) {
-			addGuideline(normalized);
+		for (const guideline of promptGuidelines ?? []) {
+			const normalized = guideline.trim();
+			if (normalized.length > 0) {
+				guidelinesSet.add(normalized);
+			}
 		}
-	}
 
-	// Always include these
-	addGuideline("Be concise in your responses");
-	addGuideline("Show file paths clearly when working with files");
+		// Always include these
+		guidelinesSet.add("Be concise in your responses");
+		guidelinesSet.add("Show file paths clearly when working with files");
 
-	const guidelines = guidelinesList.map((g) => `- ${g}`).join("\n");
+		const guidelines = [...guidelinesSet].map((g) => `- ${g}`).join("\n");
 
-	let prompt = `You are Yoma, a coding and embedded-development agent.
+		prompt = `You are Yoma, a coding and embedded-development agent.
 
 Use only the tools listed below. Do not invent unavailable tools or claim that an action was performed unless its tool result proves it.
 
@@ -166,6 +138,7 @@ ${toolsList}
 
 Tool-specific rules:
 ${guidelines}`;
+	}
 
 	if (appendSection) {
 		prompt += appendSection;
@@ -182,7 +155,7 @@ ${guidelines}`;
 	}
 
 	// Append skills section (only if read tool is available)
-	if (hasRead && skills.length > 0) {
+	if (tools.includes("read") && skills.length > 0) {
 		prompt += `\n\n${formatSkillsForSystemPrompt(skills)}`;
 	}
 

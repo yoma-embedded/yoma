@@ -229,8 +229,7 @@ export function powershellArgv(script: string): string[] {
 
 /**
  * 读串口的 PowerShell(导出只为可测)。读原始字节直写 stdout,不让 PowerShell 按
- * 代码页解码一遍;DTR/RTS 拉高是为了对齐 POSIX —— 那边 open 就会拉高,不对齐的话
- * 同一块板子换台机器就"不吐数据"。
+ * 代码页解码一遍。
  */
 export function windowsReaderScript(port: string, baud: number): string {
 	return [

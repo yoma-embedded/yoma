@@ -53,30 +53,19 @@ async function pathExists(env: FileSystem, path: string): Promise<boolean> {
  */
 export async function resolveReadPath(env: FileSystem, filePath: string): Promise<string> {
 	const resolved = await resolveToCwd(env, filePath);
+	if (await pathExists(env, resolved)) return resolved;
 
-	if (await pathExists(env, resolved)) {
-		return resolved;
-	}
-
-	const amPmVariant = tryMacOSScreenshotPath(resolved);
-	if (amPmVariant !== resolved && (await pathExists(env, amPmVariant))) {
-		return amPmVariant;
-	}
-
-	const nfdVariant = tryNFDVariant(resolved);
-	if (nfdVariant !== resolved && (await pathExists(env, nfdVariant))) {
-		return nfdVariant;
-	}
-
-	const curlyVariant = tryCurlyQuoteVariant(resolved);
-	if (curlyVariant !== resolved && (await pathExists(env, curlyVariant))) {
-		return curlyVariant;
-	}
-
-	// NFD + 弯引号的组合(法语 macOS 截图 "Capture d'écran" 就是这种)。
-	const nfdCurlyVariant = tryCurlyQuoteVariant(nfdVariant);
-	if (nfdCurlyVariant !== resolved && (await pathExists(env, nfdCurlyVariant))) {
-		return nfdCurlyVariant;
+	// 依次尝试的变体,顺序即语义:先命中先返回。每条为什么存在,见各自的 tryX。
+	const nfd = tryNFDVariant(resolved);
+	const candidates = [
+		tryMacOSScreenshotPath(resolved),
+		nfd,
+		tryCurlyQuoteVariant(resolved),
+		// NFD + 弯引号的组合(法语 macOS 截图 "Capture d'écran" 就是这种)。
+		tryCurlyQuoteVariant(nfd),
+	];
+	for (const candidate of candidates) {
+		if (candidate !== resolved && (await pathExists(env, candidate))) return candidate;
 	}
 
 	return resolved;

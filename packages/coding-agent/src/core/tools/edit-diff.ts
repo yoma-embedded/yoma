@@ -229,12 +229,6 @@ export function stripBom(content: string): { bom: string; text: string } {
 	return content.startsWith("﻿") ? { bom: "﻿", text: content.slice(1) } : { bom: "", text: content };
 }
 
-function countOccurrences(content: string, oldText: string): number {
-	const fuzzyContent = normalizeForFuzzyMatch(content);
-	const fuzzyOldText = normalizeForFuzzyMatch(oldText);
-	return fuzzyContent.split(fuzzyOldText).length - 1;
-}
-
 function getNotFoundError(path: string, editIndex: number, totalEdits: number): Error {
 	if (totalEdits === 1) {
 		return new Error(
@@ -301,17 +295,26 @@ export function applyEditsToNormalizedContent(
 
 	const initialMatches = normalizedEdits.map((edit) => fuzzyFindText(normalizedContent, edit.oldText));
 	const usedFuzzyMatch = initialMatches.some((match) => match.usedFuzzyMatch);
-	const replacementBaseContent = usedFuzzyMatch ? normalizeForFuzzyMatch(normalizedContent) : normalizedContent;
+
+	// 归一化空间**整批只算一次**。从前它藏在 countOccurrences 里按 edit 重算:每个 edit
+	// 都要把整份文件重新 NFKC + 四条正则跑一遍,连精确匹配那条路也照跑。
+	// 能提出来是因为 normalizeForFuzzyMatch 幂等 —— NFKC 幂等,而那一类特殊空格
+	// (U+00A0 / U+2002-200A / U+202F / U+205F / U+3000)全都是 JS 空白,行尾的那些在
+	// trimEnd 那一步就没了,所以末尾几条 replace 造不出新的行尾空白。
+	// 往这个函数里加会改变"已归一化文本"的规则之前,先确认这条还成立。
+	const fuzzyContent = normalizeForFuzzyMatch(normalizedContent);
+	const replacementBaseContent = usedFuzzyMatch ? fuzzyContent : normalizedContent;
 
 	const matchedEdits: MatchedEdit[] = [];
 	for (let i = 0; i < normalizedEdits.length; i++) {
 		const edit = normalizedEdits[i]!;
-		const matchResult = fuzzyFindText(replacementBaseContent, edit.oldText);
+		// 没走模糊时 replacementBaseContent 就是 normalizedContent,initialMatches 已经算过同一件事。
+		const matchResult = usedFuzzyMatch ? fuzzyFindText(replacementBaseContent, edit.oldText) : initialMatches[i]!;
 		if (!matchResult.found) {
 			throw getNotFoundError(path, i, normalizedEdits.length);
 		}
 
-		const occurrences = countOccurrences(replacementBaseContent, edit.oldText);
+		const occurrences = fuzzyContent.split(normalizeForFuzzyMatch(edit.oldText)).length - 1;
 		if (occurrences > 1) {
 			throw getDuplicateError(path, i, normalizedEdits.length, occurrences);
 		}

@@ -28,13 +28,19 @@ const DEFAULT_PATHEXT = ".EXE;.CMD;.BAT;.COM";
  * "PATH",两种真实见过。这里手动做一次大小写不敏感查找兜底,不依赖 env 到底
  * 是不是那个特殊对象。
  */
-function readEnvVar(env: NodeJS.ProcessEnv, name: string): string | undefined {
-	if (env[name] !== undefined) return env[name];
+export function findEnvKey(env: NodeJS.ProcessEnv, name: string): string | undefined {
+	// **先扫 Object.keys,精确名只作兜底**,顺序不能反:Windows 上真 `process.env` 是
+	// 一个大小写不敏感的代理,`env["PATH"] !== undefined` 即使真实键叫 "Path" 也为真。
+	// 先试精确名就会返回 "PATH",而调用方(resolve.ts 的 shellEnvFor)`{...base}` 展开
+	// 出来的普通对象里躺着的是 "Path" —— 于是写回时同时出现 "Path"(旧值)和
+	// "PATH"(新值)两个键,子进程认哪个是未定义行为。
 	const lower = name.toLowerCase();
-	for (const key of Object.keys(env)) {
-		if (key.toLowerCase() === lower) return env[key];
-	}
-	return undefined;
+	return Object.keys(env).find((key) => key.toLowerCase() === lower) ?? (env[name] !== undefined ? name : undefined);
+}
+
+function readEnvVar(env: NodeJS.ProcessEnv, name: string): string | undefined {
+	const key = findEnvKey(env, name);
+	return key === undefined ? undefined : env[key];
 }
 
 /**
@@ -325,8 +331,8 @@ export function registryCandidates(toolId: string, platform: NodeJS.Platform = p
 	for (const root of UNINSTALL_ROOTS) {
 		try {
 			// env 必须显式传:bun 的 spawnSync 省略 env 时按进程启动那一刻的环境
-			// 解析 argv[0],运行时改过的 PATH 对它不生效(根 CLAUDE.md、这次任务的
-			// "会咬人的地方"第 1 条,serial.ts:176 同一道疤)。
+			// 解析 argv[0],运行时改过的 PATH 对它不生效(根 CLAUDE.md 的"会咬人的地方",
+			// serial.ts:176 同一道疤)。
 			// 超时是上界不是预算:这一档跑在 SessionManager.ensureOpen() 的关键路径上
 			// (会话打开时同步等它),而 `/s` 是把整个 Uninstall 子树递归扫一遍,装了
 			// 很多软件的机器上真的要几百毫秒。三个根 × 每个缺席的工具会累加,所以宁可

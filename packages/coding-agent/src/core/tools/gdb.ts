@@ -33,6 +33,7 @@
  */
 import { type ChildProcess, spawn } from "node:child_process";
 import { createWriteStream, existsSync, type WriteStream } from "node:fs";
+import { open as openFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import type { ExecutionEnv } from "@yoma/my-pi";
@@ -43,6 +44,8 @@ import {
 	describeProbeConflict,
 	type EnginePathOptions,
 	engineBin,
+	exe,
+	killOnHostExit,
 	killTree,
 	releaseProbe,
 	stamp,
@@ -386,22 +389,6 @@ interface Pending {
 }
 
 const liveSessions = new Set<GdbSession>();
-let cleanupHooksInstalled = false;
-
-function installCleanupHooks(): void {
-	if (cleanupHooksInstalled) return;
-	cleanupHooksInstalled = true;
-	process.once("exit", () => {
-		for (const s of liveSessions) s.killNow();
-	});
-	// 攥着探针的 gdbserver 太贵,不能像 log.ts 那样"宿主已有监听就跳过"。
-	for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
-		process.once(signal, () => {
-			for (const s of liveSessions) s.killNow();
-			process.exit(signal === "SIGINT" ? 130 : signal === "SIGTERM" ? 143 : 129);
-		});
-	}
-}
 
 export interface GdbSessionOptions {
 	gdbPath: string;
@@ -488,7 +475,8 @@ export class GdbSession {
 		});
 		this.child = child;
 		liveSessions.add(this);
-		installCleanupHooks();
+		// 不让位:攥着探针的 gdbserver 太贵,宿主自己装了信号处理也照样要收掉它。
+		killOnHostExit(liveSessions);
 
 		await new Promise<void>((resolve, reject) => {
 			const onSpawn = () => {
@@ -637,21 +625,38 @@ export class GdbSession {
 		} else {
 			this.state = "halted";
 		}
+		const info = this.recordStop(reason, {
+			bkptno: miString(record.results?.bkptno),
+			frame: frameOf(miTuple(record.results?.frame)),
+		});
+		this.writeLog(`■ stopped#${info.n} ${reason}${info.frame ? ` @ ${renderFrame(info.frame)}` : ""}`);
+
+		this.wakeStopWaiters(record);
+	}
+
+	/**
+	 * 一次停止的记账:计数、StopInfo、清 lastResumeAt、落盘。onExec(有 `*stopped`)
+	 * 与 onNotify(目标跑完退出,压根没有 `*stopped`)两条路共用。
+	 *
+	 * 落盘的理由:自动压缩会把"我们之前停在哪"从上下文里删掉,而原始 MI 是没法 grep 的。
+	 * 每次停止 120 字节左右,一次长会话也就几 KB。JSON.stringify 会丢掉值为 undefined
+	 * 的键,所以退出那条路落下来的仍然只有 {n,epoch,t,reason},字节数不变。
+	 *
+	 * ■ 行不在这里写:只有 onExec 那条路要写它。
+	 */
+	private recordStop(reason: string, extra?: { bkptno?: string; frame?: Frame }): StopInfo {
 		this.stopCount += 1;
-		const frame = frameOf(miTuple(record.results?.frame));
 		const info: StopInfo = {
 			n: this.stopCount,
 			epoch: this.epoch,
 			t: Date.now() - this.startedAt,
 			reason,
-			bkptno: miString(record.results?.bkptno),
-			frame,
+			bkptno: extra?.bkptno,
+			frame: extra?.frame,
 			sinceResumeMs: this.lastResumeAt ? Date.now() - this.lastResumeAt : undefined,
 		};
 		this.lastStop = info;
 		this.lastResumeAt = undefined;
-		// 自动压缩会把"我们之前停在哪"从上下文里删掉,而原始 MI 是没法 grep 的。
-		// 每次停止 120 字节左右,一次长会话也就几 KB。
 		this.stopsStream?.write(
 			`${JSON.stringify({
 				n: info.n,
@@ -659,15 +664,13 @@ export class GdbSession {
 				t: info.t,
 				reason: info.reason,
 				bkptno: info.bkptno,
-				func: frame?.func,
-				file: frame?.file,
-				line: frame?.line,
-				addr: frame?.addr,
+				func: info.frame?.func,
+				file: info.frame?.file,
+				line: info.frame?.line,
+				addr: info.frame?.addr,
 			})}\n`,
 		);
-		this.writeLog(`■ stopped#${info.n} ${reason}${frame ? ` @ ${renderFrame(frame)}` : ""}`);
-
-		this.wakeStopWaiters(record);
+		return info;
 	}
 
 	/**
@@ -681,16 +684,7 @@ export class GdbSession {
 		if (record.class === "thread-group-exited") {
 			const code = miString(record.results?.["exit-code"]);
 			this.state = "exited";
-			this.stopCount += 1;
-			this.lastStop = {
-				n: this.stopCount,
-				epoch: this.epoch,
-				t: Date.now() - this.startedAt,
-				reason: code === undefined ? "exited (no exit code reported)" : `exited with code ${code}`,
-				sinceResumeMs: this.lastResumeAt ? Date.now() - this.lastResumeAt : undefined,
-			};
-			this.lastResumeAt = undefined;
-			this.stopsStream?.write(`${JSON.stringify({ n: this.lastStop.n, epoch: this.epoch, t: this.lastStop.t, reason: this.lastStop.reason })}\n`);
+			this.recordStop(code === undefined ? "exited (no exit code reported)" : `exited with code ${code}`);
 			this.wakeStopWaiters(record);
 			return;
 		}
@@ -724,8 +718,8 @@ export class GdbSession {
 	}
 
 	/**
-	 * 发一条 MI 命令。**串行**:上一条没落地就排队 —— gdb 是个 REPL,而且串行之后
-	 * "这条 ~ 流记录属于哪条命令"就不用猜了。token 照发,用来发现失同步。
+	 * 发一条 MI 命令。上一条没落地就**排队**,不报错(串行的理由见类 doc)。
+	 * resolve 的是该 token 的 `^` 记录,output 是这条命令在飞期间收到的 ~/@ 流文本。
 	 */
 	send(command: string, timeoutMs = COMMAND_TIMEOUT_MS): Promise<MiRecord & { output: string }> {
 		const next = this.queue.then(
@@ -871,10 +865,10 @@ function tcpProbe(port: number): Promise<boolean> {
 /**
  * 就绪 = race(就绪正则, TCP 可连, server 退出),server 退出立刻获胜。
  *
- * 两条都要,因为两边各有假阳/假阴:probe-rs 在绑定 socket **之前**就打印
- * "stub 起来了",QEMU 成功时什么都不打印;反过来 OpenOCD 的 4444/6666
- * 在适配器初始化之前就绑上了,只轮询端口会在目标根本没连上时误判成功
- * (所以这里只轮询 gdb 端口)。
+ * 两条判据都要 —— 每个 server 各自的假阳/假阴写在 SERVER_CAPS 表里(readyRe 字段的
+ * 注释、以及 openocd 与 qemu 两条)。这里只补一句表里放不下的:轮询的只有 **gdb 端口**,
+ * 因为 OpenOCD 的 4444/6666 在适配器初始化之前就绑上了,拿它们判断会在目标根本没连上
+ * 时误判成功。
  */
 export async function waitForServerReady(server: ServerProcess, readyRe: RegExp | undefined, deadlineMs: number) {
 	const started = Date.now();
@@ -1152,9 +1146,9 @@ export async function renderStopReport(
 
 function findOnPath(name: string): string | undefined {
 	const dirs = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean);
-	const exe = process.platform === "win32" ? `${name}.exe` : name;
+	const binary = exe(name);
 	for (const dir of dirs) {
-		const candidate = path.join(dir, exe);
+		const candidate = path.join(dir, binary);
 		if (existsSync(candidate)) return candidate;
 	}
 	return undefined;
@@ -1244,7 +1238,7 @@ const gdbSchema = Type.Object({
 	condition: Type.Optional(Type.String({ description: "break: only stop when this expression is true." })),
 	temporary: Type.Optional(Type.Boolean({ description: "break: delete the breakpoint after it is hit once." })),
 	remove: Type.Optional(Type.String({ description: 'break: delete breakpoint N, or "all".' })),
-	// 显式元组:.map() 会丢掉元组结构,Static 推导会塌成单个字面量(同 log.ts 的注释)。
+	// 同上:显式元组,别改成 .map()。
 	op: Type.Optional(
 		Type.Union(
 			[
@@ -1333,17 +1327,30 @@ async function describeStuck(session: GdbSession, waitMs: number): Promise<strin
 	return `${head}DHCSR says the core is still executing normally (S_HALT=0, S_SLEEP=0). The firmware is running, not wedged — either it never reaches your breakpoint, or the breakpoint did not get inserted.`;
 }
 
-function delay(ms: number): { promise: Promise<void>; cancel: () => void } {
-	let cancel = () => {};
-	const promise = new Promise<void>((resolve) => {
-		const timer = setTimeout(resolve, ms);
+/**
+ * promise 是否在 ms 之内落定。五处"等停止,但最多等这么久"共用这一份 —— 从前每处都是
+ * delay() + Promise.race + cancel 三行。
+ *
+ * 拒绝要**原样传出去**,不能吞成 false:这里的 promise 目前都来自 expectStop()(只
+ * resolve,失败路径喂的是合成 stopped 记录),但把 reject 吞掉会让将来某个会抛的调用
+ * 方变成"静默 false + unhandled rejection",而那种 bug 在硬件路径上极难归因。
+ * 定时器 unref:等待绝不能拖住事件循环(gdb / server 子进程都是 detached + unref 的)。
+ */
+function settledWithin(promise: Promise<unknown>, ms: number): Promise<boolean> {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => resolve(false), ms);
 		timer.unref?.();
-		cancel = () => {
-			clearTimeout(timer);
-			resolve();
-		};
+		promise.then(
+			() => {
+				clearTimeout(timer);
+				resolve(true);
+			},
+			(error) => {
+				clearTimeout(timer);
+				reject(error);
+			},
+		);
 	});
-	return { promise, cancel };
 }
 
 /**
@@ -1360,13 +1367,16 @@ async function fixSourcePaths(session: GdbSession, env: ExecutionEnv): Promise<s
 		.slice(0, 40);
 	if (files.length === 0) return undefined;
 
-	let missing = 0;
+	// 存在性检查一批并发:每个文件本来都要 await 一次,而它们互不相关。
+	const checked = await Promise.all(files.map(async (full) => ({ full, hit: await env.exists(full) })));
+	const missingFiles = checked.filter(({ hit }) => !(hit.ok && hit.value)).map(({ full }) => full);
+	const missing = missingFiles.length;
+	if (!missing) return undefined;
+
+	// 后缀回退保持串行短路:第一个能映射上的就定案,不必把剩下的都问一遍。
 	let mapped: { from: string; to: string } | undefined;
-	for (const full of files) {
-		const exists = await env.exists(full);
-		if (exists.ok && exists.value) continue;
-		missing++;
-		if (mapped) continue;
+	for (const full of missingFiles) {
+		if (mapped) break;
 		// 从最短的后缀开始往回试:找到工作区里同名同层级的那个文件,前缀差就是映射。
 		const parts = full.split(path.sep).filter(Boolean);
 		for (let i = parts.length - 1; i >= 1; i--) {
@@ -1378,7 +1388,6 @@ async function fixSourcePaths(session: GdbSession, env: ExecutionEnv): Promise<s
 			}
 		}
 	}
-	if (!missing) return undefined;
 	if (mapped) {
 		await session.console(`set substitute-path ${mapped.from} ${mapped.to}`).catch(() => undefined);
 		return `source paths: ${missing} of ${files.length} compile-time paths do not exist here; mapped ${mapped.from} → ${mapped.to}`;
@@ -1496,10 +1505,7 @@ export function createGdbToolDefinition(
 				return { stopped: false, error: msg };
 			}
 		}
-		const timer = delay(waitMs);
-		const stopped = await Promise.race([waiter.then(() => true), timer.promise.then(() => false)]);
-		timer.cancel();
-		if (stopped) return { stopped: true };
+		if (await settledWithin(waiter, waitMs)) return { stopped: true };
 
 		if (onTimeout === "leave-running") {
 			return {
@@ -1510,10 +1516,7 @@ export function createGdbToolDefinition(
 		// 中断阶梯:-exec-interrupt 的 ^done 只表示"中断已发出",不表示停了。
 		const second = s.expectStop();
 		await s.send("-exec-interrupt").catch(() => undefined);
-		const grace = delay(INTERRUPT_GRACE_MS);
-		const halted = await Promise.race([second.then(() => true), grace.promise.then(() => false)]);
-		grace.cancel();
-		if (halted) {
+		if (await settledWithin(second, INTERRUPT_GRACE_MS)) {
 			return {
 				stopped: true,
 				note: `nothing stopped within ${waitMs} ms, so I interrupted the target. Your firmware was running normally — this halt was mine, not a crash.`,
@@ -1569,8 +1572,22 @@ export function createGdbToolDefinition(
 						);
 					}
 
-					const head = await env.readBinaryFile(elf);
-					const machine = head.ok ? elfMachine(head.value.subarray(0, 0x14)) : undefined;
+					// 只要 e_ident + e_machine 这 20 字节。整读会为一个带调试信息的 ELF 拉起
+					// 几十 MB 的临时 buffer(同一次 start 里 verifyImage 还要再整读一遍算 sha256)。
+					// 这里刻意不走 ExecutionEnv:gdb 是本机 spawn 的,ELF 必然在本机,而 elf
+					// 在上面已经过 resolveToCwd 变成绝对路径了(这一步不能挪到它前面)。
+					const head = new Uint8Array(0x14);
+					try {
+						const fh = await openFile(elf, "r");
+						try {
+							await fh.read(head, 0, 0x14, 0);
+						} finally {
+							await fh.close();
+						}
+					} catch {
+						// 读不到就按未知架构回落到 gdb-multiarch / gdb,与整读失败时同解。
+					}
+					const machine = elfMachine(head);
 					const { gdbPath } = resolveGdbPath(machine, params.gdbPath ?? options?.gdbPath);
 
 					let host = "localhost";
@@ -1627,9 +1644,7 @@ export function createGdbToolDefinition(
 							const tail = server?.tail.length ? `\nThe server's last output:\n${server.tail.join("\n")}` : "";
 							throw new Error(`could not connect to ${connection}: ${miString(sel.results?.msg)}${tail}`);
 						}
-						const settle = delay(2_000);
-						await Promise.race([firstStop, settle.promise]);
-						settle.cancel();
+						await settledWithin(firstStop, 2_000);
 
 						await probeCore(session);
 						const sourceNote = await fixSourcePaths(session, env);
@@ -1780,9 +1795,7 @@ export function createGdbToolDefinition(
 						if (op === "interrupt") {
 							const waiter = s.expectStop();
 							await s.send("-exec-interrupt");
-							const grace = delay(INTERRUPT_GRACE_MS);
-							const halted = await Promise.race([waiter.then(() => true), grace.promise.then(() => false)]);
-							grace.cancel();
+							const halted = await settledWithin(waiter, INTERRUPT_GRACE_MS);
 							const text = halted
 								? `${banner()}\n${await renderStopReport(s, { show: params.show, relativeTo: env.cwd })}`
 								: `${banner()}\ninterrupt was sent but the target did not stop within ${INTERRUPT_GRACE_MS} ms — it may be asleep (WFI with the debug clock gated) or SWD lost sync.`;
@@ -1803,9 +1816,7 @@ export function createGdbToolDefinition(
 							const r = await s.console(template);
 							s.epoch += 1;
 							if (op === "reset-halt") {
-								const grace = delay(INTERRUPT_GRACE_MS);
-								await Promise.race([waiter, grace.promise]);
-								grace.cancel();
+								await settledWithin(waiter, INTERRUPT_GRACE_MS);
 							}
 							const text =
 								`${banner()}\nsession epoch is now ${s.epoch} — the target was reset, so any address, register value or ` +

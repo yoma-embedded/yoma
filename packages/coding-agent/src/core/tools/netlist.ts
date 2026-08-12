@@ -11,7 +11,14 @@
 import path from "node:path";
 import type { ExecutionEnv } from "@yoma/my-pi";
 import { type Static, Type } from "typebox";
-import { capEngineOutput, type EnginePathOptions, engineBin, engineDataDir, runEngine } from "./engines.ts";
+import {
+	assertEngineSettled,
+	capEngineOutput,
+	type EnginePathOptions,
+	engineBin,
+	engineDataDir,
+	runEngine,
+} from "./engines.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { type ToolDefinition, wrapToolDefinition } from "./types.ts";
 
@@ -83,21 +90,25 @@ export function createNetlistToolDefinition(
 		],
 		parameters: netlistSchema,
 		execute: async (_toolCallId, params, signal) => {
+			// 两个分支跑的是两个不同的引擎,善后那五行却逐字一样;非零退出对这两个引擎
+			// 都是真失败(不像 stm32kernel 的 exit 1 和 probe-rs),所以退出码检查可以留在这。
+			const runOrThrow = async (bin: string, args: string[], label: string) => {
+				const result = assertEngineSettled(await runEngine(bin, args, { cwd: env.cwd, signal }), label);
+				if (result.exitCode !== 0) {
+					throw new Error(`${label} failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`);
+				}
+				return result;
+			};
+
 			const netlist = await resolveToCwd(env, params.netlistPath);
 			const exists = await env.exists(netlist);
 			if (!exists.ok || !exists.value) throw new Error(`netlist file not found: ${netlist}`);
 
 			// 不带 part:controller_map 输出原始连接图,stderr 上是探测说明。
 			if (!params.part) {
-				const bin = engineBin("controller_map", options);
 				const args = [netlist];
 				if (params.mainController) args.push("--main-controller", params.mainController);
-				const result = await runEngine(bin, args, { cwd: env.cwd, signal });
-				if (result.timedOut) throw new Error("controller_map timed out");
-				if (result.aborted) throw new Error("controller_map was aborted");
-				if (result.exitCode !== 0) {
-					throw new Error(`controller_map failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`);
-				}
+				const result = await runOrThrow(engineBin("controller_map", options), args, "controller_map");
 				const notes = result.stderr.trim();
 				// The raw pin map exists to identify the board and controller —
 				// a tighter cap than the general engine limit, because its full
@@ -113,7 +124,6 @@ export function createNetlistToolDefinition(
 			}
 
 			// 带 part:board_ir 联动 stm32kernel 的数据,产出三个 JSON 文件。
-			const bin = engineBin("board_ir", options);
 			const kernel = engineBin("stm32kernel", options);
 			const dataDir = engineDataDir("stm32", options);
 
@@ -137,12 +147,7 @@ export function createNetlistToolDefinition(
 			];
 			if (params.mainController) args.push("--main-controller", params.mainController);
 
-			const result = await runEngine(bin, args, { cwd: env.cwd, signal });
-			if (result.timedOut) throw new Error("board_ir timed out");
-			if (result.aborted) throw new Error("board_ir was aborted");
-			if (result.exitCode !== 0) {
-				throw new Error(`board_ir failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`);
-			}
+			const result = await runOrThrow(engineBin("board_ir", options), args, "board_ir");
 
 			const files = {
 				boardIr: path.join(outDir, `${stem}_board_ir.json`),

@@ -277,6 +277,24 @@ function readBraced(src: string, pos: number, close: "}" | "]"): Read<MiValue> |
 }
 
 /**
+ * 单字符转义 → 字节。null 原型:e 是从输入串里切出来的,不能让它撞上 `constructor`
+ * 这类原型键(它恒为单个 UTF-16 码元,撞不上,但表本身不该有那个面)。
+ */
+const SIMPLE_ESCAPES: Record<string, number> = Object.assign(Object.create(null), {
+	n: 0x0a,
+	t: 0x09,
+	r: 0x0d,
+	a: 0x07,
+	b: 0x08,
+	f: 0x0c,
+	v: 0x0b,
+	e: 0x1b,
+	"\\": 0x5c,
+	'"': 0x22,
+	"'": 0x27,
+});
+
+/**
  * 读 c-string。gdb 发的是**字节串**:非 ASCII 按 UTF-8 逐字节转义成 \\346 这种,
  * 所以必须先还原成字节再按 UTF-8 解一次,直接按字符拼会得到乱码。
  */
@@ -298,56 +316,19 @@ function readCString(src: string, pos: number): Read<string> | undefined {
 		i++;
 		const e = src[i];
 		if (e === undefined) return undefined;
-		switch (e) {
-			case "n":
-				bytes.push(0x0a);
-				i++;
-				break;
-			case "t":
-				bytes.push(0x09);
-				i++;
-				break;
-			case "r":
-				bytes.push(0x0d);
-				i++;
-				break;
-			case "a":
-				bytes.push(0x07);
-				i++;
-				break;
-			case "b":
-				bytes.push(0x08);
-				i++;
-				break;
-			case "f":
-				bytes.push(0x0c);
-				i++;
-				break;
-			case "v":
-				bytes.push(0x0b);
-				i++;
-				break;
-			case "e":
-				bytes.push(0x1b);
-				i++;
-				break;
-			case "\\":
-			case '"':
-			case "'":
-				bytes.push(e.charCodeAt(0));
-				i++;
-				break;
-			default: {
-				if (e >= "0" && e <= "7") {
-					let oct = "";
-					while (oct.length < 3 && src[i]! >= "0" && src[i]! <= "7") oct += src[i++];
-					bytes.push(Number.parseInt(oct, 8) & 0xff);
-					break;
-				}
-				// 不认识的转义:原样保留反斜杠后的那个字符,别吞。
-				pushUtf8(bytes, src.codePointAt(i)!);
-				i += src.codePointAt(i)! > 0xffff ? 2 : 1;
-			}
+		const simple = SIMPLE_ESCAPES[e];
+		if (simple !== undefined) {
+			bytes.push(simple);
+			i++;
+		} else if (e >= "0" && e <= "7") {
+			// 八进制:i 此时正指向 e,最多吃 3 位。
+			let oct = "";
+			while (oct.length < 3 && src[i]! >= "0" && src[i]! <= "7") oct += src[i++];
+			bytes.push(Number.parseInt(oct, 8) & 0xff);
+		} else {
+			// 不认识的转义:原样保留反斜杠后的那个字符,别吞。
+			pushUtf8(bytes, src.codePointAt(i)!);
+			i += src.codePointAt(i)! > 0xffff ? 2 : 1;
 		}
 	}
 	return undefined;

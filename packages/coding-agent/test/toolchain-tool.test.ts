@@ -82,10 +82,12 @@ describe("check", () => {
 
 	it("每个工具一行:ok 带路径/版本/来源,missing 带安装指引;check 是纯读,不写账本", async () => {
 		writeFakeExe(binDir, "widget", "1.2.3");
-		writeManifest([
-			{ id: "widget", bin: ["widget"] },
-			{ id: "gizmo", bin: ["gizmo"], install: { win32: "get gizmo from example.com", darwin: "brew install gizmo", linux: "apt install gizmo" } },
-		]);
+		// 三个平台各写一句,断言时按本机平台取对应那句 —— makeTool 传的是真实
+		// process.platform,写死其中一句的话这条断言只在那一个平台上成立(写死 win32
+		// 的那一版在 mac 上必红)。PlatformKey 就是这三个,所以直接索引即可。
+		const install = { win32: "get gizmo from example.com", darwin: "brew install gizmo", linux: "apt install gizmo" };
+		const expectedHint = install[process.platform as keyof typeof install];
+		writeManifest([{ id: "widget", bin: ["widget"] }, { id: "gizmo", bin: ["gizmo"], install }]);
 		const tool = makeTool({ PATH: binDir });
 
 		const result = await tool.execute("c1", { action: "check" });
@@ -95,7 +97,7 @@ describe("check", () => {
 		expect(text).toContain("1.2.3");
 		expect(text).toContain("via path");
 		expect(text).toContain("gizmo: MISSING");
-		expect(text).toContain("get gizmo from example.com");
+		expect(text).toContain(expectedHint);
 		expect(result.details.ok).toBe(false); // gizmo 是非 optional 且缺失
 		expect(result.details.tools?.map((t) => t.id)).toEqual(["widget", "gizmo"]);
 

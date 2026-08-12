@@ -21,6 +21,20 @@ async function getMutationQueueKey(env: FileSystem, filePath: string): Promise<s
 	return canonical.ok ? canonical.value : resolvedPath;
 }
 
+/**
+ * 持锁期间检查中断:每个 await 之后调一次。
+ *
+ * 不在 abort 事件里 reject:那样会在文件操作还在飞的时候就放开队列锁。轮询式检查
+ * 能观察到同样的中断,又能把锁按住到操作真正落地。**只给持锁的调用方用** ——
+ * read 工具不进队列,那条因果对它不成立,所以它自己写。
+ *
+ * 文案是模型看得见的工具错误,逐字保留;Node 原生的 `signal.throwIfAborted()` 抛的是
+ * DOMException、消息也不同,不能换。
+ */
+export function throwIfAborted(signal?: AbortSignal): void {
+	if (signal?.aborted) throw new Error("Operation aborted");
+}
+
 export async function withFileMutationQueue<T>(env: FileSystem, filePath: string, fn: () => Promise<T>): Promise<T> {
 	// registrationQueue 让"取键 + 挂链"这一步本身也串行,避免两个调用同时读到同一个 currentQueue。
 	const registration = registrationQueue.then(async () => {

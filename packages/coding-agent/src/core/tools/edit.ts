@@ -17,7 +17,7 @@ import {
 	restoreLineEndings,
 	stripBom,
 } from "./edit-diff.ts";
-import { withFileMutationQueue } from "./file-mutation-queue.ts";
+import { throwIfAborted, withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { type ToolDefinition, wrapToolDefinition } from "./types.ts";
 
@@ -118,33 +118,29 @@ export function createEditToolDefinition(
 			const absolutePath = await resolveToCwd(env, path);
 
 			return withFileMutationQueue(env, absolutePath, async () => {
-				// 不在 abort 事件里 reject:那样会在文件操作还在飞的时候放开队列锁。
-				const throwIfAborted = (): void => {
-					if (signal?.aborted) throw new Error("Operation aborted");
-				};
-
-				throwIfAborted();
+				// 每个 await 之后查一次中断,理由见 throwIfAborted。
+				throwIfAborted(signal);
 
 				const readResult = await env.readTextFile(absolutePath);
 				if (!readResult.ok) {
-					throwIfAborted();
+					throwIfAborted(signal);
 					throw new Error(`Could not edit file: ${path}. Error code: ${readResult.error.code}.`);
 				}
 				const rawContent = readResult.value;
-				throwIfAborted();
+				throwIfAborted(signal);
 
 				// 匹配前先剥掉 BOM —— 模型不会在 oldText 里带上这个不可见字符。
 				const { bom, text: content } = stripBom(rawContent);
 				const originalEnding = detectLineEnding(content);
 				const normalizedContent = normalizeToLF(content);
 				const { baseContent, newContent } = applyEditsToNormalizedContent(normalizedContent, edits, path);
-				throwIfAborted();
+				throwIfAborted(signal);
 
 				// 写回时把 BOM 和原来的行尾风格还原,免得一次 edit 顺手改掉整个文件的行尾。
 				const finalContent = bom + restoreLineEndings(newContent, originalEnding);
 				const writeResult = await env.writeFile(absolutePath, finalContent);
 				if (!writeResult.ok) throw new Error(writeResult.error.message);
-				throwIfAborted();
+				throwIfAborted(signal);
 
 				const patch = generateUnifiedPatch(path, baseContent, newContent);
 				return {

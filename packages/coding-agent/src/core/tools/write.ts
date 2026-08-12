@@ -6,7 +6,7 @@
  */
 import type { FileSystem } from "@yoma/my-pi";
 import { type Static, Type } from "typebox";
-import { withFileMutationQueue } from "./file-mutation-queue.ts";
+import { throwIfAborted, withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { type ToolDefinition, wrapToolDefinition } from "./types.ts";
 
@@ -44,15 +44,10 @@ export function createWriteToolDefinition(
 		async execute(_toolCallId, { path, content }, signal) {
 			const absolutePath = await resolveToCwd(env, path);
 			return withFileMutationQueue(env, absolutePath, async () => {
-				// 不在 abort 事件里 reject:那样会在文件操作还在飞的时候就放开队列锁。
-				// 每个 await 之后查一次 signal.aborted,能观察到同样的中断,又能把锁按住到操作真正落地。
-				const throwIfAborted = (): void => {
-					if (signal?.aborted) throw new Error("Operation aborted");
-				};
-
-				throwIfAborted();
+				// 每个 await 之后查一次中断,理由见 throwIfAborted。
+				throwIfAborted(signal);
 				const existed = await env.exists(absolutePath);
-				throwIfAborted();
+				throwIfAborted(signal);
 
 				const created = !(existed.ok && existed.value);
 				// 覆盖时先把旧内容读出来,否则 ACP 那边只能画出"从空白变成新内容"的假 diff。
@@ -61,12 +56,12 @@ export function createWriteToolDefinition(
 				if (!created) {
 					const previous = await env.readTextFile(absolutePath);
 					if (previous.ok) oldContent = previous.value;
-					throwIfAborted();
+					throwIfAborted(signal);
 				}
 
 				const writeResult = await env.writeFile(absolutePath, content);
 				if (!writeResult.ok) throw new Error(writeResult.error.message);
-				throwIfAborted();
+				throwIfAborted(signal);
 
 				return {
 					content: [{ type: "text" as const, text: `Successfully wrote ${content.length} bytes to ${path}` }],

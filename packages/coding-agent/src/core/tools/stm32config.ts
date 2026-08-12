@@ -4,8 +4,10 @@
  * 与 yoma 的差异:
  * - Effect Schema → TypeBox,Tool.define → my-pi 的 ToolDefinition。
  * - 子进程走 engines/ 层的 runEngine(argv 直接 spawn),路径解析走双布局 resolver。
- * - 去掉 ctx.ask 权限询问与 assertExternalDirectoryEffect(my-pi 暂无对应设施,
- *   权限由 ACP 客户端侧把关);configPath/out 仍解析到会话 cwd。
+ * - 去掉 ctx.ask 权限询问与 assertExternalDirectoryEffect —— my-pi 侧没有权限设施,
+ *   整个产品也没有(agent 想调什么工具就调什么,这是产品决定);configPath/out 仍
+ *   解析到会话 cwd。原注释说"权限由 ACP 客户端侧把关"是假线索:ACP 的把关要 agent
+ *   自己发 session/request_permission 才成立,而这边一次都不发。
  * - 结果形态从 {title, metadata, output} 改为 AgentToolResult 的 content/details。
  *
  * 描述文本与 yoma stm32config.txt 逐字一致。
@@ -14,6 +16,7 @@ import path from "node:path";
 import type { ExecutionEnv } from "@yoma/my-pi";
 import { type Static, Type } from "typebox";
 import {
+	assertEngineSettled,
 	capEngineOutput,
 	type EnginePathOptions,
 	engineBin,
@@ -213,9 +216,10 @@ export function createStm32ConfigToolDefinition(
 			const dataDir = engineDataDir("stm32", options);
 			const args = buildStm32ConfigArgs(resolved, dataDir, path.join(dataDir, "fw"));
 
-			const result = await runEngine(kernel, args, { cwd: env.cwd, signal });
-			if (result.timedOut) throw new Error(`stm32kernel ${params.command} timed out`);
-			if (result.aborted) throw new Error(`stm32kernel ${params.command} was aborted`);
+			const result = assertEngineSettled(
+				await runEngine(kernel, args, { cwd: env.cwd, signal }),
+				`stm32kernel ${params.command}`,
+			);
 			if (result.exitCode === 2 || (result.exitCode !== 0 && !result.stdout.trim())) {
 				throw new Error(`stm32kernel ${params.command} failed (exit ${result.exitCode}): ${result.stderr}`);
 			}

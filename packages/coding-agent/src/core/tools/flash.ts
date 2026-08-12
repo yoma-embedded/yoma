@@ -14,6 +14,7 @@ import path from "node:path";
 import type { ExecutionEnv } from "@yoma/my-pi";
 import { type Static, Type } from "typebox";
 import {
+	assertEngineSettled,
 	claimProbe,
 	describeProbeConflict,
 	type EnginePathOptions,
@@ -189,8 +190,8 @@ export function createFlashToolDefinition(
 			} finally {
 				if (exclusive) releaseProbe("flash");
 			}
-			if (result.timedOut) throw new Error(`probe-rs ${params.action} timed out`);
-			if (result.aborted) throw new Error(`probe-rs ${params.action} was aborted`);
+			// 只判超时/中断:probe-rs 非零退出不抛错(见文件头),那条策略留在下面。
+			assertEngineSettled(result, `probe-rs ${params.action}`);
 
 			const output = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n");
 			const details: FlashToolDetails = { action: params.action, chip: params.chip, exitCode: result.exitCode };

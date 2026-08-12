@@ -7,13 +7,11 @@
  * 账本 / 版本探针全部在 core/toolchain/ 子系统里(它自己直接用 node:child_process,
  * 不经 engines.ts 的 runEngine)。这个文件只是薄薄一层"参数 -> 调用 -> 渲染成人话"。
  *
- * check 与 resolve 共享同一条解析 + 渲染路径,区别只有两点(细节见 bypassLedgerDir /
- * rememberFreshResults 的注释):resolve 让这一次解析看不见账本,然后把新鲜结果
- * 写回真正的账本;check 是纯读,谁都不写。
+ * check 与 resolve 共享同一条解析 + 渲染路径,区别只有两点:resolve 传 skipLedger
+ * 让这一次解析看不见账本,然后把新鲜结果写回真正的账本(见 rememberFreshResults);
+ * check 是纯读,谁都不写。
  */
-import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AgentToolResult, ExecutionEnv } from "@yoma/my-pi";
 import { type Static, Type } from "typebox";
@@ -28,7 +26,7 @@ export const TOOLCHAIN_ACTIONS = ["check", "resolve", "set"] as const;
 export type ToolchainAction = (typeof TOOLCHAIN_ACTIONS)[number];
 
 const toolchainSchema = Type.Object({
-	// 显式元组而非 .map():数组会丢掉元组结构,Static 推导塌成 never(仓里其它工具同一条注释)。
+	// 显式元组而非 .map():数组会丢掉元组结构,Static 推导塌成 never。
 	action: Type.Optional(
 		Type.Union([Type.Literal("check"), Type.Literal("resolve"), Type.Literal("set")], {
 			description:
@@ -135,19 +133,6 @@ function renderResolution(resolution: ToolchainResolution, action: ToolchainActi
 // ─── resolve 动作:跳过账本、写回账本 ───────────────────────────────────────────
 
 /**
- * 给这一次 resolveToolchain 用的一次性 configDir,保证不存在 toolchains.json——
- * 公共契约的 resolveToolchain 没有"跳过账本"这个开关(五个模块的形状是钉死的公共
- * 契约,这次任务也明确不许碰 resolve.ts),但 readLedger 对读不到文件的目录一律
- * 当空账本处理(ledger.ts 的容错读设计),给它一个保证落空的路径就是同样的效果,
- * 不用碰 resolve.ts,也不用真的创建这个目录(readFileSync 失败本身就够了)。
- * 真正落盘用的是调用方原本的 configDir(见 rememberFreshResults),这个假路径只
- * 影响"这一次解析看不看得见旧账本",从头到尾不会被写入。
- */
-function bypassLedgerDir(): string {
-	return path.join(tmpdir(), `yoma-toolchain-bypass-${randomUUID()}`);
-}
-
-/**
  * 把这次新鲜探测到的 ok 结果写回账本,by:"auto"。跳过 source==="local" 的:那是
  * 这一个项目的覆盖(可能是仓库里 vendor 的专属工具链),写进机器级账本会让同一台
  * 机器上不相关的项目也悄悄捡到它——正是这套系统要挡的"选错还编得过"那类坑(根
@@ -233,7 +218,9 @@ export function createToolchainToolDefinition(
 
 			const resolution = await resolveToolchain({
 				projectDir: env.cwd,
-				configDir: action === "resolve" ? bypassLedgerDir() : options?.configDir,
+				configDir: options?.configDir,
+				// resolve 的语义:不信旧记录,重新探一遍(写回仍由 rememberFreshResults 做)。
+				skipLedger: action === "resolve",
 				side: options?.side,
 				platform: options?.platform,
 				env: options?.env,

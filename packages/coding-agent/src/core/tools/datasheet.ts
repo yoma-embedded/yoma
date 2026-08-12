@@ -13,14 +13,13 @@
  *
  * 前身是从 yoma 移植的四个本地工具(datasheet_search/read_manual_section/
  * view_figure/download_manual + datasheet/ lib);按"不走本地"的决定合并重写,
- * download_manual(物化本地缓存)随之删除。章节抽取与引用格式化的纯逻辑
- * 原样保留(原 yoma datasheet/section.ts、rerank.ts 的格式化部分)。
+ * download_manual(物化本地缓存)随之删除。
  */
 import path from "node:path";
 import type { ExecutionEnv } from "@yoma/my-pi";
 import { type Static, Type } from "typebox";
+import { clamp } from "./engines.ts";
 import { type ToolDefinition, wrapToolDefinition } from "./types.ts";
-
 
 /** 数据手册文件服务器基址。 */
 export function serverUrl(): string | undefined {
@@ -137,14 +136,19 @@ export function formatCitation(h: SearchHit, i: number): string {
 	return out;
 }
 
+// 这两个曾经是 engines.ts clamp() 的逐字重写(gdb/log 早就在用那一份)。改成委托,
+// 但**函数留着**:它们是导出的,而 test/datasheet.test.ts 那六条断言是全仓唯一钉住
+// 这四个数字的地方 —— 同样的数字还写在下面 schema 的 description 里给模型看,删了闸门
+// 两边就能静默对不上。
+
+/** search 的 topK:默认 6,夹到 1..20(数字与 schema description 同源)。 */
 export function clampTopK(n: number | undefined): number {
-	if (!Number.isFinite(n)) return 6;
-	return Math.min(20, Math.max(1, Math.trunc(n as number)));
+	return clamp(n, 6, 1, 20);
 }
 
+/** read_section 的输出上限:默认 12000,夹到 1000..40000。 */
 export function clampChars(n: number | undefined): number {
-	if (!Number.isFinite(n)) return 12000;
-	return Math.min(40000, Math.max(1000, Math.trunc(n as number)));
+	return clamp(n, 12000, 1000, 40000);
 }
 
 // ─── 工具定义 ────────────────────────────────────────────────────────────────

@@ -225,10 +225,15 @@ describe("probeVersion: 超时不挂起、不抛", () => {
 			const elapsed = Date.now() - start;
 			expect(result).toBeUndefined();
 			// 下界(减去一点计时器粒度容差)证明真的等到了我们自己的超时,不是恰好
-			// 被别的什么提前打断;上界证明杀确实生效了,不是超时之后还在傻等这个
-			// 死循环自然退出(它根本不会自然退出)。
+			// 被别的什么提前打断。
 			expect(elapsed).toBeGreaterThanOrEqual(PROBE_TIMEOUT_MS - 50);
-			expect(elapsed).toBeLessThan(PROBE_TIMEOUT_MS + 3000);
+			// 上界证明它在**有界**的时间里收了手,而不是陪着这个永不退出的 sleep 耗下去。
+			// 走的是哪条路要看得清:`#!/bin/sh` + `sleep 9999` 里握着 stdout/stderr 管道的
+			// 是孙子进程 sleep,而 probeVersion 只 kill 直接子进程(它是 --version 探测,
+			// 不像 engines.ts 那样建进程组),于是 'close' 永远不来 —— 结算的是 probeVersion
+			// 自己那道 FORCE_KILL_GRACE_MS + 1s 的兜底,也就是超时后再 3s。所以上界必须
+			// **大于** 3s 那个点,写成恰好等于它的话这条断言永远不可能通过。
+			expect(elapsed).toBeLessThan(PROBE_TIMEOUT_MS + 3500);
 		},
 		PROBE_TIMEOUT_MS + 5000, // bun:test 默认单测超时 5000ms,比 PROBE_TIMEOUT_MS 本身还短,必须显式放宽
 	);
