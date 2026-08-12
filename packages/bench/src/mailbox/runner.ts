@@ -27,19 +27,20 @@
  * 它只进终报,真相是信箱里每轮 result 的 `spentTokens`(累计值)。
  */
 
-import { copyFile, mkdir, readdir, writeFile } from "node:fs/promises"
+import { copyFile, mkdir, readdir } from "node:fs/promises"
 import path from "node:path"
 
 import type { FauxScript } from "../faux.ts"
 import { fileExists, readJsonFile } from "../fsx.ts"
 import type * as git from "../git.ts"
-import { acquireRoleLock, backoffSeconds } from "./daemon.ts"
+import { runRoleDaemon } from "./daemon.ts"
 import { runTurnInChildProcess, type TurnInput } from "../runner.ts"
 import type { TurnResult } from "../turn.ts"
 import { benchRolePrompt, runnerRoundPrompt } from "./prompts.ts"
 import {
   roundArtifactsDir,
   scanMailbox,
+  writeJson,
   writeRoundResult,
   type MailboxVerdict,
   type RoundFiles,
@@ -85,9 +86,9 @@ function syncContext(options: MailboxRunnerOptions): MailboxSyncContext {
   return { clone: options.clone, branch: options.branch, author: RUNNER_AUTHOR, run: options.gitRun }
 }
 
-/** 工位端这个任务的私有目录:工作区 + 会话指针。在信箱克隆之外。 */
-function jobRoot(options: MailboxRunnerOptions, jobId: string): string {
-  return path.join(options.workRoot ?? path.join(path.dirname(options.clone), "work"), jobId)
+/** 工位端这个任务的私有目录:工作区 + 会话指针。**在信箱克隆之外**(见文件头)。 */
+function jobRoot(clone: string, workRoot: string | undefined, jobId: string): string {
+  return path.join(workRoot ?? path.join(path.dirname(clone), "work"), jobId)
 }
 
 
@@ -102,8 +103,7 @@ async function readLocalState(root: string): Promise<RunnerLocalState> {
 }
 
 async function saveLocalState(root: string, state: RunnerLocalState): Promise<void> {
-  await mkdir(root, { recursive: true })
-  await writeFile(path.join(root, "session.json"), JSON.stringify(state, null, 2) + "\n")
+  await writeJson(path.join(root, "session.json"), state)
 }
 
 /**
@@ -126,7 +126,7 @@ async function stageIncoming(clone: string, round: number, workspace: string): P
   return staged
 }
 
-/** 工位端跨轮累计的 token,只进终报。真相在信箱里(每轮 result 存的是累计值)。 */
+/** 工位端的跨轮累计 = 最近一轮 result 的 spentTokens(它本身就是累计值,**不求和** —— 与 sumMotherTokens 相反)。为什么不落地见文件头「本地状态」。 */
 function runnerTokensSoFar(rounds: RoundFiles[]): number {
   for (const entry of [...rounds].reverse()) {
     if (entry.result) return entry.result.spentTokens
@@ -171,8 +171,8 @@ async function runRound(
   const started = now()
   const sync = syncContext(options)
   const round = instruction.round
-  const root = jobRoot(options, job.id)
-  const workspace = path.join(root, "work")
+  const root = jobRoot(options.clone, options.workRoot, job.id)
+  const workspace = runnerWorkspaceFor(options.clone, options.workRoot, job.id)
   let sessionID = (await readLocalState(root)).sessionID
   const spentBefore = runnerTokensSoFar(rounds)
 
@@ -264,31 +264,20 @@ export async function runMailboxRunner(
     onStep?: (outcome: RunnerStepOutcome) => void
   },
 ): Promise<RunnerStepOutcome> {
-  const lock = await acquireRoleLock(options.clone, "runner")
-  if (!lock.ok) return { kind: "blocked", detail: lock.detail }
-  let blockedStreak = 0
-  try {
-    for (;;) {
-      let outcome: RunnerStepOutcome
-      try {
-        outcome = await runnerStep(options)
-      } catch (error) {
-        outcome = { kind: "blocked", detail: (error as Error).message }
-      }
-      options.onStep?.(outcome)
-      if (outcome.kind === "idle") options.onProgress?.(`(空闲)${outcome.detail}`)
-      if (outcome.kind === "finalized" || options.once) return outcome
-      blockedStreak = outcome.kind === "blocked" ? blockedStreak + 1 : 0
-      const delay = backoffSeconds(options.pollSeconds, blockedStreak)
-      if (outcome.kind === "blocked") options.onProgress?.(`⚠ ${outcome.detail}(${delay}s 后重试)`)
-      await new Promise((resolve) => setTimeout(resolve, delay * 1000))
-    }
-  } finally {
-    await lock.release()
-  }
+  return runRoleDaemon<RunnerStepOutcome>({
+    clone: options.clone,
+    role: "runner",
+    pollSeconds: options.pollSeconds,
+    once: options.once,
+    step: () => runnerStep(options),
+    blocked: (detail) => ({ kind: "blocked", detail }),
+    terminalKind: "finalized",
+    onStep: options.onStep,
+    onProgress: options.onProgress,
+  })
 }
 
 /** 给宿主(桌面端/CLI)用:这个任务在本机的工作目录。会话回放的路由要它。 */
 export function runnerWorkspaceFor(clone: string, workRoot: string | undefined, jobId: string): string {
-  return path.join(workRoot ?? path.join(path.dirname(clone), "work"), jobId, "work")
+  return path.join(jobRoot(clone, workRoot, jobId), "work")
 }

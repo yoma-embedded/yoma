@@ -16,6 +16,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { fileExists } from "../fsx.ts"
+import { lineDecoder } from "../lines.ts"
 import { resolveWorkspace } from "../job.ts"
 import { ensureYomaDir } from "../runner.ts"
 import { initMailbox } from "./init.ts"
@@ -151,13 +152,14 @@ export async function runSim(options: SimOptions): Promise<SimResult> {
     const child = options.spawnRole
       ? options.spawnRole(role, clone, { root, branch, pollSeconds, projectDir: workspace })
       : spawnDefault(role, clone)
-    const forward = (chunk: Buffer) => {
-      for (const line of chunk.toString().split("\n")) {
-        if (line.trim()) say(`[${role}] ${line.trimEnd()}`)
-      }
+    // 每条流各一个解码器:共用一个的话两边的半行会互相串。见 lines.ts 的两个坑。
+    const emit = (line: string) => say(`[${role}] ${line}`)
+    for (const stream of [child.stdout, child.stderr]) {
+      if (!stream) continue
+      const decoder = lineDecoder(emit)
+      stream.on("data", (chunk: Buffer) => decoder.push(chunk))
+      stream.on("end", () => decoder.flush())
     }
-    child.stdout?.on("data", forward)
-    child.stderr?.on("data", forward)
     return child
   }
 

@@ -3,8 +3,8 @@
  *
  * ## 这是什么
  *
- * 一份信箱任务 = 一份普通 bench job(工程标识、硬件、任务描述、预算)+ 一个 `mailbox`
- * 段(研发端的模型与分析预算、轮询间隔、附件上限)。两个角色共用这一份文件:
+ * 一份信箱任务 = 一份普通 bench job(工程标识、硬件、任务描述)+ 一个 `mailbox`
+ * 段(研发端的模型、轮询间隔、附件上限)。两个角色共用这一份文件:
  *
  * - **mother**(研发端,有构建环境):读结果 → 改代码 → 构建 → 把产物当附件塞进本轮 →
  *   用大白话写指令;
@@ -18,11 +18,12 @@
  *
  * ## 为什么复用 Job 而不是另起一套
  *
- * `mailbox` 段里只放**两侧协作**才需要的东西(研发端的模型与分析预算、轮询间隔、
- * 附件上限);任务本身的字段(硬件、预算、模型)在 Job 里,信箱模式没有改变它们的语义。
+ * `mailbox` 段里只放**两侧协作**才需要的东西(研发端的模型、轮询间隔、附件上限);
+ * 任务本身的字段(硬件、模型)在 Job 里,信箱模式没有改变它们的语义。
  *
- * **没有预算上限**。跑多少轮、花多少 token,由研发端 agent 自己判断 —— 它判 `done`
- * 或 `fail` 才收工。要提前停就在桌面端按停止(或杀掉守护进程)。
+ * **spec 里没有任何上限字段**:跑多少轮、花多少 token,由研发端 agent 自己判断 ——
+ * 它判 `done` 或 `fail` 才收工(为什么归它,见 mother.ts 头部的「谁裁决」)。
+ * 要提前停就在桌面端按停止(或杀掉守护进程)。
  */
 
 import { readTextFile } from "../fsx.ts"
@@ -74,7 +75,7 @@ export function parseMailboxJob(raw: unknown): MailboxJob {
   const job = parseJob(raw)
   const issues: string[] = []
 
-  const mailboxRaw = isObject(raw) && isObject((raw as Record<string, unknown>).mailbox) ? ((raw as Record<string, unknown>).mailbox as Record<string, unknown>) : {}
+  const mailboxRaw = isObject(raw) && isObject(raw.mailbox) ? raw.mailbox : {}
   const motherRaw = isObject(mailboxRaw.mother) ? mailboxRaw.mother : {}
   const motherModel = parseModelSpec(motherRaw.model, "mailbox.mother.model", issues)
 

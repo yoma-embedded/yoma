@@ -10,7 +10,7 @@
  *   rounds/001/artifacts/*      研发端 → 工位端:本轮附件(新构建的固件、脚本…)
  *   rounds/001/patch.diff       研发端为本轮做的代码改动(审计与终报用)
  *   rounds/001/result.json      工位端 → 研发端:轮结果(最后写 —— 它的存在 = 本轮完成)
- *   rounds/001/decision.json    本轮裁决(研发端 mother 或预算守卫)
+ *   rounds/001/decision.json    本轮裁决(研发端 mother;拿不到它的决定时由代码代写)
  *   verdict.json                终局(出现即整个任务结束)
  *   report.md                   终报(与 verdict 同一次提交写入)
  * ```
@@ -90,7 +90,7 @@ export interface RoundResultFile {
   turn?: RoundTurnSummary
   /** 本轮附件在工位机上被放到了哪儿(相对工作目录),由调试台落盘、不经模型。 */
   incoming?: string[]
-  /** 工位端跨轮累计的 token(含本轮)。预算强制的输入。 */
+  /** 工位端跨轮累计的 token(含本轮)。只进终报的参考数字,没有任何门限依赖它。 */
   spentTokens: number
   /** 轮级失败(子进程没产出结果)。有它时 turn 缺失。 */
   error?: string
@@ -103,8 +103,10 @@ export type DecisionKind = "continue" | "done" | "fail"
 export interface RoundDecision {
   round: number
   /**
-   * 裁决者。`policy` = 预算守卫(轮数/token/墙钟到顶)—— 代码定的,不是模型;
-   * `mother` = 研发端 agent 真判断过。裁决者不能伪造。
+   * 裁决者。`mother` = 研发端 agent 真判断过;`policy` = 代码代它写的,只发生在
+   * "拿不到它的决定"时(轮执行失败、轮被中断、决定 JSON 重试后仍读不出来)——
+   * 那不是裁决,是没法把它的话变成动作。**没有任何门限会产生 policy**(轮数 /
+   * token / 墙钟三个上限在 2026-08 一并删了)。裁决者不能伪造。
    */
   by: "mother" | "policy"
   decision: DecisionKind
@@ -227,9 +229,7 @@ export async function writeInstruction(
 
 /** 旁证先落盘,result.json 最后写 —— 它的存在就是"本轮完成"的信号。 */
 export async function writeRoundResult(root: string, result: RoundResultFile): Promise<void> {
-  const dir = roundDir(root, result.round)
-  await mkdir(dir, { recursive: true })
-  await writeJson(path.join(dir, "result.json"), result)
+  await writeJson(path.join(roundDir(root, result.round), "result.json"), result)
 }
 
 export async function writeDecision(root: string, decision: RoundDecision): Promise<void> {
@@ -255,12 +255,13 @@ async function listRoundNumbers(root: string): Promise<number[]> {
 
 export async function readRound(root: string, round: number): Promise<RoundFiles> {
   const dir = roundDir(root, round)
-  return {
-    round,
-    instruction: await readJson<RoundInstruction>(path.join(dir, "instruction.json")),
-    result: await readJson<RoundResultFile>(path.join(dir, "result.json")),
-    decision: await readJson<RoundDecision>(path.join(dir, "decision.json")),
-  }
+  // 三个读互不依赖,一批发出去 —— 三个文件都不在(kickoff 之前)时尤其明显。
+  const [instruction, result, decision] = await Promise.all([
+    readJson<RoundInstruction>(path.join(dir, "instruction.json")),
+    readJson<RoundResultFile>(path.join(dir, "result.json")),
+    readJson<RoundDecision>(path.join(dir, "decision.json")),
+  ])
+  return { round, instruction, result, decision }
 }
 
 /**
@@ -279,8 +280,7 @@ export async function scanMailbox(root: string): Promise<MailboxSnapshot> {
   try {
     const verdict = await readVerdict(root)
     const numbers = await listRoundNumbers(root)
-    const rounds: RoundFiles[] = []
-    for (const number of numbers) rounds.push(await readRound(root, number))
+    const rounds = await Promise.all(numbers.map((number) => readRound(root, number)))
 
     if (verdict) return { job, state: { kind: "done", verdict }, rounds }
     if (!job) return { state: { kind: "empty" }, rounds }

@@ -24,10 +24,10 @@
  * 工具,进程边界在这里没有要清理的东西;runTurn 每次建 host、用完 dispose,进程内
  * 已经是干净的生命周期。
  *
- * ## 解析失败的终点是终局,不是无限重试
+ * ## 解析失败为什么只重试一次
  *
- * 决定 JSON 不合法时重试一次;再失败就终局(by:"policy",理由写明)。守护进程的
- * 轮询循环里没有"这次不算"—— 每次重试都是真实的模型花费,烧钱等不来正确性。
+ * 重试走同一会话,错误信息就是新提示词(见 analyse);再读不出来就按上面那条终局。
+ * 守护进程的轮询循环里没有"这次不算"—— 每次重试都是真实的模型花费,烧钱等不来正确性。
  */
 
 import { mkdir, writeFile } from "node:fs/promises"
@@ -37,8 +37,8 @@ import { fileExists, readJsonFile } from "../fsx.ts"
 import * as git from "../git.ts"
 import { resolveWorkspace, type Job, type JobModel } from "../job.ts"
 import { ensureYomaDir } from "../runner.ts"
-import { runTurn, type TurnOptions, type TurnResult, type TurnUsage } from "../turn.ts"
-import { acquireRoleLock, backoffSeconds } from "./daemon.ts"
+import { addUsage, runTurn, zeroUsage, type TurnOptions, type TurnResult, type TurnUsage } from "../turn.ts"
+import { runRoleDaemon } from "./daemon.ts"
 import { renderMailboxReport } from "./report.ts"
 import {
   motherFollowUpPrompt,
@@ -53,6 +53,7 @@ import {
   scanMailbox,
   sumMotherTokens,
   writeDecision,
+  writeJson,
   writeInstruction,
   writeVerdict,
   type DecisionKind,
@@ -104,6 +105,11 @@ export interface MotherDecisionPayload {
 }
 
 const MOTHER_AUTHOR = { name: "yoma-mailbox-mother", email: "bench@yoma.local" }
+
+/** 四处开轮/收尾都要它,而且字段与值完全一致 —— 换错 author 不报错,这正是它危险的地方。 */
+function syncContext(options: MailboxMotherOptions): MailboxSyncContext {
+  return { clone: options.clone, branch: options.branch, author: MOTHER_AUTHOR, run: options.gitRun }
+}
 const DEV_COMMIT_AUTHOR = { name: "yoma-bench", email: "bench@yoma.local" }
 
 interface MotherLocalState {
@@ -142,8 +148,10 @@ async function readLocalState(clone: string): Promise<MotherLocalState> {
 }
 
 async function saveLocalState(clone: string, state: MotherLocalState): Promise<void> {
+  // ensureLocalDir 不能省:它写的 .gitignore 才是 pullReset 的 clean -fd 下的护身符,
+  // 只靠 writeJson 的 mkdir 会让会话指针每轮被静默清掉。
   await ensureLocalDir(clone)
-  await writeFile(path.join(localDir(clone), "state.json"), JSON.stringify(state, null, 2) + "\n")
+  await writeJson(path.join(localDir(clone), "state.json"), state)
 }
 
 /**
@@ -254,12 +262,7 @@ function planArtifacts(
 
 export async function motherStep(options: MailboxMotherOptions): Promise<MotherStepOutcome> {
   const progress = (message: string) => options.onProgress?.(message)
-  const sync: MailboxSyncContext = {
-    clone: options.clone,
-    branch: options.branch,
-    author: MOTHER_AUTHOR,
-    run: options.gitRun,
-  }
+  const sync = syncContext(options)
 
   // 与 runnerStep 同一条纪律:同步失败走 blocked(守护对它有退避),不裸抛。
   try {
@@ -323,12 +326,7 @@ async function kickoff(
   progress: (message: string) => void,
 ): Promise<MotherStepOutcome> {
   const now = options.now ?? Date.now
-  const sync: MailboxSyncContext = {
-    clone: options.clone,
-    branch: options.branch,
-    author: MOTHER_AUTHOR,
-    run: options.gitRun,
-  }
+  const sync = syncContext(options)
   progress("研发端开局:读任务书,决定第一轮")
 
   const prepared = await prepareProjectBranch(options, mailboxJob, workspace)
@@ -387,14 +385,8 @@ async function decide(
   progress: (message: string) => void,
 ): Promise<MotherStepOutcome> {
   const { round, instruction, result } = state
-  const job = mailboxJob.job
   const now = options.now ?? Date.now
-  const sync: MailboxSyncContext = {
-    clone: options.clone,
-    branch: options.branch,
-    author: MOTHER_AUTHOR,
-    run: options.gitRun,
-  }
+  const sync = syncContext(options)
 
   // 只进终报,不做任何门限判断。
   const motherTokensBefore = sumMotherTokens(allRounds)
@@ -535,12 +527,7 @@ async function settleTerminal(
   motherTokensBefore: number,
 ): Promise<MotherStepOutcome> {
   const now = options.now ?? Date.now
-  const sync: MailboxSyncContext = {
-    clone: options.clone,
-    branch: options.branch,
-    author: MOTHER_AUTHOR,
-    run: options.gitRun,
-  }
+  const sync = syncContext(options)
   await writeDecision(options.clone, decision)
   const verdict: MailboxVerdict = {
     outcome,
@@ -551,14 +538,11 @@ async function settleTerminal(
     decidedBy: decision.by,
     at: new Date(now()).toISOString(),
   }
-  // 终报要包含本轮裁决 —— 重新读一遍轮次(decision 刚落盘),别用扫描时的旧快照。
-  const rounds: RoundFiles[] = []
-  for (const entry of allRounds) {
-    rounds.push(entry.round === decision.round ? await readRound(options.clone, decision.round) : entry)
-  }
-  if (decision.round > 0 && !rounds.some((entry) => entry.round === decision.round)) {
-    rounds.push(await readRound(options.clone, decision.round))
-  }
+  // 终报要包含本轮裁决 —— 重读一遍本轮(decision 刚落盘),别用扫描时的旧快照。
+  // 本轮永远是最后一轮:listRoundNumbers 升序,而 awaiting-mother 取的就是末尾那条,
+  // 所以摘掉再追加不会打乱顺序。round 0 是开局轮,没有 rounds/000。
+  const rounds = allRounds.filter((entry) => entry.round !== decision.round)
+  if (decision.round > 0) rounds.push(await readRound(options.clone, decision.round))
   const report = renderMailboxReport({ mailboxJob, verdict, rounds, sessionsRoot: options.sessionsRoot })
   await writeVerdict(options.clone, verdict, report)
   const pushed = await commitPush(sync, `verdict: ${verdict.outcome}(${decision.by})—— ${verdict.reason.slice(0, 60)}`)
@@ -634,7 +618,6 @@ async function analyse(
   const run = options.runTurn ?? runTurn
   const state = await readLocalState(options.clone)
   const job = motherTurnJob(mailboxJob, workspace)
-  const zero: TurnUsage = { tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, cost: 0 }
 
   const turnOnce = async (prompt: string, sessionID?: string): Promise<TurnResult> =>
     run({
@@ -650,7 +633,7 @@ async function analyse(
     })
 
   await ensureLocalDir(options.clone)
-  let usage = zero
+  let usage = zeroUsage()
   let sessionID = state.sessionID
   const book = async (turnUsage: TurnUsage) => {
     usage = addUsage(usage, turnUsage)
@@ -660,7 +643,8 @@ async function analyse(
   let turn: TurnResult
   try {
     turn = await turnOnce(
-      sessionID ? (input ? motherFollowUpPrompt(input) : motherKickoffPrompt(mailboxJob)) : input ? motherPrompt(input) : motherKickoffPrompt(mailboxJob),
+      // input 为空 = 开局轮(两种会话状态都用开局提示词);有 input 时才分首轮/跟进。
+      input ? (sessionID ? motherFollowUpPrompt(input) : motherPrompt(input)) : motherKickoffPrompt(mailboxJob),
       sessionID,
     )
   } catch (error) {
@@ -690,24 +674,12 @@ async function analyse(
   return { ok: true, payload: parsed.payload, usage, sessionID }
 }
 
-function addUsage(a: TurnUsage, b: TurnUsage): TurnUsage {
-  return {
-    tokens: {
-      input: a.tokens.input + b.tokens.input,
-      output: a.tokens.output + b.tokens.output,
-      reasoning: a.tokens.reasoning + b.tokens.reasoning,
-      cache: { read: a.tokens.cache.read + b.tokens.cache.read, write: a.tokens.cache.write + b.tokens.cache.write },
-    },
-    cost: a.cost + b.cost,
-  }
-}
-
 function usageTokens(usage?: TurnUsage): number {
   if (!usage) return 0
   return usage.tokens.input + usage.tokens.output
 }
 
-/** 常驻循环,与工位端同构;终局(done)即退出。 */
+/** 常驻循环(锁 / 退避 / 轮询骨架都在 runRoleDaemon);终局 done 即退出。 */
 export async function runMailboxMother(
   options: MailboxMotherOptions & {
     pollSeconds: number
@@ -716,26 +688,15 @@ export async function runMailboxMother(
     onStep?: (outcome: MotherStepOutcome) => void
   },
 ): Promise<MotherStepOutcome> {
-  const lock = await acquireRoleLock(options.clone, "mother")
-  if (!lock.ok) return { kind: "blocked", detail: lock.detail }
-  let blockedStreak = 0
-  try {
-    for (;;) {
-      let outcome: MotherStepOutcome
-      try {
-        outcome = await motherStep(options)
-      } catch (error) {
-        outcome = { kind: "blocked", detail: (error as Error).message }
-      }
-      options.onStep?.(outcome)
-      if (outcome.kind === "idle") options.onProgress?.(`(空闲)${outcome.detail}`)
-      if (outcome.kind === "done" || options.once) return outcome
-      blockedStreak = outcome.kind === "blocked" ? blockedStreak + 1 : 0
-      const delay = backoffSeconds(options.pollSeconds, blockedStreak)
-      if (outcome.kind === "blocked") options.onProgress?.(`⚠ ${outcome.detail}(${delay}s 后重试)`)
-      await new Promise((resolve) => setTimeout(resolve, delay * 1000))
-    }
-  } finally {
-    await lock.release()
-  }
+  return runRoleDaemon<MotherStepOutcome>({
+    clone: options.clone,
+    role: "mother",
+    pollSeconds: options.pollSeconds,
+    once: options.once,
+    step: () => motherStep(options),
+    blocked: (detail) => ({ kind: "blocked", detail }),
+    terminalKind: "done",
+    onStep: options.onStep,
+    onProgress: options.onProgress,
+  })
 }

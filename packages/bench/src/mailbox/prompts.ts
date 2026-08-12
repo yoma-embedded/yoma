@@ -1,12 +1,8 @@
 /**
  * 信箱两侧的话术。
  *
- * ## 分工
- *
- * - **研发端(mother)**:有工程的完整检出和构建环境。它读证据、改代码、构建,
- *   把产物当**附件**塞进本轮,再用大白话告诉工位端要干什么。碰不到硬件。
- * - **工位端(runner)**:板子在它这里。它**没有工程代码** —— 工作目录是一次性的,
- *   里面只有研发端附过来的东西。它拿到附件和指令,自己决定怎么上板,然后复现、观察、报告。
+ * 分工见 spec.ts 头部(「工位端没有项目检出」这件事在 runner.ts 头部还有更细的一段)。
+ * 两条由此而来、必须落在话术里的纪律:
  *
  * 两条由此而来的话术纪律:
  *
@@ -24,6 +20,7 @@
 import type { Job } from "../job.ts"
 import type { MailboxJob } from "./spec.ts"
 import type { RoundArtifact, RoundFiles, RoundInstruction, RoundResultFile } from "./store.ts"
+import { quote } from "./text.ts"
 
 /** 工位端 agent 的角色说明。只在会话第一轮带上(之后会话延续,不重复)。 */
 export function benchRolePrompt(job: Job, workDir: string): string {
@@ -205,10 +202,17 @@ function renderRoundBrief(input: MotherPromptInput): string {
   }
 
   if (result.turn) {
-    const tools = Object.entries(result.turn.toolCounts)
+    const turn = result.turn
+    const tools = Object.entries(turn.toolCounts)
       .map(([tool, count]) => (count > 1 ? `${tool}×${count}` : tool))
       .join(" ")
-    sections.push(`## 工位端的自述\n\n${quote(clip(result.turn.text || "(这一轮没有正文)", 4000))}\n\n工具调用:${tools || "无"}${result.turn.stopReason ? `\n本轮中断:${result.turn.stopReason}` : ""}${result.turn.toolErrors.length ? `\n工具报错:\n${result.turn.toolErrors.map((error) => `- ${clip(error, 200)}`).join("\n")}` : ""}${result.turn.errors.length ? `\n轮内 provider 错误(模型侧故障,不是代码问题):\n${result.turn.errors.map((error) => `- ${clip(error, 200)}`).join("\n")}` : ""}`)
+    const bullets = (items: string[]) => items.map((item) => `- ${clip(item, 200)}`).join("\n")
+    // 四段的顺序是提示词的既定形状,别调。
+    const meta = [`工具调用:${tools || "无"}`]
+    if (turn.stopReason) meta.push(`本轮中断:${turn.stopReason}`)
+    if (turn.toolErrors.length) meta.push(`工具报错:\n${bullets(turn.toolErrors)}`)
+    if (turn.errors.length) meta.push(`轮内 provider 错误(模型侧故障,不是代码问题):\n${bullets(turn.errors)}`)
+    sections.push(`## 工位端的自述\n\n${quote(clip(turn.text || "(这一轮没有正文)", 4000))}\n\n${meta.join("\n")}`)
   }
 
   const history = rounds
@@ -233,13 +237,6 @@ export function motherRetryPrompt(error: string): string {
   return `你上一条回复里的决定没法被机器读取:${error}
 
 请重新给出决定:只需一个 \`\`\`json 围栏,字段与规则同前(decision / analysis / instruction / artifacts / reason)。`
-}
-
-function quote(text: string): string {
-  return text
-    .split("\n")
-    .map((line) => `> ${line}`)
-    .join("\n")
 }
 
 function clip(text: string, limit: number): string {

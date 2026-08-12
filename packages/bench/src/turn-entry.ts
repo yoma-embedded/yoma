@@ -34,16 +34,9 @@ function say(message: string): void {
 }
 
 const result: TurnResult = await runTurn({
-  job: input.job,
-  workspace: input.workspace,
-  sessionsRoot: input.sessionsRoot,
-  stateDir: input.stateDir,
-  enginesDir: input.enginesDir,
-  configDir: input.configDir,
+  ...input,
   // 假模型脚本以数据形态穿进来(本机演练/打包冒烟)—— 不联网、不要 key,其余全真。
   resolveModels: input.faux ? fauxResolveModels(input.faux) : undefined,
-  sessionID: input.sessionID,
-  prompt: input.prompt,
   onEvent: (event) => {
     if (event.type === "message.part.updated" && event.part.type === "tool") {
       const part = event.part

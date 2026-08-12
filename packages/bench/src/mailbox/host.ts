@@ -30,7 +30,7 @@ import type { FauxScript } from "../faux.ts"
 import { fauxResolveModels } from "../faux.ts"
 import { readTextFile } from "../fsx.ts"
 import { initMailbox } from "./init.ts"
-import { loadMailboxJob } from "./spec.ts"
+import { DEFAULT_POLL_SECONDS, loadMailboxJob } from "./spec.ts"
 import { runMailboxMother, type MotherStepOutcome } from "./mother.ts"
 import { runMailboxRunner, runnerWorkspaceFor, type RunnerStepOutcome } from "./runner.ts"
 import { runSim } from "./sim.ts"
@@ -69,7 +69,7 @@ export interface MailboxHostConfig {
   jobFile?: string
   /** sim:模拟根目录。 */
   root?: string
-  /** sim:墙钟上限(分钟),缺省取 job.budget.wallClockMin。 */
+  /** sim:墙钟上限(分钟),缺省 60 —— 演练台的看门狗,不是产品预算(见 SimOptions.timeoutMin)。 */
   timeoutMin?: number
   /** sim:清掉上次演练从头来。 */
   fresh?: boolean
@@ -174,7 +174,7 @@ export async function runMailboxHost(config: MailboxHostConfig, emit: EmitMailbo
       configDir: config.configDir,
       turnEntry: config.turnEntry,
       fauxTurns: config.faux?.turns,
-      pollSeconds: config.pollSeconds ?? 15,
+      pollSeconds: config.pollSeconds ?? DEFAULT_POLL_SECONDS,
       once: config.once,
       onProgress: progress,
       onStep: (step) => {
@@ -198,7 +198,7 @@ export async function runMailboxHost(config: MailboxHostConfig, emit: EmitMailbo
     enginesDir: config.enginesDir,
     configDir: config.configDir,
     resolveModels: config.faux?.mother ? fauxResolveModels(config.faux.mother) : undefined,
-    pollSeconds: config.pollSeconds ?? 15,
+    pollSeconds: config.pollSeconds ?? DEFAULT_POLL_SECONDS,
     once: config.once,
     onProgress: progress,
     onStep: (step) => {

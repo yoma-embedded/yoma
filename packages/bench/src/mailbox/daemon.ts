@@ -5,9 +5,9 @@
  *
  * CLI 明示 `--once` 是给 cron 的,而调试轮动辄几十分钟、cron 周期是分钟级 ——
  * 不加锁的缺省结局就是重叠:第二个实例的 pullReset 会把第一个实例写了一半的轮
- * 结果清掉,两个内核子进程还会在同一块板子上抢探针(实测复现过,连本地
- * state.json 都会互相覆盖把预算记少)。锁住"每角色每信箱克隆一个实例"这个
- * sync.ts 整套论证赖以成立的前提。
+ * 结果清掉,两个内核子进程还会在同一块板子上抢探针(实测复现过,连研发端本地的
+ * state.json —— 会话指针与任务基线 —— 都会互相覆盖)。锁住"每角色每信箱克隆一个
+ * 实例"这个 sync.ts 整套论证赖以成立的前提。
  *
  * 锁文件住在克隆内自带 .gitignore 的目录里(与 .mother/ 同一套护身符:
  * pullReset 的 clean -fd 不删被 ignore 的文件),内容是 pid —— 持有者崩了不释放
@@ -17,8 +17,9 @@
  *
  * blocked 多半是"远端可读不可写"(deploy key 只读、分支保护)或网络故障,而
  * pullReset 会把没推上去的本地成果清掉 —— 于是每次轮询都在**整轮重跑**昂贵步骤
- * (模型 + 硬件动作)。花费如今两侧都记账,预算会收敛,但退避把"收敛前烧掉多少"
- * 从每 15 秒一轮压到分钟级,也把对远端的重试压力降下来。恢复正常一次即复位。
+ * (模型 + 硬件动作)。而这条路上没有任何预算兜底(上限整套已删),退避就是唯一的
+ * 刹车:把烧钱速度从每 15 秒一轮压到分钟级,也把对远端的重试压力降下来。
+ * 恢复正常一次即复位。
  */
 
 import { mkdir, unlink, writeFile } from "node:fs/promises"
@@ -46,9 +47,8 @@ export async function acquireRoleLock(clone: string, role: "runner" | "mother"):
       writeFileSync(lockFile, `${process.pid}\n`, { flag: "wx" })
       return { ok: true, release: async () => unlink(lockFile).catch(() => {}) }
     } catch {
-      const raw = await readTextFile(lockFile).catch(() => "")
-      const holder = Number.parseInt(raw.trim(), 10)
-      if (Number.isFinite(holder) && holder > 0 && isAlive(holder)) {
+      const holder = await livingHolder(lockFile)
+      if (holder !== undefined) {
         return { ok: false, detail: `${role} 已有实例在跑(pid ${holder})—— 一个信箱克隆一个角色只能有一个实例` }
       }
       // 持有者已死:清掉尸体锁再抢一次。
@@ -70,11 +70,17 @@ export async function acquireRoleLock(clone: string, role: "runner" | "mother"):
 export async function activeRoleLocks(clone: string): Promise<string[]> {
   const held: string[] = []
   for (const role of ["runner", "mother"] as const) {
-    const raw = await readTextFile(path.join(clone, LOCK_DIR, `${role}.pid`)).catch(() => "")
-    const holder = Number.parseInt(raw.trim(), 10)
-    if (Number.isFinite(holder) && holder > 0 && isAlive(holder)) held.push(`${role}(pid ${holder})`)
+    const holder = await livingHolder(path.join(clone, LOCK_DIR, `${role}.pid`))
+    if (holder !== undefined) held.push(`${role}(pid ${holder})`)
   }
   return held
+}
+
+/** 锁文件里那个**还活着**的持有者 pid;文件不在、内容不是 pid、进程已死都返回 undefined。 */
+async function livingHolder(lockFile: string): Promise<number | undefined> {
+  const raw = await readTextFile(lockFile).catch(() => "")
+  const pid = Number.parseInt(raw.trim(), 10)
+  return Number.isFinite(pid) && pid > 0 && isAlive(pid) ? pid : undefined
 }
 
 function isAlive(pid: number): boolean {
@@ -83,6 +89,50 @@ function isAlive(pid: number): boolean {
     return true
   } catch {
     return false
+  }
+}
+
+/**
+ * 守护进程的轮询循环。两个角色的这段从前一字不差地各写一份,只差三处:角色名、
+ * 步函数、终态 kind。本文件顶上那两件"公共护具"(锁 + 退避)本来就在这儿,唯独把
+ * 它们粘起来的循环留在了外面。
+ *
+ * `blocked` 用工厂传进来而不是就地造:泛型表达不了"T 的联合里含 blocked 分支"。
+ * 进度串(`(空闲)…` 与 `⚠ …(Ns 后重试)`)是桌面端事件里看得见的文本,逐字保留。
+ */
+export async function runRoleDaemon<T extends { kind: string; detail?: string }>(params: {
+  clone: string
+  role: "runner" | "mother"
+  pollSeconds: number
+  once?: boolean
+  step: () => Promise<T>
+  blocked: (detail: string) => T
+  /** 见到它就返回退出(runner 是 "finalized",mother 是 "done")。 */
+  terminalKind: T["kind"]
+  onStep?: (outcome: T) => void
+  onProgress?: (message: string) => void
+}): Promise<T> {
+  const lock = await acquireRoleLock(params.clone, params.role)
+  if (!lock.ok) return params.blocked(lock.detail)
+  let blockedStreak = 0
+  try {
+    for (;;) {
+      let outcome: T
+      try {
+        outcome = await params.step()
+      } catch (error) {
+        outcome = params.blocked((error as Error).message)
+      }
+      params.onStep?.(outcome)
+      if (outcome.kind === "idle") params.onProgress?.(`(空闲)${outcome.detail}`)
+      if (outcome.kind === params.terminalKind || params.once) return outcome
+      blockedStreak = outcome.kind === "blocked" ? blockedStreak + 1 : 0
+      const delay = backoffSeconds(params.pollSeconds, blockedStreak)
+      if (outcome.kind === "blocked") params.onProgress?.(`⚠ ${outcome.detail}(${delay}s 后重试)`)
+      await new Promise((resolve) => setTimeout(resolve, delay * 1000))
+    }
+  } finally {
+    await lock.release()
   }
 }
 

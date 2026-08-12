@@ -18,7 +18,7 @@ import { resolveMotherModel, runMailboxMother } from "./mailbox/mother.ts"
 import { cloneDirFor, defaultMailboxRoot } from "./mailbox/paths.ts"
 import { runMailboxRunner } from "./mailbox/runner.ts"
 import { runSim } from "./mailbox/sim.ts"
-import { loadMailboxJob } from "./mailbox/spec.ts"
+import { DEFAULT_POLL_SECONDS, loadMailboxJob } from "./mailbox/spec.ts"
 import { scanMailbox } from "./mailbox/store.ts"
 import { ensureClone, pullReset } from "./mailbox/sync.ts"
 
@@ -120,11 +120,11 @@ function parseMailboxArgs(args: string[]): { positionals: string[]; flags: Mailb
   return { positionals, flags }
 }
 
-/** 轮询间隔:命令行 > 信箱里 job 声明 > 15s。克隆里还没有 job 时用兜底值,重启后自然收敛。 */
+/** 轮询间隔:命令行 > 信箱里 job 声明 > spec 的默认。克隆里还没有 job 时用兜底值,重启后自然收敛。 */
 async function pollSecondsOf(clone: string, flags: MailboxFlags): Promise<number> {
   if (flags.interval !== undefined) return flags.interval
   const snapshot = await scanMailbox(clone)
-  return snapshot.job?.mailbox.pollSeconds ?? 15
+  return snapshot.job?.mailbox.pollSeconds ?? DEFAULT_POLL_SECONDS
 }
 
 /**
@@ -145,10 +145,9 @@ async function resolveClone(role: string, target: string | undefined, flags: Mai
   return clone
 }
 
-async function commandMailbox(sub: string | undefined, rest: string[]): Promise<void> {
+async function commandMailbox(sub: string, rest: string[]): Promise<void> {
   const { positionals, flags } = parseMailboxArgs(rest)
   const target = positionals[0]
-  if (!sub) fail("用法:yoma-bench mailbox <init|runner|mother|status|sim> [目标] [旗标](不带参数看总用法)")
 
   if (sub === "init") {
     if (!target) fail("用法:yoma-bench mailbox init <mailbox-job.json> [信箱克隆目录] [--remote url]")
@@ -162,38 +161,23 @@ async function commandMailbox(sub: string | undefined, rest: string[]): Promise<
     return
   }
 
-  if (sub === "runner") {
-    const clone = await resolveClone("runner", target, flags)
-    const outcome = await runMailboxRunner({
+  if (sub === "runner" || sub === "mother") {
+    const clone = await resolveClone(sub, target, flags)
+    const common = {
       clone,
       branch: flags.branch,
       sessionsRoot: defaultSessionsRoot(),
-      workRoot: flags.workRoot,
       enginesDir: defaultEnginesDir(),
-      onProgress: (message) => say(`${DIM}${message}${RESET}`),
+      onProgress: (message: string) => say(`${DIM}${message}${RESET}`),
       pollSeconds: await pollSecondsOf(clone, flags),
       once: flags.once,
-    })
-    if (outcome.kind === "finalized") {
-      say(`${GREEN}✓${RESET} 闭环终局:${outcome.verdict.outcome} —— ${outcome.verdict.reason}`)
-      process.exit(outcome.verdict.outcome === "passed" ? 0 : 1)
     }
-    process.exit(outcome.kind === "blocked" ? 1 : 0)
-  }
-
-  if (sub === "mother") {
-    const clone = await resolveClone("mother", target, flags)
-    const outcome = await runMailboxMother({
-      clone,
-      branch: flags.branch,
-      sessionsRoot: defaultSessionsRoot(),
-      projectDir: flags.project,
-      enginesDir: defaultEnginesDir(),
-      onProgress: (message) => say(`${DIM}${message}${RESET}`),
-      pollSeconds: await pollSecondsOf(clone, flags),
-      once: flags.once,
-    })
-    if (outcome.kind === "done") {
+    // 终态 kind 两侧不同名(runner 是 finalized、mother 是 done),其余逐字相同。
+    const outcome =
+      sub === "runner"
+        ? await runMailboxRunner({ ...common, workRoot: flags.workRoot })
+        : await runMailboxMother({ ...common, projectDir: flags.project })
+    if (outcome.kind === "finalized" || outcome.kind === "done") {
       say(`${GREEN}✓${RESET} 闭环终局:${outcome.verdict.outcome} —— ${outcome.verdict.reason}`)
       process.exit(outcome.verdict.outcome === "passed" ? 0 : 1)
     }

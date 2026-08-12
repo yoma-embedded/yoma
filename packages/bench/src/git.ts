@@ -21,6 +21,11 @@ export interface GitOutcome {
 
 export type GitRunner = (args: string[], cwd: string) => Promise<GitOutcome>
 
+/**
+ * `close` 时对整段 stdout 做了 trim —— 谁要解析 `git status --porcelain`,第一行的
+ * 前导空格已经没了(` M x.c` → `M x.c`),按固定列 `slice(3)` 会把文件名咬掉一个字符
+ * (实测:main.c 变成 ain.c)。要解析就先逐行 trim 再剥状态码。
+ */
 export const runGitReal: GitRunner = (args, cwd) =>
   new Promise((resolve) => {
     const child = spawn("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] })
@@ -52,23 +57,6 @@ export async function currentBranch(context: GitContext): Promise<string> {
 export async function isClean(context: GitContext): Promise<boolean> {
   const status = await git(context, "status", "--porcelain")
   return status.ok && status.stdout === ""
-}
-
-/**
- * 被改动的**已跟踪**文件。未跟踪文件(`??`)不算 —— agent 顺手写个日志、工具落个
- * 临时文件都会出现在那一栏,而工位端真正要防的是"源码被动过"。
- */
-export async function dirtyTrackedFiles(context: GitContext): Promise<string[]> {
-  const status = await git(context, "status", "--porcelain")
-  if (!status.ok || !status.stdout) return []
-  // 逐行先 trim 再剥状态码,**不按固定列切**:runGitReal 对整段 stdout 做了 trim,
-  // 于是第一行的前导空格没了(` M x.c` → `M x.c`),按 `slice(3)` 会把文件名咬掉
-  // 一个字符(实测:main.c 变成 ain.c)。
-  return status.stdout
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line !== "" && !line.startsWith("??"))
-    .map((line) => line.replace(/^[A-Z?!]{1,2}\s+/, ""))
 }
 
 /**
@@ -145,11 +133,6 @@ export async function diffPatch(context: GitContext, baseCommit: string): Promis
 
 export async function headCommit(context: GitContext): Promise<string> {
   return (await git(context, "rev-parse", "HEAD")).stdout
-}
-
-/** 提交是否存在于本仓。信箱模式换机续跑的防线:信箱记录的头提交,本地必须真的有。 */
-export async function hasCommit(context: GitContext, sha: string): Promise<boolean> {
-  return (await git(context, "cat-file", "-e", `${sha}^{commit}`)).ok
 }
 
 /** 只推 job 声明的那条分支,绝不 --force。 */

@@ -13,6 +13,8 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
+import { lineDecoder } from "./lines.ts"
+
 import type { FauxScript } from "./faux.ts"
 import { fileExists, readJsonFile } from "./fsx.ts"
 import type { Job } from "./job.ts"
@@ -165,15 +167,10 @@ export async function runTurnInChildProcess(
   activeTurnChildren.add(child)
   child.on("close", () => activeTurnChildren.delete(child))
 
-  // 逐 chunk toString() 会劈断多字节 UTF-8(进度行里有中文),必须走流式解码。
-  const decoder = new TextDecoder()
-  let pending = ""
-  child.stdout.on("data", (chunk: Buffer) => {
-    pending += decoder.decode(chunk, { stream: true })
-    const lines = pending.split("\n")
-    pending = lines.pop() ?? ""
-    for (const line of lines) if (line.trim()) handlers.onProgress?.(line.trimEnd())
-  })
+  // 流式分行(为什么不能逐 chunk toString 见 lines.ts)。这里不 flush:
+  // 子进程的最后一句协议输出总是带换行,残行只会是杂散输出。
+  const decoder = lineDecoder((line) => handlers.onProgress?.(line))
+  child.stdout.on("data", (chunk: Buffer) => decoder.push(chunk))
 
   const code = await new Promise<number | null>((resolve) => {
     child.on("error", () => resolve(null))

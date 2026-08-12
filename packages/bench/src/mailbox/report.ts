@@ -8,6 +8,7 @@
 
 import type { MailboxJob } from "./spec.ts"
 import type { MailboxVerdict, RoundFiles } from "./store.ts"
+import { quote } from "./text.ts"
 
 const OUTCOME_LABEL: Record<MailboxVerdict["outcome"], string> = {
   passed: "✅ 研发端判定已解决",
@@ -107,13 +108,8 @@ function renderReplay(input: MailboxReportInput): string {
   return lines.join("\n")
 }
 
-function quote(text: string): string {
-  return text
-    .split("\n")
-    .map((line) => `> ${line}`)
-    .join("\n")
-}
-
+// 截断标记**不带换行**:一半调用点在 markdown 表格单元格里,换行会把表格劈开。
+// (prompts.ts 那份带换行,它进的是提示词正文,不是表格。)
 function clip(text: string, limit: number): string {
   return text.length <= limit ? text : `${text.slice(0, limit)}…(截断)`
 }

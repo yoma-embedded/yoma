@@ -6,9 +6,8 @@
  * 裸装配(example/99-headless-run.ts 那条路)省下的只是几十行代码,要重建的却是
  * 投影器、自动压缩、工具装配、事件协议这一整层。而 `KernelHostOptions` 的
  * sessionsRoot / stateDir / enginesDir / onEvents 全是注入位 —— 它本来就是为
- * "第二个宿主"准备的形状。附带白得两件事:
- *   1. sessionsRoot 指向 desktop 的会话目录时,desktop 打开就能回放整个调试过程;
- *   2. P2 给 host 加 WebSocket 入口后,desktop 能实时 attach 观战,协议帧一个字不用改。
+ * "第二个宿主"准备的形状。附带白得一件事:sessionsRoot 指向 desktop 的会话目录时,
+ * desktop 打开就能回放整个调试过程。
  *
  * ## 为什么一轮一个子进程(调用方 spawn turn-entry)
  *
@@ -91,7 +90,27 @@ export interface TurnResult {
   elapsedMs: number
 }
 
-const ZERO_TOKENS: Tokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
+/**
+ * 用量的零元与加法。**工厂而不是共享常量**:usageByMessage 为空时 reduce 把初值原样
+ * 返回,那个对象随即成为 TurnResult.usage 交给调用方继续累加并落盘 —— 共享常量会被
+ * 写一次就全局污染(Object.freeze 是浅的,盖不住 tokens.cache)。
+ */
+export const zeroUsage = (): TurnUsage => ({
+  tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+  cost: 0,
+})
+
+export function addUsage(a: TurnUsage, b: TurnUsage): TurnUsage {
+  return {
+    tokens: {
+      input: a.tokens.input + b.tokens.input,
+      output: a.tokens.output + b.tokens.output,
+      reasoning: a.tokens.reasoning + b.tokens.reasoning,
+      cache: { read: a.tokens.cache.read + b.tokens.cache.read, write: a.tokens.cache.write + b.tokens.cache.write },
+    },
+    cost: a.cost + b.cost,
+  }
+}
 
 export async function runTurn(options: TurnOptions): Promise<TurnResult> {
   const started = Date.now()
@@ -117,19 +136,7 @@ export async function runTurn(options: TurnOptions): Promise<TurnResult> {
     finish = resolve
   })
 
-  const totals = (): TurnUsage => {
-    const tokens: Tokens = { ...ZERO_TOKENS, cache: { ...ZERO_TOKENS.cache } }
-    let cost = 0
-    for (const usage of usageByMessage.values()) {
-      tokens.input += usage.tokens.input
-      tokens.output += usage.tokens.output
-      tokens.reasoning += usage.tokens.reasoning
-      tokens.cache.read += usage.tokens.cache.read
-      tokens.cache.write += usage.tokens.cache.write
-      cost += usage.cost
-    }
-    return { tokens, cost }
-  }
+  const totals = (): TurnUsage => [...usageByMessage.values()].reduce(addUsage, zeroUsage())
 
   const host: KernelHost = createKernelHost({
     sessionsRoot: options.sessionsRoot,
