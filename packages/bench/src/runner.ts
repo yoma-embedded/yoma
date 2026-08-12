@@ -37,6 +37,10 @@ export interface TurnInput {
   turnEntry?: string
   /** 技能/上下文/凭据的全局目录。生产不传(默认 ~/.my-pi);演练与测试传临时目录隔离。 */
   configDir?: string
+  /** 工具链清单按哪一侧筛。信箱工位端传 "runner"。 */
+  toolchainSide?: "mother" | "runner"
+  /** 工具链清单原文。工位端没有项目检出,清单经信箱送到,从这里灌进子进程。 */
+  toolchainManifestText?: string
   /** 假模型脚本(本机演练/打包冒烟)。有它则子进程不联网、不要 key,其余全真。 */
   faux?: FauxScript
 }

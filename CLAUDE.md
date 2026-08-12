@@ -299,6 +299,16 @@ text part,不过滤的话提示词会原样出现在终报的"根因分析"里)�
    什么""该盯哪个符号"必须写进指令。研发端的角色提示词专门交代了这一段。
 2. **附件是工位端拿到任何东西的唯一通道** —— 固件、诊断脚本、参考数据都走它。
    要给 agent 加工具,就是往 `artifacts` 里多列一个文件,不需要改协议。
+3. **工具链清单是唯一的例外,它走自己那条路**:研发端每轮下发时把
+   `<工程>/.my-pi/toolchain.json` 原样复制进信箱根(`store.ts` 的
+   `syncToolchainManifest`,幂等),工位端读出来经 `TurnInput.toolchainManifestText`
+   灌进内核,并钉死 `toolchainSide: "runner"`。不这么做的话工位端那侧
+   `resolveToolchain` 找不到清单、**静默返回空**,于是它对"缺什么、按什么方法装"
+   一无所知 —— 表现是 agent 撞一个 `ModuleNotFoundError` 再把它当成"脚本坏了"
+   报回去,研发端拿到一条误导性证据。side 必须传:那台机器上只有板子,核 cmake /
+   arm-gcc 会一路报 MISSING,盖住真正缺的那条。清单是提交进库、零绝对路径的项目
+   配置,所以复制它是安全的 —— 两台机器读同一份声明,各自对着**自己的**账本
+   (`<configDir>/toolchains.json`)和 `toolchain.local.json` 解析。
 
 - **协议里不预设"怎么把新固件弄上板"**:附件 + 一句人话就是全部机制。换成 OTA 或
   远端 CI 产物时,变的只是指令里那句话和工位端手上的脚本 —— 不用改协议。

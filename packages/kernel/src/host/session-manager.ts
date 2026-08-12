@@ -142,6 +142,27 @@ export interface SessionManagerOptions {
    * 档位是安全的(非 reasoning 模型的档位表只有 `["off"]`,自然落回 off)。
    */
   defaultThinkingLevel?: string
+  /**
+   * 工具链清单按哪一侧筛(清单里每条工具的 `side` 字段)。**不传就是 `"mother"`**,
+   * 桌面端与信箱研发端都属于这一侧。
+   *
+   * 信箱的**工位端必须传 `"runner"`**:那台机器上只有板子,核它有没有 cmake /
+   * arm-gcc 毫无意义,而清单里那几条会一路报 MISSING —— 纯噪音,还会盖住真正缺的
+   * 那条(jlink / python)。
+   */
+  toolchainSide?: "mother" | "runner"
+  /**
+   * 工具链清单的原文,绕开"从 projectDir 读 `.my-pi/toolchain.json`"这一步。
+   *
+   * 存在的理由只有一个:**工位端没有项目检出**。它的 cwd 是一次性目录,清单文件不在
+   * 那儿,于是解析静默短路(`tools: []`),这一侧对"该有什么、缺了怎么装"一无所知 ——
+   * 表现是 agent 照着指令跑脚本,撞一个 ModuleNotFoundError,把它当成"脚本坏了"报回去,
+   * 研发端拿到一条误导性证据。清单经信箱送过来,从这里灌进去。
+   *
+   * 注意它只替掉"读清单"这一步:`toolchain.local.json`(本机覆盖)与账本仍按
+   * projectDir / configDir 读 —— 那两样本来就是本机事实,不该跟着信箱走。
+   */
+  toolchainManifestText?: string
 }
 
 export class SessionManager {
@@ -536,8 +557,14 @@ export class SessionManager {
    * 统一按"当作没有清单"处理。
    */
   private async resolveToolchainSafe(entry: Entry): Promise<ToolchainResolution> {
+    const side = this.options.toolchainSide ?? "mother"
     try {
-      return await resolveToolchain({ projectDir: entry.cwd, configDir: this.configDir })
+      return await resolveToolchain({
+        projectDir: entry.cwd,
+        configDir: this.configDir,
+        side,
+        manifestText: this.options.toolchainManifestText,
+      })
     } catch (error) {
       this.options.emit([
         {
@@ -546,7 +573,7 @@ export class SessionManager {
           message: `工具链清单解析失败:${(error as Error)?.message ?? String(error)}`,
         },
       ])
-      return { manifestPath: undefined, manifest: undefined, side: "mother", tools: [], ok: true, needsAttention: [] }
+      return { manifestPath: undefined, manifest: undefined, side, tools: [], ok: true, needsAttention: [] }
     }
   }
 

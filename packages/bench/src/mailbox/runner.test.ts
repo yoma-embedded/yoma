@@ -7,7 +7,14 @@ import type { TurnInput } from "../runner.ts"
 import { initMailbox } from "./init.ts"
 import { runnerStep, type MailboxRunnerOptions } from "./runner.ts"
 import { parseMailboxJob } from "./spec.ts"
-import { attachArtifacts, writeDecision, writeInstruction, type RoundArtifact, type RoundResultFile } from "./store.ts"
+import {
+  attachArtifacts,
+  writeDecision,
+  writeInstruction,
+  TOOLCHAIN_FILE,
+  type RoundArtifact,
+  type RoundResultFile,
+} from "./store.ts"
 import { commitPush } from "./sync.ts"
 import { fakeTurn, freshClone, makeMailbox, rawMailboxJob, Temp, usage } from "./testkit.ts"
 
@@ -244,6 +251,58 @@ describe("mailbox runner", () => {
     expect(sessionIDs).toEqual([undefined, "ses-1", undefined])
     // 会话重开 = 新会话,角色说明必须重新带上,否则它不知道自己是工位端。
     expect(prompts[2]).toContain("你是这个调试闭环的工位端")
+  })
+
+  describe("工具链清单", () => {
+    /** 跑一轮,把交给子进程的那份 TurnInput 抓出来。 */
+    async function inputOfOneRound(mailbox: { runnerClone: string }, workRoot: string): Promise<TurnInput> {
+      let seen: TurnInput | undefined
+      await runnerStep(
+        options(mailbox.runnerClone, workRoot, {
+          runTurn: async (input: TurnInput) => {
+            seen = input
+            return fakeTurn()
+          },
+        }),
+      )
+      if (!seen) throw new Error("这一轮没有调用 runTurn")
+      return seen
+    }
+
+    /**
+     * 比"同一份声明"而不是逐字节相同:清单要过一趟 git,而 Windows 上 checkout 会把
+     * 行尾 LF 换成 CRLF(实测写出去 LF、收回来 CRLF)。这对下游无害 —— parseManifest
+     * 走 JSON.parse,剥行注释也只认换行本身 —— 但逐字节断言会在 Windows 上假红。
+     */
+    function sameDocument(received: string | undefined, expected: string): void {
+      expect(received).toBeDefined()
+      expect(JSON.parse(received!)).toEqual(JSON.parse(expected))
+    }
+
+    test("信箱里有清单:原文灌进子进程,并按工位端一侧核对", async () => {
+      // 这一侧**没有项目检出**,`<工程>/.my-pi/toolchain.json` 不在它的工作目录里。
+      // 不把原文送过去,resolveToolchain 就静默返回空,工位端对"缺什么、怎么装"一无所知
+      // —— 表现是 agent 撞一个 ModuleNotFoundError 再把它当成"脚本坏了"报回研发端。
+      const { mailbox } = await fixture()
+      const manifest = '{"schema":"yoma/toolchain@1","tools":[{"id":"jlink","side":"runner"}]}\n'
+      writeFileSync(path.join(mailbox.motherClone, TOOLCHAIN_FILE), manifest)
+      await issue(mailbox, 1, "跑一下")
+
+      const input = await inputOfOneRound(mailbox, temp.dir("work-"))
+      sameDocument(input.toolchainManifestText, manifest)
+      expect(input.toolchainSide).toBe("runner")
+    })
+
+    test("信箱里没有清单:不编一份,但身份仍然是 runner", async () => {
+      // 项目没声明工具链是常态,那条路径必须完全静默 —— 但"这台机器是工位端"与
+      // "项目有没有清单"无关,side 不能因此退回 mother(退回了就会去核编译器)。
+      const { mailbox } = await fixture()
+      await issue(mailbox, 1, "跑一下")
+
+      const input = await inputOfOneRound(mailbox, temp.dir("work-"))
+      expect(input.toolchainManifestText).toBeUndefined()
+      expect(input.toolchainSide).toBe("runner")
+    })
   })
 })
 

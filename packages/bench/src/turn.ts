@@ -61,6 +61,15 @@ export interface TurnOptions {
    * 项目上下文(AGENTS.md/CLAUDE.md)与技能和 Zed、桌面端完全一致。测试传临时目录隔离。
    */
   configDir?: string
+  /**
+   * 工具链清单按哪一侧筛。信箱工位端传 `"runner"`,别的都不传(默认 `"mother"`)。
+   */
+  toolchainSide?: Parameters<typeof createKernelHost>[0]["toolchainSide"]
+  /**
+   * 工具链清单原文。**只有工位端用得上** —— 它的 workspace 是一次性目录,
+   * 没有 `.my-pi/toolchain.json`,清单只能经信箱送过来。
+   */
+  toolchainManifestText?: string
   settleMs?: number
   hardTimeoutMs?: number
 }
@@ -150,6 +159,8 @@ export async function runTurn(options: TurnOptions): Promise<TurnResult> {
     // 消息 reasoning token 为 0,一步一句话)。桌面端刻意不传 —— 那边档位是用户
     // 在模型对话框里的现场选择。任务书写了就听任务书的,包括显式写 "off"。
     defaultThinkingLevel: options.job.model?.thinking ?? DEFAULT_THINKING_LEVEL,
+    toolchainSide: options.toolchainSide,
+    toolchainManifestText: options.toolchainManifestText,
     onEvents: (batch) => {
       for (const event of batch) handleEvent(event)
     },

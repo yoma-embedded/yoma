@@ -6,6 +6,8 @@
  * ```
  * <信箱根>/
  *   job.json                    总任务书(MailboxJob 原文)
+ *   toolchain.json              项目工具链清单的副本(研发端每轮刷新;工位端没有检出,
+ *                               这是它唯一读得到清单的途径)
  *   rounds/001/instruction.json 研发端 → 工位端:本轮指令(自然语言)
  *   rounds/001/artifacts/*      研发端 → 工位端:本轮附件(新构建的固件、脚本…)
  *   rounds/001/patch.diff       研发端为本轮做的代码改动(审计与终报用)
@@ -37,8 +39,12 @@
  * 崩溃在任何一步都只会退回"重跑本步",不会出现两边看到的状态互相矛盾。
  */
 
-import { copyFile, mkdir, readdir, stat, writeFile } from "node:fs/promises"
+import { copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises"
 import path from "node:path"
+
+// 清单在工程里的相对位置只有一个真源 —— 抄一份的结果会是"研发端读 .my-pi/toolchain.json、
+// 信箱复制的是别处",而两边都不报错。
+import { MANIFEST_RELATIVE } from "@yoma/my-pi-coding-agent"
 
 import { fileExists, readJsonFile } from "../fsx.ts"
 
@@ -155,6 +161,19 @@ export interface MailboxSnapshot {
 export const JOB_FILE = "job.json"
 export const VERDICT_FILE = "verdict.json"
 export const REPORT_FILE = "report.md"
+/**
+ * 项目工具链清单在信箱里的副本。
+ *
+ * **工位端没有项目检出**,`<工程>/.my-pi/toolchain.json` 不在它那儿,于是它对"这台
+ * 机器该有什么、缺了怎么装"一无所知 —— 表现是照着指令跑脚本、撞一个
+ * ModuleNotFoundError,再把它当成"脚本坏了"报回去。清单本身是项目配置(跟着仓库走、
+ * 零绝对路径),所以原样复制一份进信箱是安全的:两台机器读同一份声明,各自对着自己的
+ * 账本解析。
+ *
+ * 放信箱**根**而不是某一轮下面:它不是这一轮的东西,而是整个任务期间都成立的事实。
+ * 研发端每次下发轮次时刷新(幂等),于是它中途给清单加一条工具,下一轮工位端就看得到。
+ */
+export const TOOLCHAIN_FILE = "toolchain.json"
 
 export function roundDir(root: string, round: number): string {
   return path.join(root, "rounds", String(round).padStart(3, "0"))
@@ -225,6 +244,27 @@ export async function writeInstruction(
   await mkdir(dir, { recursive: true })
   if (extras?.patch !== undefined) await writeFile(path.join(dir, "patch.diff"), extras.patch)
   await writeJson(path.join(dir, "instruction.json"), instruction)
+}
+
+/**
+ * 把研发端检出里的工具链清单复制进信箱根。返回是否写了。
+ *
+ * 项目没有清单是常态(绝大多数项目根本没声明工具链),那就什么都不做 —— 也**不删**
+ * 信箱里已有的那份:删了等于让工位端在某一轮突然失明,而"清单文件这轮读不到"更可能是
+ * 研发端工作树的临时状态,不是"这个项目不再需要工具了"。
+ */
+export async function syncToolchainManifest(root: string, workspace: string): Promise<boolean> {
+  const source = path.join(workspace, MANIFEST_RELATIVE)
+  const text = await readFile(source, "utf8").catch(() => undefined)
+  if (text === undefined) return false
+  await mkdir(root, { recursive: true })
+  await writeFile(path.join(root, TOOLCHAIN_FILE), text)
+  return true
+}
+
+/** 读信箱里的清单原文,交给工位端的 `resolveToolchain({ manifestText })`。 */
+export async function readToolchainManifest(root: string): Promise<string | undefined> {
+  return readFile(path.join(root, TOOLCHAIN_FILE), "utf8").catch(() => undefined)
 }
 
 /** 旁证先落盘,result.json 最后写 —— 它的存在就是"本轮完成"的信号。 */

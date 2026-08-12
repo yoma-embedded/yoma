@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { writeFileSync } from "node:fs"
+import { mkdirSync, writeFileSync } from "node:fs"
 import path from "node:path"
 
 import { DEFAULT_THINKING_LEVEL } from "@yoma-desktop/kernel"
@@ -11,7 +11,13 @@ import { initMailbox } from "./init.ts"
 import { motherStep, parseMotherDecision, resolveMotherModel, type MailboxMotherOptions } from "./mother.ts"
 import { runnerStep } from "./runner.ts"
 import { parseMailboxJob } from "./spec.ts"
-import { scanMailbox, writeInstruction, type RoundDecision, type RoundInstruction } from "./store.ts"
+import {
+  scanMailbox,
+  writeInstruction,
+  TOOLCHAIN_FILE,
+  type RoundDecision,
+  type RoundInstruction,
+} from "./store.ts"
 import { commitPush } from "./sync.ts"
 import { fakeTurn, freshClone, makeMailbox, makeTargetRepo, rawMailboxJob, Temp, usage } from "./testkit.ts"
 
@@ -337,6 +343,34 @@ describe("mailbox mother", () => {
 
     // 信箱状态回到 awaiting-runner。
     expect((await scanMailbox(verify)).state.kind).toBe("awaiting-runner")
+  })
+
+  test("下发轮次时把工具链清单同步进信箱 —— 工位端唯一读得到它的途径", async () => {
+    // 工位端没有项目检出,`<工程>/.my-pi/toolchain.json` 只存在于研发端这边。
+    // 不随轮次推过去,对面就永远不知道自己该装什么 —— 而那一侧恰恰是最可能缺东西的。
+    const { target, mailbox } = await fixtureAfterRound({})
+    mkdirSync(path.join(target, ".my-pi"), { recursive: true })
+    writeFileSync(
+      path.join(target, ".my-pi", "toolchain.json"),
+      '{"schema":"yoma/toolchain@1","tools":[{"id":"jlink","side":"runner"}]}',
+    )
+    // 清单是**提交进库**的项目配置;留成未跟踪文件会让研发端开局的"工作树必须干净"卡住。
+    await runGitReal(["add", "-A"], target)
+    await runGitReal(["commit", "-q", "-m", "declare toolchain"], target)
+
+    const outcome = await motherStep(
+      motherOptions(mailbox.motherClone, target, {
+        runTurn: async () =>
+          fakeTurn({
+            text: '```json\n{"decision":"continue","instruction":"再测一次"}\n```',
+          }),
+      }),
+    )
+    expect(outcome.kind).toBe("decided")
+
+    const pushed = await freshClone(temp, mailbox.bare)
+    const manifest = await Bun.file(path.join(pushed, TOOLCHAIN_FILE)).text()
+    expect(JSON.parse(manifest).tools[0].id).toBe("jlink")
   })
 
   test("决定不合法:同一会话重试一次,第二次才认输终局", async () => {

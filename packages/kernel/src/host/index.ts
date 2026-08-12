@@ -44,6 +44,16 @@ export interface KernelHostOptions {
    * (档位由模型对话框现场决定),bench 传(无人值守)。详见 SessionManagerOptions。
    */
   defaultThinkingLevel?: SessionManagerOptions["defaultThinkingLevel"]
+  /**
+   * 工具链清单按哪一侧筛。不传即 `"mother"`(桌面端与信箱研发端)。
+   * 信箱工位端传 `"runner"`。详见 SessionManagerOptions。
+   */
+  toolchainSide?: SessionManagerOptions["toolchainSide"]
+  /**
+   * 工具链清单原文。**只有工位端需要** —— 它没有项目检出,清单读不到,
+   * 得经信箱送过来。详见 SessionManagerOptions。
+   */
+  toolchainManifestText?: SessionManagerOptions["toolchainManifestText"]
   /** 成批推事件出去。host 已经做过合并,这里拿到的就是最终批次。 */
   onEvents(events: KernelEvent[]): void
 }
@@ -63,6 +73,8 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     configDir: options.configDir,
     resolveModels: options.resolveModels,
     defaultThinkingLevel: options.defaultThinkingLevel,
+    toolchainSide: options.toolchainSide,
+    toolchainManifestText: options.toolchainManifestText,
     emit: (events) => sink.push(events),
   })
   const projects = new ProjectStore(path.join(options.stateDir, "projects.json"))

@@ -4,16 +4,19 @@ import path from "node:path"
 
 import {
   attachArtifacts,
+  readToolchainManifest,
   roundArtifactsDir,
   roundDir,
   scanMailbox,
   sumMotherTokens,
+  syncToolchainManifest,
   writeDecision,
   writeInstruction,
   writeJson,
   writeRoundResult,
   writeVerdict,
   JOB_FILE,
+  TOOLCHAIN_FILE,
   type RoundResultFile,
 } from "./store.ts"
 import { rawMailboxJob, Temp, usage } from "./testkit.ts"
@@ -152,5 +155,51 @@ describe("mailbox store", () => {
     await writeDecision(root, { round: 2, by: "policy", decision: "fail", at: new Date(0).toISOString() })
     const snapshot = await scanMailbox(root)
     expect(sumMotherTokens(snapshot.rounds)).toBe(1200)
+  })
+
+  describe("工具链清单副本", () => {
+    /** 研发端的检出:清单住在 `<工程>/.my-pi/toolchain.json`。 */
+    function workspaceWithManifest(temp: Temp, text: string): string {
+      const dir = temp.dir("ws-")
+      mkdirSync(path.join(dir, ".my-pi"), { recursive: true })
+      writeFileSync(path.join(dir, ".my-pi", "toolchain.json"), text)
+      return dir
+    }
+
+    test("研发端有清单:原样复制进信箱根,工位端读得到同一份", async () => {
+      const root = temp.dir("store-")
+      const text = '{"schema":"yoma/toolchain@1","tools":[{"id":"jlink","side":"runner"}]}\n'
+      expect(await syncToolchainManifest(root, workspaceWithManifest(temp, text))).toBe(true)
+      expect(await readToolchainManifest(root)).toBe(text)
+    })
+
+    test("项目没有清单:静默不写,读到 undefined", async () => {
+      const root = temp.dir("store-")
+      expect(await syncToolchainManifest(root, temp.dir("ws-empty-"))).toBe(false)
+      expect(await readToolchainManifest(root)).toBeUndefined()
+    })
+
+    test("清单这轮读不到时**不删**信箱里已有的那份", async () => {
+      // 删了等于让工位端在某一轮突然失明,而"读不到"更可能是研发端工作树的临时状态,
+      // 不是"这个项目不再需要工具了"。
+      const root = temp.dir("store-")
+      const text = '{"schema":"yoma/toolchain@1","tools":[]}\n'
+      await syncToolchainManifest(root, workspaceWithManifest(temp, text))
+      expect(await syncToolchainManifest(root, temp.dir("ws-gone-"))).toBe(false)
+      expect(await readToolchainManifest(root)).toBe(text)
+    })
+
+    test("刷新会覆盖:研发端中途给清单加一条工具,下一轮对面就看得到", async () => {
+      const root = temp.dir("store-")
+      await syncToolchainManifest(root, workspaceWithManifest(temp, '{"tools":[]}'))
+      await syncToolchainManifest(root, workspaceWithManifest(temp, '{"tools":["new"]}'))
+      expect(await readToolchainManifest(root)).toBe('{"tools":["new"]}')
+    })
+
+    test("落点是信箱根的 toolchain.json,不是某一轮下面", async () => {
+      const root = temp.dir("store-")
+      await syncToolchainManifest(root, workspaceWithManifest(temp, "{}"))
+      expect(await Bun.file(path.join(root, TOOLCHAIN_FILE)).text()).toBe("{}")
+    })
   })
 })

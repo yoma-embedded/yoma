@@ -52,6 +52,7 @@ import {
   readRound,
   scanMailbox,
   sumMotherTokens,
+  syncToolchainManifest,
   writeDecision,
   writeJson,
   writeInstruction,
@@ -506,6 +507,10 @@ async function issueInstruction(
     artifacts = attached.artifacts
     progress(`附件 ${artifacts.map((item) => item.name).join("、")}`)
   }
+
+  // 工具链清单跟着这一轮一起推出去。工位端没有项目检出,这是它唯一读得到清单的途径;
+  // 幂等,所以研发端中途给清单加一条工具,下一轮对面就看得到。
+  if (await syncToolchainManifest(options.clone, workspace)) progress("工具链清单已同步进信箱")
 
   await writeInstruction(
     options.clone,

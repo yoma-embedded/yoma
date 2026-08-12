@@ -38,6 +38,7 @@ import { runTurnInChildProcess, type TurnInput } from "../runner.ts"
 import type { TurnResult } from "../turn.ts"
 import { benchRolePrompt, runnerRoundPrompt } from "./prompts.ts"
 import {
+  readToolchainManifest,
   roundArtifactsDir,
   scanMailbox,
   writeJson,
@@ -196,6 +197,11 @@ async function runRound(
   const incoming = await stageIncoming(options.clone, round, workspace)
   if (incoming.length) progress(`本轮附件已就位:${incoming.join("、")}`)
 
+  // 工具链清单:研发端每轮随指令推过来,这一侧读原文灌进子进程。没有就算了 ——
+  // 项目没声明工具链是常态,那条路径必须完全静默。
+  const toolchainManifestText = await readToolchainManifest(options.clone)
+  if (toolchainManifestText) progress("按工位端(runner)一侧核对工具链")
+
   const input: TurnInput = {
     job,
     workspace,
@@ -209,6 +215,9 @@ async function runRound(
     }),
     turnEntry: options.turnEntry,
     configDir: options.configDir,
+    // 这一侧只有板子:核编译器毫无意义,而清单里那几条会一路报 MISSING 盖住真正缺的那条。
+    toolchainSide: "runner",
+    toolchainManifestText,
     faux: options.fauxTurns?.[round - 1],
   }
 
