@@ -208,6 +208,7 @@ export const TOOL_NAMES = [
   "edit",
   "write",
   "toolchain",
+  "examples",
   "grep",
   "stm32config",
   "netlist",
@@ -297,6 +298,23 @@ export interface ToolchainToolDetails {
   id?: string
 }
 
+/**
+ * examples(例程库)工具的 details,从 coding-agent 的 ExamplesToolDetails 结构化
+ * 复制(公共契约见 core/tools/examples.ts)。暂无专门卡片消费它(GenericTool 兜底,
+ * 与 toolchain 同一先例),提前钉住形状,漂移由 details-check.ts 兜底。
+ */
+export interface ExamplesToolDetails {
+  action: "search" | "info" | "seed"
+  /** search 才有:命中数与命中 id。 */
+  count?: number
+  hitIds?: string[]
+  /** info / seed 才有。 */
+  id?: string
+  corpus?: string
+  /** seed 才有:落进工作区的绝对路径。 */
+  seededTo?: string
+}
+
 export interface NetlistToolDetails {
   mode: "map" | "board_ir"
   part?: string
@@ -384,6 +402,7 @@ export interface ToolDetailsMap {
   edit: EditToolDetails
   write: WriteToolDetails
   toolchain: ToolchainToolDetails
+  examples: ExamplesToolDetails
   grep: GrepToolDetails
   stm32config: Stm32ConfigToolDetails
   netlist: NetlistToolDetails

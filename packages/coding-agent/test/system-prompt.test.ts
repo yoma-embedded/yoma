@@ -201,8 +201,9 @@ describe("collectToolPromptData", () => {
 		const env = new NodeExecutionEnv({ cwd: process.cwd() });
 		const data = collectToolPromptData(createCodingToolDefinitions(env));
 
-		expect(data.selectedTools).toEqual(["read", "bash", "edit", "write", "toolchain"]);
+		expect(data.selectedTools).toEqual(["read", "bash", "edit", "write", "toolchain", "examples"]);
 		expect(data.toolSnippets?.read).toBe("Read file contents");
+		expect(data.toolSnippets?.examples).toContain("verified vendor examples");
 		expect(data.promptGuidelines?.length).toBeGreaterThan(0);
 	});
 

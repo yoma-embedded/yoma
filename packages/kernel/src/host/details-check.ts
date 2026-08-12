@@ -22,6 +22,7 @@ import type {
   BashToolDetails as PiBash,
   DatasheetToolDetails as PiDatasheet,
   EditToolDetails as PiEdit,
+  ExamplesToolDetails as PiExamples,
   FlashToolDetails as PiFlash,
   GdbToolDetails as PiGdb,
   LogToolDetails as PiLog,
@@ -52,6 +53,7 @@ export type Check_bash = Expect<Assignable<PiBash, ToolDetailsMap["bash"]>>
 export type Check_edit = Expect<Assignable<PiEdit, ToolDetailsMap["edit"]>>
 export type Check_write = Expect<Assignable<PiWrite, ToolDetailsMap["write"]>>
 export type Check_toolchain = Expect<Assignable<PiToolchain, ToolDetailsMap["toolchain"]>>
+export type Check_examples = Expect<Assignable<PiExamples, ToolDetailsMap["examples"]>>
 export type Check_stm32config = Expect<Assignable<PiStm32Config, ToolDetailsMap["stm32config"]>>
 export type Check_netlist = Expect<Assignable<PiNetlist, ToolDetailsMap["netlist"]>>
 export type Check_flash = Expect<Assignable<PiFlash, ToolDetailsMap["flash"]>>

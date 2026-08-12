@@ -45,6 +45,15 @@ export {
 	restoreLineEndings,
 	stripBom,
 } from "./edit-diff.ts";
+export {
+	createExamplesTool,
+	createExamplesToolDefinition,
+	EXAMPLES_ACTIONS,
+	type ExamplesAction,
+	type ExamplesToolDetails,
+	type ExamplesToolInput,
+	type ExamplesToolOptions,
+} from "./examples.ts";
 export { withFileMutationQueue } from "./file-mutation-queue.ts";
 export {
 	buildFlashArgs,
@@ -198,6 +207,7 @@ import type { ExecutionEnv } from "@yoma/my-pi";
 import { createBashToolDefinition } from "./bash.ts";
 import { createDatasheetToolDefinition } from "./datasheet.ts";
 import { createEditToolDefinition } from "./edit.ts";
+import { createExamplesToolDefinition } from "./examples.ts";
 import { createFlashToolDefinition } from "./flash.ts";
 import { createGdbToolDefinition } from "./gdb.ts";
 import { createLogToolDefinition } from "./log.ts";
@@ -227,6 +237,8 @@ export function createCodingToolDefinitions(env: ExecutionEnv): ToolDef[] {
 		createEditToolDefinition(env),
 		createWriteToolDefinition(env),
 		createToolchainToolDefinition(env),
+		// examples 与 toolchain 同档:回答"这个工程从哪来"(种子起步),不依赖 engines。
+		createExamplesToolDefinition(env),
 	];
 }
 
