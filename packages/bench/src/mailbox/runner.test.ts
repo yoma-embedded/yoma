@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { writeFileSync } from "node:fs"
+import { mkdirSync, writeFileSync } from "node:fs"
 import path from "node:path"
 
 import { runGitReal } from "../git.ts"
@@ -130,6 +130,118 @@ describe("mailbox runner", () => {
     const verify = await freshClone(temp, mailbox.bare)
     const result = (await Bun.file(path.join(verify, "rounds", "001", "result.json")).json()) as RoundResultFile
     expect(result.incoming).toEqual(["fw.elf"])
+  })
+
+  test("回传通道:outbox 里的东西收进本轮 back/,收过的移进 .sent 不重传", async () => {
+    const { mailbox } = await fixture()
+    const workRoot = temp.dir("work-")
+    await issue(mailbox, 1, "采一段 Ch2 电流回来")
+
+    // agent 这一轮往投递目录里丢了采集(子目录形状要保得住)。
+    const outcome = await runnerStep(
+      options(mailbox.runnerClone, workRoot, {
+        runTurn: async (input: TurnInput) => {
+          const outbox = path.join(input.workspace, "outbox", "capture")
+          mkdirSync(outbox, { recursive: true })
+          writeFileSync(path.join(outbox, "ch2.csv"), "t,iq\n0,0.10\n")
+          return fakeTurn({ text: "采完了,曲线在附件里" })
+        },
+      }),
+    )
+    expect(outcome.kind).toBe("ran")
+
+    const verify = await freshClone(temp, mailbox.bare)
+    expect(await Bun.file(path.join(verify, "rounds", "001", "back", "capture", "ch2.csv")).text()).toContain("t,iq")
+    const result = (await Bun.file(path.join(verify, "rounds", "001", "result.json")).json()) as RoundResultFile
+    expect(result.back?.map((item) => item.name)).toEqual(["capture/ch2.csv"])
+    // 自述全文另存一份:提示词里只进节选,细节让研发端自己去读。
+    expect(await Bun.file(path.join(verify, "rounds", "001", "bench-report.md")).text()).toContain("采完了")
+
+    // 收过的移进 .sent(工位机留底),投递目录里不再有 —— 下一轮扫的是空目录,
+    // 同一份采集不会被传第二次。
+    const workspace = workspaceOf(workRoot)
+    expect(await Bun.file(path.join(workspace, "outbox", "capture", "ch2.csv")).exists()).toBe(false)
+    expect(await Bun.file(path.join(workspace, "outbox", ".sent", "001", "capture", "ch2.csv")).exists()).toBe(true)
+  })
+
+  test("推送失败时投递目录原封不动 —— 下一轮还能把同一份采集送出去", async () => {
+    const { mailbox } = await fixture()
+    const workRoot = temp.dir("work-")
+    await issue(mailbox, 1, "采一段回来")
+
+    // 回填那一步推不上去(网断)。这一轮不算数,底稿必须留着。
+    const pushBroken: typeof runGitReal = (args, cwd) =>
+      args[0] === "push" ? Promise.resolve({ ok: false, stdout: "", stderr: "网断了" }) : runGitReal(args, cwd)
+    const outcome = await runnerStep(
+      options(mailbox.runnerClone, workRoot, {
+        gitRun: pushBroken,
+        runTurn: async (input: TurnInput) => {
+          mkdirSync(path.join(input.workspace, "outbox"), { recursive: true })
+          writeFileSync(path.join(input.workspace, "outbox", "ch2.csv"), "t,iq\n0,0.1\n")
+          return fakeTurn()
+        },
+      }),
+    )
+    expect(outcome.kind).toBe("blocked")
+
+    // 归档发生在推送成功之后 —— 否则下一次 pullReset 的 clean -fd 会把没提交的
+    // back/ 抹掉,而投递目录已经空了:那一轮的采集就永远回不去研发端。
+    const workspace = workspaceOf(workRoot)
+    expect(await Bun.file(path.join(workspace, "outbox", "ch2.csv")).exists()).toBe(true)
+    expect(await Bun.file(path.join(workspace, "outbox", ".sent", "001", "ch2.csv")).exists()).toBe(false)
+  })
+
+  test("ASK-HUMAN.txt 抬成人工请求,不当附件传", async () => {
+    const { mailbox } = await fixture()
+    const workRoot = temp.dir("work-")
+    await issue(mailbox, 1, "上电复现")
+
+    await runnerStep(
+      options(mailbox.runnerClone, workRoot, {
+        runTurn: async (input: TurnInput) => {
+          const outbox = path.join(input.workspace, "outbox")
+          mkdirSync(outbox, { recursive: true })
+          writeFileSync(path.join(outbox, "ASK-HUMAN.txt"), "请把台架电源设为 24V 并接到母线,电机保持不转\n")
+          return fakeTurn({ text: "母线无电,先报上来" })
+        },
+      }),
+    )
+
+    const verify = await freshClone(temp, mailbox.bare)
+    const result = (await Bun.file(path.join(verify, "rounds", "001", "result.json")).json()) as RoundResultFile
+    expect(result.needsHuman).toContain("24V")
+    // 它是"这轮卡在人身上"的信号,不是一件要送给研发端的资料。
+    expect(result.back).toBeUndefined()
+    expect(await Bun.file(path.join(verify, "rounds", "001", "back", "ASK-HUMAN.txt")).exists()).toBe(false)
+  })
+
+  test("挂起等人时工位端空转:不跑轮、把请求原样报给宿主", async () => {
+    const { mailbox } = await fixture()
+    await issue(mailbox, 1, "上电复现")
+    await runnerStep(options(mailbox.runnerClone, temp.dir("work-")))
+    // 裁决从工位端这个克隆写出去 —— 它刚推过结果,是当前的那一份;这里要验的是
+    // "看到挂起就停手",不是两个克隆谁先推。
+    await writeDecision(mailbox.runnerClone, {
+      round: 1,
+      by: "mother",
+      decision: "await-human",
+      ask: "请把台架电源设为 24V",
+      at: new Date().toISOString(),
+    })
+    await commitPush({ clone: mailbox.runnerClone, author: { name: "t", email: "t@e.c" } }, "挂起")
+
+    let turns = 0
+    const outcome = await runnerStep(
+      options(mailbox.runnerClone, temp.dir("work-"), {
+        runTurn: async () => {
+          turns += 1
+          return fakeTurn()
+        },
+      }),
+    )
+    expect(turns).toBe(0)
+    expect(outcome.kind).toBe("awaiting-human")
+    if (outcome.kind === "awaiting-human") expect(outcome.ask).toContain("24V")
   })
 
   test("结果已回填(等研发端)时空转,不重复跑", async () => {

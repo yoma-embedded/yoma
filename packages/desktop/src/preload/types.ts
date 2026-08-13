@@ -42,12 +42,19 @@ export type MailboxComposeWire = {
   tier: "quick" | "standard" | "thorough"
   title?: string
 }
+/** 人对一次挂起的回执。板子边上那台机器也点得了 —— 信箱是共享的,谁写谁推。 */
+export type MailboxAckWire = {
+  round: number
+  answer: "done" | "cannot"
+  note?: string
+}
 export type MailboxAPI = {
   configure(settings: MailboxSettingsWire): Promise<{ ok: boolean; message?: string }>
   start(task: MailboxTaskWire): Promise<{ ok: boolean; message?: string }>
   stop(): Promise<{ ok: boolean; message?: string }>
   status(): Promise<unknown>
   probe(remote: string): Promise<{ ok: boolean; message: string }>
+  ackHuman(input: MailboxAckWire): Promise<{ ok: boolean; message: string }>
   composeJob(input: MailboxComposeWire): Promise<{ ok: boolean; jobFile?: string; projectDir?: string; message?: string }>
   subscribe(cb: (event: unknown) => void): () => void
 }

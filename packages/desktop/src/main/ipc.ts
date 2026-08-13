@@ -38,7 +38,8 @@ type Deps = {
   resolveAppPath: (appName: string) => Promise<string | null>
   updater: UpdaterController
   /** 信箱调试台:controller 四动作 + 连通自检 + 任务书生成。返回值全是普通对象,不抛 Error。 */
-  mailbox: Pick<MailboxController, "configure" | "start" | "stop" | "status"> & Pick<MailboxMain, "probe" | "composeJob">
+  mailbox: Pick<MailboxController, "configure" | "start" | "stop" | "status"> &
+    Pick<MailboxMain, "probe" | "composeJob" | "ackHuman">
   showUpdater: () => Promise<void> | void
   setBackgroundColor: (color: string) => void
   exportDebugLogs: () => Promise<string>
@@ -59,6 +60,10 @@ export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle("mailbox-stop", () => deps.mailbox.stop())
   ipcMain.handle("mailbox-status", () => deps.mailbox.status())
   ipcMain.handle("mailbox-probe", (_event: IpcMainInvokeEvent, remote: string) => deps.mailbox.probe(remote))
+  // 人工回执:挂起时人点的那一下。写信箱 + 推送都在 main,渲染层只递一个普通对象。
+  ipcMain.handle("mailbox-ack-human", (_event: IpcMainInvokeEvent, input: Parameters<Deps["mailbox"]["ackHuman"]>[0]) =>
+    deps.mailbox.ackHuman(input),
+  )
   ipcMain.handle("mailbox-compose", (_event: IpcMainInvokeEvent, input: Parameters<Deps["mailbox"]["composeJob"]>[0]) =>
     deps.mailbox.composeJob(input),
   )

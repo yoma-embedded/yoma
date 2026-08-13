@@ -13,6 +13,7 @@ import { runnerStep } from "./runner.ts"
 import { parseMailboxJob } from "./spec.ts"
 import {
   scanMailbox,
+  writeHumanAck,
   writeInstruction,
   TOOLCHAIN_FILE,
   type RoundDecision,
@@ -45,6 +46,21 @@ describe("parseMotherDecision", () => {
     expect(parseMotherDecision('```json\n{"decision":"continue"}\n```').ok).toBe(false)
     expect(parseMotherDecision('```json\n{"decision":"fail"}\n```').ok).toBe(false)
     expect(parseMotherDecision('```json\n{"decision":"done","reason":"证据齐了"}\n```').ok).toBe(true)
+  })
+
+  test("await-human 要有 ask;开局轮压根不接受它(挂起没有地方落)", () => {
+    const parked = parseMotherDecision('```json\n{"decision":"await-human","ask":"请把台架电源设为 24V"}\n```')
+    expect(parked.ok).toBe(true)
+    if (parked.ok) expect(parked.payload.ask).toBe("请把台架电源设为 24V")
+
+    // ask 是要发给人看的那句话,没有它挂起就是个哑状态。
+    expect(parseMotherDecision('```json\n{"decision":"await-human"}\n```').ok).toBe(false)
+
+    const atKickoff = parseMotherDecision('```json\n{"decision":"await-human","ask":"上电"}\n```', {
+      allowAwaitHuman: false,
+    })
+    expect(atKickoff.ok).toBe(false)
+    if (!atKickoff.ok) expect(atKickoff.error).toContain("开局轮")
   })
 
   test("没有围栏、不是 JSON、不是对象,报错各说各的", () => {
@@ -397,6 +413,109 @@ describe("mailbox mother", () => {
     // 两次白跑的花费必须入账 —— 烧掉的钱不因为没产出就消失。
     expect(decision.usage?.tokens.input).toBe(200)
   })
+
+  test(
+    "回传件 + 挂起 + 回执:原始数据落到工程里,等人期间不烧一个 token,回执一到接着走",
+    async () => {
+      const target = await makeTargetRepo(temp)
+      const mailbox = await makeMailbox(temp)
+      await initMailbox({ clone: mailbox.motherClone, mailboxJob: parseMailboxJob(rawMailboxJob()) })
+      await writeInstruction(mailbox.motherClone, {
+        round: 1,
+        prompt: "上电复现,把采集回传",
+        issuedBy: "mother",
+        at: new Date().toISOString(),
+      })
+      await commitPush({ clone: mailbox.motherClone, author: { name: "t", email: "t@e.c" } }, "第 1 轮")
+
+      // 工位端:回传一段采集,并说这一轮卡在人工上电上。
+      const ran = await runnerStep({
+        clone: mailbox.runnerClone,
+        workRoot: temp.dir("work-"),
+        sessionsRoot: temp.dir("sessions-"),
+        runTurn: async (input) => {
+          const outbox = path.join(input.workspace, "outbox")
+          mkdirSync(outbox, { recursive: true })
+          writeFileSync(path.join(outbox, "vbus.csv"), "t,vbus\n0,1.9\n")
+          writeFileSync(path.join(outbox, "ASK-HUMAN.txt"), "请把台架电源设为 24V 并接到母线")
+          return fakeTurn({ text: "母线只有 1.9V,采集在 outbox 里" })
+        },
+      })
+      expect(ran.kind).toBe("ran")
+
+      // 研发端第一次裁决:数据到手,但确实要等人 —— 挂起。
+      const parkPrompts: string[] = []
+      const parked = await motherStep(
+        motherOptions(mailbox.motherClone, target, {
+          runTurn: async (options: TurnOptions) => {
+            parkPrompts.push(options.prompt)
+            return fakeTurn({
+              text: '```json\n{"decision":"await-human","analysis":"母线无电","ask":"请把台架电源设为 24V 并接到母线"}\n```',
+              usage: usage(500, 100),
+            })
+          },
+        }),
+      )
+      expect(parked.kind).toBe("awaiting-human")
+      if (parked.kind === "awaiting-human") expect(parked.ask).toContain("24V")
+
+      // 回传件落在工程里,提示词给的是可以直接打开的相对路径(不是"它说它采了一段")。
+      expect(await Bun.file(path.join(target, ".my-pi", "back", "001", "vbus.csv")).text()).toContain("t,vbus")
+      expect(parkPrompts[0]).toContain(".my-pi/back/001/vbus.csv")
+      expect(parkPrompts[0]).toContain(".my-pi/back/001/bench-report.md")
+      expect(parkPrompts[0]).toContain("需要人动手")
+
+      // 挂起期间:两侧都不跑轮,一个 token 都不烧。
+      let idleTurns = 0
+      const idle = await motherStep(
+        motherOptions(mailbox.motherClone, target, {
+          runTurn: async () => {
+            idleTurns += 1
+            return fakeTurn()
+          },
+        }),
+      )
+      expect(idle.kind).toBe("awaiting-human")
+      expect(idleTurns).toBe(0)
+
+      // 挂起不下发新轮 —— 第 2 轮的指令这时候不该存在。
+      const midway = await freshClone(temp, mailbox.bare)
+      expect(await Bun.file(path.join(midway, "rounds", "002", "instruction.json")).exists()).toBe(false)
+
+      // 人回了执:同一轮重新裁决,回执原话进提示词。
+      await writeHumanAck(mailbox.motherClone, 1, {
+        answer: "done",
+        note: "电源已设 24V,电机没接",
+        by: "ben",
+        at: new Date().toISOString(),
+      })
+      await commitPush({ clone: mailbox.motherClone, author: { name: "t", email: "t@e.c" } }, "人工回执")
+
+      const resumePrompts: string[] = []
+      const resumed = await motherStep(
+        motherOptions(mailbox.motherClone, target, {
+          runTurn: async (options: TurnOptions) => {
+            resumePrompts.push(options.prompt)
+            return fakeTurn({
+              text: '```json\n{"decision":"continue","analysis":"条件具备","instruction":"再跑一次自检脚本,把 RESULT 行贴回来"}\n```',
+              usage: usage(300, 60),
+            })
+          },
+        }),
+      )
+      expect(resumed.kind).toBe("decided")
+      expect(resumePrompts[0]).toContain("电源已设 24V")
+      expect(resumePrompts[0]).toContain("人已经做完了")
+
+      const verify = await freshClone(temp, mailbox.bare)
+      const decision = (await Bun.file(path.join(verify, "rounds", "001", "decision.json")).json()) as RoundDecision
+      expect(decision.decision).toBe("continue")
+      // 挂起那一次分析也是真花的钱:重裁覆盖同一个 decision.json,不结转就凭空消失。
+      expect(decision.usage?.tokens.input).toBe(800)
+      expect(await Bun.file(path.join(verify, "rounds", "002", "instruction.json")).exists()).toBe(true)
+    },
+    30_000,
+  )
 
   test("等工位端时空转", async () => {
     const target = await makeTargetRepo(temp)

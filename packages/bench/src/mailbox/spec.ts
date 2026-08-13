@@ -52,6 +52,15 @@ export interface MailboxConfig {
    * Cortex-M 固件通常 1–5MB,留了足够余量,又拦得住"把整个 build 目录附上"。
    */
   maxArtifactBytes: number
+  /**
+   * 单轮**回传**合计上限(字节)。方向反过来但物理性质一样:信箱仓不忘事,而上行的
+   * 诱惑更大 —— 一次 16kHz 全采就能是几十 MB,工位端又不知道自己在给一个 git 仓喂东西。
+   * 默认 16MB:压缩过的采集/日志/几张图都装得下,而"把整个采集目录倒进来"会被拦住。
+   *
+   * 超限的处理与下行**不同**:下行报错拦住研发端,上行只跳过并记进 `backSkipped`
+   * (见 collectBack —— 不能因为一个大文件把整轮结果毙掉)。
+   */
+  maxBackBytes: number
 }
 
 export interface MailboxJob {
@@ -61,6 +70,7 @@ export interface MailboxJob {
 
 export const DEFAULT_POLL_SECONDS = 15
 export const DEFAULT_MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
+export const DEFAULT_MAX_BACK_BYTES = 16 * 1024 * 1024
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -85,6 +95,9 @@ export function parseMailboxJob(raw: unknown): MailboxJob {
   const maxArtifactBytes = num(mailboxRaw.maxArtifactBytes) ?? DEFAULT_MAX_ARTIFACT_BYTES
   if (maxArtifactBytes < 1) issues.push("mailbox.maxArtifactBytes 至少为 1")
 
+  const maxBackBytes = num(mailboxRaw.maxBackBytes) ?? DEFAULT_MAX_BACK_BYTES
+  if (maxBackBytes < 1) issues.push("mailbox.maxBackBytes 至少为 1")
+
   if (issues.length) throw new JobSpecError(issues)
 
   return {
@@ -93,6 +106,7 @@ export function parseMailboxJob(raw: unknown): MailboxJob {
       mother: { model: motherModel },
       pollSeconds,
       maxArtifactBytes,
+      maxBackBytes,
     },
   }
 }

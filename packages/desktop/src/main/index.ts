@@ -7,7 +7,7 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { getCACertificates, setDefaultCACertificates } from "node:tls"
 import type { Event } from "electron"
-import { app, BrowserWindow } from "electron"
+import { app, BrowserWindow, Notification } from "electron"
 
 import { Deferred, Effect, Fiber } from "effect"
 import contextMenu from "electron-context-menu"
@@ -287,6 +287,11 @@ const main = Effect.gen(function* () {
       },
       set: (settings) => getStore("opencode.mailbox").set("settings", settings),
     },
+    // 挂起等人时喊一声。**不看窗口有没有聚焦** —— 要动手的人多半在板子那边,
+    // 而这条通知就是把"闭环停在这儿了"送出去的唯一手段。
+    notify: ({ title, body }) => {
+      if (Notification.isSupported()) new Notification({ title, body }).show()
+    },
     log: (line) => writeLog("mailbox", "daemon", { line }),
   })
   const mailbox = mailboxMain
@@ -321,6 +326,7 @@ const main = Effect.gen(function* () {
       stop: () => mailbox.controller.stop(),
       status: () => mailbox.controller.status(),
       probe: (remote) => mailbox.probe(remote),
+      ackHuman: (input) => mailbox.ackHuman(input),
       composeJob: (input) => mailbox.composeJob(input),
     },
     showUpdater: () => showUpdaterDialog(updater, true),

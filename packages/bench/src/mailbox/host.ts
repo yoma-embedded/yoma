@@ -84,6 +84,8 @@ export type MailboxUiState =
   | { kind: "kickoff" }
   | { kind: "awaiting-runner"; round: number }
   | { kind: "awaiting-mother"; round: number }
+  /** 挂起等人。`ask` 必须随状态走 —— 界面要拿它弹通知、显示原文,而不是让人翻轮次。 */
+  | { kind: "awaiting-human"; round: number; ask: string }
   | { kind: "done"; verdict: MailboxVerdict }
 
 export interface MailboxUiSnapshot {
@@ -187,6 +189,8 @@ export async function runMailboxHost(config: MailboxHostConfig, emit: EmitMailbo
       return finish(outcome.verdict.outcome === "passed" ? 0 : 2, `终局 ${outcome.verdict.outcome}`, outcome.verdict)
     }
     if (outcome.kind === "blocked") return finish(3, outcome.detail)
+    // 挂起不是失败:退 0,让 cron/--once 场景安静地等下一次(人还没动手而已)。
+    if (outcome.kind === "awaiting-human") return finish(0, `第 ${outcome.round} 轮挂起,等人:${outcome.ask}`)
     return finish(0, outcome.kind === "ran" ? `第 ${outcome.round} 轮已回填` : outcome.detail)
   }
 
@@ -211,6 +215,7 @@ export async function runMailboxHost(config: MailboxHostConfig, emit: EmitMailbo
     return finish(outcome.verdict.outcome === "passed" ? 0 : 2, `终局 ${outcome.verdict.outcome}`, outcome.verdict)
   }
   if (outcome.kind === "blocked") return finish(3, outcome.detail)
+  if (outcome.kind === "awaiting-human") return finish(0, `第 ${outcome.round} 轮挂起,等人:${outcome.ask}`)
   return finish(0, outcome.kind === "decided" ? `第 ${outcome.round} 轮已裁决` : outcome.detail)
 }
 
@@ -300,6 +305,8 @@ function makeSnapshotEmitter(
 const PROMPT_CAP = 8000
 const TEXT_CAP = 8000
 const REPORT_CAP = 64_000
+/** 人工请求进通知与横幅,长了没法看;原文照常在轮次的 decision.json 里。 */
+const ASK_CAP = 2000
 
 function trimSnapshot(
   snapshot: MailboxSnapshot,
@@ -340,6 +347,8 @@ function trimState(state: MailboxSnapshot["state"]): MailboxUiState {
       return { kind: "awaiting-runner", round: state.round }
     case "awaiting-mother":
       return { kind: "awaiting-mother", round: state.round }
+    case "awaiting-human":
+      return { kind: "awaiting-human", round: state.round, ask: clip(state.ask, ASK_CAP) }
   }
 }
 

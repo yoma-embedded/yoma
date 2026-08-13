@@ -152,6 +152,7 @@ const api: ElectronAPI = {
     stop: () => ipcRenderer.invoke("mailbox-stop"),
     status: () => ipcRenderer.invoke("mailbox-status"),
     probe: (remote) => ipcRenderer.invoke("mailbox-probe", remote),
+    ackHuman: (input) => ipcRenderer.invoke("mailbox-ack-human", input),
     composeJob: (input) => ipcRenderer.invoke("mailbox-compose", input),
     subscribe: (cb) => {
       const handler = (_: unknown, event: unknown) => cb(event)

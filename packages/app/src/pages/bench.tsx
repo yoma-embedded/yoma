@@ -40,6 +40,8 @@ export default function BenchPage() {
     notice: undefined as { error: boolean; text: string } | undefined,
     form: { remote: "", role: "runner" as MailboxRoleView, branch: "", pollSeconds: "", projectDir: "" },
     task: { templatePath: "", description: "", title: "" },
+    /** 回执时人补的一句话("电源已设 24V")—— 它会进研发端下一轮的提示词。 */
+    ackNote: "",
   })
 
   const t = (key: string) => language.t(key as never)
@@ -102,6 +104,27 @@ export default function BenchPage() {
   const status = () => state.status
   const snapshot = () => state.status?.snapshot
   const running = () => state.status?.phase === "running" || state.status?.phase === "stopping"
+  /** 闭环挂起等人时的那条请求(没挂起就是 undefined —— 面板整个不出现)。 */
+  const parked = () => {
+    const current = snapshot()?.state
+    return current?.kind === "awaiting-human" ? current : undefined
+  }
+
+  /**
+   * 人回执。写信箱 + 推送都在 main 侧,这里只递一个普通对象。
+   *
+   * 回执落地后状态自己滑回"等研发端裁决",守护下一次轮询就接着走 —— 前端不需要
+   * 再做任何事,也**不要**乐观地把面板收起来:没推成功时那会是一个假象。
+   */
+  async function ackHuman(round: number, answer: "done" | "cannot") {
+    if (!mailbox) return
+    setState("busy", true)
+    const result = await guard(() => mailbox.ackHuman({ round, answer, note: state.ackNote.trim() || undefined }))
+    setState("busy", false)
+    if (!result) return
+    if (result.ok) setState("ackNote", "")
+    say(!result.ok, result.message)
+  }
 
   async function saveSettings() {
     if (!mailbox) return
@@ -349,6 +372,34 @@ export default function BenchPage() {
           <Match when={state.tab === "progress"}>
             <section class="flex flex-col gap-3">
               <StateBanner status={status()} t={t} />
+              {/* 挂起等人:闭环这时候一个 token 都不烧,唯一能推动它的是这两个按钮。 */}
+              <Show when={parked()}>
+                {(park) => (
+                  <div class={`${CARD} flex flex-col gap-2 border-v2-state-fg-danger p-4`}>
+                    <h2 class="text-[13px] text-v2-text-text-base [font-weight:600]">
+                      {t("bench.human.title")}({t("bench.round")} {park().round})
+                    </h2>
+                    <pre class="whitespace-pre-wrap text-[12px] leading-[1.6] text-v2-text-text-base">{park().ask}</pre>
+                    <div class={INPUT_ROW}>
+                      <span class={LABEL}>{t("bench.human.note")}</span>
+                      <TextInputV2
+                        value={state.ackNote}
+                        placeholder={t("bench.human.note.hint")}
+                        onInput={(event) => setState("ackNote", event.currentTarget.value)}
+                      />
+                    </div>
+                    <div class="flex gap-2">
+                      <ButtonV2 variant="contrast" disabled={state.busy} onClick={() => void ackHuman(park().round, "done")}>
+                        {t("bench.human.done")}
+                      </ButtonV2>
+                      <ButtonV2 variant="neutral" disabled={state.busy} onClick={() => void ackHuman(park().round, "cannot")}>
+                        {t("bench.human.cannot")}
+                      </ButtonV2>
+                    </div>
+                    <p class="text-[11px] text-v2-text-text-muted">{t("bench.human.hint")}</p>
+                  </div>
+                )}
+              </Show>
               <For each={[...(snapshot()?.rounds ?? [])].reverse()}>
                 {(round) => <RoundCard round={round} t={t} onWatch={watchSession} />}
               </For>
@@ -468,6 +519,8 @@ function StateBanner(props: { status?: MailboxStatusView; t: (key: string) => st
         return `${props.t("bench.progress.state.awaitingRunner")}(${props.t("bench.round")} ${current.round})`
       case "awaiting-mother":
         return `${props.t("bench.progress.state.awaitingMother")}(${props.t("bench.round")} ${current.round})`
+      case "awaiting-human":
+        return `${props.t("bench.progress.state.awaitingHuman")}(${props.t("bench.round")} ${current.round})`
       case "done":
         return `${props.t("bench.progress.state.done")}:${current.verdict.reason}`
     }
@@ -525,6 +578,26 @@ function RoundCard(props: { round: MailboxRoundView; t: (key: string) => string;
                 {result().incoming!.join(" · ")}
               </div>
             </Show>
+            {/* 上行:工位端回传的原始数据(研发端那侧已落进 .my-pi/back/<轮次>/)。 */}
+            <Show when={result().back?.length}>
+              <div class="text-[11px] text-v2-text-text-muted">
+                {t("bench.progress.back")}
+                {result().back!.map((item) => `${item.name}(${formatBytes(item.bytes)})`).join(" · ")}
+              </div>
+            </Show>
+            {/* 没送成的必须现身:静默丢弃会让人以为"工位端什么都没给"。 */}
+            <Show when={result().backSkipped?.length}>
+              <div class="text-[11px] text-v2-state-fg-danger">
+                {t("bench.progress.backSkipped")}
+                {result().backSkipped!.map((item) => `${item.name}:${item.reason}`).join(" · ")}
+              </div>
+            </Show>
+            <Show when={result().needsHuman}>
+              <div class="text-[12px] text-v2-text-text-base">
+                <span class="[font-weight:600]">{t("bench.progress.needsHuman")}</span>
+                <span class="whitespace-pre-wrap">{result().needsHuman}</span>
+              </div>
+            </Show>
             <Show when={result().turn?.text}>
               <div class="max-h-[120px] overflow-y-auto whitespace-pre-wrap text-[12px] leading-[1.6] text-v2-text-text-base">
                 {result().turn!.text}
@@ -562,6 +635,22 @@ function RoundCard(props: { round: MailboxRoundView; t: (key: string) => string;
               <div class="whitespace-pre-wrap text-[12px] leading-[1.6] text-v2-text-text-muted">
                 {decision().analysis ?? decision().reason}
               </div>
+            </Show>
+            <Show when={decision().ask}>
+              <div class="whitespace-pre-wrap text-[12px] leading-[1.6] text-v2-text-text-base">
+                {t("bench.progress.ask")}
+                {decision().ask}
+              </div>
+            </Show>
+            {/* 回执:谁在什么时候把那件事做了(或者做不了)。挂起的另一半。 */}
+            <Show when={props.round.humanAck}>
+              {(ack) => (
+                <div class="text-[11px] text-v2-text-text-muted">
+                  {ack().answer === "done" ? t("bench.progress.ack.done") : t("bench.progress.ack.cannot")}
+                  <Show when={ack().by}> · {ack().by}</Show>
+                  <Show when={ack().note}> · {ack().note}</Show>
+                </div>
+              )}
             </Show>
             {/* 代码改动来自**研发端的裁决**(它才是改代码的一侧),不是工位端的结果。 */}
             <Show when={decision().git}>

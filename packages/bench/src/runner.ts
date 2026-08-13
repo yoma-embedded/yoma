@@ -79,12 +79,14 @@ export interface TurnInput {
  * 要提交的是项目配置(bench 的 mailbox 模板、toolchain 的工具链声明),列两条运行
  * 产物比列白名单更好读。`toolchain.local.json` 是例外中的例外:它长得像项目配置
  * (跟 toolchain.json 挨着放),内容却是本机路径 —— 必须显式拉黑,不能靠"没在黑名单里
- * 就放行"的默认值蒙混过去。
+ * 就放行"的默认值蒙混过去。`back/` 是工位端回传件在研发机上的落点(采集、日志、图)——
+ * 它已经在信箱仓里留了底,再进项目仓一次只会让工程仓跟着一起胖。
  */
 const YOMA_IGNORE = `# yoma 在这个项目里的运行产物,不进版本库(含本文件);bench 与 toolchain 的项目配置要跟着仓库走。
 .gitignore
 gdb/
 logs/
+back/
 flash-state.json
 bench/turns/
 bench/mailbox-sim/

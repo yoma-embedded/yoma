@@ -20,6 +20,8 @@ export type MailboxPlatform = {
   stop(): Promise<{ ok: boolean; message?: string }>
   status(): Promise<MailboxStatusView>
   probe(remote: string): Promise<{ ok: boolean; message: string }>
+  /** 挂起等人时人点的那一下:写 `rounds/NNN/human-ack.json` 并推回信箱。 */
+  ackHuman(input: { round: number; answer: "done" | "cannot"; note?: string }): Promise<{ ok: boolean; message: string }>
   /** `projectDir` 是从模板位置推导出的**本机**工程根,不进任务书 —— 本机没配时的兜底。 */
   composeJob(input: MailboxComposeInputView): Promise<{ ok: boolean; jobFile?: string; projectDir?: string; message?: string }>
   subscribe(cb: (event: MailboxEventView) => void): () => void

@@ -11,11 +11,24 @@
  *   rounds/001/instruction.json 研发端 → 工位端:本轮指令(自然语言)
  *   rounds/001/artifacts/*      研发端 → 工位端:本轮附件(新构建的固件、脚本…)
  *   rounds/001/patch.diff       研发端为本轮做的代码改动(审计与终报用)
+ *   rounds/001/back/*           工位端 → 研发端:本轮回传件(采集数据、日志、图)
+ *   rounds/001/bench-report.md  工位端 → 研发端:本轮自述**全文**(提示词里只进节选)
  *   rounds/001/result.json      工位端 → 研发端:轮结果(最后写 —— 它的存在 = 本轮完成)
  *   rounds/001/decision.json    本轮裁决(研发端 mother;拿不到它的决定时由代码代写)
+ *   rounds/001/human-ack.json   人 → 闭环:await-human 挂起时的回执(谁都可以写)
  *   verdict.json                终局(出现即整个任务结束)
  *   report.md                   终报(与 verdict 同一次提交写入)
  * ```
+ *
+ * ## 两个方向都要有附件
+ *
+ * 下行(`artifacts/`)是工位端拿到东西的唯一通道;上行(`back/`)是研发端拿到**原始数据**
+ * 的唯一通道。没有上行时,工位端采到的波形只能用文字复述,而复述过的数据不能再算 ——
+ * 研发端手上有完整工具链,让它自己读自己算,比信一句"看起来收敛了"强得多。
+ *
+ * 上行不设"声明"这一步(下行的 `artifacts: [...]` 是研发端在决定 JSON 里声明的):
+ * 工位端是唯一挨着板子的一侧,给它加一个"必须写出可解析结构"的契约等于在最不该失败的
+ * 地方多一个解析失败模式。约定一个投递目录、由调试台扫,才是确定性的。
  *
  * **一轮的输入是一整包**:指令 + 附件 + 补丁同住 `rounds/NNN/`,同一次提交推出去。
  * 附件是这条邮路的重点 —— 研发端改完代码自己构建,把产物塞进 `artifacts/`,
@@ -28,15 +41,20 @@
  * 状态文件意味着它可能和轮次文件失配,而失配时该信谁没有答案。文件的存在性本身就是
  * 状态机:一个轮次都没有 → 等研发端开第一轮(kickoff);instruction 有而 result 无
  * → 等工位端;result 有而 decision 无 → 等研发端裁决;verdict 有 → 结束。
+ * 多一条:decision 是 `await-human` 而 human-ack.json 还没出现 → 挂起等人,**两侧都不跑轮**
+ * (等人是零成本的;这条不存在时,"等人"表现为研发端一轮轮重复转达同一句请求)。
+ * 回执到了就自然回到"result 有而 decision 无"那一格 —— 研发端拿着回执重新裁决同一轮。
  *
  * 工位端**没有项目检出** —— 它的工作目录是一次性的,内容全部来自附件。所以这条邮路
  * 不只是通信,它同时是工位端拿到一切东西(固件、脚本、数据)的唯一途径。
  *
  * ## 写入顺序即协议
  *
- * 工位端一轮的产物里 **result.json 必须最后写**;研发端的 decision + 下轮 instruction
- * + 附件必须**同一次提交**。配合 sync.ts 的 pullReset(工作树永远等于远端已推的真相),
- * 崩溃在任何一步都只会退回"重跑本步",不会出现两边看到的状态互相矛盾。
+ * 工位端一轮的产物里 **result.json 必须最后写**(回传件 `back/*` 与全文 `bench-report.md`
+ * 都在它之前);研发端的 decision + 下轮 instruction + 附件必须**同一次提交**。配合
+ * sync.ts 的 pullReset(工作树永远等于远端已推的真相),崩溃在任何一步都只会退回
+ * "重跑本步",不会出现两边看到的状态互相矛盾 —— 半拷完的 back/ 因为没有 result.json
+ * 而整轮不算数,重跑时被同名覆盖。
  */
 
 import { copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises"
@@ -51,13 +69,26 @@ import { fileExists, readJsonFile } from "../fsx.ts"
 import type { TurnUsage } from "../turn.ts"
 import { parseMailboxJob, type MailboxJob } from "./spec.ts"
 
-/** 一件附件。`bytes` 由写入端记下,收件端可以据此核对自己拿到的是不是同一份。 */
+/**
+ * 一件附件。`bytes` 由写入端记下,收件端可以据此核对自己拿到的是不是同一份。
+ * 两个方向共用这副形状:下行是 `artifacts/`,上行是 `back/`。
+ */
 export interface RoundArtifact {
-  /** 文件名(不含目录),就是 `artifacts/` 下的那个名字。 */
+  /** 相对 `artifacts/` 或 `back/` 的路径。下行永远是纯文件名;上行允许带子目录。 */
   name: string
   bytes: number
-  /** 研发端仓库里的来源路径,给人看("这个 elf 是哪儿来的")。 */
+  /** 来源路径,给人看:下行是研发端仓库里的路径,上行是工位机投递目录里的路径。 */
   from?: string
+}
+
+/**
+ * 工位端想回传但没送成的东西。**必须让研发端看见** —— 静默丢弃会让它以为"工位端
+ * 什么都没给",于是照着一份不存在的证据继续推理。
+ */
+export interface BackSkipped {
+  name: string
+  bytes: number
+  reason: string
 }
 
 export interface RoundInstruction {
@@ -96,6 +127,15 @@ export interface RoundResultFile {
   turn?: RoundTurnSummary
   /** 本轮附件在工位机上被放到了哪儿(相对工作目录),由调试台落盘、不经模型。 */
   incoming?: string[]
+  /** 工位端这一轮回传的文件(内容在同轮的 `back/` 下),由调试台扫投递目录得到。 */
+  back?: RoundArtifact[]
+  /** 想回传但被上限挡下的。见 BackSkipped —— 它进提示词,不是只进日志。 */
+  backSkipped?: BackSkipped[]
+  /**
+   * 工位端说这一轮卡在一个**人工动作**上(原话)。它只是"报告有这么件事",挂不挂起
+   * 由研发端裁决 —— 板子边上的人也许正好在,或者还有不依赖这个动作的活可以先干。
+   */
+  needsHuman?: string
   /** 工位端跨轮累计的 token(含本轮)。只进终报的参考数字,没有任何门限依赖它。 */
   spentTokens: number
   /** 轮级失败(子进程没产出结果)。有它时 turn 缺失。 */
@@ -104,7 +144,14 @@ export interface RoundResultFile {
   elapsedMs: number
 }
 
-export type DecisionKind = "continue" | "done" | "fail"
+/**
+ * `await-human` 不是终局:它是"这一轮到此为止,等一个人去板子边上动手"。
+ *
+ * 为什么要有它:板子那侧的很多事(接电源、换负载、机械复位)不是任何 agent 能做的。
+ * 没有这个值时,研发端唯一能表达"我在等人"的方式是再下发一轮"请转达……",于是
+ * 一轮轮空转 —— 实测一次任务里 5 轮有 3 轮是这么烧掉的。挂起是零成本的,重复下发不是。
+ */
+export type DecisionKind = "continue" | "done" | "fail" | "await-human"
 
 export interface RoundDecision {
   round: number
@@ -119,6 +166,8 @@ export interface RoundDecision {
   /** 研发端的分析自述(policy 裁决时缺省)。 */
   analysis?: string
   reason?: string
+  /** `await-human` 时必填:要人去做的那件事,一句人话。它会原样进通知和界面。 */
+  ask?: string
   usage?: TurnUsage
   motherSessionID?: string
   /** 研发端为下一轮做的代码改动(它自己提交的)。 */
@@ -136,11 +185,29 @@ export interface MailboxVerdict {
   at: string
 }
 
+/**
+ * 人对一次 `await-human` 的回执。**两台机器都能写** —— 要动手的人多半就站在板子边上,
+ * 逼他跑回研发机去点一下毫无道理;信箱是共享的,谁写谁推。
+ *
+ * `answer: "cannot"` 同样是回执:做不了也是信息,研发端据此换一条不依赖它的路,
+ * 总好过继续挂着。
+ */
+export interface HumanAck {
+  answer: "done" | "cannot"
+  /** 人补的一句话("电源已设 24V" / "这台没有程控电源")。它会进研发端下一轮的提示词。 */
+  note?: string
+  /** 谁回的,自愿填(桌面端填机器名/用户名,CLI 填 --by)。 */
+  by?: string
+  at: string
+}
+
 export interface RoundFiles {
   round: number
   instruction?: RoundInstruction
   result?: RoundResultFile
   decision?: RoundDecision
+  /** 本轮的人工回执(只在 decision 是 await-human 时有意义)。 */
+  humanAck?: HumanAck
 }
 
 export type MailboxState =
@@ -149,6 +216,11 @@ export type MailboxState =
   | { kind: "kickoff" }
   | { kind: "awaiting-runner"; round: number; instruction: RoundInstruction }
   | { kind: "awaiting-mother"; round: number; instruction: RoundInstruction; result: RoundResultFile }
+  /**
+   * 研发端判了 `await-human`,回执还没来。两侧守护看到它都停手 —— 挂起不烧 token,
+   * 而"再问一遍"烧。回执一到,状态自己变回 awaiting-mother(见 scanMailbox)。
+   */
+  | { kind: "awaiting-human"; round: number; ask: string; decision: RoundDecision }
   | { kind: "empty" }
   | { kind: "corrupt"; detail: string }
 
@@ -193,6 +265,36 @@ export function roundArtifactsDir(root: string, round: number): string {
   return path.join(roundDir(root, round), "artifacts")
 }
 
+/** 上行的落点。与 `artifacts/` 同级、名字对仗 —— 一眼能看出这一轮两个方向各走了什么。 */
+export function roundBackDir(root: string, round: number): string {
+  return path.join(roundDir(root, round), "back")
+}
+
+/**
+ * 工位端本轮自述的**全文**。
+ *
+ * 提示词里只进节选(见 prompts.ts 的 clipEnds):自述会随会话一轮轮累积,把整篇塞进
+ * 上下文等于让第 8 轮还背着前 7 轮的原始日志。全文落成文件、提示词里给路径,研发端
+ * 要看细节自己读一次 —— 一次性成本,不进会话历史。
+ */
+export const ROUND_REPORT_FILE = "bench-report.md"
+
+export function roundReportPath(root: string, round: number): string {
+  return path.join(roundDir(root, round), ROUND_REPORT_FILE)
+}
+
+export async function writeRoundReport(root: string, round: number, text: string): Promise<void> {
+  await mkdir(roundDir(root, round), { recursive: true })
+  await writeFile(roundReportPath(root, round), text.endsWith("\n") ? text : `${text}\n`)
+}
+
+/** 本轮的人工回执。谁写都行(桌面端按钮 / CLI),写完照常提交推送。 */
+export const HUMAN_ACK_FILE = "human-ack.json"
+
+export async function writeHumanAck(root: string, round: number, ack: HumanAck): Promise<void> {
+  await writeJson(path.join(roundDir(root, round), HUMAN_ACK_FILE), ack)
+}
+
 /**
  * 把研发端的产物拷进本轮的 `artifacts/`。
  *
@@ -232,6 +334,55 @@ export async function attachArtifacts(
     artifacts.push({ name: entry.name, bytes, from: entry.from })
   }
   return { ok: true, artifacts }
+}
+
+/**
+ * 把工位端投递目录里的东西收进本轮的 `back/`。
+ *
+ * 与 attachArtifacts 有三处不同,都是方向决定的:
+ *
+ * 1. **超限是跳过,不是错误。** 下行超限该把研发端拦住(它有别的办法把东西送过去);
+ *    上行拦住就等于连整轮结果一起毙掉 —— 板子上跑出来的现象比那个大文件贵得多。
+ *    跳过的进 `backSkipped`,让研发端看得见"它想给我但没给成"。
+ * 2. **允许子目录。** 工位端的采集脚本自然会写出 `capture/ch2.csv` 这种形状,
+ *    逼它拍平只会换来一堆重名。
+ * 3. **没有"声明"这一步。** 扫目录是确定性动作,不经模型(见文件头)。
+ */
+export async function collectBack(
+  root: string,
+  round: number,
+  entries: { source: string; name: string }[],
+  maxBytes: number,
+): Promise<{ back: RoundArtifact[]; skipped: BackSkipped[] }> {
+  const dir = roundBackDir(root, round)
+  const back: RoundArtifact[] = []
+  const skipped: BackSkipped[] = []
+  let total = 0
+  for (const entry of entries) {
+    const bytes = await stat(entry.source)
+      .then((info) => info.size)
+      .catch(() => undefined)
+    if (bytes === undefined) {
+      skipped.push({ name: entry.name, bytes: 0, reason: "读不到这个文件(被删了?还在写?)" })
+      continue
+    }
+    if (total + bytes > maxBytes) {
+      skipped.push({
+        name: entry.name,
+        bytes,
+        reason:
+          `本轮回传合计会超过上限 ${(maxBytes / 1024 / 1024).toFixed(0)}MB —— ` +
+          `信箱是个 git 仓,进去的大文件永远瘦不回来。先抽样/压缩再回传`,
+      })
+      continue
+    }
+    total += bytes
+    const target = path.join(dir, entry.name)
+    await mkdir(path.dirname(target), { recursive: true })
+    await copyFile(entry.source, target)
+    back.push({ name: entry.name, bytes, from: entry.name })
+  }
+  return { back, skipped }
 }
 
 /** 一轮的输入是一整包:指令 + 补丁 + 附件。instruction.json 最后写。 */
@@ -295,13 +446,14 @@ async function listRoundNumbers(root: string): Promise<number[]> {
 
 export async function readRound(root: string, round: number): Promise<RoundFiles> {
   const dir = roundDir(root, round)
-  // 三个读互不依赖,一批发出去 —— 三个文件都不在(kickoff 之前)时尤其明显。
-  const [instruction, result, decision] = await Promise.all([
+  // 四个读互不依赖,一批发出去 —— 文件都不在(kickoff 之前)时尤其明显。
+  const [instruction, result, decision, humanAck] = await Promise.all([
     readJson<RoundInstruction>(path.join(dir, "instruction.json")),
     readJson<RoundResultFile>(path.join(dir, "result.json")),
     readJson<RoundDecision>(path.join(dir, "decision.json")),
+    readJson<HumanAck>(path.join(dir, HUMAN_ACK_FILE)),
   ])
-  return { round, instruction, result, decision }
+  return { round, instruction, result, decision, humanAck }
 }
 
 /**
@@ -331,6 +483,21 @@ export async function scanMailbox(root: string): Promise<MailboxSnapshot> {
     const last = rounds[rounds.length - 1]!
     if (!last.instruction) {
       return { job, state: { kind: "corrupt", detail: `轮 ${last.round} 有目录但没有 instruction.json` }, rounds }
+    }
+    // 挂起先于"等研发端裁决":这一轮它已经裁过了(结论是"等人"),回执没来之前
+    // 再叫它一次只会得到同一句话。回执一到,这个 if 不成立,状态自动落回下面那格,
+    // 研发端拿着回执重新裁决同一轮 —— 挂起因此不需要任何额外的唤醒机制。
+    if (last.decision?.decision === "await-human" && !last.humanAck) {
+      return {
+        job,
+        state: {
+          kind: "awaiting-human",
+          round: last.round,
+          ask: last.decision.ask ?? last.decision.reason ?? "(研发端没写清要人做什么)",
+          decision: last.decision,
+        },
+        rounds,
+      }
     }
     if (last.result) {
       return { job, state: { kind: "awaiting-mother", round: last.round, instruction: last.instruction, result: last.result }, rounds }

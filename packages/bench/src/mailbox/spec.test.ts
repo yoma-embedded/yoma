@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
 import { JobSpecError } from "../job.ts"
-import { parseMailboxJob, DEFAULT_MAX_ARTIFACT_BYTES, DEFAULT_POLL_SECONDS } from "./spec.ts"
+import { parseMailboxJob, DEFAULT_MAX_ARTIFACT_BYTES, DEFAULT_MAX_BACK_BYTES, DEFAULT_POLL_SECONDS } from "./spec.ts"
 import { rawMailboxJob } from "./testkit.ts"
 
 describe("mailbox spec", () => {
@@ -11,6 +11,8 @@ describe("mailbox spec", () => {
     const parsed = parseMailboxJob(raw)
     expect(parsed.mailbox.pollSeconds).toBe(DEFAULT_POLL_SECONDS)
     expect(parsed.mailbox.maxArtifactBytes).toBe(DEFAULT_MAX_ARTIFACT_BYTES)
+    // 上行有自己的额度:同一个信箱仓,方向反过来但物理性质一样。
+    expect(parsed.mailbox.maxBackBytes).toBe(DEFAULT_MAX_BACK_BYTES)
   })
 
   test("信箱里的任务书不带绝对路径 —— 工程目录是本机事实", () => {
@@ -40,6 +42,7 @@ describe("mailbox spec", () => {
   test("非法值指名道姓", () => {
     expect(() => parseMailboxJob(rawMailboxJob({ mailbox: { pollSeconds: 0 } }))).toThrow(JobSpecError)
     expect(() => parseMailboxJob(rawMailboxJob({ mailbox: { maxArtifactBytes: 0 } }))).toThrow(/maxArtifactBytes/)
+    expect(() => parseMailboxJob(rawMailboxJob({ mailbox: { maxBackBytes: 0 } }))).toThrow(/maxBackBytes/)
     // 档位错字要报出**是哪一段**的 model —— job.model 和 mailbox.mother.model 长得一样。
     expect(() => parseMailboxJob(rawMailboxJob({ mailbox: { mother: { model: { thinking: "hi" } } } }))).toThrow(
       /mailbox\.mother\.model\.thinking/,

@@ -17,6 +17,7 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process"
 import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { readFile, writeFile } from "node:fs/promises"
+import { userInfo } from "node:os"
 import { dirname, join } from "node:path"
 
 import type { MailboxHostConfig } from "@yoma-desktop/bench"
@@ -46,6 +47,8 @@ export interface MailboxMainOptions {
   bundleDir: string
   broadcast(event: MailboxPublicEvent): void
   persistence: { get(): MailboxSettings | undefined; set(settings: MailboxSettings): void }
+  /** 系统通知(闭环挂起等人时喊一声)。接线层给,测试不给 —— 这里不 import electron。 */
+  notify?(payload: { title: string; body: string }): void
   log?(line: string): void
 }
 
@@ -59,6 +62,14 @@ export interface MailboxMain {
   stopAll(graceMs?: number): Promise<void>
   /** 配置页的连通自检:git ls-remote,报错原样给人看。凭据走系统 git,这里不代管。 */
   probe(remote: string): Promise<{ ok: boolean; message: string }>
+  /**
+   * 人对一次 `await-human` 的回执:写 `rounds/NNN/human-ack.json` 并推上去。
+   *
+   * **自己一个克隆**(角色名 `human`),绝不碰守护那两个:守护每步都
+   * `reset --hard + clean -fd`,往它的克隆里写一个还没提交的文件会被原地清掉,
+   * 两个进程同时动一个 `.git` 还要抢 index.lock。
+   */
+  ackHuman(input: MailboxAckInput): Promise<{ ok: boolean; message: string }>
   /**
    * 任务页:项目模板 + 描述 + 预算档 → 生成任务书文件。硬件事实与安全约束永远来自模板。
    *
@@ -100,6 +111,7 @@ export function createMailboxMain(options: MailboxMainOptions): MailboxMain {
     persistence: options.persistence,
     broadcast: options.broadcast,
     projectDir: resolveProjectDir,
+    notify: options.notify,
 
     launch(config, io) {
       mkdirSync(mailboxDir, { recursive: true })
@@ -173,6 +185,14 @@ export function createMailboxMain(options: MailboxMainOptions): MailboxMain {
   return {
     controller,
     probe: probeRemote,
+    async ackHuman(input) {
+      const settings = options.persistence.get()
+      if (!settings) return { ok: false, message: "还没配信箱(远端/角色)" }
+      const branch = settings.branch?.trim() || "main"
+      // 角色名 human:与两个守护的克隆各占各的目录,谁也别去 reset 谁的工作树。
+      const clone = cloneDirFor(mailboxDir, settings.remote, "human", settings.branch)
+      return ackHumanIn(clone, settings.remote, branch, input)
+    },
     async composeJob(input) {
       const composed = await composeJob(input, mailboxDir)
       // 记下推导出的工程根:这台机器还没配"工程目录"时,守护就用它。
@@ -202,6 +222,96 @@ function killHandle(children: Map<MailboxLaunchHandle, ChildProcess>, handle: Ma
   if (process.platform === "win32") spawn("taskkill", ["/pid", String(child.pid), "/f", "/t"], { stdio: "ignore" })
   else child.kill("SIGKILL")
   children.delete(handle)
+}
+
+export interface MailboxAckInput {
+  round: number
+  answer: "done" | "cannot"
+  note?: string
+}
+
+/** 跑一条 git,拿到退出码与两股输出。凭据缺失要立刻失败,别在后台等一个不存在的终端。 */
+function git(args: string[], cwd: string): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    const child = spawn("git", args, {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "true" },
+    })
+    let stdout = ""
+    let stderr = ""
+    child.stdout!.on("data", (chunk: Buffer) => (stdout += chunk.toString()))
+    child.stderr!.on("data", (chunk: Buffer) => (stderr += chunk.toString()))
+    child.on("error", (error) => resolve({ ok: false, stdout, stderr: error.message }))
+    child.on("close", (code) => resolve({ ok: code === 0, stdout, stderr }))
+  })
+}
+
+/**
+ * 写回执并推上去。
+ *
+ * 这条路径**不经守护**:它是"人"这个第三方写者。协议上安全的前提是路径不相交 ——
+ * `human-ack.json` 只有这里写,守护只读它(见 bench 的 store.ts:scanMailbox)。
+ */
+async function ackHumanIn(
+  clone: string,
+  remote: string,
+  branch: string,
+  input: MailboxAckInput,
+): Promise<{ ok: boolean; message: string }> {
+  if (!remote.trim()) return { ok: false, message: "还没配信箱远端" }
+  if (!(input.round > 0)) return { ok: false, message: `轮次不对:${input.round}` }
+
+  if (!existsSync(join(clone, ".git"))) {
+    mkdirSync(dirname(clone), { recursive: true })
+    const cloned = await git(["clone", "-q", "--branch", branch, remote, clone], dirname(clone))
+    if (!cloned.ok) return { ok: false, message: `克隆信箱失败:${cloned.stderr.trim()}` }
+  }
+  const fetched = await git(["fetch", "-q", "origin", branch], clone)
+  if (!fetched.ok) return { ok: false, message: `拉信箱失败:${fetched.stderr.trim()}` }
+  // 先对齐远端再写:这个克隆平时没人管,可能停在很旧的位置。
+  await git(["reset", "--hard", `origin/${branch}`], clone)
+  await git(["clean", "-fd"], clone)
+
+  const roundDir = join(clone, "rounds", String(input.round).padStart(3, "0"))
+  if (!existsSync(roundDir)) return { ok: false, message: `信箱里没有第 ${input.round} 轮 —— 先看一眼进度页` }
+  const ack = {
+    answer: input.answer,
+    note: input.note?.trim() || undefined,
+    by: userInfo().username,
+    at: new Date().toISOString(),
+  }
+  writeFileSync(join(roundDir, "human-ack.json"), `${JSON.stringify(ack, null, 2)}\n`)
+
+  const added = await git(["add", "-A"], clone)
+  if (!added.ok) return { ok: false, message: `git add 失败:${added.stderr.trim()}` }
+  const committed = await git(
+    [
+      "-c",
+      "user.name=yoma-mailbox-human",
+      "-c",
+      "user.email=bench@yoma.local",
+      "commit",
+      "-q",
+      "-m",
+      `round ${input.round}: 人工回执(${input.answer})`,
+    ],
+    clone,
+  )
+  if (!committed.ok) return { ok: false, message: `提交回执失败:${committed.stderr.trim()}` }
+
+  let pushed = await git(["push", "-q", "origin", `HEAD:${branch}`], clone)
+  if (!pushed.ok) {
+    // 守护刚推过别的路径就会撞上这一下。路径不相交,rebase 一次必定干净。
+    const rebased = await git(["pull", "--rebase", "-q", "origin", branch], clone)
+    if (!rebased.ok) return { ok: false, message: `回执推不上去:${rebased.stderr.trim()}` }
+    pushed = await git(["push", "-q", "origin", `HEAD:${branch}`], clone)
+  }
+  if (!pushed.ok) return { ok: false, message: `回执推不上去:${pushed.stderr.trim()}` }
+  return {
+    ok: true,
+    message: input.answer === "done" ? "回执已推送 —— 研发端下一次轮询就接着走" : "已告诉研发端这件事做不了",
+  }
 }
 
 /**

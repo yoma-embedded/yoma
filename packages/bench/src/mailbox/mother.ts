@@ -30,7 +30,7 @@
  * 守护进程的轮询循环里没有"这次不算"—— 每次重试都是真实的模型花费,烧钱等不来正确性。
  */
 
-import { mkdir, writeFile } from "node:fs/promises"
+import { copyFile, mkdir, readdir, stat, writeFile } from "node:fs/promises"
 import path from "node:path"
 
 import { fileExists, readJsonFile } from "../fsx.ts"
@@ -50,6 +50,9 @@ import {
 import {
   attachArtifacts,
   readRound,
+  roundBackDir,
+  roundReportPath,
+  ROUND_REPORT_FILE,
   scanMailbox,
   sumMotherTokens,
   syncToolchainManifest,
@@ -94,6 +97,8 @@ export type MotherStepOutcome =
   | { kind: "idle"; detail: string }
   | { kind: "decided"; round: number; decision: DecisionKind }
   | { kind: "done"; verdict: MailboxVerdict }
+  /** 挂起等人。宿主拿它去发通知、去把请求显示出来 —— 这条路上没有别的唤醒机制。 */
+  | { kind: "awaiting-human"; round: number; ask: string }
   | { kind: "blocked"; detail: string }
 
 export interface MotherDecisionPayload {
@@ -101,6 +106,8 @@ export interface MotherDecisionPayload {
   analysis?: string
   instruction?: string
   reason?: string
+  /** `await-human` 时必填:要人去做什么。 */
+  ask?: string
   /** 要穿过信箱交给工位端的文件,相对工程根。 */
   artifacts?: string[]
 }
@@ -161,6 +168,14 @@ async function saveLocalState(clone: string, state: MotherLocalState): Promise<v
  */
 export function parseMotherDecision(
   text: string,
+  context?: {
+    /**
+     * 开局轮不接受 `await-human`:那一刻信箱里连一轮都没有,挂起就等于把决定写进
+     * `rounds/000/`——一个没有 instruction 的轮次,下一次扫描直接判 corrupt。
+     * 开局要人先动手是完全正常的诉求,写进第一轮指令让工位端去转达即可。
+     */
+    allowAwaitHuman?: boolean
+  },
 ): { ok: true; payload: MotherDecisionPayload } | { ok: false; error: string } {
   const fences = [...text.matchAll(/```(?:json)?\s*\n([\s\S]*?)```/g)]
   if (!fences.length) return { ok: false, error: "回复里没有 ```json 围栏" }
@@ -176,8 +191,16 @@ export function parseMotherDecision(
   }
   const record = parsed as Record<string, unknown>
   const decision = record.decision
-  if (decision !== "continue" && decision !== "done" && decision !== "fail") {
-    return { ok: false, error: `decision "${String(decision)}" 不认识,可选:continue / done / fail` }
+  if (decision !== "continue" && decision !== "done" && decision !== "fail" && decision !== "await-human") {
+    return { ok: false, error: `decision "${String(decision)}" 不认识,可选:continue / done / fail / await-human` }
+  }
+  if (decision === "await-human" && context?.allowAwaitHuman === false) {
+    return {
+      ok: false,
+      error:
+        "开局轮不能 await-human —— 信箱里还没有任何一轮,挂起没有地方落。" +
+        "要人先动手就把这件事写进第一轮指令,让工位端去转达",
+    }
   }
   const str = (key: string): string | undefined =>
     typeof record[key] === "string" && (record[key] as string).trim() !== ""
@@ -185,11 +208,15 @@ export function parseMotherDecision(
       : undefined
   const instruction = str("instruction")
   const reason = str("reason")
+  const ask = str("ask")
   if (decision === "continue" && !instruction) {
     return { ok: false, error: "decision 为 continue 时 instruction 必填,而且要具体到下一轮做什么" }
   }
-  if (decision !== "continue" && !reason) {
-    return { ok: false, error: `decision 为 ${decision} 时 reason 必填` }
+  if (decision === "await-human" && !ask) {
+    return { ok: false, error: "decision 为 await-human 时 ask 必填:要人做什么、做到什么程度,一句人话" }
+  }
+  if (decision === "done" || decision === "fail") {
+    if (!reason) return { ok: false, error: `decision 为 ${decision} 时 reason 必填` }
   }
 
   const artifactsRaw = record.artifacts
@@ -204,7 +231,7 @@ export function parseMotherDecision(
     if (!artifacts.length) artifacts = undefined
   }
 
-  return { ok: true, payload: { decision, analysis: str("analysis"), instruction, reason, artifacts } }
+  return { ok: true, payload: { decision, analysis: str("analysis"), instruction, reason, ask, artifacts } }
 }
 
 /**
@@ -233,6 +260,72 @@ export function resolveMotherModel(mailboxJob: MailboxJob): JobModel | undefined
 function motherTurnJob(mailboxJob: MailboxJob, workspace: string): Job {
   const job = mailboxJob.job
   return { ...job, repo: { ...job.repo, directory: workspace }, model: resolveMotherModel(mailboxJob) }
+}
+
+/**
+ * 回传件在研发机上的落点(相对工程根)。进 `.my-pi/` 是因为那儿本来就是"yoma 在这个
+ * 工程里的运行产物"的地盘,而且已经被 ensureYomaDir 的忽略规则罩住 —— 采集数据不该
+ * 跟着代码提交进工程仓,它在信箱仓里已经留了底。
+ */
+const BACK_DIR_RELATIVE = ".my-pi/back"
+
+/**
+ * 目录下的全部文件,相对路径(posix 分隔)。自己走而不用 readdir 的 recursive:
+ * 回传件允许带子目录,而"递归 + withFileTypes"的可用性跟运行时版本有关,
+ * 一旦不支持就是**静默少收几件** —— 这种失败方向不能要。
+ */
+async function listFilesUnder(root: string, relative = ""): Promise<string[]> {
+  const entries = await readdir(path.join(root, relative), { withFileTypes: true }).catch(() => [])
+  const found: string[] = []
+  for (const entry of entries) {
+    const next = relative ? `${relative}/${entry.name}` : entry.name
+    if (entry.isDirectory()) found.push(...(await listFilesUnder(root, next)))
+    else if (entry.isFile()) found.push(next)
+  }
+  return found.sort()
+}
+
+/**
+ * 把本轮回传件从信箱拷进工程目录,顺带把工位端自述全文也放过去。
+ *
+ * 与工位端的 stageIncoming 是同一件事、反方向:**落点由代码决定,不经模型**。
+ * 给研发端 agent 的是可以直接打开的相对路径 —— 它手上有完整工具链,原始数据要能被
+ * 真的读/画/算,只报个文件名等于还是让它信一段文字复述。
+ */
+async function stageBack(
+  clone: string,
+  round: number,
+  workspace: string,
+): Promise<{ files?: { name: string; bytes: number; localPath: string }[]; reportPath?: string }> {
+  const bucket = String(round).padStart(3, "0")
+  const targetDir = path.join(workspace, ".my-pi", "back", bucket)
+  const relative = (name: string) => `${BACK_DIR_RELATIVE}/${bucket}/${name}`
+
+  const copyInto = async (source: string, name: string): Promise<void> => {
+    const target = path.join(targetDir, name)
+    await mkdir(path.dirname(target), { recursive: true })
+    await copyFile(source, target)
+  }
+
+  const files: { name: string; bytes: number; localPath: string }[] = []
+  const backDir = roundBackDir(clone, round)
+  for (const name of await listFilesUnder(backDir)) {
+    const source = path.join(backDir, name)
+    await copyInto(source, name)
+    const bytes = await stat(source)
+      .then((info) => info.size)
+      .catch(() => 0)
+    files.push({ name, bytes, localPath: relative(name) })
+  }
+
+  let reportPath: string | undefined
+  const report = roundReportPath(clone, round)
+  if (await fileExists(report)) {
+    await copyInto(report, ROUND_REPORT_FILE)
+    reportPath = relative(ROUND_REPORT_FILE)
+  }
+
+  return { files: files.length ? files.sort((a, b) => a.name.localeCompare(b.name)) : undefined, reportPath }
 }
 
 /** 把 agent 声明的相对路径变成可拷贝的附件条目;边界与重名在这里挡掉。 */
@@ -290,6 +383,11 @@ export async function motherStep(options: MailboxMotherOptions): Promise<MotherS
   if (snapshot.state.kind === "awaiting-runner") {
     return { kind: "idle", detail: `第 ${snapshot.state.round} 轮指令已下发,等工位端执行` }
   }
+  // 挂起期间不跑轮:再叫它一次只会得到同一句"还在等人"。回执一到,scanMailbox 自己
+  // 把状态落回 awaiting-mother,下一次轮询就接着走 —— 这就是全部的唤醒机制。
+  if (snapshot.state.kind === "awaiting-human") {
+    return { kind: "awaiting-human", round: snapshot.state.round, ask: snapshot.state.ask }
+  }
 
   const outcome =
     snapshot.state.kind === "kickoff"
@@ -335,6 +433,7 @@ function motherDecision(
     decision: payload.decision,
     analysis: payload.analysis,
     reason: payload.reason,
+    ask: payload.ask,
     usage: analysed.usage,
     motherSessionID: analysed.sessionID,
     at,
@@ -381,6 +480,8 @@ async function kickoff(
   }
 
   const payload = analysed.payload
+  // 开局轮的 `!== continue` 只可能是 done/fail —— await-human 已经在解析处被挡掉
+  // (它在这里会被当成 fail 收尾,而那是编译器看不出来的错)。
   if (payload.decision !== "continue") {
     const reason = payload.reason!
     const decision = motherDecision(0, payload, analysed, new Date(now()).toISOString())
@@ -423,12 +524,22 @@ async function decide(
   const prepared = await prepareProjectBranch(options, mailboxJob, workspace)
   if (!prepared.ok) return { kind: "blocked", detail: prepared.error }
 
+  // 回传件先落到研发机上,再把落点写进提示词 —— 落点是事实,不该靠谁复述(与下行的
+  // incoming 同一条纪律)。落盘失败不阻断这一轮:少了原始数据它照样能读自述做判断。
+  const staged = await stageBack(options.clone, round, workspace).catch((error) => {
+    progress(`⚠ 回传件落盘失败(本轮只能看自述):${(error as Error).message}`)
+    return undefined
+  })
+  if (staged?.files?.length) progress(`工位端回传 ${staged.files.length} 件,已落到 ${BACK_DIR_RELATIVE}/`)
+
   const analysed = await analyse(options, mailboxJob, workspace, {
     mailboxJob,
     round,
     instruction,
     result,
     rounds: allRounds,
+    staged,
+    humanAck: allRounds.find((entry) => entry.round === round)?.humanAck,
   })
   if (!analysed.ok) {
     const reason = `研发端未能给出合法决定:${analysed.error}`
@@ -438,7 +549,25 @@ async function decide(
 
   const payload = analysed.payload
   const decision = motherDecision(round, payload, analysed, new Date(now()).toISOString())
+  // 挂起那一次分析也是真花的钱。重裁会覆盖同一个 decision.json,不结转的话那笔账
+  // 在终报里凭空消失(sumMotherTokens 是按轮读 decision.usage 的)。
+  const parked = allRounds.find((entry) => entry.round === round)?.decision
+  if (parked?.decision === "await-human" && parked.usage) {
+    decision.usage = addUsage(decision.usage ?? zeroUsage(), parked.usage)
+  }
   progress(`研发端裁决:${payload.decision}${payload.analysis ? ` —— ${payload.analysis.slice(0, 100)}` : ""}`)
+
+  // 挂起不是终局,必须挡在下面那条 `!== "continue"` 的二分之前 —— 落进去会被
+  // 当成 fail 收尾(编译绿、测试绿、行为错)。这一轮到此为止:不下发新指令,
+  // 等人写回执。研发端这一轮里改过的代码留在工作树上,下一次 issueInstruction 一起提交。
+  if (payload.decision === "await-human") {
+    const ask = payload.ask!
+    await writeDecision(options.clone, decision)
+    const pushed = await commitPush(sync, `round ${round}: await-human —— ${ask.slice(0, 60)}`)
+    if (!pushed.pushed) return { kind: "blocked", detail: pushed.detail ?? "挂起裁决推不上去" }
+    progress(`挂起等人:${ask.split("\n")[0]}`)
+    return { kind: "awaiting-human", round, ask }
+  }
 
   if (payload.decision !== "continue") {
     return terminal(decision, payload.decision === "done" ? "passed" : "failed", payload.reason!)
@@ -666,7 +795,9 @@ async function analyse(
   sessionID = turn.sessionID
   await book(turn.usage)
 
-  let parsed = parseMotherDecision(turn.text)
+  // input 为空 = 开局轮,那一刻挂起没有地方落(见 parseMotherDecision 的 allowAwaitHuman)。
+  const parseContext = { allowAwaitHuman: input !== undefined }
+  let parsed = parseMotherDecision(turn.text, parseContext)
   if (!parsed.ok) {
     if (turn.stopReason) {
       return { ok: false, error: `研发端轮被中断(${turn.stopReason}),没有产出决定`, usage, sessionID }
@@ -679,7 +810,7 @@ async function analyse(
       return { ok: false, error: `${parsed.error};重试轮执行失败:${(error as Error).message}`, usage, sessionID }
     }
     await book(retry.usage)
-    parsed = parseMotherDecision(retry.text)
+    parsed = parseMotherDecision(retry.text, parseContext)
     if (!parsed.ok) return { ok: false, error: `重试后仍然:${parsed.error}`, usage, sessionID }
   }
   return { ok: true, payload: parsed.payload, usage, sessionID }

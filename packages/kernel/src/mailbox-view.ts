@@ -72,19 +72,32 @@ export interface MailboxRoundGitView {
   commits: string[]
 }
 
+/** 工位端想回传但被上限挡下的东西。它进界面 —— 静默丢弃会让人以为"工位端没给"。 */
+export interface MailboxBackSkippedView {
+  name: string
+  bytes: number
+  reason: string
+}
+
 export interface MailboxRoundResultView {
   round: number
   sessionID?: string
   turn?: MailboxTurnSummaryView
   /** 本轮附件在工位机上的落点(相对它那个一次性工作目录)。 */
   incoming?: string[]
+  /** 工位端这一轮回传的文件,内容在 `rounds/NNN/back/` 下。 */
+  back?: MailboxArtifactView[]
+  backSkipped?: MailboxBackSkippedView[]
+  /** 工位端说这一轮卡在一个人工动作上(原话)。 */
+  needsHuman?: string
   spentTokens: number
   error?: string
   at: string
   elapsedMs: number
 }
 
-export type MailboxDecisionKindView = "continue" | "done" | "fail"
+/** `await-human` 不是终局:这一轮到此为止,等一个人去板子边上动手。 */
+export type MailboxDecisionKindView = "continue" | "done" | "fail" | "await-human"
 
 export interface MailboxDecisionView {
   round: number
@@ -92,6 +105,8 @@ export interface MailboxDecisionView {
   decision: MailboxDecisionKindView
   analysis?: string
   reason?: string
+  /** `await-human` 时:要人做的那件事,一句人话。 */
+  ask?: string
   usage?: MailboxUsageView
   motherSessionID?: string
   /** 研发端为下一轮做的代码改动(它自己提交的)。 */
@@ -109,11 +124,20 @@ export interface MailboxVerdictView {
   at: string
 }
 
+/** 人对一次 await-human 的回执。两侧机器都写得了 —— 要动手的人多半就站在板子边上。 */
+export interface MailboxHumanAckView {
+  answer: "done" | "cannot"
+  note?: string
+  by?: string
+  at: string
+}
+
 export interface MailboxRoundView {
   round: number
   instruction?: MailboxInstructionView
   result?: MailboxRoundResultView
   decision?: MailboxDecisionView
+  humanAck?: MailboxHumanAckView
 }
 
 export type MailboxUiStateView =
@@ -123,6 +147,8 @@ export type MailboxUiStateView =
   | { kind: "kickoff" }
   | { kind: "awaiting-runner"; round: number }
   | { kind: "awaiting-mother"; round: number }
+  /** 挂起等人。`ask` 随状态走,界面拿它弹通知、显示原文。 */
+  | { kind: "awaiting-human"; round: number; ask: string }
   | { kind: "done"; verdict: MailboxVerdictView }
 
 export interface MailboxSnapshotView {

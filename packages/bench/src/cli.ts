@@ -6,7 +6,7 @@
  * 环境,工位端有板子(而且**只有**板子 —— 它没有项目检出,拿到的东西全是附件)。
  */
 
-import { homedir } from "node:os"
+import { homedir, userInfo } from "node:os"
 import path from "node:path"
 
 import { kernelSelfCheck } from "@yoma-desktop/kernel/host"
@@ -19,8 +19,8 @@ import { cloneDirFor, defaultMailboxRoot } from "./mailbox/paths.ts"
 import { runMailboxRunner } from "./mailbox/runner.ts"
 import { runSim } from "./mailbox/sim.ts"
 import { DEFAULT_POLL_SECONDS, loadMailboxJob } from "./mailbox/spec.ts"
-import { scanMailbox } from "./mailbox/store.ts"
-import { ensureClone, pullReset } from "./mailbox/sync.ts"
+import { scanMailbox, writeHumanAck } from "./mailbox/store.ts"
+import { commitPush, ensureClone, pullReset } from "./mailbox/sync.ts"
 
 const RESET = "[0m"
 const DIM = "[2m"
@@ -91,10 +91,16 @@ interface MailboxFlags {
   project?: string
   /** 工位端一次性工作目录的根。缺省是信箱克隆的兄弟目录。 */
   workRoot?: string
+  /** ack:人补的一句话,会进研发端下一轮的提示词。 */
+  note?: string
+  /** ack:谁回的。缺省取本机用户名 —— 挂起的回执要能追溯到人。 */
+  by?: string
+  /** ack:这件事做不了(同样是回执 —— 研发端据此换路,总好过继续挂着)。 */
+  cannot: boolean
 }
 
 function parseMailboxArgs(args: string[]): { positionals: string[]; flags: MailboxFlags } {
-  const flags: MailboxFlags = { once: false, fresh: false }
+  const flags: MailboxFlags = { once: false, fresh: false, cannot: false }
   const positionals: string[] = []
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!
@@ -111,8 +117,11 @@ function parseMailboxArgs(args: string[]): { positionals: string[]; flags: Mailb
     else if (arg === "--project") flags.project = value()
     else if (arg === "--work-root") flags.workRoot = value()
     else if (arg === "--timeout-min") flags.timeoutMin = Number(value())
+    else if (arg === "--note") flags.note = value()
+    else if (arg === "--by") flags.by = value()
     else if (arg === "--once") flags.once = true
     else if (arg === "--fresh") flags.fresh = true
+    else if (arg === "--cannot") flags.cannot = true
     else if (arg.startsWith("--")) fail(`不认识的旗标 ${arg}`)
     else positionals.push(arg)
   }
@@ -215,9 +224,43 @@ async function commandMailbox(sub: string, rest: string[]): Promise<void> {
     if (state.kind === "done") say(`${GREEN}${BOLD}终局 ${state.verdict.outcome}${RESET} —— ${state.verdict.reason}`)
     else if (state.kind === "awaiting-runner") say(`${YELLOW}等工位机执行第 ${state.round} 轮${RESET}`)
     else if (state.kind === "awaiting-mother") say(`${YELLOW}等研发端处理第 ${state.round} 轮${RESET}`)
-    else if (state.kind === "empty") say(`${DIM}信箱是空的(等 init)${RESET}`)
+    else if (state.kind === "awaiting-human") {
+      say(`${YELLOW}${BOLD}第 ${state.round} 轮挂起,等人动手:${RESET}`)
+      say(`  ${state.ask}`)
+      say(`${DIM}  做完了:yoma-bench mailbox ack ${target ?? "[信箱克隆]"} --note "..."${RESET}`)
+      say(`${DIM}  做不了:同一条命令加 --cannot${RESET}`)
+    } else if (state.kind === "empty") say(`${DIM}信箱是空的(等 init)${RESET}`)
     else if (state.kind === "kickoff") say(`${YELLOW}等研发端下发第一轮${RESET}`)
     else say(`${RED}信箱损坏:${state.detail}${RESET}`)
+    return
+  }
+
+  if (sub === "ack") {
+    // 人的回执。**自己一个克隆**,理由与 status 同一条:守护每步都 pullReset
+    // (`reset --hard + clean -fd`),往它的克隆里写一个还没提交的 human-ack.json
+    // 会被原地清掉,两个进程同时动一个 .git 还要抢 index.lock。
+    const clone = await resolveClone("ack", target, flags)
+    const held = await activeRoleLocks(clone)
+    if (held.length > 0) fail(`这个克隆正被守护占着(${held.join("、")})—— 换一个目录,或者不传路径让它落在规范位置`)
+
+    const author = { name: "yoma-mailbox-human", email: "bench@yoma.local" }
+    const sync = { clone, branch: flags.branch, author }
+    await pullReset(sync)
+    const snapshot = await scanMailbox(clone)
+    if (snapshot.state.kind !== "awaiting-human") {
+      fail(`这个信箱现在不在等人(状态:${snapshot.state.kind})—— 没有要回执的事`)
+    }
+    const round = snapshot.state.kind === "awaiting-human" ? snapshot.state.round : 0
+    const answer = flags.cannot ? "cannot" : "done"
+    await writeHumanAck(clone, round, {
+      answer,
+      note: flags.note,
+      by: flags.by ?? userInfo().username,
+      at: new Date().toISOString(),
+    })
+    const pushed = await commitPush(sync, `round ${round}: 人工回执(${answer})${flags.note ? ` —— ${flags.note.slice(0, 60)}` : ""}`)
+    if (!pushed.pushed) fail(pushed.detail ?? "回执推不上去")
+    say(`${GREEN}✓${RESET} 第 ${round} 轮回执已推送(${answer === "done" ? "已照做" : "做不了"})—— 研发端下一次轮询就会接着走`)
     return
   }
 
@@ -255,6 +298,9 @@ if (!command || !jobFile) {
   yoma-bench mailbox mother [信箱克隆] --project <工程目录>    研发端(有代码与构建环境)
   yoma-bench mailbox runner [信箱克隆]                          工位端(有板子;不需要工程代码)
   yoma-bench mailbox status [信箱克隆]                          看进度
+  yoma-bench mailbox ack    [信箱克隆] [--note "..."] [--cannot]
+                                                               人工动作的回执(挂起时用;
+                                                               板子边上那台机器也能回)
   yoma-bench mailbox sim    <mailbox-job.json> [--remote url] [--fresh]
                                                                单机模拟整个闭环(两个真子进程,
                                                                只通过 git 通信;默认本地裸仓)
@@ -269,6 +315,9 @@ if (!command || !jobFile) {
   --branch B     信箱分支(缺省 main)
   --once         runner/mother 只走一步就退(cron 场景)
   --work-root D  工位端一次性工作目录的根(缺省是信箱克隆的兄弟目录)
+  --note "..."   ack:人补的一句话(会进研发端下一轮的提示词)
+  --by NAME      ack:谁回的(缺省本机用户名)
+  --cannot       ack:这件事做不了 —— 也是回执,研发端据此换路
   --fresh        sim 清掉上次模拟从头来(外部远端不受影响)`)
   process.exit(2)
 }

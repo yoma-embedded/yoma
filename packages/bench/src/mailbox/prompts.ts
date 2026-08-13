@@ -17,9 +17,11 @@
  * 只进审计不进控制流 —— 控制流吃自然语言等于把状态机交给了随机性。
  */
 
+import path from "node:path"
+
 import type { Job } from "../job.ts"
 import type { MailboxJob } from "./spec.ts"
-import type { RoundArtifact, RoundFiles, RoundInstruction, RoundResultFile } from "./store.ts"
+import type { HumanAck, RoundArtifact, RoundFiles, RoundInstruction, RoundResultFile } from "./store.ts"
 import { quote } from "./text.ts"
 
 /** 工位端 agent 的角色说明。只在会话第一轮带上(之后会话延续,不重复)。 */
@@ -54,6 +56,26 @@ ${hardware ? `硬件:${hardware}\n\n` : ""}## 你手上有什么
   研发端只能通过你的自述了解板子 —— 它看不到你的屏幕,含糊的描述会让它改错地方。
   拿不准的地方就说拿不准,别替它下结论。
 
+## 回传通道:\`${path.join(workDir, "outbox")}\`
+
+**要研发端亲眼看的东西,丢进这个目录** —— 采集数据、完整日志、截图、脚本产出的
+csv/npz,调试台会连同你的报告一起送回去,它那边有完整工具链,能自己画自己算。
+文字复述过的数据它没法再算,曲线更不可能靠形容词传过去。
+
+- 子目录随便建(\`capture/ch2.csv\` 这种很正常),同名不用担心 —— 每轮各存各的。
+- 收过的会被移进 \`outbox/.sent/\`,所以**同一份数据不会重复传**;要再送一次就再丢一份。
+- 有大小上限(信箱是个 git 仓,进去的东西瘦不回来)。原始采集先抽样或压缩再丢;
+  超限的不会中断本轮,但研发端只会看到"有一件没送成"。
+- 正文里说一句每个文件是什么、怎么读的 —— 一个 csv 没有列名说明,对面只能猜。
+
+## 需要人动手时:\`outbox/ASK-HUMAN.txt\`
+
+接电源、换负载、动机械、插拔线 —— 这些不是你能做的,也不是研发端能做的。把要人做的事
+**写成一句人话**丢进这个文件,闭环会挂起、给人发通知,等回执再继续,**不会**一轮轮
+空转地重复问。写清楚:做什么、做到什么程度、做完之后你要怎么验证。
+
+写了它就照常把这一轮已经能做的事做完、如实回填 —— 挂起是研发端的裁决,不是你停手的理由。
+
 ## 总任务书(含工位安全约束 —— 这些对你同样有效)
 
 ${job.task}`
@@ -87,6 +109,17 @@ export interface MotherPromptInput {
   instruction: RoundInstruction
   result: RoundResultFile
   rounds: RoundFiles[]
+  /**
+   * 工位端这一轮回传的东西**落在研发机上哪儿**(相对工程根)。调试台落盘后填,
+   * 不经模型 —— 与下行 `incoming` 同一条纪律:落点是事实,不该靠谁复述。
+   */
+  staged?: {
+    files?: { name: string; bytes: number; localPath: string }[]
+    /** 工位端自述全文的落点。提示词里只进节选,细节让它自己去读。 */
+    reportPath?: string
+  }
+  /** 上一次 await-human 的回执。有它 = 这一轮是"人做完了,重新裁决"。 */
+  humanAck?: HumanAck
 }
 
 /** 研发端的角色说明 —— 开局和分析轮共用同一段,保证两条路径说的是同一件事。 */
@@ -114,6 +147,11 @@ function motherRole(): string {
    **附件是工位端拿到任何东西的唯一通道。**
 4. **写指令。** 用大白话说清要干什么,比如"新固件在附件里,烧进去,然后读 0x20000010
    这个 32 位值告诉我是多少"。**不要规定它用什么工具上板** —— 烧录还是别的路子是它的判断。
+5. **要原始数据,别要结论。** 工位端有一条回传通道(它的 \`outbox/\` 目录),你可以让它
+   把采集、完整日志、脚本产出丢进去;送回来的文件已经落在你工程里的
+   \`.my-pi/back/<轮次>/\`,路径每轮会列给你。**你有完整工具链** —— 自己读、自己画、
+   自己算,比信一句"看起来收敛了"可靠得多。要它回传时说清格式(列名、单位、采样率),
+   并提醒它先抽样或压缩(信箱是 git 仓,大文件进去就瘦不回来)。
 
 ## 你不做的
 
@@ -134,10 +172,11 @@ function motherRole(): string {
 
 \`\`\`json
 {
-  "decision": "continue | done | fail",
+  "decision": "continue | done | fail | await-human",
   "analysis": "你对证据的解读,两三句",
   "instruction": "decision 为 continue 时必填:给工位端的完整指令",
   "artifacts": ["build/Debug/firmware.elf"],
+  "ask": "decision 为 await-human 时必填:要人去板子边上做什么,一句人话",
   "reason": "decision 为 done/fail 时必填:结论是什么 / 为什么放弃"
 }
 \`\`\`
@@ -146,7 +185,22 @@ function motherRole(): string {
 - **continue**:还有可行的下一步。一轮只验一个假设,指令要具体到"怎么自证"。
 - **artifacts**:可选。文件必须真的存在(构建完再写),路径相对工程根。改一次就附一次。
 - **done**:证据表明问题已经解决。\`reason\` 里写清楚是哪条证据让你下这个结论。
-- **fail**:按当前路径修不动了(假设空间穷尽、问题超出代码层、需要人换硬件)。`
+- **fail**:按当前路径修不动了(假设空间穷尽、问题超出代码层、需要人换硬件)。
+- **await-human**:下一步卡在一个**人的动作**上(接电源、换负载、动机械、插拔线),
+  而且没有不依赖它的活可以先干。闭环会挂起、通知人、等回执,**期间两侧都不跑轮**。
+
+  \`ask\` 会原样发给人,写清楚:做什么、做到什么程度、做完怎么算数。
+
+  **同一个请求不要重复下发。** 上一轮已经转达过而人还没动手,正确动作是 \`await-human\`
+  (挂起是零成本的),不是再写一遍"请转达……"—— 那只是把同一句话烧成 token。
+  如果还有不依赖那个动作的事可以验,就照常 \`continue\` 去验,别空等。
+
+## 关于"验收判据"
+
+工位端报的现象常常只能证明**一部分**判据。你可以基于旁证下结论,但要在 \`reason\` 里
+分开写:哪些是**照着原定判据字面验到的**,哪些是**推出来的**、还差什么条件才能验。
+把推论写成"已验证"会让读终报的人以为板子上真跑出了那个结果 —— 那不是措辞问题,
+是把没做完的验收当成做完了。`
 }
 
 /**
@@ -212,8 +266,19 @@ function renderRoundBrief(input: MotherPromptInput): string {
     if (turn.stopReason) meta.push(`本轮中断:${turn.stopReason}`)
     if (turn.toolErrors.length) meta.push(`工具报错:\n${bullets(turn.toolErrors)}`)
     if (turn.errors.length) meta.push(`轮内 provider 错误(模型侧故障,不是代码问题):\n${bullets(turn.errors)}`)
-    sections.push(`## 工位端的自述\n\n${quote(clip(turn.text || "(这一轮没有正文)", 4000))}\n\n${meta.join("\n")}`)
+    // 自述是全篇里唯一会长到失控的一段:节选进提示词、全文进文件(见 clipEnds)。
+    const full = input.staged?.reportPath
+    if (full) meta.push(`自述全文(未截断):\`${full}\``)
+    const text = clipEnds(
+      turn.text || "(这一轮没有正文)",
+      BENCH_TEXT_HEAD,
+      BENCH_TEXT_TAIL,
+      full ? `全文在 \`${full}\`` : "全文在信箱本轮目录的 bench-report.md",
+    )
+    sections.push(`## 工位端的自述\n\n${quote(text)}\n\n${meta.join("\n")}`)
   }
+
+  sections.push(...renderBackSections(input))
 
   const history = rounds
     .filter((entry) => entry.round < round && entry.decision)
@@ -225,6 +290,61 @@ function renderRoundBrief(input: MotherPromptInput): string {
       `最后写一个 \`\`\`json 围栏 —— **只有它会被机器读取**。`,
   )
   return sections.join("\n\n")
+}
+
+/**
+ * 上行三件事:回传件落在哪、有没有没送成的、有没有在等人。
+ *
+ * 回传件给的是**本机相对路径**而不是文件名 —— 研发端手上有完整工具链,路径是让它
+ * 真去读、去画、去算的;只报个名字等于还是让它信工位端的文字描述。
+ */
+function renderBackSections(input: MotherPromptInput): string[] {
+  const { result, humanAck } = input
+  const sections: string[] = []
+  const staged = input.staged?.files ?? []
+
+  if (staged.length) {
+    const lines = staged.map(
+      (item) => `- \`${item.localPath}\`(${(item.bytes / 1024).toFixed(0)}KB${item.name === item.localPath ? "" : `,工位端叫它 ${item.name}`})`,
+    )
+    sections.push(
+      `## 工位端回传的文件(已经在你机器上)\n\n${lines.join("\n")}\n\n` +
+        `这是原始数据,不是它的复述 —— 自己读、自己画、自己算。`,
+    )
+  }
+  if (result.backSkipped?.length) {
+    const lines = result.backSkipped.map(
+      (item) => `- \`${item.name}\`(${(item.bytes / 1024).toFixed(0)}KB):${item.reason}`,
+    )
+    sections.push(
+      `## 它想回传但没送成的\n\n${lines.join("\n")}\n\n` +
+        `这些东西**你没有**。要就让它抽样/压缩后重发,别当作已经看过。`,
+    )
+  }
+  if (result.needsHuman) {
+    sections.push(
+      `## 工位端说需要人动手\n\n${quote(clip(result.needsHuman, 2000))}\n\n` +
+        `这不是它偷懒 —— 接电源、换负载、动机械没人能替。你的选择:还有不依赖这个动作的事`
+        + `可以验就照常 \`continue\` 去验;没有就 \`await-human\`,把要人做的事写进 \`ask\`。`
+        + `**别再下发一轮"请转达……"**。`,
+    )
+  }
+  if (humanAck) {
+    const answer = humanAck.answer === "done" ? "人已经做完了" : "人做不了这件事"
+    // 上一次挂起的请求要一起给:本轮自己那条裁决不在"此前各轮"里(它按 round < 当前轮
+    // 过滤),不带上的话它看到的简报和挂起前一模一样,大概率原地再挂一次。
+    const parked = input.rounds.find((entry) => entry.round === input.round)?.decision
+    const ask = parked?.decision === "await-human" ? parked.ask : undefined
+    sections.push(
+      `## 人工动作的回执:${answer}\n\n` +
+        (ask ? `你上一次请求的是:${quote(clip(ask, 600))}\n\n` : "") +
+        `人的回话:${humanAck.note ? `\n\n${quote(clip(humanAck.note, 1000))}` : "(没留话)"}\n\n` +
+        (humanAck.answer === "done"
+          ? `条件已经具备,接着往下走 —— 这一轮由你重新裁决(挂起期间没有产生新的板上证据)。`
+          : `这条路走不通了,换一条不依赖它的验证路径,或者据此收尾。`),
+    )
+  }
+  return sections
 }
 
 function renderArtifactList(artifacts?: RoundArtifact[]): string {
@@ -241,4 +361,22 @@ export function motherRetryPrompt(error: string): string {
 
 function clip(text: string, limit: number): string {
   return text.length <= limit ? text : `${text.slice(0, limit)}\n…(截断)`
+}
+
+/**
+ * 工位端自述进提示词的额度。**尾巴留得比头多** —— 汇总行、RESULT、结论永远在末尾,
+ * 从头截断正好砍掉最该看的那半(实测:一次五轮的任务,每一轮的自述都超过当时 4000 字的
+ * 上限,第一轮丢掉 44%,而丢掉的正是结论段)。
+ *
+ * 为什么不干脆全给:自述随会话一轮轮累积,全篇进上下文等于第 8 轮还背着前 7 轮的原始
+ * 日志。全文另有文件,要细节自己读一次 —— 一次性成本,不进会话历史。
+ */
+const BENCH_TEXT_HEAD = 6000
+const BENCH_TEXT_TAIL = 14000
+
+/** 头尾都留的截断。`hint` 写清全文在哪 —— 只说"截断了"会让人以为剩下的没了。 */
+function clipEnds(text: string, head: number, tail: number, hint: string): string {
+  if (text.length <= head + tail) return text
+  const dropped = text.length - head - tail
+  return `${text.slice(0, head)}\n\n…(中间省略 ${dropped} 字,${hint})…\n\n${text.slice(-tail)}`
 }

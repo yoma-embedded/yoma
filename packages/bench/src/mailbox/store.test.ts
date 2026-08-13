@@ -4,13 +4,16 @@ import path from "node:path"
 
 import {
   attachArtifacts,
+  collectBack,
   readToolchainManifest,
   roundArtifactsDir,
+  roundBackDir,
   roundDir,
   scanMailbox,
   sumMotherTokens,
   syncToolchainManifest,
   writeDecision,
+  writeHumanAck,
   writeInstruction,
   writeJson,
   writeRoundResult,
@@ -58,6 +61,57 @@ describe("mailbox store", () => {
     const done = await scanMailbox(root)
     expect(done.state.kind).toBe("done")
     if (done.state.kind === "done") expect(done.state.verdict.outcome).toBe("failed")
+  })
+
+  test("挂起等人:裁决在而回执没来 → awaiting-human;回执一到 → 回到 awaiting-mother", async () => {
+    const root = temp.dir("store-")
+    await writeJson(path.join(root, JOB_FILE), rawMailboxJob())
+    await writeInstruction(root, { round: 1, prompt: "复现", issuedBy: "mother", at: new Date(0).toISOString() })
+    await writeRoundResult(root, result(1, { needsHuman: "请把台架电源设为 24V" }))
+    await writeDecision(root, {
+      round: 1,
+      by: "mother",
+      decision: "await-human",
+      ask: "请把台架电源设为 24V 并接到母线",
+      at: new Date(0).toISOString(),
+    })
+
+    const parked = await scanMailbox(root)
+    expect(parked.state.kind).toBe("awaiting-human")
+    if (parked.state.kind === "awaiting-human") {
+      expect(parked.state.round).toBe(1)
+      // ask 随状态走:通知与横幅要拿它,不该逼界面自己去翻轮次文件。
+      expect(parked.state.ask).toContain("24V")
+    }
+
+    // 回执落地 = 唤醒。没有别的机制:状态自己滑回"等研发端裁决",它拿着回执重裁同一轮。
+    await writeHumanAck(root, 1, { answer: "done", note: "已设 24V", at: new Date(0).toISOString() })
+    const resumed = await scanMailbox(root)
+    expect(resumed.state.kind).toBe("awaiting-mother")
+    expect(resumed.rounds[0]?.humanAck?.note).toBe("已设 24V")
+  })
+
+  test("回传件:超限的跳过并记账,不因为一个大文件把整轮毙掉", async () => {
+    const root = temp.dir("store-")
+    const bench = temp.dir("bench-out-")
+    writeFileSync(path.join(bench, "small.csv"), "t,iq\n0,0.1\n")
+    writeFileSync(path.join(bench, "huge.npz"), "x".repeat(4096))
+
+    const collected = await collectBack(
+      root,
+      1,
+      [
+        { source: path.join(bench, "small.csv"), name: "small.csv" },
+        { source: path.join(bench, "huge.npz"), name: "capture/huge.npz" },
+        { source: path.join(bench, "没有这个文件"), name: "missing.bin" },
+      ],
+      1024,
+    )
+    expect(collected.back.map((item) => item.name)).toEqual(["small.csv"])
+    expect(collected.skipped.map((item) => item.name)).toEqual(["capture/huge.npz", "missing.bin"])
+    expect(collected.skipped[0]!.reason).toContain("上限")
+    // 收下的是真拷过去了(子目录也保得住形状)。
+    expect(await Bun.file(path.join(roundBackDir(root, 1), "small.csv")).text()).toContain("t,iq")
   })
 
   test("状态永远看最大的轮 —— 下发第 2 轮后回到 awaiting-runner", async () => {

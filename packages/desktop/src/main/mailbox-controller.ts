@@ -87,6 +87,11 @@ export interface MailboxControllerDeps {
   now?(): number
   /** 定时器注入(测试拨快钟)。返回取消函数。 */
   schedule?(fn: () => void, ms: number): () => void
+  /**
+   * 系统通知。只用在**闭环挂起等人**这一件事上:那一刻没人再推进任何东西,
+   * 而要动手的人多半没盯着这个窗口 —— 不主动喊一声,挂起就等于卡死。
+   */
+  notify?(payload: { title: string; body: string }): void
 }
 
 /** 崩溃重启退避:5s 起步,翻倍,封顶 60s。 */
@@ -125,6 +130,8 @@ export class MailboxController {
   private task?: ActiveTask
   private phase: MailboxStatus["phase"] = "idle"
   private snapshot?: MailboxUiSnapshot
+  /** 已经为哪一轮的挂起喊过人(快照会重发,同一次挂起只响一下)。 */
+  private announcedPark?: number
   private message?: string
 
   constructor(deps: MailboxControllerDeps) {
@@ -253,10 +260,33 @@ export class MailboxController {
     }
     // sim 的 child 事件里也有快照 —— 展开一层,进度页不用关心事件来自哪层进程。
     const effective = event.type === "child" ? event.event : event
-    if (effective.type === "snapshot") this.snapshot = effective.snapshot
+    if (effective.type === "snapshot") {
+      this.snapshot = effective.snapshot
+      this.announceIfParked(effective.snapshot)
+    }
     if (effective.type === "done" && event.type !== "child") task.done = effective
     this.deps.broadcast({ type: "host", event })
     if (effective.type === "snapshot" || effective.type === "done") this.pushStatus()
+  }
+
+  /**
+   * 挂起时喊一声人。
+   *
+   * 按轮次去重:快照每几秒重发一次,而同一次挂起只该响一下。回执落地后状态会滑回
+   * awaiting-mother,这里的记号跟着清掉 —— 下一次挂起(哪怕还是这一轮)照样会响。
+   */
+  private announceIfParked(snapshot: MailboxUiSnapshot): void {
+    const state = snapshot.state
+    if (state.kind !== "awaiting-human") {
+      this.announcedPark = undefined
+      return
+    }
+    if (this.announcedPark === state.round) return
+    this.announcedPark = state.round
+    this.deps.notify?.({
+      title: `信箱闭环挂起:第 ${state.round} 轮等人动手`,
+      body: state.ask.split("\n")[0]!.slice(0, 200),
+    })
   }
 
   private handleExit(task: ActiveTask, code: number | null): void {
