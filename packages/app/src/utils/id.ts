@@ -3,7 +3,6 @@ const prefixes = {
   message: "msg",
   user: "usr",
   part: "prt",
-  pty: "pty",
 } as const
 
 const LENGTH = 26

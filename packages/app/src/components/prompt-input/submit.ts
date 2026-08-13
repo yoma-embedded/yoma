@@ -142,14 +142,12 @@ type PromptSubmitInput = {
   info: Accessor<{ id: string } | undefined>
   imageAttachments: Accessor<ImageAttachmentPart[]>
   commentCount: Accessor<number>
-  mode: Accessor<"normal" | "shell">
   working: Accessor<boolean>
   editor: () => HTMLDivElement | undefined
   queueScroll: () => void
   promptLength: (prompt: Prompt) => number
-  addToHistory: (prompt: Prompt, mode: "normal" | "shell") => void
+  addToHistory: (prompt: Prompt) => void
   resetHistoryNavigation: () => void
-  setMode: (mode: "normal" | "shell") => void
   setPopover: (popover: "at" | "slash" | null) => void
   shouldQueue?: Accessor<boolean>
   onQueue?: (draft: FollowupDraft) => void
@@ -248,7 +246,6 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     const context = submission.context
     const text = currentPrompt.map((part) => ("content" in part ? part.content : "")).join("")
     const images = input.imageAttachments().slice()
-    const mode = input.mode()
 
     if (text.trim().length === 0 && images.length === 0 && input.commentCount() === 0) {
       if (input.working()) void abort()
@@ -264,7 +261,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       return
     }
 
-    input.addToHistory(currentPrompt, mode)
+    input.addToHistory(currentPrompt)
     input.resetHistoryNavigation()
 
     // 内核里一个会话就是一个 cwd —— 没有 worktree,也就没有"新会话开在别的目录"这件事。
@@ -316,7 +313,6 @@ export function createPromptSubmit(input: PromptSubmitInput) {
 
     const clearInput = () => {
       submission.clear()
-      input.setMode("normal")
       input.setPopover(null)
     }
 
@@ -325,7 +321,6 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       if (!restored) return false
       restored.target.set(restored.prompt, input.promptLength(restored.prompt))
       if (!submission.current(prompt.capture())) return true
-      input.setMode(mode)
       input.setPopover(null)
       requestAnimationFrame(() => {
         const editor = input.editor()
@@ -337,7 +332,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       return true
     }
 
-    if (!isNewSession && mode === "normal" && input.shouldQueue?.()) {
+    if (!isNewSession && input.shouldQueue?.()) {
       input.onQueue?.(draft)
       clearContext(submission.target())
       clearInput()

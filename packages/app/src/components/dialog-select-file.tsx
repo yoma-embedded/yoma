@@ -47,10 +47,8 @@ type DialogSelectFileMode = "all" | "files"
 const ENTRY_LIMIT = 5
 const COMMON_COMMAND_IDS = [
   "session.new",
-  "workspace.new",
   "session.previous",
   "session.next",
-  "terminal.toggle",
   "review.toggle",
 ] as const
 

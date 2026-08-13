@@ -22,18 +22,15 @@ export interface Settings {
     showFileTree: boolean
     showNavigation: boolean
     showSearch: boolean
-    showTerminal: boolean
     showReasoningSummaries: boolean
     shellToolPartsExpanded: boolean
     editToolPartsExpanded: boolean
-    showCustomAgents: boolean
     mobileTitlebarPosition: "top" | "bottom"
   }
   appearance: {
     fontSize: number
     mono: string
     sans: string
-    terminal: string
   }
   keybinds: Record<string, string>
   notifications: NotificationSettings
@@ -42,17 +39,13 @@ export interface Settings {
 
 export const monoDefault = "System Mono"
 export const sansDefault = "System Sans"
-export const terminalDefault = "JetBrainsMono Nerd Font Mono"
 
 const monoFallback =
   'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace'
 const sansFallback = 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-const terminalFallback =
-  '"JetBrainsMono Nerd Font Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace'
 
 const monoBase = monoFallback
 const sansBase = sansFallback
-const terminalBase = terminalFallback
 
 function input(font: string | undefined) {
   return font ?? ""
@@ -85,14 +78,6 @@ export function sansFontFamily(font: string | undefined) {
   return stack(font, sansBase)
 }
 
-export function terminalInput(font: string | undefined) {
-  return input(font)
-}
-
-export function terminalFontFamily(font: string | undefined) {
-  return stack(font, terminalBase)
-}
-
 const defaultSettings: Settings = {
   general: {
     autoSave: true,
@@ -100,18 +85,15 @@ const defaultSettings: Settings = {
     showFileTree: false,
     showNavigation: false,
     showSearch: false,
-    showTerminal: false,
     showReasoningSummaries: false,
     shellToolPartsExpanded: false,
     editToolPartsExpanded: false,
-    showCustomAgents: false,
     mobileTitlebarPosition: "top",
   },
   appearance: {
     fontSize: 14,
     mono: "",
     sans: "",
-    terminal: "",
   },
   keybinds: {},
   notifications: {
@@ -137,10 +119,6 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
     const [store, setStore, _, ready] = persisted("settings.v3", createStore<Settings>(defaultSettings))
     const showFileTree = withFallback(() => store.general?.showFileTree, defaultSettings.general.showFileTree)
     const showSearch = withFallback(() => store.general?.showSearch, defaultSettings.general.showSearch)
-    const showCustomAgents = withFallback(
-      () => store.general?.showCustomAgents,
-      defaultSettings.general.showCustomAgents,
-    )
     // The legacy layout is gone; the flag is pinned on and kept only so the
     // remaining `newLayoutDesigns()` call sites keep compiling until they are collapsed.
     const newLayoutDesigns = () => true
@@ -187,10 +165,6 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
         setShowSearch(value: boolean) {
           setStore("general", "showSearch", value)
         },
-        showTerminal: withFallback(() => store.general?.showTerminal, defaultSettings.general.showTerminal),
-        setShowTerminal(value: boolean) {
-          setStore("general", "showTerminal", value)
-        },
         showReasoningSummaries: withFallback(
           () => store.general?.showReasoningSummaries,
           defaultSettings.general.showReasoningSummaries,
@@ -212,10 +186,6 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
         setEditToolPartsExpanded(value: boolean) {
           setStore("general", "editToolPartsExpanded", value)
         },
-        showCustomAgents,
-        setShowCustomAgents(value: boolean) {
-          setStore("general", "showCustomAgents", value)
-        },
         mobileTitlebarPosition: withFallback(
           () => store.general?.mobileTitlebarPosition,
           defaultSettings.general.mobileTitlebarPosition,
@@ -228,7 +198,6 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
       visibility: {
         fileTree: visible(showFileTree),
         search: visible(showSearch),
-        customAgents: visible(showCustomAgents),
       },
       appearance: {
         fontSize: withFallback(() => store.appearance?.fontSize, defaultSettings.appearance.fontSize),
@@ -242,10 +211,6 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
         uiFont: withFallback(() => store.appearance?.sans, defaultSettings.appearance.sans),
         setUIFont(value: string) {
           setStore("appearance", "sans", value.trim() ? value : "")
-        },
-        terminalFont: withFallback(() => store.appearance?.terminal, defaultSettings.appearance.terminal),
-        setTerminalFont(value: string) {
-          setStore("appearance", "terminal", value.trim() ? value : "")
         },
       },
       keybinds: {

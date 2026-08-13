@@ -263,7 +263,6 @@ export default function Page() {
 
   const [store, setStore] = createStore({
     ...sessionViewState(),
-    newSessionWorktree: "main",
     deferRender: false,
   })
 
@@ -339,13 +338,6 @@ export default function Page() {
   const reviewCount = () => reviewDiffs().length
   const hasReview = () => reviewCount() > 0
   const reviewReady = () => !vcsQuery.isPending
-
-  const newSessionWorktree = createMemo(() => {
-    if (store.newSessionWorktree === "create") return "create"
-    const project = sync().project
-    if (project && sdk().directory !== project.directory) return sdk().directory
-    return "main"
-  })
 
   const setActiveMessage = (message: UserMessage | undefined) => {
     messageMark = scrollMark
@@ -458,17 +450,6 @@ export default function Page() {
     refreshVcs()
   })
   onCleanup(stopVcs)
-
-  createEffect(
-    on(
-      () => sdk().directory,
-      (dir) => {
-        if (!dir) return
-        setStore("newSessionWorktree", "main")
-      },
-      { defer: true },
-    ),
-  )
 
   const selectionPreview = (path: string, selection: FileSelection) => {
     const content = file.get(path)?.content?.content

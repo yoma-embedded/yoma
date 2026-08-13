@@ -228,7 +228,6 @@ const baseInput = () => ({
   prompt,
   imageAttachments: () => [],
   commentCount: () => 0,
-  mode: () => "normal" as const,
   working: () => false,
   editor: () => undefined,
   queueScroll: () => undefined,
@@ -236,7 +235,6 @@ const baseInput = () => ({
     value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
   addToHistory: () => undefined,
   resetHistoryNavigation: () => undefined,
-  setMode: () => undefined,
   setPopover: () => undefined,
   onSubmit: () => undefined,
 })

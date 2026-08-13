@@ -29,11 +29,3 @@ export const getHoveredLinkText = (value: unknown) => {
   if (typeof link.text !== "string") return
   return link.text
 }
-
-export const getSpeechRecognitionCtor = <T>(value: unknown): (new () => T) | undefined => {
-  if (!isRecord(value)) return
-  const ctor =
-    typeof value.webkitSpeechRecognition === "function" ? value.webkitSpeechRecognition : value.SpeechRecognition
-  if (typeof ctor !== "function") return
-  return ctor as new () => T
-}

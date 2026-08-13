@@ -7,7 +7,7 @@ export function sessionTime(session: Session) {
 
 /**
  * Compact relative time badge, e.g. "13 分" / "13m" — matches the Codex layout.
- * `locale` is the app locale key (e.g. "zh", "zht", "en").
+ * `locale` is the app locale key (e.g. "zh", "en").
  */
 export function terseAgo(ms: number, locale: string) {
   const zh = locale.startsWith("zh")

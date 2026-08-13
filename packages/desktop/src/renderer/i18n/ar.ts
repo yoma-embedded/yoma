@@ -1,18 +1,0 @@
-export const dict = {
-  "desktop.menu.checkForUpdates": "التحقق من وجود تحديثات...",  "desktop.menu.reloadWebview": "إعادة تحميل Webview",
-  "desktop.menu.restart": "إعادة تشغيل",
-
-  "desktop.dialog.chooseFolder": "اختر مجلدًا",
-  "desktop.dialog.chooseFile": "اختر ملفًا",
-  "desktop.dialog.saveFile": "حفظ ملف",
-
-  "desktop.updater.checkFailed.title": "فشل التحقق من التحديثات",
-  "desktop.updater.checkFailed.message": "فشل التحقق من وجود تحديثات",
-  "desktop.updater.none.title": "لا توجد تحديثات متاحة",
-  "desktop.updater.none.message": "أنت تستخدم بالفعل أحدث إصدار من Yoma",
-  "desktop.updater.downloadFailed.title": "فشل التحديث",
-  "desktop.updater.downloadFailed.message": "فشل تنزيل التحديث",
-  "desktop.updater.downloaded.title": "تم تنزيل التحديث",
-  "desktop.updater.downloaded.prompt": "تم تنزيل إصدار {{version}} من Yoma، هل ترغب في تثبيته وإعادة تشغيله؟",
-  "desktop.updater.installFailed.title": "فشل التحديث",
-  "desktop.updater.installFailed.message": "فشل تثبيت التحديث",}

@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test"
 import {
   disposeIfDisposable,
   getHoveredLinkText,
-  getSpeechRecognitionCtor,
   hasSetOption,
   isDisposable,
   setOptionIfSupported,
@@ -43,22 +42,5 @@ describe("runtime adapters", () => {
     expect(getHoveredLinkText({ currentHoveredLink: { text: "https://example.com" } })).toBe("https://example.com")
     expect(getHoveredLinkText({ currentHoveredLink: { text: 1 } })).toBeUndefined()
     expect(getHoveredLinkText(null)).toBeUndefined()
-  })
-
-  test("resolves speech recognition constructor with webkit precedence", () => {
-    // oxlint-disable-next-line no-extraneous-class
-    class SpeechCtor {}
-    // oxlint-disable-next-line no-extraneous-class
-    class WebkitCtor {}
-    const ctor = getSpeechRecognitionCtor({
-      SpeechRecognition: SpeechCtor,
-      webkitSpeechRecognition: WebkitCtor,
-    })
-    expect(ctor).toBe(WebkitCtor)
-  })
-
-  test("returns undefined when no valid speech constructor exists", () => {
-    expect(getSpeechRecognitionCtor({ SpeechRecognition: "nope" })).toBeUndefined()
-    expect(getSpeechRecognitionCtor(undefined)).toBeUndefined()
   })
 })

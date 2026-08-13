@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { streamChunk } from "../timeline/session-timeline-benchmark.fixture"
+import { streamChunk } from "../timeline/stream-chunk"
 import { streamProgress } from "../timeline/session-timeline-stream-probe"
 
 test("classifies emitted stream markers using the fixture cycle", () => {
