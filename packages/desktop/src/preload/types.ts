@@ -80,7 +80,6 @@ export type FatalRendererError = {
 export type ElectronAPI = {
   kernel: KernelAPI
   killSidecar: () => Promise<void>
-  installCli: () => Promise<string>
   awaitInitialization: () => Promise<ServerReadyData>
   manuals: ManualsAPI
   mailbox: MailboxAPI

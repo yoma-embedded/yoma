@@ -7,6 +7,7 @@ import { setNavigate } from "@/utils/notification-click"
 import { setV2Toast, ToastRegion } from "@/utils/toast"
 import { CodexSidebar } from "./layout/codex-sidebar"
 import { CodexSearch } from "./layout/codex-search"
+import { PreflightBanner } from "@/components/preflight-banner"
 
 export default function NewLayout(props: ParentProps) {
   const platform = usePlatform()
@@ -37,6 +38,7 @@ export default function NewLayout(props: ParentProps) {
       }}
     >
       <Titlebar update={update} sidebar={{ opened: sidebarOpen, toggle: () => setSidebarOpen((value) => !value) }} />
+      <PreflightBanner />
       <div class="flex flex-1 min-h-0 min-w-0">
         <Show when={sidebarOpen()}>
           <CodexSidebar onOpenSearch={() => setSearchOpen(true)} />

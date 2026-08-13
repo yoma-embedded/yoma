@@ -1,6 +1,6 @@
 // 凭证独立性验收:FileCredentialStore 的读写与权限,resolveModel 的
 // auth.json/环境变量/settings.json 选择顺序,以及请求时 getAuth 的热更新语义。
-import { mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, statSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
@@ -76,6 +76,19 @@ describe("FileCredentialStore", () => {
 		expect(await store.read("deepseek")).toBeUndefined();
 		expect(await store.read("moonshotai-cn")).toEqual({ type: "api_key", key: "sk-b" });
 	});
+
+	it("heals a stored key that is missing type (or uses the old api-key discriminator)", async () => {
+		const dir = createTempDir();
+		const path = join(dir, "auth.json");
+		writeFileSync(path, JSON.stringify({ deepseek: { key: "sk-no-type" } }));
+		const store = new FileCredentialStore(path);
+
+		expect(await store.read("deepseek")).toEqual({ type: "api_key", key: "sk-no-type" });
+		expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ deepseek: { type: "api_key", key: "sk-no-type" } });
+
+		writeFileSync(path, JSON.stringify({ deepseek: { type: "api-key", key: "sk-old" } }));
+		expect(await store.read("deepseek")).toEqual({ type: "api_key", key: "sk-old" });
+	});
 });
 
 describe("resolveModel", () => {
@@ -144,5 +157,12 @@ describe("resolveModel", () => {
 
 		process.env.MY_PI_PROVIDER = "deepseek";
 		await expect(resolveModel(dir)).rejects.toThrow(/DEEPSEEK_API_KEY/);
+	});
+
+	it("treats a key without type as configured instead of silently ignoring it", async () => {
+		const dir = createTempDir();
+		writeAuth(dir, { deepseek: { key: "sk-no-type" } });
+		const { model } = await resolveModel(dir);
+		expect(model.provider).toBe("deepseek");
 	});
 });

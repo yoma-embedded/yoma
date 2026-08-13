@@ -474,12 +474,7 @@ export function NewHome() {
             </Show>
           </ScrollView>
         </section>
-        <HomeUtilityNav
-          class="flex lg:hidden"
-          openSettings={openSettings}
-          openHelp={() => platform.openLink("https://opencode.ai/desktop-feedback")}
-          language={language}
-        />
+        <HomeUtilityNav class="flex lg:hidden" openSettings={openSettings} language={language} />
       </div>
     </div>
   )
@@ -488,7 +483,6 @@ export function NewHome() {
 function HomeUtilityNav(props: {
   class?: string
   openSettings: () => void
-  openHelp: () => void
   language: ReturnType<typeof useLanguage>
 }) {
   return (
@@ -500,14 +494,6 @@ function HomeUtilityNav(props: {
       >
         <IconV2 name="settings-gear" size="small" />
         <span class={HOME_PROJECT_NAV_LABEL}>{props.language.t("sidebar.settings")}</span>
-      </button>
-      <button
-        type="button"
-        class={`${HOME_PROJECT_NAV_ROW} text-v2-text-text-faint [&>[data-slot=icon-svg]]:text-v2-icon-icon-muted`}
-        onClick={props.openHelp}
-      >
-        <IconV2 name="help" size="small" />
-        <span class={HOME_PROJECT_NAV_LABEL}>{props.language.t("sidebar.help")}</span>
       </button>
     </div>
   )

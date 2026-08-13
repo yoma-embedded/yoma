@@ -14,6 +14,8 @@ import { createCodingToolDefinitions } from "@yoma/my-pi-coding-agent"
 
 import type { KernelEvent, KernelHandlers, KernelMethod, KernelParams, KernelResult } from "../protocol.ts"
 import { createEmbeddedTools, SessionManager, type SessionManagerOptions } from "./session-manager.ts"
+import { runPreflight, inspectEngines } from "./preflight.ts"
+import { myPiConfigDir } from "./auth.ts"
 import { ProjectStore, listFiles, readFile, searchFiles, vcsDiff, vcsInfo } from "./services.ts"
 import { StreamSink } from "./stream.ts"
 
@@ -26,6 +28,7 @@ export { StreamSink } from "./stream.ts"
 // 全局配置目录的真源(凭据/技能/上下文)。导出它是为了让 bench 的 paths.ts 副本
 // 有个可断言的对手 —— 那份副本必须是叶子模块,不能反过来 import 这里。
 export { myPiConfigDir } from "./auth.ts"
+export { inspectEngines, parseProbeList, runPreflight } from "./preflight.ts"
 
 export interface KernelHostOptions {
   /** engines/bin + engines/data 的所在目录。生产环境是 process.resourcesPath/engines。 */
@@ -39,10 +42,7 @@ export interface KernelHostOptions {
   configDir?: string
   /** 模型目录的来源。默认复用 my-pi 的 resolveModel();测试注入 faux provider。 */
   resolveModels?: SessionManagerOptions["resolveModels"]
-  /**
-   * 没人显式选档位时的思考档位。**不传就是 my-pi 的默认 `off`** —— 桌面端刻意不传
-   * (档位由模型对话框现场决定),bench 传(无人值守)。详见 SessionManagerOptions。
-   */
+  /** 没人选档时的思考档位。不传则 `"off"`。桌面端和 bench 都传 `max`。 */
   defaultThinkingLevel?: SessionManagerOptions["defaultThinkingLevel"]
   /**
    * 工具链清单按哪一侧筛。不传即 `"mother"`(桌面端与信箱研发端)。
@@ -87,6 +87,12 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
       sessionsRoot: options.sessionsRoot,
       node: process.versions.node,
     }),
+    "app.preflight": () =>
+      runPreflight({
+        sessions,
+        configDir: options.configDir ?? myPiConfigDir(),
+        enginesDir: options.enginesDir,
+      }),
 
     "session.list": ({ directory }) => sessions.list(directory),
     "session.get": ({ sessionID }) => sessions.get(sessionID),
@@ -141,15 +147,17 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
   }
 }
 
-/** 冒烟自检:确认整个 my-pi 依赖图在当前 runtime 下真的加载得起来。 */
+/** 冒烟自检:依赖图能加载,engines 二进制真的在。 */
 export function kernelSelfCheck(options: { enginesDir?: string } = {}) {
   const env = new NodeExecutionEnv({ cwd: process.cwd() })
   const coding = createCodingToolDefinitions(env)
   const embedded = createEmbeddedTools(env, options.enginesDir)
+  const engines = inspectEngines(options.enginesDir)
   return {
     node: process.versions.node,
     electron: process.versions.electron ?? null,
     harness: typeof AgentHarness,
     tools: [...coding, ...embedded].map((t) => t.name),
+    engines,
   }
 }

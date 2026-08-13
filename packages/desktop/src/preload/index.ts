@@ -127,7 +127,6 @@ const kernel = {
 const api: ElectronAPI = {
   kernel,
   killSidecar: () => ipcRenderer.invoke("kill-sidecar"),
-  installCli: () => ipcRenderer.invoke("install-cli"),
   awaitInitialization: () => ipcRenderer.invoke("await-initialization"),
   manuals: {
     config: () => ipcRenderer.invoke("manuals-config"),

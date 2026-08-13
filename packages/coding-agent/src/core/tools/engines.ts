@@ -49,26 +49,50 @@ export interface EnginePathOptions {
 	enginesDir?: string;
 }
 
-export function enginesDir(): string {
-	let dir = path.dirname(fileURLToPath(import.meta.url));
+/** engines/bin 下必须有的可执行文件。 */
+export const ENGINE_BINARIES = ["stm32kernel", "probe-rs", "controller_map", "board_ir", "connections"] as const;
+
+/** 向上找带 bin/ 的 engines 目录,跳过空壳。 */
+export function findEnginesDir(start: string): string {
+	let dir = start;
+	const skipped: string[] = [];
 	while (true) {
 		const candidate = path.join(dir, "engines");
-		if (existsSync(candidate)) return candidate;
+		if (existsSync(candidate)) {
+			if (existsSync(path.join(candidate, "bin"))) return candidate;
+			skipped.push(candidate);
+		}
 		const parent = path.dirname(dir);
 		if (parent === dir) {
+			const skipNote = skipped.length ? ` Ignored empty engines/ without bin/: ${skipped.join(", ")}.` : "";
 			throw new Error(
-				"engines/ directory not found. Run `git submodule update --init --recursive` then `bun engines/build.ts`.",
+				"engines/ directory not found." +
+					skipNote +
+					" Run `git submodule update --init --recursive` then `bun engines/build.ts`.",
 			);
 		}
 		dir = parent;
 	}
 }
 
+export function enginesDir(): string {
+	return findEnginesDir(path.dirname(fileURLToPath(import.meta.url)));
+}
+
+function engineMissingMessage(name: string, file: string, root: string): string {
+	const isSourceCheckout = existsSync(path.join(root, "build.ts"));
+	if (isSourceCheckout) {
+		return `\`${name}\` not found at ${file}. This is the repo engines directory — run \`bun engines/build.ts\` from the repository root.`;
+	}
+	return `\`${name}\` not found at ${file}. The packaged debug engines are missing — reinstall Yoma. This is not a source checkout, so \`bun engines/build.ts\` will not help.`;
+}
+
 /** engines/bin/ 下的可执行文件,如 engineBin("stm32kernel")。缺席时给修复指引。 */
 export function engineBin(name: string, options?: EnginePathOptions): string {
-	const file = path.join(options?.enginesDir ?? enginesDir(), "bin", exe(name));
+	const root = options?.enginesDir ?? enginesDir();
+	const file = path.join(root, "bin", exe(name));
 	if (!existsSync(file)) {
-		throw new Error(`\`${name}\` not found at ${file}. Run \`bun engines/build.ts\` to build and install the engines.`);
+		throw new Error(engineMissingMessage(name, file, root));
 	}
 	return file;
 }

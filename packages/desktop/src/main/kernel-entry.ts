@@ -10,7 +10,13 @@
  */
 
 import { createKernelHost, kernelSelfCheck, type KernelHost } from "@yoma-desktop/kernel/host"
-import { RETIRED_TOOL_NAMES, TOOL_NAMES, type KernelEvent, type KernelFrame } from "@yoma-desktop/kernel"
+import {
+  DEFAULT_THINKING_LEVEL,
+  RETIRED_TOOL_NAMES,
+  TOOL_NAMES,
+  type KernelEvent,
+  type KernelFrame,
+} from "@yoma-desktop/kernel"
 import { ensureDatasheetServerEnv } from "./datasheet-server.ts"
 
 // my-pi 的 datasheet 工具只读 process.env,而用户不该配环境变量 —— 默认值在这里兜。
@@ -116,6 +122,8 @@ if (parentPort) {
         stateDir: command.stateDir,
         enginesDir: command.enginesDir,
         version: command.version,
+        // 没人选档时不要落到 harness 的 "off"。
+        defaultThinkingLevel: DEFAULT_THINKING_LEVEL,
         onEvents: broadcast,
       })
       hostReady?.()

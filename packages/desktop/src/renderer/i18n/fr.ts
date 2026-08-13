@@ -1,7 +1,5 @@
 export const dict = {
-  "desktop.menu.checkForUpdates": "Vérifier les mises à jour...",
-  "desktop.menu.installCli": "Installer la CLI...",
-  "desktop.menu.reloadWebview": "Recharger la Webview",
+  "desktop.menu.checkForUpdates": "Vérifier les mises à jour...",  "desktop.menu.reloadWebview": "Recharger la Webview",
   "desktop.menu.restart": "Redémarrer",
 
   "desktop.dialog.chooseFolder": "Choisir un dossier",
@@ -18,11 +16,4 @@ export const dict = {
   "desktop.updater.downloaded.prompt":
     "La version {{version}} d'Yoma a été téléchargée. Voulez-vous l'installer et redémarrer ?",
   "desktop.updater.installFailed.title": "Échec de la mise à jour",
-  "desktop.updater.installFailed.message": "Impossible d'installer la mise à jour",
-
-  "desktop.cli.installed.title": "CLI installée",
-  "desktop.cli.installed.message":
-    "CLI installée dans {{path}}\n\nRedémarrez votre terminal pour utiliser la commande 'opencode'.",
-  "desktop.cli.failed.title": "Échec de l'installation",
-  "desktop.cli.failed.message": "Impossible d'installer la CLI : {{error}}",
-}
+  "desktop.updater.installFailed.message": "Impossible d'installer la mise à jour",}

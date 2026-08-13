@@ -357,7 +357,7 @@ text part,不过滤的话提示词会原样出现在终报的"根因分析"里)�
 - 单机模拟(`mailbox sim`)起 **两个真子进程 + 各自的克隆 + 本地裸仓**,与生产的
   差别只有远端 URL(`--remote` 换私有 GitHub 仓即是跨机器形态)。
 
-**产品形态(2026-08-08 起,P1–P3 已进桌面端;设计与验收见 `docs/施工指南-信箱调试台桌面端.md`)**:
+**产品形态(2026-08-08 起,P1–P3 已进桌面端;协议见 `docs/信箱闭环-协议与双机部署.md`)**:
 
 - 引擎打包成两个纯 node 产物(`out/main/mailbox-host.mjs` 五角色一个入口 +
   `mailbox-turn-entry.mjs`,esbuild 见 `desktop/scripts/build-mailbox.ts`);

@@ -7,8 +7,6 @@ import { TextInputV2 } from "@yoma-desktop/ui/v2/text-input-v2"
 import { useTheme, type ColorScheme } from "@yoma-desktop/ui/theme/context"
 import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
-import { useServerSync } from "@/context/server-sync"
-import { useServerSDK } from "@/context/server-sdk"
 import { useUpdaterAction } from "../updater-action"
 import {
   monoDefault,
@@ -17,13 +15,9 @@ import {
   sansDefault,
   sansFontFamily,
   sansInput,
-  terminalDefault,
-  terminalFontFamily,
-  terminalInput,
   useSettings,
 } from "@/context/settings"
 import { playSoundById, SOUND_OPTIONS } from "@/utils/sound"
-import { Link } from "../link"
 import { SettingsListV2 } from "./parts/list"
 import { SettingsRowV2 } from "./parts/row"
 import "./settings-v2.css"
@@ -37,18 +31,6 @@ let demoSoundState = {
 type ThemeOption = {
   id: string
   name: string
-}
-
-type ShellOption = {
-  path: string
-  name: string
-  acceptable: boolean
-}
-
-type ShellSelectOption = {
-  id: string
-  value: string
-  label: string
 }
 
 // To prevent audio from overlapping/playing very quickly when navigating the settings menus,
@@ -83,8 +65,6 @@ export const SettingsGeneralV2: Component = () => {
   const language = useLanguage()
   const platform = usePlatform()
   const settings = useSettings()
-  const serverSync = useServerSync()
-  const serverSdk = useServerSDK()
   const mobile = createMediaQuery("(max-width: 767px)")
 
   const updater = useUpdaterAction()
@@ -92,10 +72,6 @@ export const SettingsGeneralV2: Component = () => {
   const desktop = createMemo(() => platform.platform === "desktop")
 
   const themeOptions = createMemo<ThemeOption[]>(() => theme.ids().map((id) => ({ id, name: theme.name(id) })))
-
-  // 内核没有 PTY —— my-pi 的 NodeExecutionEnv.exec 是一次性 spawn,不是伪终端。
-  // 终端面板要不要保留是个待定的产品决策,在那之前这里给空列表,UI 会退化成"自动"。
-  const [shells] = createResource(async () => [] as ShellOption[], { initialValue: [] as ShellOption[] })
 
   const [pinchZoom, { mutate: setPinchZoom }] = createResource(
     () => (desktop() && platform.getPinchZoomEnabled ? true : false),
@@ -105,40 +81,6 @@ export const SettingsGeneralV2: Component = () => {
 
   onMount(() => {
     void theme.loadThemes()
-  })
-
-  const autoOption = { id: "auto", value: "", label: language.t("settings.general.row.shell.autoDefault") }
-  const currentShell = createMemo(() => serverSync().data.config.shell ?? "")
-
-  const shellOptions = createMemo<ShellSelectOption[]>(() => {
-    const list = shells.latest
-    const current = serverSync().data.config.shell
-
-    const nameCounts = new Map<string, number>()
-    for (const s of list) {
-      nameCounts.set(s.name, (nameCounts.get(s.name) || 0) + 1)
-    }
-
-    const options = [
-      autoOption,
-      ...list.map((s) => {
-        const ambiguousName = (nameCounts.get(s.name) || 0) > 1
-        const text = ambiguousName ? s.path : s.name
-        const label = s.acceptable ? text : `${text} (${language.t("settings.general.row.shell.terminalOnly")})`
-        return {
-          id: s.path,
-          // Prefer name over path - "bash" is much cleaner than the explicit full route even when it may change due to PATH.
-          value: ambiguousName ? s.path : s.name,
-          label,
-        }
-      }),
-    ]
-
-    if (current && !options.some((o) => o.value === current)) {
-      options.push({ id: current, value: current, label: current })
-    }
-
-    return options
   })
 
   const onPinchZoomChange = (checked: boolean) => {
@@ -165,7 +107,6 @@ export const SettingsGeneralV2: Component = () => {
   const soundOptions = [noneSound, ...SOUND_OPTIONS]
   const mono = () => monoInput(settings.appearance.font())
   const sans = () => sansInput(settings.appearance.uiFont())
-  const terminal = () => terminalInput(settings.appearance.terminalFont())
 
   const soundSelectProps = (
     enabled: () => boolean,
@@ -211,29 +152,6 @@ export const SettingsGeneralV2: Component = () => {
             value={(o) => o.value}
             label={(o) => o.label}
             onSelect={(option) => option && language.setLocale(option.value)}
-          />
-        </SettingsRowV2>
-
-        <SettingsRowV2
-          title={language.t("settings.general.row.shell.title")}
-          description={language.t("settings.general.row.shell.description")}
-        >
-          <SelectV2
-            appearance="inline"
-            data-action="settings-shell"
-            options={shellOptions()}
-            current={shellOptions().find((o) => o.value === currentShell()) ?? autoOption}
-            placement="bottom-end"
-            gutter={6}
-            value={(o) => o.id}
-            label={(o) => o.label}
-            onSelect={(option) => {
-              if (!option) return
-              if (option.value === currentShell()) return
-              // 内核没有配置服务(opencode 的 config 是后端下发的)。shell 选择
-              // 随终端一起待定,这里先只更新本地选中态。
-              void option
-            }}
           />
         </SettingsRowV2>
 
@@ -363,14 +281,7 @@ export const SettingsGeneralV2: Component = () => {
 
         <SettingsRowV2
           title={language.t("settings.general.row.theme.title")}
-          description={
-            <>
-              {language.t("settings.general.row.theme.description")}{" "}
-              <Link class="settings-v2-link" href="https://opencode.ai/docs/themes/">
-                {language.t("common.learnMore")}
-              </Link>
-            </>
-          }
+          description={language.t("settings.general.row.theme.description")}
         >
           <SelectV2
             appearance="inline"
@@ -437,27 +348,6 @@ export const SettingsGeneralV2: Component = () => {
           </div>
         </SettingsRowV2>
 
-        <SettingsRowV2
-          title={language.t("settings.general.row.terminalFont.title")}
-          description={language.t("settings.general.row.terminalFont.description")}
-        >
-          <div class="w-full sm:w-[220px]">
-            <TextInputV2
-              data-action="settings-terminal-font"
-              type="text"
-              appearance="base"
-              value={terminal()}
-              onInput={(event) => settings.appearance.setTerminalFont(event.currentTarget.value)}
-              placeholder={terminalDefault}
-              spellcheck={false}
-              autocorrect="off"
-              autocomplete="off"
-              autocapitalize="off"
-              aria-label={language.t("settings.general.row.terminalFont.title")}
-              style={{ "font-family": terminalFontFamily(settings.appearance.terminalFont()) }}
-            />
-          </div>
-        </SettingsRowV2>
       </SettingsListV2>
     </div>
   )

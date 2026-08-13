@@ -205,19 +205,36 @@ function readJson(path: string): any {
 	}
 }
 
-/**
- * 文件版凭证仓库:<configDir>/auth.json,格式与 pi 相同
- * ({"deepseek":{"type":"api_key","key":"sk-…"}}),0600 权限。
- * 每次 read 都重读文件,所以改 auth.json 即时生效。
- * 单 ACP 进程用,写入靠 promise 链串行化即可,不需要 pi 那套跨进程文件锁。
- */
+/** 缺 `type` 或旧的 `api-key` 当成 `api_key`;oauth 不动。 */
+function coerceCredential(raw: unknown): { credential: Credential; healed: boolean } | undefined {
+	if (!raw || typeof raw !== "object") return undefined;
+	const entry = raw as Record<string, unknown>;
+	if (entry.type === "oauth") return { credential: raw as Credential, healed: false };
+	if (typeof entry.key !== "string" || entry.key.trim() === "") {
+		return entry.type === "api_key" ? { credential: raw as Credential, healed: false } : undefined;
+	}
+	if (entry.type === "api_key") return { credential: raw as Credential, healed: false };
+	return { credential: { ...entry, type: "api_key" } as Credential, healed: true };
+}
+
+/** 文件版凭证仓库:<configDir>/auth.json,0600。每次 read 重读文件。 */
 export class FileCredentialStore implements CredentialStore {
 	private chain: Promise<unknown> = Promise.resolve();
 
 	constructor(private readonly path: string) {}
 
-	private load(): Record<string, Credential> {
-		return readJson(this.path) ?? {};
+	private load(): { data: Record<string, Credential>; healed: boolean } {
+		const raw = readJson(this.path) ?? {};
+		if (!raw || typeof raw !== "object") return { data: {}, healed: false };
+		const data: Record<string, Credential> = {};
+		let healed = false;
+		for (const [id, entry] of Object.entries(raw as Record<string, unknown>)) {
+			const coerced = coerceCredential(entry);
+			if (!coerced) continue;
+			data[id] = coerced.credential;
+			if (coerced.healed) healed = true;
+		}
+		return { data, healed };
 	}
 
 	private save(data: Record<string, Credential>): void {
@@ -227,7 +244,9 @@ export class FileCredentialStore implements CredentialStore {
 	}
 
 	async read(providerId: string): Promise<Credential | undefined> {
-		return this.load()[providerId];
+		const { data, healed } = this.load();
+		if (healed) this.save(data);
+		return data[providerId];
 	}
 
 	modify(
@@ -235,10 +254,12 @@ export class FileCredentialStore implements CredentialStore {
 		fn: (current: Credential | undefined) => Promise<Credential | undefined>,
 	): Promise<Credential | undefined> {
 		const task = this.chain.then(async () => {
-			const data = this.load();
+			const { data, healed } = this.load();
 			const next = await fn(data[providerId]);
 			if (next !== undefined) {
 				data[providerId] = next;
+				this.save(data);
+			} else if (healed) {
 				this.save(data);
 			}
 			return data[providerId];
@@ -249,7 +270,7 @@ export class FileCredentialStore implements CredentialStore {
 
 	delete(providerId: string): Promise<void> {
 		const task = this.chain.then(async () => {
-			const data = this.load();
+			const { data } = this.load();
 			if (providerId in data) {
 				delete data[providerId];
 				this.save(data);

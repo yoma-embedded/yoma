@@ -48,6 +48,7 @@ export interface KernelClient {
 
   app: {
     info(): Promise<KernelResult<"app.info">>
+    preflight(): Promise<KernelResult<"app.preflight">>
   }
   session: {
     list(params?: { directory?: string }): Promise<Session[]>
@@ -107,6 +108,7 @@ export function createKernelClient(transport: KernelTransport): KernelClient {
 
     app: {
       info: () => call("app.info", undefined),
+      preflight: () => call("app.preflight", undefined),
     },
     session: {
       list: (params) => call("session.list", { directory: params?.directory }),

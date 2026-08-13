@@ -1,3 +1,5 @@
+import { pickThinkingLevel } from "@yoma-desktop/kernel"
+
 type AgentModel = {
   providerID: string
   modelID: string
@@ -33,6 +35,14 @@ export function resolveModelVariant(input: VariantInput) {
   if (input.selected && input.variants.includes(input.selected)) return input.selected
   if (input.configured && input.variants.includes(input.configured)) return input.configured
   return undefined
+}
+
+/** 没人选过时落到 pickThinkingLevel(默认 max),避免 harness 静默 off。 */
+export function resolveThinkingVariant(input: VariantInput & { saved?: string }): string | undefined {
+  const resolved = resolveModelVariant(input)
+  if (resolved) return resolved
+  if (input.saved && input.variants.includes(input.saved)) return input.saved
+  return pickThinkingLevel(input.variants)
 }
 
 export function cycleModelVariant(input: VariantInput) {

@@ -44,11 +44,40 @@ export interface PromptInput {
   files?: Array<{ mime: string; url: string; filename?: string }>
 }
 
+/** `code` 给 UI 文案,`detail` 给排查。 */
+export interface PreflightCheck {
+  ok: boolean
+  code: string
+  detail?: string
+}
+
+export interface PreflightAuth extends PreflightCheck {
+  file: string
+  providers: string[]
+}
+
+export interface PreflightEngines extends PreflightCheck {
+  dir: string | null
+  missing: string[]
+}
+
+export interface PreflightProbe extends PreflightCheck {
+  devices: string[]
+}
+
+export interface PreflightReport {
+  auth: PreflightAuth
+  engines: PreflightEngines
+  probe: PreflightProbe
+}
+
 export interface KernelMethods {
   "app.info": {
     params: void
     result: { version: string; enginesDir: string | null; sessionsRoot: string; node: string }
   }
+  /** 首跑预检:key / 引擎 / 探针。失败带 code。 */
+  "app.preflight": { params: void; result: PreflightReport }
 
   "session.list": { params: { directory?: string }; result: Session[] }
   "session.get": { params: { sessionID: string }; result: Session }

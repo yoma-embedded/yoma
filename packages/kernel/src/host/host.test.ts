@@ -344,7 +344,7 @@ describe("思考档位", () => {
     }
   }
 
-  test("宿主不表态时保持 my-pi 的默认(off)—— 桌面端行为不许被这次改动带跑", async () => {
+  test("宿主不表态时保持 my-pi 的默认(off)", async () => {
     const capture = capturing()
     const { host, workspace } = makeHost(capture.steps, { reasoningModel: true })
     const session = (await host.handle("session.create", { directory: workspace })) as Session

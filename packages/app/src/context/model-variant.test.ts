@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { cycleModelVariant, getConfiguredAgentVariant, resolveModelVariant } from "./model-variant"
+import { cycleModelVariant, getConfiguredAgentVariant, resolveModelVariant, resolveThinkingVariant } from "./model-variant"
 
 describe("model variant", () => {
   test("resolves configured agent variant when model matches", () => {
@@ -82,5 +82,33 @@ describe("model variant", () => {
     })
 
     expect(value).toBe("low")
+  })
+
+  test("thinking fallback is max when nobody picked a level", () => {
+    expect(
+      resolveThinkingVariant({
+        variants: ["off", "high", "max"],
+        selected: undefined,
+        configured: undefined,
+      }),
+    ).toBe("max")
+  })
+
+  test("thinking fallback keeps an explicit off and a saved high", () => {
+    expect(
+      resolveThinkingVariant({
+        variants: ["off", "high", "max"],
+        selected: "off",
+        configured: undefined,
+      }),
+    ).toBe("off")
+    expect(
+      resolveThinkingVariant({
+        variants: ["off", "high", "max"],
+        selected: undefined,
+        configured: undefined,
+        saved: "high",
+      }),
+    ).toBe("high")
   })
 })

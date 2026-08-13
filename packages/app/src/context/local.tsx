@@ -5,7 +5,7 @@ import { batch, createEffect, createMemo, startTransition } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useModels } from "@/context/models"
 import { Persist, persisted } from "@/utils/persist"
-import { cycleModelVariant, resolveModelVariant } from "./model-variant"
+import { cycleModelVariant, resolveThinkingVariant } from "./model-variant"
 import { useSDK } from "./sdk"
 import { useSync } from "./sync"
 import { useServerSDK } from "./server-sdk"
@@ -230,16 +230,14 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         configured,
         selected,
         current() {
-          const resolved = resolveModelVariant({
+          const model = current()
+          const saved = model ? models.variant.get({ providerID: model.provider.id, modelID: model.id }) : undefined
+          return resolveThinkingVariant({
             variants: this.list(),
             selected: this.selected(),
             configured: this.configured(),
+            saved,
           })
-          if (resolved) return resolved
-          const model = current()
-          if (!model) return
-          const saved = models.variant.get({ providerID: model.provider.id, modelID: model.id })
-          if (saved && this.list().includes(saved)) return saved
         },
         list() {
           return current()?.thinkingLevels ?? []
@@ -263,13 +261,13 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         cycle() {
           const items = this.list()
           if (items.length === 0) return
-          this.set(
-            cycleModelVariant({
-              variants: items,
-              selected: this.selected(),
-              configured: this.configured(),
-            }),
-          )
+          const next = cycleModelVariant({
+            variants: items,
+            selected: this.current(),
+            configured: this.configured(),
+          })
+          // 末档再循环回第一档,不要清成 undefined。
+          this.set(next ?? items[0])
         },
       },
     }

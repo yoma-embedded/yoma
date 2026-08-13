@@ -127,19 +127,8 @@ export interface SessionManagerOptions {
    */
   resolveModels?: () => Promise<{ models: Models; model: Model<string> }>
   /**
-   * 没人显式选档位时用哪一档 —— **不给就沿用 my-pi 自己的默认(`off`)**。
-   *
-   * 这是应用层策略,和自动压缩、轮级重试同一类:内核只给 `setThinkingLevel` 这个
-   * 机制,什么时候用、用哪档归宿主决定。两个宿主的答案不一样,所以它必须是注入位
-   * 而不是写死的常量:
-   *
-   * - **桌面端不传**。它有模型对话框,档位是用户当场的选择,经 `setModel` 下发
-   *   (`app/src/components/prompt-input/submit.ts`)。悄悄改它的默认等于改产品行为。
-   * - **bench 传**。无人值守,没人看着那个"最强的档默认关掉"的开关 —— 实测代价见
-   *   `../thinking.ts` 的头注释。
-   *
-   * 值会经 `pickThinkingLevel` 按模型实际支持的档位落定,所以给一个该模型没有的
-   * 档位是安全的(非 reasoning 模型的档位表只有 `["off"]`,自然落回 off)。
+   * 没人选档时用哪一档。不传则 harness 落到 `"off"`。
+   * 桌面端与 bench 都传 `max`;`setModel` 的显式选择压过它。
    */
   defaultThinkingLevel?: string
   /**
@@ -508,11 +497,7 @@ export class SessionManager {
       session,
       models,
       model,
-      // 不给这个字段时 harness 落到 "off",于是 reasoning 模型的思考被静默关掉
-      // (见 ../thinking.ts)。宿主表过态就按它落定 —— 这里是唯一同时握着
-      // **解析后的 model** 和宿主策略的地方,所以放在构造期:调用方没钉模型
-      // (job.model 缺省 → 不调 setModel)的那条路也一并覆盖到。
-      // 之后 setModel 带 thinking 进来仍然赢,显式选择永远压过默认。
+      // 不传则 harness 落到 "off"。setModel 的显式选择压过这里。
       thinkingLevel: this.options.defaultThinkingLevel
         ? (pickThinkingLevel(getSupportedThinkingLevels(model) as string[], this.options.defaultThinkingLevel) as never)
         : undefined,

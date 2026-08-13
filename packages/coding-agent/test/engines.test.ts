@@ -12,6 +12,8 @@ import {
 	engineBin,
 	engineDataDir,
 	enginesDir,
+	exe,
+	findEnginesDir,
 	runEngine,
 	sanitizeStem,
 } from "../src/index.ts";
@@ -37,7 +39,7 @@ function makeEnginesDir(bins: Record<string, string> = {}): string {
 	const root = createTempDir();
 	mkdirSync(join(root, "bin"), { recursive: true });
 	for (const [name, script] of Object.entries(bins)) {
-		const binPath = join(root, "bin", name);
+		const binPath = join(root, "bin", exe(name));
 		writeFileSync(binPath, script);
 		chmodSync(binPath, 0o755);
 	}
@@ -52,18 +54,39 @@ echo "argv: $@"
 describe("engine path resolution", () => {
 	it("resolves binaries and data from the bin/data layout", () => {
 		const root = makeEnginesDir({ stm32kernel: ECHO_ARGS_KERNEL });
-		expect(engineBin("stm32kernel", { enginesDir: root })).toBe(join(root, "bin", "stm32kernel"));
+		expect(engineBin("stm32kernel", { enginesDir: root })).toBe(join(root, "bin", exe("stm32kernel")));
 		expect(engineDataDir("stm32", { enginesDir: root })).toBe(join(root, "data", "stm32"));
 	});
 
-	it("reports the missing path and the fix when a binary is absent", () => {
+	it("reports a packaged-app reinstall hint when build.ts is absent", () => {
 		const root = makeEnginesDir();
 		expect(() => engineBin("stm32kernel", { enginesDir: root })).toThrow(/not found at/);
+		expect(() => engineBin("stm32kernel", { enginesDir: root })).toThrow(/reinstall Yoma/);
+	});
+
+	it("reports bun engines/build.ts when this is a source checkout", () => {
+		const root = makeEnginesDir();
+		writeFileSync(join(root, "build.ts"), "");
 		expect(() => engineBin("stm32kernel", { enginesDir: root })).toThrow(/bun engines\/build\.ts/);
 	});
 
-	it("defaults to the repo's engines/ directory", () => {
-		expect(enginesDir().endsWith(`${sep}engines`)).toBe(true);
+	it("skips empty engines/ shells that have no bin/", () => {
+		const outer = createTempDir();
+		const real = join(outer, "engines");
+		mkdirSync(join(real, "bin"), { recursive: true });
+		const nested = join(outer, "nested");
+		mkdirSync(join(nested, "engines"), { recursive: true });
+		expect(findEnginesDir(nested)).toBe(real);
+	});
+
+	it("default walk skips empty engines/ shells instead of returning them", () => {
+		try {
+			const dir = enginesDir();
+			expect(dir.endsWith(`${sep}engines`)).toBe(true);
+			expect(existsSync(join(dir, "bin"))).toBe(true);
+		} catch (error) {
+			expect((error as Error).message).toMatch(/Ignored empty engines/);
+		}
 	});
 });
 

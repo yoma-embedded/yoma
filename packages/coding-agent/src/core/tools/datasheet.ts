@@ -6,8 +6,11 @@
  * 客户端不落索引、不落产物、不需要 SiliconFlow key —— embedding 与向量检索
  * 都是服务器的事。本机唯一的配置就是服务器地址。
  *
- * - search:       POST {server}/api/search(服务器端 bge-m3 + Lance 检索;
- *                 端点尚未上线时返回引导信息,接口契约见 docs/施工指南-引擎集成.md §5)
+ * - search:       POST {server}/api/search
+ *                 请求 { query, chip, rev?, top_k }
+ *                 响应 { hits: [{ text, manual_name, chip, rev, page, headings,
+ *                                 score, kind, source_pdf, parsed_path, image_path }] }
+ *                 服务器端 bge-m3 + Lance;端点尚未上线时返回引导信息
  * - read_section: GET {server}/artifacts/<parsed_path> + 本文件内的 markdown 章节抽取
  * - view_figure:  GET {server}/artifacts/<image_path> → ImageContent(模型直接读图)
  *
@@ -254,12 +257,13 @@ function noServerHelp(): string {
 	);
 }
 
-/** 服务器还没有 /api/search 时的引导(接口契约见 docs/施工指南-引擎集成.md §5)。 */
+/** 服务器还没有 /api/search 时的引导。契约见本文件头注释。 */
 function searchUnavailableHelp(server: string): string {
 	return (
 		`The datasheet server at ${server} does not expose POST /api/search yet (HTTP 404). ` +
 		`Server-side search (bge-m3 embedding + Lance query on the server) needs that endpoint — ` +
-		`ask the datasheet-server maintainer to add it (contract: docs/施工指南-引擎集成.md §5). ` +
+		`ask the datasheet-server maintainer to add POST /api/search ` +
+		`({ query, chip, rev?, top_k } → { hits: [{ text, parsed_path, image_path, ... }] }). ` +
 		`Meanwhile read_section and view_figure still work when you know a manual's parsed_path / image_path.`
 	);
 }

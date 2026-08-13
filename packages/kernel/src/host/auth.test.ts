@@ -222,4 +222,29 @@ describe("凭据全链路(注入 configDir,进程内)", () => {
       cleanup()
     }
   }, 20_000)
+
+  test("手写缺 type 的 key 仍算已配置", async () => {
+    const configDir = tempDir("yoma-auth-typeless-")
+    const sessionsRoot = tempDir("yoma-auth-sessions-")
+    writeFileSync(authFilePath(configDir), JSON.stringify({ deepseek: { key: "sk-no-type" } }))
+    const saved: Record<string, string | undefined> = {}
+    for (const name of ["MY_PI_PROVIDER", "MY_PI_MODEL", "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY"]) {
+      saved[name] = process.env[name]
+      delete process.env[name]
+    }
+    try {
+      const manager = new SessionManager({ sessionsRoot, configDir, emit: () => {} })
+      const list = await manager.providers()
+      const deepseek = list.find((p) => p.id === "deepseek")!
+      expect(deepseek.authenticated).toBe(true)
+      expect(deepseek.models.length).toBeGreaterThan(0)
+      expect(readAuthFile(configDir).deepseek?.type).toBe("api_key")
+    } finally {
+      for (const [name, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[name]
+        else process.env[name] = value
+      }
+      cleanup()
+    }
+  }, 20_000)
 })
