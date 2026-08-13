@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeAll, describe, expect, it } from "bun:test";
 import { NodeExecutionEnv } from "@yoma/my-pi/node";
 import {
 	buildAttachArgs,
@@ -15,6 +15,10 @@ import {
 	splitArgv,
 	splitChunk,
 } from "../src/index.ts";
+
+beforeAll(() => {
+	process.env.YOMA_PROBE_LOCK = join(tmpdir(), `yoma-probe-log-${process.pid}.lock`);
+});
 
 // ─── 测试脚手架 ──────────────────────────────────────────────────────────────
 

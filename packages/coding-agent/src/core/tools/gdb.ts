@@ -47,6 +47,7 @@ import {
 	exe,
 	killOnHostExit,
 	killTree,
+	appendProbeOccupationHint,
 	releaseProbe,
 	stamp,
 	unrefStream as unref,
@@ -877,9 +878,12 @@ export async function waitForServerReady(server: ServerProcess, readyRe: RegExp 
 		if (server.exited) {
 			const { code, signal } = server.exited;
 			throw new Error(
-				`the gdb server exited before it was ready (${signal ? `signal ${signal}` : `code ${code}`}).\n` +
-					`Command: ${server.argv.join(" ")}\n` +
-					`Its last output:\n${server.tail.join("\n") || "(nothing)"}`,
+				appendProbeOccupationHint(
+					`the gdb server exited before it was ready (${signal ? `signal ${signal}` : `code ${code}`}).\n` +
+						`Command: ${server.argv.join(" ")}\n` +
+						`Its last output:\n${server.tail.join("\n") || "(nothing)"}`,
+					server.tail.join("\n"),
+				),
 			);
 		}
 		if (readyRe && !sawPattern && server.tail.some((l) => readyRe.test(l))) sawPattern = true;
@@ -890,9 +894,12 @@ export async function waitForServerReady(server: ServerProcess, readyRe: RegExp 
 		});
 	}
 	throw new Error(
-		`the gdb server did not open port ${server.port} within ${deadlineMs} ms.\n` +
-			`Command: ${server.argv.join(" ")}\n` +
-			`Its output so far:\n${server.tail.join("\n") || "(nothing)"}`,
+		appendProbeOccupationHint(
+			`the gdb server did not open port ${server.port} within ${deadlineMs} ms.\n` +
+				`Command: ${server.argv.join(" ")}\n` +
+				`Its output so far:\n${server.tail.join("\n") || "(nothing)"}`,
+			server.tail.join("\n"),
+		),
 	);
 }
 
@@ -1642,7 +1649,12 @@ export function createGdbToolDefinition(
 						const sel = await session.send(`-target-select extended-remote ${connection}`, ATTACH_TIMEOUT_MS);
 						if (sel.class === "error") {
 							const tail = server?.tail.length ? `\nThe server's last output:\n${server.tail.join("\n")}` : "";
-							throw new Error(`could not connect to ${connection}: ${miString(sel.results?.msg)}${tail}`);
+							throw new Error(
+								appendProbeOccupationHint(
+									`could not connect to ${connection}: ${miString(sel.results?.msg)}${tail}`,
+									server?.tail.join("\n") ?? "",
+								),
+							);
 						}
 						await settledWithin(firstStop, 2_000);
 

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 
 import { DEFAULT_THINKING_LEVEL } from "@yoma-desktop/kernel"
 
-import { DEFAULT_MODEL, JobSpecError, parseJob, resolveWorkspace } from "./job.ts"
+import { DEFAULT_MODEL, JobSpecError, parseJob, pickAvailableModel, resolveWorkspace } from "./job.ts"
 
 function base(overrides: Record<string, unknown> = {}) {
   return {
@@ -60,17 +60,14 @@ describe("parseJob · 模型与思考档位", () => {
     expect(job.model?.thinking).toBe(DEFAULT_THINKING_LEVEL)
   })
 
-  test("整个 model 不填:落定成调试台的默认模型 —— 研发端与工位端读的是同一份 job", () => {
-    // 不落定的话,两侧各自回落到"本机第一个有凭据的 provider 的默认模型",
-    // 可以是两家不同的模型,而任务书里没有一处看得出来。
+  test("整个 model 不填:不钉 DeepSeek,只落思考档位 —— 运行时再按本机凭据挑", () => {
     const job = parseJob(base())
-    expect(job.model).toEqual({ ...DEFAULT_MODEL, thinking: DEFAULT_THINKING_LEVEL })
+    expect(job.model).toEqual({ thinking: DEFAULT_THINKING_LEVEL })
   })
 
-  test("只填一半的 model 整个落回默认 —— 不去猜另一半", () => {
-    // 猜出来的 deepseek/<别家模型> 会在第一轮 setModel 上报未知模型,那时人已经走了。
-    expect(parseJob(base({ model: { modelID: "kimi-k3" } })).model?.modelID).toBe(DEFAULT_MODEL.modelID)
-    // 但档位不受"要么齐要么不填"约束:它单独生效。
+  test("只填一半的 model 不去猜另一半,也不回落到 DeepSeek", () => {
+    expect(parseJob(base({ model: { modelID: "kimi-k3" } })).model?.modelID).toBeUndefined()
+    expect(parseJob(base({ model: { modelID: "kimi-k3" } })).model?.providerID).toBeUndefined()
     expect(parseJob(base({ model: { modelID: "kimi-k3", thinking: "off" } })).model?.thinking).toBe("off")
   })
 
@@ -89,6 +86,20 @@ describe("parseJob · 模型与思考档位", () => {
 
   test("档位的问题和别的问题一起报出来", () => {
     expect(issuesOf({ id: "j-1", model: { thinking: "巨能想" } })).toHaveLength(2)
+  })
+
+  test("pickAvailableModel:有 DeepSeek Flash 就用它,否则第一个已认证的", () => {
+    expect(
+      pickAvailableModel([
+        { id: "openai", authenticated: true, models: [{ id: "gpt-4" }] },
+        { id: "deepseek", authenticated: true, models: [{ id: DEFAULT_MODEL.modelID }] },
+      ]),
+    ).toEqual(DEFAULT_MODEL)
+    expect(pickAvailableModel([{ id: "moonshotai-cn", authenticated: true, models: [{ id: "kimi-k2" }] }])).toEqual({
+      providerID: "moonshotai-cn",
+      modelID: "kimi-k2",
+    })
+    expect(pickAvailableModel([{ id: "deepseek", authenticated: false, models: [] }])).toBeUndefined()
   })
 })
 

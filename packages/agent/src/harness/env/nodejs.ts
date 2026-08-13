@@ -246,11 +246,16 @@ function getShellEnv(
 	inheritEnv = true,
 ): NodeJS.ProcessEnv {
 	if (!inheritEnv) return { ...extraEnv };
-	return {
+	const env: NodeJS.ProcessEnv = {
 		...process.env,
 		...baseEnv,
 		...extraEnv,
 	};
+	// 中文 Windows 上 Python 在非 TTY 里按 cp936 写 stdout,我们按 UTF-8 解管道,
+	// 乱码进报告且不可逆。钉死这两项;调用方显式传入的值不覆盖。
+	if (!env.PYTHONIOENCODING) env.PYTHONIOENCODING = "utf-8";
+	if (!env.PYTHONUTF8) env.PYTHONUTF8 = "1";
+	return env;
 }
 
 /**

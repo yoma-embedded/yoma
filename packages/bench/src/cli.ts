@@ -51,7 +51,7 @@ function defaultEnginesDir(): string | undefined {
   return path.join(path.resolve(import.meta.dir, "..", "..", ".."), "engines")
 }
 
-/** `deepseek/deepseek-v4-flash(思考 max)`。thinking 一定有值(parseJob 落定过)。 */
+/** `deepseek/deepseek-v4-flash(思考 max)`。没钉模型时是「内核默认」。 */
 function modelLabel(model?: JobModel): string {
   if (!model?.providerID || !model.modelID) return "内核默认"
   return `${model.providerID}/${model.modelID}(思考 ${model.thinking ?? "默认"})`
@@ -63,8 +63,8 @@ async function commandCheck(jobFile: string): Promise<void> {
   const { job } = mailboxJob
   say(`${GREEN}✓${RESET} 任务书合法:${job.title} ${DIM}(${job.id})${RESET}`)
   if (job.bench.chip) say(`${DIM}  板卡 ${job.bench.board ?? "—"} · 芯片 ${job.bench.chip}${RESET}`)
-  // 模型是任务书里最容易"以为配上了"的一项:不填有默认,只填一半会整个落回默认。
-  // 把**落定之后**的两端印出来 —— 否则要跑完一轮、翻会话 JSONL 才看得出跑的是谁。
+  // 模型是任务书里最容易"以为配上了"的一项:不填则运行时按本机凭据挑,只填一半会丢掉那一半。
+  // 把解析后的两端印出来 —— 没钉模型时这里是"内核默认",真正用的要等开跑。
   say(`${DIM}  研发端 ${modelLabel(resolveMotherModel(mailboxJob))} · 工位端 ${modelLabel(job.model)}${RESET}`)
 
   const enginesDir = defaultEnginesDir()

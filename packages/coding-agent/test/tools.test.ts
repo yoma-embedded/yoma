@@ -236,6 +236,15 @@ describe("bash tool", () => {
 		expect(textOf(await bash.execute("c1", { command: "true" }))).toBe("(no output)");
 	});
 
+	it("flags UTF-8 replacement characters so garbled CJK is not treated as firmware evidence", async () => {
+		const env = makeEnv();
+		const bash = createBashTool(env);
+		const result = await bash.execute("c1", { command: "printf '\\357\\277\\275 tick'" });
+		expect(textOf(result)).toContain("\uFFFD");
+		expect(textOf(result)).toContain("U+FFFD replacement characters");
+		expect(textOf(result)).toContain("Do not treat garbled CJK as firmware evidence");
+	});
+
 	it("throws with the output attached on a non-zero exit code", async () => {
 		const env = makeEnv();
 		const bash = createBashTool(env);

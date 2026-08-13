@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeAll, describe, expect, it } from "bun:test";
 import { NodeExecutionEnv } from "@yoma/my-pi/node";
 import {
 	buildServerArgv,
@@ -19,6 +19,10 @@ import {
 	resolveGdbPath,
 	SERVER_CAPS,
 } from "../src/index.ts";
+
+beforeAll(() => {
+	process.env.YOMA_PROBE_LOCK = join(tmpdir(), `yoma-probe-gdb-${process.pid}.lock`);
+});
 
 // ─── 脚手架 ──────────────────────────────────────────────────────────────────
 

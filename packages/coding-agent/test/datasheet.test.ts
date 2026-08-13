@@ -195,10 +195,12 @@ function fakeServer(options?: { searchStatus?: number }) {
 }
 
 describe("datasheet tool", () => {
-	it("explains what to configure when no server is set", async () => {
+	it("explains what to configure when no server is set, and forbids inventing chip facts", async () => {
 		isolate();
 		const result = await makeTool().execute("c1", { action: "search", query: "q", chip: "STM32F1" });
 		expect(textOf(result)).toContain("YOMA_DATASHEET_SERVER");
+		expect(textOf(result)).toContain("DATASHEET LOOKUP UNAVAILABLE");
+		expect(textOf(result)).toContain("Do not invent");
 	});
 
 	it("search posts to /api/search and formats citations", async () => {
@@ -234,16 +236,24 @@ describe("datasheet tool", () => {
 		}
 	});
 
-	it("search throws on a real server error", async () => {
+	it("search degrades instead of throwing on a real server error", async () => {
 		isolate();
 		const { server } = fakeServer({ searchStatus: 500 });
 		try {
-			await expect(makeTool().execute("c1", { action: "search", query: "q", chip: "STM32F1" })).rejects.toThrow(
-				/search failed \(500/,
-			);
+			const result = await makeTool().execute("c1", { action: "search", query: "q", chip: "STM32F1" });
+			expect(textOf(result)).toContain("DATASHEET LOOKUP UNAVAILABLE");
+			expect(textOf(result)).toContain("HTTP 500");
 		} finally {
 			server.stop(true);
 		}
+	});
+
+	it("search degrades when the server is unreachable, and forbids inventing chip facts", async () => {
+		isolate();
+		process.env.YOMA_DATASHEET_SERVER = "http://127.0.0.1:1";
+		const result = await makeTool().execute("c1", { action: "search", query: "q", chip: "STM32F1" });
+		expect(textOf(result)).toContain("DATASHEET LOOKUP UNAVAILABLE");
+		expect(textOf(result)).toContain("Do not invent");
 	});
 
 	it("search requires query and chip", async () => {

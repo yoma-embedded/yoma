@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { chmodSync, closeSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeAll, describe, expect, it } from "bun:test";
 import { NodeExecutionEnv } from "@yoma/my-pi/node";
 import {
 	buildSttyArgs,
@@ -20,6 +20,10 @@ import {
 	unsupportedBaud,
 	windowsReaderScript,
 } from "../src/index.ts";
+
+beforeAll(() => {
+	process.env.YOMA_PROBE_LOCK = join(tmpdir(), `yoma-probe-serial-${process.pid}.lock`);
+});
 
 // ─── 测试脚手架 ──────────────────────────────────────────────────────────────
 

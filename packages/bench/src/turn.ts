@@ -24,11 +24,10 @@
  */
 
 import { createKernelHost, type KernelHost } from "@yoma-desktop/kernel/host"
-import { DEFAULT_THINKING_LEVEL } from "@yoma-desktop/kernel"
-import type { KernelEvent } from "@yoma-desktop/kernel"
+import { DEFAULT_THINKING_LEVEL, type KernelEvent, type ProviderInfo } from "@yoma-desktop/kernel"
 import type { AssistantMessage, Session, Tokens } from "@yoma-desktop/kernel"
 
-import type { Job } from "./job.ts"
+import { pickAvailableModel, type Job } from "./job.ts"
 
 /** idle 之后再等这么久没有新状态,才认为一轮真的结束(躲开自动压缩的第二段)。 */
 const SETTLE_MS = 700
@@ -237,17 +236,24 @@ export async function runTurn(options: TurnOptions): Promise<TurnResult> {
       sessionID = session.id
     }
 
-    // 任务书钉的模型只对**真注册表**有意义。faux 演练(smoke:mailbox / sim --faux)注入
-    // 的注册表里只有假模型,照着任务书 setModel 会当场"未知模型 deepseek/…" —— 演练要验
-    // 的是装配与闭环,不是选型,所以这时用注入的那个。生产从不注入 resolveModels,于是
-    // parseJob 落定的模型(任务书没写就是 DEFAULT_MODEL)一定会被下发。
-    const model = options.resolveModels ? undefined : options.job.model
-    if (model?.providerID && model.modelID) {
-      await host.handle("session.setModel", {
-        sessionID,
-        providerID: model.providerID,
-        modelID: model.modelID,
-      })
+    // 任务书钉了完整模型就下发。没钉则从本机已认证目录挑:有 DeepSeek Flash 用它,
+    // 否则第一个有凭据的模型 —— 不要把外人没有的 deepseek/… 写进 setModel。
+    // faux 演练注入的注册表里只有假模型,照着任务书 setModel 会当场未知模型。
+    if (!options.resolveModels) {
+      const requested = options.job.model
+      const catalog = (await host.handle("model.list", undefined as never)) as ProviderInfo[]
+      const picked =
+        requested?.providerID && requested.modelID
+          ? { providerID: requested.providerID, modelID: requested.modelID }
+          : pickAvailableModel(catalog)
+      if (picked) {
+        await host.handle("session.setModel", {
+          sessionID,
+          providerID: picked.providerID,
+          modelID: picked.modelID,
+          thinking: requested?.thinking,
+        })
+      }
     }
 
     await host.handle("session.prompt", { sessionID, input: { text: options.prompt } })

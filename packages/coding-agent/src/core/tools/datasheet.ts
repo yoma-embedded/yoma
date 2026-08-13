@@ -229,7 +229,7 @@ export const FIGURE_MIME: Record<string, string> = {
 };
 const MAX_FIGURE_BYTES = 8 * 1024 * 1024;
 
-const DESCRIPTION = `Chip datasheet / reference-manual assistant backed by the team datasheet server: RAG search with citations, full-section reading, and figure viewing. Everything is fetched on demand from the server — nothing is stored locally.
+const DESCRIPTION = `Chip datasheet / reference-manual assistant backed by a datasheet server: RAG search with citations, full-section reading, and figure viewing. Everything is fetched on demand from the server — nothing is stored locally.
 
 Actions:
 - search (query, chip, [rev, topK]): retrieval-only search over indexed manual PROSE. Returns the top matching RAW chunks WITH citations (manual name, page, section breadcrumb, score). It does NOT answer the question — read the chunks and write the answer yourself, citing page/section.
@@ -244,16 +244,29 @@ Search rules:
 - Exact register/bitfield/address/reset VALUES quoted in prose are contextual, not authoritative — for supported chips the stm32config tool's generated output is authoritative for configuration values.
 - Which pad carries which signal — alternate functions, ADC channel numbers, timer channels, the package pinout — is NOT a manual question for a supported chip: \`stm32config describe-mcu\` answers it authoritatively, completely and in one call. Search here only for parts that tool does not cover.
 - If the answer is not in the returned chunks, say so honestly — never fabricate manual content.
-- Requires network access to the team datasheet server (YOMA_DATASHEET_SERVER).`;
+- If this tool reports lookup unavailable (no server, unreachable, HTTP error): do NOT invent registers, electrical ratings, or peripheral behavior from memory. Tell the user manuals cannot be queried and they can point YOMA_DATASHEET_SERVER at a datasheet server (self-hosted is fine) or read the PDF themselves.
+- Requires network access to a datasheet server (YOMA_DATASHEET_SERVER).`;
 
 function textResult(text: string, details: DatasheetToolDetails) {
 	return { content: [{ type: "text" as const, text }], details };
 }
 
+const LOOKUP_UNAVAILABLE =
+	"DATASHEET LOOKUP UNAVAILABLE. Do not invent register maps, electrical ratings, reset values, or peripheral behavior from memory. " +
+	"Tell the user the manuals cannot be queried from this machine, and that they can set YOMA_DATASHEET_SERVER to a working datasheet server (self-hosted is fine) or look the PDF up themselves.";
+
 function noServerHelp(): string {
 	return (
-		`No datasheet server configured. Ask the user to set YOMA_DATASHEET_SERVER=<http://server[:port]> ` +
-		`in the environment.`
+		`${LOOKUP_UNAVAILABLE}\n` +
+		`No datasheet server configured. Set YOMA_DATASHEET_SERVER=<http://server[:port]> in the environment to enable search/read_section/view_figure.`
+	);
+}
+
+function unreachableHelp(server: string, detail: string): string {
+	return (
+		`${LOOKUP_UNAVAILABLE}\n` +
+		`Could not reach the datasheet server at ${server}: ${detail}. ` +
+		`This is a configuration/network problem, not a missing chip fact.`
 	);
 }
 
@@ -280,32 +293,48 @@ export function createDatasheetToolDefinition(
 		name: "datasheet",
 		label: "datasheet",
 		description: DESCRIPTION,
-		promptSnippet: "Search chip manuals with citations, read full sections, view figures (team datasheet server)",
-		promptGuidelines: [
-			"Before answering any register-level or peripheral-behavior question, search the indexed manuals with the datasheet tool — never answer such questions from memory, and cite page/section.",
-		],
+		promptSnippet: "Search chip manuals with citations, read full sections, view figures (datasheet server)",
+		promptGuidelines: serverUrl()
+			? [
+					"Before answering any register-level or peripheral-behavior question, search the indexed manuals with the datasheet tool and cite page/section. If the tool says lookup is unavailable or unreachable, do not invent those facts from memory — tell the user manuals cannot be queried.",
+				]
+			: [
+					"Datasheet lookup is not configured (YOMA_DATASHEET_SERVER). Do not answer register-level, electrical, or peripheral-behavior questions from memory — say you cannot look up the manual.",
+				],
 		parameters: datasheetSchema,
 		execute: async (_toolCallId, params, signal) => {
 			const server = serverUrl();
 			if (!server) return textResult(noServerHelp(), { action: params.action });
 
+			const fetchServer = async (url: string, init?: RequestInit): Promise<Response> => {
+				try {
+					return await fetch(url, { ...init, signal });
+				} catch (error) {
+					const detail = error instanceof Error ? error.message : String(error);
+					throw Object.assign(new Error(unreachableHelp(server, detail)), { datasheetUnreachable: true });
+				}
+			};
+
+			try {
 			switch (params.action) {
 				case "search": {
 					const query = need(params.query, "search", "query");
 					const chip = need(params.chip, "search", "chip");
 					const k = clampTopK(params.topK);
-					const res = await fetch(`${server}/api/search`, {
+					const res = await fetchServer(`${server}/api/search`, {
 						method: "POST",
 						headers: { "Content-Type": "application/json" },
 						body: JSON.stringify({ query, chip, rev: params.rev, top_k: k }),
-						signal,
 					});
 					if (res.status === 404) {
 						return textResult(searchUnavailableHelp(server), { action: "search", chip, rev: params.rev });
 					}
 					if (!res.ok) {
 						const body = await res.text().catch(() => "");
-						throw new Error(`datasheet search failed (${res.status} ${res.statusText}): ${body.slice(0, 300)}`);
+						return textResult(
+							unreachableHelp(server, `HTTP ${res.status} ${res.statusText}${body ? `: ${body.slice(0, 300)}` : ""}`),
+							{ action: "search", chip, rev: params.rev },
+						);
 					}
 					const json = (await res.json()) as { hits?: SearchHit[] };
 					const hits = (json.hits ?? []).slice(0, k).map((h) => ({ ...h, kind: h.kind ?? "" }));
@@ -337,7 +366,7 @@ export function createDatasheetToolDefinition(
 				case "read_section": {
 					const rel = need(params.parsedPath, "read_section", "parsedPath");
 					const cap = clampChars(params.maxChars);
-					const res = await fetch(`${server}/artifacts/${encodeRel(rel)}`, { signal });
+					const res = await fetchServer(`${server}/artifacts/${encodeRel(rel)}`);
 					if (res.status === 404) {
 						return textResult(
 							`Parsed manual not on the server: ${rel} (HTTP 404). The manual may not be ingested with parsed ` +
@@ -345,7 +374,12 @@ export function createDatasheetToolDefinition(
 							{ action: "read_section", parsedPath: rel },
 						);
 					}
-					if (!res.ok) throw new Error(`datasheet read_section failed (${res.status} ${res.statusText}) for ${rel}`);
+					if (!res.ok) {
+						return textResult(unreachableHelp(server, `HTTP ${res.status} ${res.statusText} for ${rel}`), {
+							action: "read_section",
+							parsedPath: rel,
+						});
+					}
 					const raw = await res.text();
 					const lines = raw.split("\n");
 					const headings = parseHeadings(lines);
@@ -406,14 +440,19 @@ export function createDatasheetToolDefinition(
 							{ action: "view_figure", imagePath: rel },
 						);
 					}
-					const res = await fetch(`${server}/artifacts/${encodeRel(rel)}`, { signal });
+					const res = await fetchServer(`${server}/artifacts/${encodeRel(rel)}`);
 					if (res.status === 404) {
 						return textResult(
 							`Figure not on the server: ${rel} (HTTP 404). Rely on the search prose chunks and cite those.`,
 							{ action: "view_figure", imagePath: rel },
 						);
 					}
-					if (!res.ok) throw new Error(`datasheet view_figure failed (${res.status} ${res.statusText}) for ${rel}`);
+					if (!res.ok) {
+						return textResult(unreachableHelp(server, `HTTP ${res.status} ${res.statusText} for ${rel}`), {
+							action: "view_figure",
+							imagePath: rel,
+						});
+					}
 					const bytes = Buffer.from(await res.arrayBuffer());
 					if (bytes.byteLength > MAX_FIGURE_BYTES) {
 						return textResult(
@@ -432,6 +471,12 @@ export function createDatasheetToolDefinition(
 						details: { action: "view_figure" as const, imagePath: rel, mime, bytes: bytes.byteLength },
 					};
 				}
+			}
+			} catch (error) {
+				if (error instanceof Error && "datasheetUnreachable" in error) {
+					return textResult(error.message, { action: params.action });
+				}
+				throw error;
 			}
 		},
 	};

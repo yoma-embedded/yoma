@@ -5,7 +5,6 @@ import path from "node:path"
 import { DEFAULT_THINKING_LEVEL } from "@yoma-desktop/kernel"
 
 import { runGitReal } from "../git.ts"
-import { DEFAULT_MODEL } from "../job.ts"
 import type { TurnOptions } from "../turn.ts"
 import { initMailbox } from "./init.ts"
 import { motherStep, parseMotherDecision, resolveMotherModel, type MailboxMotherOptions } from "./mother.ts"
@@ -121,23 +120,23 @@ function motherOptions(
  * 凭据的 provider 的默认模型",可以是两家不同的模型,而信箱里没有一处记着这回事。
  */
 describe("resolveMotherModel", () => {
-  test("任务书什么都不写:研发端与工位端同一个默认模型、同一档思考", () => {
+  test("任务书什么都不写:两端都不钉模型,只带思考档位", () => {
     const job = parseMailboxJob(rawMailboxJob())
-    expect(resolveMotherModel(job)).toEqual({ ...DEFAULT_MODEL, thinking: DEFAULT_THINKING_LEVEL })
+    expect(resolveMotherModel(job)).toEqual({ thinking: DEFAULT_THINKING_LEVEL })
     expect(resolveMotherModel(job)).toEqual(job.job.model!)
   })
 
-  test("mother.model 齐了就只换研发端 —— 工位端还是任务书里的那个", () => {
+  test("mother.model 齐了就只换研发端 —— 工位端仍是任务书里那个(可能未钉)", () => {
     const job = parseMailboxJob(
       rawMailboxJob({ mailbox: { mother: { model: { providerID: "deepseek", modelID: "deepseek-v4-pro" } } } }),
     )
     expect(resolveMotherModel(job)?.modelID).toBe("deepseek-v4-pro")
-    expect(job.job.model?.modelID).toBe(DEFAULT_MODEL.modelID)
+    expect(job.job.model?.modelID).toBeUndefined()
   })
 
   test("mother.model 只写档位:模型跟着 job.model,档位单独生效", () => {
     const job = parseMailboxJob(rawMailboxJob({ mailbox: { mother: { model: { thinking: "off" } } } }))
-    expect(resolveMotherModel(job)).toEqual({ ...DEFAULT_MODEL, thinking: "off" })
+    expect(resolveMotherModel(job)).toEqual({ thinking: "off" })
   })
 })
 

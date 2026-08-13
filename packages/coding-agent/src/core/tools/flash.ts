@@ -19,6 +19,7 @@ import {
 	describeProbeConflict,
 	type EnginePathOptions,
 	engineBin,
+	probeFailedHint,
 	releaseProbe,
 	runEngine,
 } from "./engines.ts";
@@ -206,7 +207,7 @@ export function createFlashToolDefinition(
 				}).catch(() => {});
 			}
 			if (result.exitCode !== 0) {
-				const text = `probe-rs ${params.action} failed (exit ${result.exitCode}):\n${output || "(no output)"}\nIf no debug probe was found, connect an ST-Link/J-Link/CMSIS-DAP probe and re-run \`list\`.`;
+				const text = `probe-rs ${params.action} failed (exit ${result.exitCode}):\n${output || "(no output)"}\n${probeFailedHint(output)}`;
 				return { content: [{ type: "text", text }], details };
 			}
 			return {

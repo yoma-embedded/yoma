@@ -237,8 +237,8 @@ export function parseMotherDecision(
 /**
  * 研发端这一侧最终用的模型。
  *
- * 模型要么齐(providerID+modelID 都在),要么回落到 `job.model` —— 后者在 parseJob 里
- * 已经落定(任务书没写就是调试台的 `DEFAULT_MODEL`),所以研发端与工位端天然同一个默认。
+ * 模型要么齐(providerID+modelID 都在),要么回落到 `job.model` —— 后者可能只有
+ * 思考档位(任务书没钉模型),真正用哪家在 runTurn 里按本机凭据再挑。
  * 半拉子的 mother.model 不去补另一半:补出来的组合会在 setModel 上报未知模型。
  *
  * `thinking` 不受"要么齐要么不填"约束:它不参与上面那个跳过判断(那是 providerID+modelID

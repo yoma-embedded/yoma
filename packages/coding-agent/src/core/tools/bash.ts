@@ -47,6 +47,16 @@ export interface BashToolDetails {
 /** onUpdate 的节流间隔:token 级刷新会把 UI 打爆,100ms 攒一批。 */
 const BASH_UPDATE_THROTTLE_MS = 100;
 
+const REPLACEMENT_CHAR = "\uFFFD";
+
+function noteDecodeDamage(text: string): string {
+	if (!text.includes(REPLACEMENT_CHAR)) return text;
+	return (
+		`${text}\n\n` +
+		`[warning: this output contains U+FFFD replacement characters — it was decoded as UTF-8 but the process likely wrote another encoding (GBK/cp936 on Chinese Windows). Do not treat garbled CJK as firmware evidence; prefer numeric registers / hex dumps.]`
+	);
+}
+
 function formatOutput(
 	progress: ShellCaptureProgress,
 	emptyText = "(no output)",
@@ -68,7 +78,7 @@ function formatOutput(
 			text += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). Full output: ${progress.fullOutputPath}]`;
 		}
 	}
-	return { text, details };
+	return { text: noteDecodeDamage(text), details };
 }
 
 function appendStatus(text: string, status: string): string {

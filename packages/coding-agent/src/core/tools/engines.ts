@@ -18,7 +18,8 @@
  * 显式传 enginesDir。
  */
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -132,7 +133,9 @@ export function stm32Families(options?: EnginePathOptions): string[] {
 // 检查 USB 线。线是好的,是 agent 自己的另一个工具占着。这个错误模型无法自己走出来,
 // 因为没有任何信息指向持有者。
 //
-// 所以只需要一个模块级变量,和一句说清楚"谁占着、怎么放"的错误。不做注册表。
+// 进程内用一个模块级变量。交互会话(内核 utilityProcess)和调试台轮次子进程
+// 各有一份,互看不见 —— 所以再落一份 `~/.my-pi/probe.lock`,跨进程才能说出
+// "谁占着、怎么放",而不是让模型去查焊接。
 
 export interface ProbeLease {
 	/** 工具名,用来组"先跑 `<owner> stop`"这句话。 */
@@ -146,26 +149,159 @@ export interface ProbeLease {
 	 * 早就没人要的租约,而且错误信息还理直气壮地点错名。
 	 */
 	isLive?: () => boolean;
+	/** 跨进程占用时对方的 pid。有这个就不要叫模型去跑本进程的 owner stop。 */
+	pid?: number;
 }
 
 let probeLease: ProbeLease | undefined;
 
+export function probeLockFile(): string {
+	const explicit = process.env.YOMA_PROBE_LOCK?.trim();
+	if (explicit) return explicit;
+	return path.join(os.homedir(), ".my-pi", "probe.lock");
+}
+
+function pidAlive(pid: number): boolean {
+	if (!Number.isInteger(pid) || pid <= 0) return false;
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+interface ProbeLockRecord {
+	pid: number;
+	owner: string;
+	label: string;
+	since: number;
+}
+
+function readCrossProcessLock(): ProbeLockRecord | undefined {
+	try {
+		const raw = JSON.parse(readFileSync(probeLockFile(), "utf8")) as ProbeLockRecord;
+		if (!raw || typeof raw.pid !== "number" || typeof raw.owner !== "string") return undefined;
+		if (raw.pid === process.pid) return undefined;
+		if (!pidAlive(raw.pid)) {
+			try {
+				unlinkSync(probeLockFile());
+			} catch {
+				// 过期锁清不掉就让下一次 claim 再试。
+			}
+			return undefined;
+		}
+		return raw;
+	} catch {
+		return undefined;
+	}
+}
+
+function writeCrossProcessLock(owner: string, label: string, since: number): void {
+	const file = probeLockFile();
+	mkdirSync(path.dirname(file), { recursive: true });
+	const body = `${JSON.stringify({ pid: process.pid, owner, label, since })}\n`;
+	try {
+		writeFileSync(file, body, { flag: "wx" });
+		return;
+	} catch {
+		const existing = readCrossProcessLock();
+		if (existing) return;
+		try {
+			unlinkSync(file);
+		} catch {
+			return;
+		}
+		try {
+			writeFileSync(file, body, { flag: "wx" });
+		} catch {
+			// 抢不到就继续:进程内租约仍在,跨进程提示走 probe-rs 的 exclusive access。
+		}
+	}
+}
+
+function clearCrossProcessLock(): void {
+	try {
+		const raw = JSON.parse(readFileSync(probeLockFile(), "utf8")) as ProbeLockRecord;
+		if (raw.pid === process.pid) unlinkSync(probeLockFile());
+	} catch {
+		// 没有锁、或不是我们写的,不动。
+	}
+}
+
 /** 拿探针。成功返回 undefined;冲突返回当前持有者。持有者已经死了就直接接管。 */
 export function claimProbe(owner: string, label: string, isLive?: () => boolean): ProbeLease | undefined {
 	if (probeLease && (probeLease.isLive?.() ?? true)) return probeLease;
-	probeLease = { owner, label, since: Date.now(), isLive };
+	const other = readCrossProcessLock();
+	if (other) {
+		return {
+			owner: other.owner,
+			label: other.label,
+			since: other.since,
+			pid: other.pid,
+			isLive: () => pidAlive(other.pid),
+		};
+	}
+	const since = Date.now();
+	probeLease = { owner, label, since, isLive, pid: process.pid };
+	writeCrossProcessLock(owner, label, since);
 	return undefined;
 }
 
 /** 放探针。owner 不匹配就什么也不做 —— 避免 A 的清理路径误放了 B 的租约。 */
 export function releaseProbe(owner: string): void {
-	if (probeLease?.owner === owner) probeLease = undefined;
+	if (probeLease?.owner !== owner) return;
+	probeLease = undefined;
+	clearCrossProcessLock();
 }
+
+const NOT_HARDWARE =
+	"This is NOT a disconnected board, a missing ST-Link, or a soldering problem.";
 
 /** 冲突时给模型看的话:必须点名持有者和确切的释放动作,否则它会去猜硬件。 */
 export function describeProbeConflict(holder: ProbeLease): string {
 	const held = Math.round((Date.now() - holder.since) / 1000);
+	if (holder.pid && holder.pid !== process.pid) {
+		return (
+			`the debug probe is already in use by another process (pid ${holder.pid}: \`${holder.owner}\` — ${holder.label}, held ${held}s). ` +
+			`${NOT_HARDWARE} Stop that Yoma session (desktop Stop, or the mailbox runner) or close the other debugger, then retry.`
+		);
+	}
 	return `the debug probe is held by the \`${holder.owner}\` tool (${holder.label}) since ${held}s ago — run \`${holder.owner}\` action:"stop" first`;
+}
+
+const EXCLUSIVE_RE =
+	/0xe00002c5|exclusive access|already in use|probe.*busy|busy.*probe|resource busy|in use by another/i;
+
+/**
+ * probe-rs 把"被别的进程占着"和"没插板子"打成很像的非零退出。
+ * 认出来就说占着;认不出来也先提占用,再提没插,不要只说去接 ST-Link。
+ */
+export function describeProbeHardwareError(output: string): string | undefined {
+	if (!EXCLUSIVE_RE.test(output)) return undefined;
+	const other = readCrossProcessLock();
+	if (other) return describeProbeConflict({ ...other, pid: other.pid, isLive: () => pidAlive(other.pid) });
+	return (
+		`the debug probe is already in use by another process (probe-rs exclusive access / 0xe00002c5). ` +
+		`${NOT_HARDWARE} A Yoma interactive session, a mailbox runner, STM32CubeIDE, OpenOCD, or another probe-rs may be holding it. ` +
+		`Stop that, then retry. If nothing else is running, unplug/replug the probe.`
+	);
+}
+
+export function appendProbeOccupationHint(message: string, output = ""): string {
+	const hint = describeProbeHardwareError(`${message}\n${output}`);
+	if (!hint) return message;
+	if (message.includes("already in use") || message.includes("0xe00002c5")) return message;
+	return `${message}\n${hint}`;
+}
+
+export function probeFailedHint(output: string): string {
+	const occupied = describeProbeHardwareError(output);
+	if (occupied) return occupied;
+	return (
+		`If another program is using the probe (Yoma session, mailbox runner, CubeIDE, OpenOCD), stop it — that error often looks like a disconnected board but is not. ` +
+		`If nothing else is running, connect an ST-Link/J-Link/CMSIS-DAP probe and re-run \`list\`.`
+	);
 }
 
 // ─── 输出预算 ────────────────────────────────────────────────────────────────

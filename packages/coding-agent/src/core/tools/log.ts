@@ -48,6 +48,7 @@ import {
 	engineBin,
 	killOnHostExit,
 	killTree,
+	appendProbeOccupationHint,
 	releaseProbe,
 	stamp,
 	unrefStream as unref,
@@ -1008,7 +1009,12 @@ export function createLogToolDefinition(
 								.join("; ")
 								.trim();
 							await started.stop();
-							throw new Error(`log start: could not open ${label}${said ? `: ${said}` : ""}${await portHint()}`);
+							throw new Error(
+								appendProbeOccupationHint(
+									`log start: could not open ${label}${said ? `: ${said}` : ""}${await portHint()}`,
+									said,
+								),
+							);
 						}
 					}
 

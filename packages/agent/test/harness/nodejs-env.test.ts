@@ -45,6 +45,24 @@ describe("NodeExecutionEnv exec", () => {
 		expect(result).toEqual({ stdout: `${await realpath(root)}:ok`, stderr: "", exitCode: 0 });
 	});
 
+	it("pins PYTHONIOENCODING and PYTHONUTF8 so Chinese Windows scripts do not emit GBK", async () => {
+		const root = createTempDir();
+		const prevIo = process.env.PYTHONIOENCODING;
+		const prevUtf = process.env.PYTHONUTF8;
+		delete process.env.PYTHONIOENCODING;
+		delete process.env.PYTHONUTF8;
+		try {
+			const env = new NodeExecutionEnv({ cwd: root });
+			const result = getOrThrow(await env.exec('printf \'%s:%s\' "$PYTHONIOENCODING" "$PYTHONUTF8"'));
+			expect(result.stdout).toBe("utf-8:1");
+		} finally {
+			if (prevIo === undefined) delete process.env.PYTHONIOENCODING;
+			else process.env.PYTHONIOENCODING = prevIo;
+			if (prevUtf === undefined) delete process.env.PYTHONUTF8;
+			else process.env.PYTHONUTF8 = prevUtf;
+		}
+	});
+
 	it("can replace rather than inherit the default shell environment", async () => {
 		const root = createTempDir();
 		const inheritedKey = "MY_PI_NODE_ENV_INHERITED_TEST";

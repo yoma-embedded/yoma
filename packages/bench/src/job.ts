@@ -51,7 +51,7 @@ export interface JobDeliver {
 }
 
 export interface JobModel {
-  /** 要么和 modelID 一起填,要么整个不填(落到 {@link DEFAULT_MODEL})。 */
+  /** 要么和 modelID 一起填,要么整个不填(运行时再从本机已有凭据的模型里挑)。 */
   providerID?: string
   modelID?: string
   /**
@@ -65,25 +65,14 @@ export interface JobModel {
 }
 
 /**
- * 任务书没写模型时,调试台用哪个 —— **研发端与工位端同一个默认**。
+ * 任务书没写模型时,**优先**试这个 —— 但只在这台机器已经有这家凭据时。
  *
- * ## 为什么调试台要自己表态
+ * 以前 parseJob 会把这个组合写进 job.json,没配 DeepSeek 的机器第一轮直接
+ * `未知模型 deepseek/…`。现在任务书里可以不钉模型,运行时再从本机已认证的
+ * 目录里挑(见 {@link pickAvailableModel})。
  *
- * 不表态的话落到内核的 `resolveModel()`:"第一个有凭据的 provider 的默认模型"。
- * 那是给交互式用的兜底 —— 用户看得见模型对话框里写的是哪个,不满意当场换。无人值守
- * 没有这一眼:两台机器上"第一个有凭据的 provider"可能根本不是同一家,于是研发端和
- * 工位端跑着不同的模型,而任务书里没有任何一处看得出来。这和上一版
- * {@link DEFAULT_THINKING_LEVEL} 的理由是同一个。
- *
- * ## 为什么是 V4 Flash 而不是 V4 Pro
- *
- * 两者的档位表一样(都支持 high/max),而 Flash 每 token 只要三分之一
- * (0.14/0.28 对 0.435/0.87)。省下的那部分直接换成思考:默认档位因此敢开到 `max`。
- * 2026-08-11 那场信箱闭环的账正好反过来 —— V4 Pro 跑了 5 轮、107 条 assistant 消息,
- * reasoning token 是 0。**贵的模型不思考,不如便宜的模型往死里想。**
- *
- * 落成显式字段(见 parseJob)而不是留空到运行时再挑,是为了让它进信箱的 job.json:
- * 工位端读到的是"用哪个模型"这件事的答案本身,不是它自己那台机器的猜测。
+ * 仍把 Flash 放在第一候选:档位表和 Pro 一样(high/max),单价大约三分之一,
+ * 省下的换成思考。任务书写了完整 model 则听任务书的,两端一致。
  */
 export const DEFAULT_MODEL = {
   providerID: "deepseek",
@@ -132,19 +121,46 @@ export function parseModelSpec(raw: unknown, fieldPath: string, issues: string[]
 }
 
 /**
- * `job.model` 的落定:模型**要么齐(providerID+modelID)要么整个落到默认**,
+ * `job.model` 的落定:模型**要么齐(providerID+modelID)要么运行时再挑**,
  * 档位单独落 —— 与 `mailbox.mother.model` 的规矩同一套(见 mother.ts 的 motherTurnJob)。
  *
  * 只填一半的模型不去猜另一半:补出来的 `deepseek/<别家的模型>` 会在第一轮 setModel
- * 上报"未知模型",而那时人已经离开了。落到默认反而是两端一致、跑得起来的那个。
+ * 上报"未知模型",而那时人已经离开了。不钉 DeepSeek,让 {@link pickAvailableModel}
+ * 对着这台机器已经能用的目录挑。
  */
 function resolveJobModel(model: JobModel | undefined): JobModel {
   const pinned = model?.providerID && model.modelID ? model : undefined
   return {
-    providerID: pinned?.providerID ?? DEFAULT_MODEL.providerID,
-    modelID: pinned?.modelID ?? DEFAULT_MODEL.modelID,
+    providerID: pinned?.providerID,
+    modelID: pinned?.modelID,
     thinking: model?.thinking ?? DEFAULT_THINKING_LEVEL,
   }
+}
+
+export interface ModelCatalogEntry {
+  id: string
+  authenticated: boolean
+  models: { id: string }[]
+}
+
+/**
+ * 任务书没钉模型时,从本机目录挑一个能用的。
+ *
+ * 有 DeepSeek Flash 凭据就用它(团队默认);否则用第一个已认证 provider 的第一个模型。
+ * 一个 key 都没有时返回 undefined,调用方不要 setModel,让内核走自己的空目录错误。
+ */
+export function pickAvailableModel(
+  catalog: ModelCatalogEntry[],
+  preferred: { providerID: string; modelID: string } = DEFAULT_MODEL,
+): { providerID: string; modelID: string } | undefined {
+  const preferredProvider = catalog.find((provider) => provider.id === preferred.providerID && provider.authenticated)
+  if (preferredProvider?.models.some((model) => model.id === preferred.modelID)) {
+    return { providerID: preferred.providerID, modelID: preferred.modelID }
+  }
+  const first = catalog.find((provider) => provider.authenticated && provider.models.length > 0)
+  const model = first?.models[0]
+  if (!first || !model) return undefined
+  return { providerID: first.id, modelID: model.id }
 }
 
 /** 解析并校验 job spec。**不** 碰文件系统 —— 路径是否存在由调用方在准备阶段查(带上下文更好报错)。 */

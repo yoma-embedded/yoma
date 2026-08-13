@@ -1,24 +1,33 @@
 import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeAll, describe, expect, it } from "bun:test";
 import { NodeExecutionEnv } from "@yoma/my-pi/node";
 import {
 	buildFlashArgs,
 	buildStm32ConfigArgs,
+	claimProbe,
 	createFlashToolDefinition,
 	createNetlistToolDefinition,
 	createStm32ConfigToolDefinition,
+	describeProbeConflict,
+	describeProbeHardwareError,
 	engineBin,
 	engineDataDir,
 	enginesDir,
 	exe,
 	findEnginesDir,
+	probeFailedHint,
+	releaseProbe,
 	runEngine,
 	sanitizeStem,
 } from "../src/index.ts";
 
 const tempDirs: string[] = [];
+
+beforeAll(() => {
+	process.env.YOMA_PROBE_LOCK = join(tmpdir(), `yoma-probe-test-${process.pid}.lock`);
+});
 
 function createTempDir(): string {
 	const dir = join(tmpdir(), `my-pi-engines-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -28,6 +37,9 @@ function createTempDir(): string {
 }
 
 afterEach(() => {
+	releaseProbe("flash");
+	releaseProbe("gdb");
+	releaseProbe("log");
 	while (tempDirs.length > 0) {
 		const dir = tempDirs.pop()!;
 		if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
@@ -567,6 +579,28 @@ describe("flash buildArgs", () => {
 	});
 });
 
+describe("probe lease", () => {
+	it("in-process conflict names the holder and how to release it", () => {
+		expect(claimProbe("flash", "probe-rs download")).toBeUndefined();
+		const holder = claimProbe("gdb", "probe-rs gdb");
+		expect(holder?.owner).toBe("flash");
+		expect(describeProbeConflict(holder!)).toContain("run `flash` action:\"stop\" first");
+		releaseProbe("flash");
+		expect(claimProbe("gdb", "probe-rs gdb")).toBeUndefined();
+		releaseProbe("gdb");
+	});
+
+	it("classifies probe-rs exclusive access as occupied, not missing hardware", () => {
+		const hint = describeProbeHardwareError("Error: exclusive access (0xe00002c5)");
+		expect(hint).toContain("already in use");
+		expect(hint).toContain("NOT a disconnected board");
+		expect(probeFailedHint("Error: exclusive access (0xe00002c5)")).toContain("already in use");
+		expect(probeFailedHint("Error: exclusive access (0xe00002c5)")).not.toContain("connect an ST-Link");
+		expect(probeFailedHint("Error: no probe found")).toContain("another program is using the probe");
+		expect(probeFailedHint("Error: no probe found")).toContain("connect an ST-Link");
+	});
+});
+
 describe("flash tool", () => {
 	const ECHO_PROBE_RS = `#!/bin/sh
 echo "argv: $@"
@@ -593,7 +627,19 @@ echo "argv: $@"
 		expect(text).toContain("probe-rs info failed (exit 1)");
 		expect(text).toContain("Error: no probe found");
 		expect(text).toContain("connect an ST-Link/J-Link/CMSIS-DAP probe");
+		expect(text).toContain("another program is using the probe");
 		expect(result.details.exitCode).toBe(1);
+	});
+
+	it("says the probe is occupied when probe-rs reports exclusive access, not a missing board", async () => {
+		const { tool } = makeTool(
+			`#!/bin/sh\necho "Error: Attaching to probe failed: exclusive access (0xe00002c5)" 1>&2\nexit 1\n`,
+		);
+		const result = await tool.execute("c1", { action: "info" });
+		const text = textOf(result);
+		expect(text).toContain("already in use");
+		expect(text).toContain("NOT a disconnected board");
+		expect(text).not.toMatch(/If no debug probe was found/);
 	});
 
 	it("resolves the firmware path against the cwd and passes bin flags", async () => {
