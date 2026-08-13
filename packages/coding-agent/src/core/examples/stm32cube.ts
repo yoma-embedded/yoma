@@ -19,7 +19,10 @@ import {
 	walkFilesRelative,
 } from "./extract-util.ts";
 
-export const STM32CUBE_EXTRACTOR_VERSION = 1;
+// v2(2026-08-14):例程判定改为"工程证据"(readme / Src / CM4|CM7 三取一)并支持
+// 类目级直挂 —— v1 按固定层级数目录,F1 的 BSP 直挂在类目下,它的 EWARM/MDK-ARM/
+// Src/Inc 全被当成了例程(真语料实测:富化对着 EWARM 报"读不到任何可分析文件")。
+export const STM32CUBE_EXTRACTOR_VERSION = 2;
 
 const CATEGORIES = ["Examples", "Examples_LL", "Examples_MIX", "Applications"] as const;
 
@@ -140,8 +143,10 @@ function extractOne(
 	const summary = parseCubeDescription(readme);
 
 	const peripherals = new Set<string>([group.toLowerCase()]);
+	// H7 双核例程的源码在 CM7/CM4 下一层(Examples/GPIO/GPIO_EXTI/CM7/Src),不带
+	// 前缀匹配的话这类条目 loc=0、外设只剩组名 —— 与工程判据同一批修(v2)。
 	const sourceFiles = walkFilesRelative(abs, 400).filter(
-		(file) => /^(Src|Inc)\//.test(file) && /\.(c|h)$/i.test(file),
+		(file) => /^(CM[47]\/)?(Src|Inc)\//.test(file) && /\.(c|h)$/i.test(file),
 	);
 	for (const file of sourceFiles) {
 		if (isCubeConfFile(file)) continue;
@@ -168,7 +173,23 @@ function extractOne(
 	};
 }
 
-/** 遍历 `Projects/<板>/{Examples,Examples_LL,Examples_MIX,Applications}/<外设组>/<例程>/`。 */
+/**
+ * 一个目录"是 Cube 例程工程"的判据:有 Src/(单核标准布局)或 CM4/CM7(H7 双核布局)。
+ * **readme 单独不算数**:组目录常带一个清单式 readme(`Examples/SPI/readme.txt` 是
+ * 子例程索引页),按 readme 认工程会把整组真例程吞成一条 0 行的假条目,还骗到小种子
+ * 加分(真语料实测)。EWARM/MDK-ARM 这类 IDE 目录、直挂工程裸露的 Src/Inc 碎块,
+ * 两个结构证据都没有。
+ */
+function isCubeProjectDir(dir: string): boolean {
+	const { dirs } = listDirNames(dir);
+	return dirs.includes("Src") || dirs.includes("CM7") || dirs.includes("CM4");
+}
+
+/**
+ * 遍历 `Projects/<板>/{Examples,Examples_LL,Examples_MIX,Applications}/<外设组>/<例程>/`。
+ * 组目录自己就是工程时(F1/H7 的 BSP 直挂在类目下)收组本身、不往里枚举;
+ * 例程层只收过得了工程判据的目录 —— v1 按层级数数,把 IDE 目录也当例程收了。
+ */
 export function extractStm32CubeExamples(root: string): RawExample[] {
 	const family = detectCubeFamily(root);
 	const build = cubeBuildState(root);
@@ -178,8 +199,14 @@ export function extractStm32CubeExamples(root: string): RawExample[] {
 		for (const category of CATEGORIES) {
 			const categoryDir = path.join(projectsDir, board, category);
 			for (const group of listDirNames(categoryDir).dirs) {
+				const groupRel = `Projects/${board}/${category}/${group}`;
+				if (isCubeProjectDir(path.join(root, groupRel))) {
+					out.push(extractOne(root, groupRel, board, group, family, build));
+					continue;
+				}
 				for (const example of listDirNames(path.join(categoryDir, group)).dirs) {
-					const rel = `Projects/${board}/${category}/${group}/${example}`;
+					const rel = `${groupRel}/${example}`;
+					if (!isCubeProjectDir(path.join(root, rel))) continue;
 					out.push(extractOne(root, rel, board, group, family, build));
 				}
 			}

@@ -15,25 +15,29 @@ import type { ExecutionEnv } from "@yoma/my-pi";
 import { type Static, Type } from "typebox";
 
 import { listDirNames } from "../examples/extract-util.ts";
-import { renderEntryCard, renderNoIndexHelp, renderSearchReport } from "../examples/render.ts";
+import { checkMergeConflicts, type PreflightInput } from "../examples/preflight.ts";
+import { renderEntryCard, renderNoIndexHelp, renderPreflightReport, renderSearchReport } from "../examples/render.ts";
 import { type Ecosystem, type ExampleEntry, type ExamplesIndex, isEcosystem } from "../examples/schema.ts";
 import { searchIndex, type SearchQuery } from "../examples/search.ts";
 import { seedExample } from "../examples/seed.ts";
-import { findSource, readAllIndexes } from "../examples/store.ts";
+import { enrichmentMapForAll, findSource, readAllIndexes } from "../examples/store.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { type ToolDefinition, wrapToolDefinition } from "./types.ts";
 
-export const EXAMPLES_ACTIONS = ["search", "info", "seed"] as const;
+export const EXAMPLES_ACTIONS = ["search", "info", "seed", "preflight"] as const;
 
 export type ExamplesAction = (typeof EXAMPLES_ACTIONS)[number];
 
 const examplesSchema = Type.Object({
 	// 显式元组而非 .map():数组会丢掉元组结构,Static 推导塌成 never(同 toolchain)。
 	action: Type.Optional(
-		Type.Union([Type.Literal("search"), Type.Literal("info"), Type.Literal("seed")], {
-			description:
-				"search (default): query the local index of verified vendor examples. info: full card for one entry id. seed: copy an example into the workspace as a starting point (requires id).",
-		}),
+		Type.Union(
+			[Type.Literal("search"), Type.Literal("info"), Type.Literal("seed"), Type.Literal("preflight")],
+			{
+				description:
+					"search (default): query the local index of verified vendor examples. info: full card for one entry id. seed: copy an example into the workspace as a starting point (requires id). preflight: merge conflict check across entries (requires ids, chassis first).",
+			},
+		),
 	),
 	target: Type.Optional(
 		Type.String({
@@ -64,6 +68,12 @@ const examplesSchema = Type.Object({
 	dest: Type.Optional(
 		Type.String({ description: "seed only: target directory relative to the working directory. Defaults to the example's name." }),
 	),
+	ids: Type.Optional(
+		Type.Array(Type.String(), {
+			description:
+				"preflight only: 2+ entry ids, the CHASSIS first, donors after. Reports overlapping pins, peripheral instances, link-time symbols, task priorities and partition tables from the enriched cards.",
+		}),
+	),
 });
 
 export type ExamplesToolInput = Static<typeof examplesSchema>;
@@ -78,6 +88,9 @@ export interface ExamplesToolDetails {
 	corpus?: string;
 	/** seed 才有:落进工作区的绝对路径。 */
 	seededTo?: string;
+	/** preflight 才有:参与的条目(底盘在前)与重叠条数。 */
+	ids?: string[];
+	conflicts?: number;
 }
 
 export interface ExamplesToolOptions {
@@ -90,9 +103,10 @@ const DESCRIPTION = `Searches a local index of VERIFIED vendor example projects 
 Why: a working vendor example is a compressed proof of hundreds of coupled decisions (clock tree, pin mux, DMA channels, linker script, build flags). Starting from one and changing a little at a time turns failures into "what did I just change" instead of "which of 400 guesses was wrong".
 
 Actions:
-- search (default): filters are structural — chip/ecosystem are HARD constraints (an STM32 example is never a candidate for an ESP32 need, however similar the description), peripherals must hit, board is a soft bonus, smaller seeds rank higher. Results show id, targets, peripherals, size, buildability and the scoring reasons.
-- info (id): the full card — summary, deps, Kconfig keys, acceptance material (vendor CI pytest where present), license, local corpus root, top-level files.
+- search (default): filters are structural — chip/ecosystem are HARD constraints (an STM32 example is never a candidate for an ESP32 need, however similar the description), peripherals must hit, board is a soft bonus, smaller seeds rank higher. Results show id, targets, peripherals, size, buildability and the scoring reasons. Where the corpus has been enriched offline, hits also carry a model-written summary and capability terms.
+- info (id): the full card — summary, deps, Kconfig keys, acceptance material (vendor CI pytest where present), license, local corpus root, top-level files, and the enriched resource footprint (pins, peripheral instances, link-time symbols, tasks) when available.
 - seed (id, dest?): copies the example into the workspace (refuses non-empty targets), excludes build artifacts and machine-generated sdkconfig, and writes .yoma-seed.json recording corpus+commit+path — the project's provenance, commit it.
+- preflight (ids, chassis FIRST): before merging donor code into the chassis, reports the overlapping facts across their enriched footprints — same pin claimed twice, same peripheral instance, symbols both define (IRQ handlers, HAL_*_MspInit), colliding task priorities, competing partition tables. It lists overlaps, it does not verdict — a shared I2C bus overlap can be exactly right. Unenriched entries are named as blind spots, never silently passed.
 
 Workflow discipline (routine-driven): decompose the need into capability units and search each unit separately; pick the seed, build-flash-run it UNCHANGED first to establish a green baseline; then add ONE capability at a time, verifying each step; on failure return to the last green commit and re-plan instead of patching on rubble.
 
@@ -152,6 +166,7 @@ export function createExamplesToolDefinition(
 		promptGuidelines: [
 			"New embedded functionality starts from a verified example, not a blank file: decompose the need into capability units, run one examples search per unit (chip is a hard constraint — never use a result whose targets exclude your chip), seed the best fit, and build-flash-run it unchanged before touching anything.",
 			"After the seed is green, add ONE capability per step and verify each step on the ladder (build → flash → runtime evidence); when a step fails, go back to the last green commit and re-plan — do not keep patching on top of a broken state.",
+			"Before merging donor example code into the chassis, run examples preflight (chassis id first, donor ids after): it reports pin / peripheral-instance / link-symbol / task-priority overlaps from the enriched cards before you hit a build or runtime error. It reports facts, not verdicts — judge shared-bus overlaps yourself.",
 		],
 		parameters: examplesSchema,
 		execute: async (_toolCallId, params) => {
@@ -177,10 +192,40 @@ export function createExamplesToolDefinition(
 				const hits = searchIndex(
 					indexes.flatMap((index) => index.entries),
 					query,
+					enrichmentMapForAll(indexes, configDir),
 				);
 				return {
 					content: [{ type: "text", text: renderSearchReport(indexes, query, hits) }],
 					details: { action, count: hits.length, hitIds: hits.map((hit) => hit.entry.id) },
+				};
+			}
+
+			if (action === "preflight") {
+				const ids = (params.ids ?? []).map((item) => item.trim()).filter((item) => item !== "");
+				if (ids.length < 2) {
+					throw new Error('preflight 需要 ids:至少 2 个条目 id,底盘在前 —— 例 ["<底盘id>","<供体id>"]');
+				}
+				if (new Set(ids).size !== ids.length) {
+					throw new Error("preflight 的 ids 里有重复条目 —— 同一例程和自己比重叠没有意义");
+				}
+				if (indexes.length === 0) throw new Error(renderNoIndexHelp());
+				const enrichment = enrichmentMapForAll(indexes, configDir);
+				const inputs: PreflightInput[] = ids.map((entryId, position) => {
+					const found = findEntry(indexes, entryId);
+					if (!found) {
+						throw new Error(`找不到条目:${entryId} —— 先 search 拿到确切 id(索引可能重建过,旧 id 会失效)`);
+					}
+					const record = enrichment.get(entryId);
+					return {
+						entry: found.entry,
+						role: position === 0 ? "chassis" : "donor",
+						...(record ? { card: record.card } : {}),
+					};
+				});
+				const report = checkMergeConflicts(inputs);
+				return {
+					content: [{ type: "text", text: renderPreflightReport(inputs, report) }],
+					details: { action, ids, conflicts: report.conflicts.length },
 				};
 			}
 
@@ -192,7 +237,11 @@ export function createExamplesToolDefinition(
 			const source = findSource(entry.corpus, configDir);
 
 			if (action === "info") {
-				const card = renderEntryCard(entry, { commit: index.header.commit, corpusRoot: source?.root });
+				const card = renderEntryCard(entry, {
+					commit: index.header.commit,
+					corpusRoot: source?.root,
+					enrichment: enrichmentMapForAll([index], configDir).get(entry.id),
+				});
 				const listing = source
 					? listDirNames(path.join(source.root, ...entry.path.split("/")))
 					: { dirs: [], files: [] };

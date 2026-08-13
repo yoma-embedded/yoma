@@ -304,7 +304,7 @@ export interface ToolchainToolDetails {
  * 与 toolchain 同一先例),提前钉住形状,漂移由 details-check.ts 兜底。
  */
 export interface ExamplesToolDetails {
-  action: "search" | "info" | "seed"
+  action: "search" | "info" | "seed" | "preflight"
   /** search 才有:命中数与命中 id。 */
   count?: number
   hitIds?: string[]
@@ -313,6 +313,9 @@ export interface ExamplesToolDetails {
   corpus?: string
   /** seed 才有:落进工作区的绝对路径。 */
   seededTo?: string
+  /** preflight 才有:参与条目(底盘在前)与重叠条数。 */
+  ids?: string[]
+  conflicts?: number
 }
 
 export interface NetlistToolDetails {

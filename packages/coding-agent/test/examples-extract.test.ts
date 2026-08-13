@@ -78,11 +78,23 @@ describe("STM32Cube 抽取器", () => {
 	const entries = extractStm32CubeExamples(CUBE_ROOT);
 	const byPath = new Map(entries.map((entry) => [entry.path, entry]));
 
-	test("收齐两个例程,Demonstrations 被跳过", () => {
+	test("收齐例程,Demonstrations 与 IDE 目录被跳过,BSP 直挂收组本身,清单 readme 不吞组", () => {
 		expect(entries.map((entry) => entry.path)).toEqual([
+			// BSP 直挂在类目下(有 Src):收它自己,不把 EWARM/MDK-ARM/Src 当例程(v1 真踩过)。
+			"Projects/NUCLEO-F401RE/Examples/BSP",
+			// GPIO 组里混着一个纯 IDE 目录(EWARM),没有工程结构证据,不收。
 			"Projects/NUCLEO-F401RE/Examples/GPIO/GPIO_IOToggle",
 			"Projects/NUCLEO-F401RE/Examples/I2C/I2C_TwoBoards_ComPolling",
+			// SPI 组带清单式 readme:readme 单独不算工程,子例程照常收(真语料实测吞过整组)。
+			"Projects/NUCLEO-F401RE/Examples/SPI/SPI_FullDuplex_ComDMA",
+			"Projects/NUCLEO-F401RE/Examples/UART/UART_DualCore",
 		]);
+	});
+
+	test("H7 式双核例程:CM7/Src 的源码计入 loc 与外设证据", () => {
+		const dual = byPath.get("Projects/NUCLEO-F401RE/Examples/UART/UART_DualCore");
+		expect(dual?.loc).toBeGreaterThan(0);
+		expect(dual?.peripherals).toEqual(["uart"]);
 	});
 
 	test("gpio 例程:@page 标题 / @par 描述 / 板名 / 家族 / include+调用证据,conf 全家桶不算", () => {

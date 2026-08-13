@@ -12,10 +12,15 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
+import {
+	type EnrichmentRecord,
+	parseEnrichmentLines,
+	serializeEnrichmentRecord,
+} from "./enrich-schema.ts";
 import {
 	type CorpusSource,
 	corpusSlug,
@@ -116,6 +121,57 @@ export function readIndexFile(corpusId: string, configDir?: string): ExamplesInd
 	const text = readTextOrUndefined(indexPathFor(corpusId, configDir));
 	if (text === undefined) return undefined;
 	return parseIndex(text);
+}
+
+// ─── 富化文件(enrich/<slug>.jsonl)────────────────────────────────────────────
+//
+// 与索引分开落盘:索引是脚本秒级重建的缓存,富化是花过钱的模型产物,重建索引不许
+// 冲掉它。逐行自描述、只追加 —— 断点续跑天然成立(缺哪条补哪条),坏行只废那一行。
+
+export function enrichDir(configDir?: string): string {
+	return path.join(examplesDir(configDir), "enrich");
+}
+
+export function enrichPathFor(corpusId: string, configDir?: string): string {
+	return path.join(enrichDir(configDir), `${corpusSlug(corpusId)}.jsonl`);
+}
+
+export function readEnrichmentRecords(corpusId: string, configDir?: string): EnrichmentRecord[] {
+	const text = readTextOrUndefined(enrichPathFor(corpusId, configDir));
+	if (text === undefined) return [];
+	return parseEnrichmentLines(text);
+}
+
+/**
+ * 追加一条富化记录。单进程内管线是逐条 await 后追加,行不交错;跨进程并发重富化
+ * 极端下可能撕一行 —— 容错读会丢那一行,重跑 enrich 补上,代价与纪律同索引。
+ */
+export function appendEnrichmentRecord(record: EnrichmentRecord, configDir?: string): void {
+	const file = enrichPathFor(record.corpus, configDir);
+	mkdirSync(path.dirname(file), { recursive: true });
+	appendFileSync(file, serializeEnrichmentRecord(record), "utf8");
+}
+
+/**
+ * 一份索引的有效富化:commit 与索引 header 一致才算数(语料换版本后旧卡片按陈旧
+ * 跳过,宁缺毋错)。同 id 多条取最后一条 —— 重富化就是"再追加一行"。
+ */
+export function enrichmentMapFor(index: ExamplesIndex, configDir?: string): Map<string, EnrichmentRecord> {
+	const map = new Map<string, EnrichmentRecord>();
+	for (const record of readEnrichmentRecords(index.header.corpus, configDir)) {
+		if (record.commit !== index.header.commit) continue;
+		map.set(record.id, record);
+	}
+	return map;
+}
+
+/** 多份索引合一张富化表 —— 工具层(search/info/preflight)按条目 id 直查。 */
+export function enrichmentMapForAll(indexes: ExamplesIndex[], configDir?: string): Map<string, EnrichmentRecord> {
+	const map = new Map<string, EnrichmentRecord>();
+	for (const index of indexes) {
+		for (const [id, record] of enrichmentMapFor(index, configDir)) map.set(id, record);
+	}
+	return map;
 }
 
 /**

@@ -4,6 +4,31 @@
  * 与 core/toolchain/index.ts 同一纪律。
  */
 export {
+	ENRICH_SCHEMA_TAG,
+	type EnrichmentCard,
+	type EnrichmentRecord,
+	isEnrichmentCard,
+	isEnrichmentRecord,
+	parseEnrichmentLines,
+	type PinUse,
+	type ResourceFootprint,
+	sanitizeEnrichmentCard,
+	serializeEnrichmentRecord,
+	type TaskDecl,
+} from "./enrich-schema.ts";
+export {
+	buildEnrichPrompt,
+	ENRICH_SYSTEM_PROMPT,
+	type EnrichCompletion,
+	enrichCorpus,
+	type EnrichCorpusOptions,
+	type EnrichCorpusResult,
+	enrichFileRank,
+	type EnrichProgress,
+	parseModelCardText,
+	pickEnrichFiles,
+} from "./enrich.ts";
+export {
 	capabilitiesFromSource,
 	ESPIDF_EXTRACTOR_VERSION,
 	extractEspIdfExamples,
@@ -35,7 +60,23 @@ export {
 	serializeIndex,
 	SOURCES_SCHEMA_TAG,
 } from "./schema.ts";
-export { describeQuery, renderEntryCard, renderHit, renderNoIndexHelp, renderSearchReport } from "./render.ts";
+export {
+	checkMergeConflicts,
+	normalizePin,
+	type PreflightConflict,
+	type PreflightConflictKind,
+	type PreflightInput,
+	type PreflightReport,
+	type PreflightRole,
+} from "./preflight.ts";
+export {
+	describeQuery,
+	renderEntryCard,
+	renderHit,
+	renderNoIndexHelp,
+	renderPreflightReport,
+	renderSearchReport,
+} from "./render.ts";
 export { normalizeTarget, type ScoredExample, searchIndex, type SearchQuery, targetMatches } from "./search.ts";
 export {
 	SEED_PROVENANCE_FILE,
@@ -46,11 +87,17 @@ export {
 	shouldCopy,
 } from "./seed.ts";
 export {
+	appendEnrichmentRecord,
+	enrichDir,
+	enrichmentMapFor,
+	enrichmentMapForAll,
+	enrichPathFor,
 	examplesDir,
 	findSource,
 	indexDir,
 	indexPathFor,
 	readAllIndexes,
+	readEnrichmentRecords,
 	readIndexFile,
 	readSources,
 	sourcesPath,

@@ -7,6 +7,7 @@
  * loc 升序 → id 字典序),索引没变时两次搜索必须一字不差。
  */
 
+import type { EnrichmentRecord } from "./enrich-schema.ts";
 import type { Ecosystem, ExampleEntry } from "./schema.ts";
 
 /**
@@ -38,6 +39,8 @@ export interface ScoredExample {
 	score: number;
 	/** 给模型看的加分理由 —— 排序要可查账,不是黑盒。 */
 	reasons: string[];
+	/** 有富化卡片时带上 —— 渲染层展示模型摘要,免得命中之后还要挨个 info。 */
+	enrichment?: EnrichmentRecord;
 }
 
 export function normalizeTarget(value: string): string {
@@ -62,13 +65,25 @@ function locBonus(loc: number): number {
 	return 0;
 }
 
-export function searchIndex(entries: ExampleEntry[], query: SearchQuery): ScoredExample[] {
+/**
+ * enrichment(可选)是富化表(store.ts 的 enrichmentMapForAll):有卡片的条目,
+ * 外设匹配并上模型标的能力词(脚本抽不到的 lowpower/ota 这类靠它),关键词弱命中
+ * 多一份中文摘要可搜。没有富化时行为与从前逐字相同 —— 富化只增益,不改底线。
+ */
+export function searchIndex(
+	entries: ExampleEntry[],
+	query: SearchQuery,
+	enrichment?: ReadonlyMap<string, EnrichmentRecord>,
+): ScoredExample[] {
 	const peripherals = (query.peripherals ?? []).map((item) => item.trim().toLowerCase()).filter((item) => item !== "");
 	const keywords = (query.keywords ?? []).map((item) => item.trim().toLowerCase()).filter((item) => item !== "");
-	const limit = query.limit ?? 12;
+	// Number.isFinite 而不是 ??:limit 为 NaN 时 slice(0, NaN) 是空数组,主检索路径
+	// 直接变成"没有命中"的假阴性(审查实测)。
+	const limit = Number.isFinite(query.limit) ? (query.limit as number) : 12;
 
 	const scored: ScoredExample[] = [];
 	for (const entry of entries) {
+		const record = enrichment?.get(entry.id);
 		if (query.ecosystem && entry.ecosystem !== query.ecosystem) continue;
 		if (query.target && !targetMatches(query.target, entry.targets)) continue;
 		if (
@@ -84,7 +99,8 @@ export function searchIndex(entries: ExampleEntry[], query: SearchQuery): Scored
 		let score = 0;
 
 		if (peripherals.length > 0) {
-			const hits = peripherals.filter((peripheral) => entry.peripherals.includes(peripheral));
+			const capabilities = record ? [...entry.peripherals, ...record.card.capabilities] : entry.peripherals;
+			const hits = peripherals.filter((peripheral) => capabilities.includes(peripheral));
 			if (hits.length === 0) continue;
 			score += hits.length * 3;
 			reasons.push(`外设命中 ${hits.join("/")}`);
@@ -96,7 +112,8 @@ export function searchIndex(entries: ExampleEntry[], query: SearchQuery): Scored
 		}
 
 		const haystackStrong = `${entry.title ?? ""}\n${entry.name}`.toLowerCase();
-		const haystackWeak = `${entry.summary ?? ""}\n${entry.path}`.toLowerCase();
+		const haystackWeak =
+			`${entry.summary ?? ""}\n${entry.path}\n${record?.card.summaryZh ?? ""}\n${record?.card.capabilities.join(" ") ?? ""}`.toLowerCase();
 		for (const keyword of keywords) {
 			if (haystackStrong.includes(keyword)) {
 				score += 2;
@@ -120,7 +137,7 @@ export function searchIndex(entries: ExampleEntry[], query: SearchQuery): Scored
 			reasons.push(`小种子(${entry.loc} 行)`);
 		}
 
-		scored.push({ entry, score, reasons });
+		scored.push(record ? { entry, score, reasons, enrichment: record } : { entry, score, reasons });
 	}
 
 	scored.sort((a, b) => b.score - a.score || a.entry.loc - b.entry.loc || a.entry.id.localeCompare(b.entry.id));
