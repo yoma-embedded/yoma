@@ -31,13 +31,13 @@ import path from "node:path"
 /**
  * 这台机器上 yoma agent 的全局目录 —— 凭据、技能、上下文文件、信箱克隆同一个地方。
  *
- * 必须与内核的 `myPiConfigDir()`(kernel/src/host/auth.ts)算出同一个值。那边是
+ * 必须与内核的 `yomaConfigDir()`(kernel/src/host/auth.ts)算出同一个值。那边是
  * 凭据与技能的真源,这边是信箱的;两者分叉的表现是**静默的**(信箱去了一个目录、
  * 凭据在另一个),所以不 import 它(见上面"叶子模块"),改用 paths.test.ts 的
  * 漂移断言把两份钉在一起。
  */
 export function defaultConfigDir(): string {
-  return path.join(homedir(), ".my-pi")
+  return path.join(homedir(), ".yoma")
 }
 
 /** 信箱克隆的默认根。命令行不给克隆目录时落在这里,与桌面端同一处。 */

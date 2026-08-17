@@ -3,13 +3,13 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "bun:test";
-import { NodeExecutionEnv } from "@yoma/my-pi/node";
+import { NodeExecutionEnv } from "@yoma/agent/node";
 import { discoverSkills, loadContextFiles, skillDirsOf } from "../src/core/resources.ts";
 
 const tempDirs: string[] = [];
 
 function createTempDir(): string {
-	const dir = join(tmpdir(), `my-pi-resources-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+	const dir = join(tmpdir(), `yoma-resources-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(dir, { recursive: true });
 	tempDirs.push(dir);
 	return dir;
@@ -91,8 +91,8 @@ describe("loadContextFiles", () => {
 
 describe("discoverSkills", () => {
 	it("looks in the global skills dir and the project .agents/skills", () => {
-		const dirs = skillDirsOf({ cwd: "/proj", globalDir: "/home/u/.my-pi" });
-		expect(dirs).toEqual([join("/home/u/.my-pi", "skills"), join("/proj", ".agents", "skills")]);
+		const dirs = skillDirsOf({ cwd: "/proj", globalDir: "/home/u/.yoma" });
+		expect(dirs).toEqual([join("/home/u/.yoma", "skills"), join("/proj", ".agents", "skills")]);
 	});
 
 	it("merges both locations and lets project skills override global ones by name", async () => {

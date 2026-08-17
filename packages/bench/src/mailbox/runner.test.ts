@@ -392,7 +392,7 @@ describe("mailbox runner", () => {
     }
 
     test("信箱里有清单:原文灌进子进程,并按工位端一侧核对", async () => {
-      // 这一侧**没有项目检出**,`<工程>/.my-pi/toolchain.json` 不在它的工作目录里。
+      // 这一侧**没有项目检出**,`<工程>/.yoma/toolchain.json` 不在它的工作目录里。
       // 不把原文送过去,resolveToolchain 就静默返回空,工位端对"缺什么、怎么装"一无所知
       // —— 表现是 agent 撞一个 ModuleNotFoundError 再把它当成"脚本坏了"报回研发端。
       const { mailbox } = await fixture()

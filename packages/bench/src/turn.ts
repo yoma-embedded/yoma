@@ -11,7 +11,7 @@
  *
  * ## 为什么一轮一个子进程(调用方 spawn turn-entry)
  *
- * my-pi 的探针租约、gdb 会话表、log 采集器都是**模块级全局**,还挂着 process 退出钩子。
+ * yoma 的探针租约、gdb 会话表、log 采集器都是**模块级全局**,还挂着 process 退出钩子。
  * 进程边界 = 免费且可靠的清理:agent 轮结束时探针、串口、gdb server 一定被收干净,
  * 下一轮不会撞上"探针被上一轮占着"。崩溃也不会留下孤儿。会话是落盘的 JSONL,
  * 下一轮换个进程接着跑,历史一条不丢。
@@ -56,7 +56,7 @@ export interface TurnOptions {
   /** 测试注入 faux provider。 */
   resolveModels?: Parameters<typeof createKernelHost>[0]["resolveModels"]
   /**
-   * 技能与上下文文件的全局目录。生产不传 —— 默认 `~/.my-pi`,于是任务 agent 拿到的
+   * 技能与上下文文件的全局目录。生产不传 —— 默认 `~/.yoma`,于是任务 agent 拿到的
    * 项目上下文(AGENTS.md/CLAUDE.md)与技能和 Zed、桌面端完全一致。测试传临时目录隔离。
    */
   configDir?: string
@@ -66,7 +66,7 @@ export interface TurnOptions {
   toolchainSide?: Parameters<typeof createKernelHost>[0]["toolchainSide"]
   /**
    * 工具链清单原文。**只有工位端用得上** —— 它的 workspace 是一次性目录,
-   * 没有 `.my-pi/toolchain.json`,清单只能经信箱送过来。
+   * 没有 `.yoma/toolchain.json`,清单只能经信箱送过来。
    */
   toolchainManifestText?: string
   settleMs?: number

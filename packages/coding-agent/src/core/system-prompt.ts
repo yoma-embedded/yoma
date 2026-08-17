@@ -2,12 +2,12 @@
  * 系统提示词构建。对应 pi coding-agent/src/core/system-prompt.ts。
  *
  * 与 pi 的差异:
- * 1. 去掉了 pi 文档区块(readmePath / docsPath / examplesPath)—— my-pi 不随包发布文档;
+ * 1. 去掉了 pi 文档区块(readmePath / docsPath / examplesPath)—— yoma 不随包发布文档;
  * 2. 技能区块直接用内核的 formatSkillsForSystemPrompt,不维护 coding-agent 分叉版;
  * 3. 加了 collectToolPromptData:pi 在 AgentSession 的装配代码里收集工具提示词元数据,
- *    my-pi 没有 AgentSession,就近放在这里。
+ *    yoma 没有 AgentSession,就近放在这里。
  */
-import { formatSkillsForSystemPrompt, type Skill } from "@yoma/my-pi";
+import { formatSkillsForSystemPrompt, type Skill } from "@yoma/agent";
 import type { ToolDefinition } from "./tools/types.ts";
 
 export interface BuildSystemPromptOptions {

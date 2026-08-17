@@ -1,5 +1,5 @@
 /**
- * my-pi 的 ACP agent 侧实现。
+ * yoma 的 ACP agent 侧实现。
  *
  * ACP 要求 agent 实现四个基线方法:initialize / authenticate / session/new / session/prompt。
  */
@@ -26,13 +26,13 @@ import {
 	type Skill,
 	type ThinkingLevel,
 	uuidv7,
-} from "@yoma/my-pi/node";
+} from "@yoma/agent/node";
 import { discoverSkills, loadContextFiles } from "../core/resources.ts";
 import { buildSystemPrompt, collectToolPromptData } from "../core/system-prompt.ts";
 import { createCodingToolDefinitions, createEmbeddedToolDefinitions, wrapToolDefinitions } from "../core/tools/index.ts";
 import { pipeHarnessToAcp, replayUpdatesOf, type UpdateSink } from "./session.ts";
 
-export const CONFIG_DIR = join(homedir(), ".my-pi");
+export const CONFIG_DIR = join(homedir(), ".yoma");
 export const SESSIONS_DIR = join(CONFIG_DIR, "sessions");
 export const LOGS_DIR = join(CONFIG_DIR, "logs");
 
@@ -249,23 +249,23 @@ interface AcpSession {
 	pendingPrompt: AbortController | null;
 }
 
-export interface MyPiAcpAgentOptions {
+export interface YomaAcpAgentOptions {
 	env: NodeExecutionEnv;
 	models: Models;
 	model: Model<any>;
 	protocolVersion: number;
 	sessionsDir?: string;
 	logsDir?: string;
-	/** 上下文文件与技能的全局目录,默认 ~/.my-pi。测试用它隔离真实的用户目录。 */
+	/** 上下文文件与技能的全局目录,默认 ~/.yoma。测试用它隔离真实的用户目录。 */
 	configDir?: string;
 }
 
-export class MyPiAcpAgent {
+export class YomaAcpAgent {
 	private sessions = new Map<string, AcpSession>();
 	// 会话仓库,目录布局与 pi 相同:<root>/--<cwd 编码>--/<时间戳>_<sessionId>.jsonl。
 	private repo: JsonlSessionRepo;
 
-	constructor(private options: MyPiAcpAgentOptions) {
+	constructor(private options: YomaAcpAgentOptions) {
 		this.repo = new JsonlSessionRepo({ fs: options.env, sessionsRoot: options.sessionsDir ?? SESSIONS_DIR });
 	}
 
@@ -424,7 +424,7 @@ export class MyPiAcpAgent {
 			loadContextFiles(env, { cwd, globalDir: configDir }),
 			discoverSkills(env, { cwd, globalDir: configDir }),
 		]);
-		// acp.ts 把 console 重定向到了 stderr(落 ~/.my-pi/acp.log),诊断记在那里。
+		// acp.ts 把 console 重定向到了 stderr(落 ~/.yoma/acp.log),诊断记在那里。
 		for (const diagnostic of diagnostics) {
 			console.error(`[skills] ${diagnostic.code} ${diagnostic.path}: ${diagnostic.message}`);
 		}
@@ -449,7 +449,7 @@ export class MyPiAcpAgent {
 			resources: { skills },
 		});
 
-		// 观测日志:harness 全事件逐行落 ~/.my-pi/logs/<sessionId>.jsonl,tail -f 即可旁观。
+		// 观测日志:harness 全事件逐行落 ~/.yoma/logs/<sessionId>.jsonl,tail -f 即可旁观。
 		// message_update / tool_execution_update 是增量流(每 token / 每输出块一条),
 		// 最终态都会出现在 message_end 和工具结果里,记它们只会刷爆日志,跳过。
 		await this.options.env.createDir(this.options.logsDir ?? LOGS_DIR, { recursive: true });
@@ -719,7 +719,7 @@ export class MyPiAcpAgent {
 	}
 }
 
-/** ACP 的 prompt 是 ContentBlock 数组,my-pi 目前只吃文本。 */
+/** ACP 的 prompt 是 ContentBlock 数组,yoma 目前只吃文本。 */
 function promptToText(prompt: unknown): string {
 	if (!Array.isArray(prompt)) return String(prompt ?? "");
 	return prompt

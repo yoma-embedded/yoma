@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { NodeExecutionEnv } from "@yoma/my-pi/node";
+import { NodeExecutionEnv } from "@yoma/agent/node";
 
 import {
 	appendEnrichmentRecord,

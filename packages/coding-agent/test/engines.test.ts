@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "bun:test";
-import { NodeExecutionEnv } from "@yoma/my-pi/node";
+import { NodeExecutionEnv } from "@yoma/agent/node";
 import {
 	buildStm32ConfigArgs,
 	claimProbe,
@@ -29,7 +29,7 @@ beforeAll(() => {
 });
 
 function createTempDir(): string {
-	const dir = join(tmpdir(), `my-pi-engines-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+	const dir = join(tmpdir(), `yoma-engines-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(dir, { recursive: true });
 	tempDirs.push(dir);
 	return dir;
@@ -468,12 +468,12 @@ echo "argv: $ALL" 1>&2
 		// board_ir 必须拿到内核与数据目录,否则外设建议无从谈起。
 		expect(text).toContain("--stm32kernel ");
 		expect(text).toContain("--data-dir ");
-		expect(text).toContain(`Board IR files written to ${join(cwd, ".my-pi")}`);
+		expect(text).toContain(`Board IR files written to ${join(cwd, ".yoma")}`);
 		expect(text).toContain('[stm32_map] peripheral suggestions with evidence/confidence:\n{"map":1}');
 		expect(text).toContain('[cfg_seed] starter stm32config document (extend it, then validate):\n{"seed":2}');
 		expect(result.details.mode).toBe("board_ir");
-		expect(result.details.files?.cfgSeed).toBe(join(cwd, ".my-pi", "odrive_cfg_seed.json"));
-		expect(existsSync(join(cwd, ".my-pi", "odrive_board_ir.json"))).toBe(true);
+		expect(result.details.files?.cfgSeed).toBe(join(cwd, ".yoma", "odrive_cfg_seed.json"));
+		expect(existsSync(join(cwd, ".yoma", "odrive_board_ir.json"))).toBe(true);
 	});
 
 	it("honors a custom outDir and passes mainController through to board_ir", async () => {
@@ -575,7 +575,7 @@ echo "argv: $@"
 		const result = await tool.execute("c1", { command: [flasher, "program"], elfPath: "fw.elf" });
 		expect(result.details.recordedElf).toBe(join(cwd, "fw.elf"));
 		expect(textOf(result)).toContain("gdb start will verify against it");
-		const state = JSON.parse(readFileSync(join(cwd, ".my-pi", "flash-state.json"), "utf8"));
+		const state = JSON.parse(readFileSync(join(cwd, ".yoma", "flash-state.json"), "utf8"));
 		expect(state.elfPath).toBe(join(cwd, "fw.elf"));
 		expect(typeof state.sha256).toBe("string");
 	});
@@ -585,7 +585,7 @@ echo "argv: $@"
 		writeFileSync(join(cwd, "fw.elf"), "fw");
 		const failed = await tool.execute("c1", { command: [flasher, "program"], elfPath: "fw.elf" });
 		expect(failed.details.recordedElf).toBeUndefined();
-		expect(existsSync(join(cwd, ".my-pi", "flash-state.json"))).toBe(false);
+		expect(existsSync(join(cwd, ".yoma", "flash-state.json"))).toBe(false);
 		await expect(tool.execute("c2", { command: [flasher, "program"], elfPath: "nope.elf" })).rejects.toThrow(
 			/elfPath not found/,
 		);

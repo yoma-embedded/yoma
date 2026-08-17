@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "bun:test";
-import { NodeExecutionEnv } from "@yoma/my-pi/node";
+import { NodeExecutionEnv } from "@yoma/agent/node";
 import { clampChars, clampTopK, createDatasheetToolDefinition, encodeRel, formatCitation, type SearchHit } from "../src/index.ts";
 import {
 	capped,
@@ -20,7 +20,7 @@ const savedServer = process.env.YOMA_DATASHEET_SERVER;
 const tempDirs: string[] = [];
 
 function createTempDir(): string {
-	const dir = join(tmpdir(), `my-pi-datasheet-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+	const dir = join(tmpdir(), `yoma-datasheet-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(dir, { recursive: true });
 	tempDirs.push(dir);
 	return dir;

@@ -1,5 +1,5 @@
 /**
- * toolchain 工具:项目声明需要哪些主机工具链(.my-pi/toolchain.json),这台机器上
+ * toolchain 工具:项目声明需要哪些主机工具链(.yoma/toolchain.json),这台机器上
  * 有什么(core/toolchain/resolve.ts 的七档探测),两者对不上时怎么问用户、怎么记
  * 住答案——三个动作分别是"看现状""强制重新看一遍并记住""把用户的回答记下来"。
  *
@@ -11,7 +11,7 @@
  * 让这一次解析看不见账本,然后把新鲜结果写回真正的账本(见 rememberFreshResults);
  * check 是纯读,谁都不写。
  */
-import type { AgentToolResult, ExecutionEnv } from "@yoma/my-pi";
+import type { AgentToolResult, ExecutionEnv } from "@yoma/agent";
 import { type Static, Type } from "typebox";
 import { recordToolchainPath, rememberFreshResults } from "../toolchain/actions.ts";
 import { type ResolvedTool, resolveToolchain, type ToolchainResolution } from "../toolchain/resolve.ts";
@@ -51,7 +51,7 @@ export interface ToolchainToolDetails {
 }
 
 export interface ToolchainToolOptions {
-	/** 账本目录,默认 ~/.my-pi(与 ledger.ts 的 defaultConfigDir 同义)。测试与工位端注入。 */
+	/** 账本目录,默认 ~/.yoma(与 ledger.ts 的 defaultConfigDir 同义)。测试与工位端注入。 */
 	configDir?: string;
 	/** 默认 "mother"(resolveToolchain 自己的默认值)。工位端场景由调用方注入 "runner"。 */
 	side?: "mother" | "runner";
@@ -60,7 +60,7 @@ export interface ToolchainToolOptions {
 	/** 默认 process.env;测试用它隔离真实环境变量、注入假 PATH。 */
 	env?: NodeJS.ProcessEnv;
 	/**
-	 * 清单原文,绕开"从 cwd 读 .my-pi/toolchain.json"。**工位端必须注入**:它没有项目
+	 * 清单原文,绕开"从 cwd 读 .yoma/toolchain.json"。**工位端必须注入**:它没有项目
 	 * 检出,清单是经信箱送来的 —— 不注入的话,系统提示词里是 runner 筛过的清单,而
 	 * agent 自己跑 toolchain check 却报"没有清单",两边自相矛盾(实测踩过)。
 	 */
@@ -168,7 +168,7 @@ export function createToolchainToolDefinition(
 		promptSnippet: "Resolve the project's required host toolchains against what's installed on this machine",
 		promptGuidelines: [
 			'The moment a command fails with "command not found" / "not recognized as an internal or external command" / a missing-compiler error, run toolchain check before searching for the binary yourself — never where/which it or hard-code a guessed path.',
-			"If toolchain check reports no manifest, ask the user before drafting .my-pi/toolchain.json — never generate it unprompted.",
+			"If toolchain check reports no manifest, ask the user before drafting .yoma/toolchain.json — never generate it unprompted.",
 		],
 		parameters: toolchainSchema,
 		execute: async (_toolCallId, params) => {

@@ -35,7 +35,7 @@ import {
 
 export interface MailboxMainOptions {
   /**
-   * 这台机器上 yoma agent 的全局目录(默认 `~/.my-pi`)—— 凭据、技能、上下文文件
+   * 这台机器上 yoma agent 的全局目录(默认 `~/.yoma`)—— 凭据、技能、上下文文件
    * 住在这里,信箱克隆落在它下面的 `mailbox/`。**不是 userData**:命令行那侧也要
    * 落在同一个目录,克隆目录一致才是单实例锁生效的前提。测试传临时目录隔离。
    */
@@ -82,7 +82,7 @@ export interface MailboxMain {
 }
 
 export interface MailboxComposeInput {
-  /** 项目模板(<项目>/.my-pi/bench/mailbox.template.json)—— 本身就是一份少了 task 的任务书。 */
+  /** 项目模板(<项目>/.yoma/bench/mailbox.template.json)—— 本身就是一份少了 task 的任务书。 */
   templatePath: string
   description: string
   title?: string
@@ -98,7 +98,7 @@ export function createMailboxMain(options: MailboxMainOptions): MailboxMain {
   /**
    * composeJob 推导出的项目根 —— 本机"工程目录"没配时的兜底。
    *
-   * 出题的那台机器天然就是工程所在的机器(模板住在 `<项目>/.my-pi/bench/` 里),所以
+   * 出题的那台机器天然就是工程所在的机器(模板住在 `<项目>/.yoma/bench/` 里),所以
    * "写描述 → 入箱并开跑"这条主路不该逼用户先去配置页填一遍路径。工位机没有这条
    * 兜底,它必须自己配 —— 那正是机器无关任务书的代价,也是它该付的。
    */
@@ -424,8 +424,8 @@ async function composeJob(
  * 从模板路径反推工程根 —— **往上找 `.git`**,不数目录层数。
  *
  * 从前是 `dirname(dirname(模板路径))`,写死了"模板在工程根下面一层"。
- * 2026-08-11 把 `.bench/` 并进 `.my-pi/bench/` 之后模板深了一层,那个写法会推出
- * `<工程>/.my-pi` —— 而且**不报错**:研发端会在一个只有忽略文件的目录里开分支、
+ * 2026-08-11 把 `.bench/` 并进 `.yoma/bench/` 之后模板深了一层,那个写法会推出
+ * `<工程>/.yoma` —— 而且**不报错**:研发端会在一个只有忽略文件的目录里开分支、
  * 找源码,症状是"agent 说它看不到代码",完全指不到真凶。
  *
  * 找 `.git` 才是真正想要的东西:研发端本来就要求工程是 git 仓(prepareBranch 第一句

@@ -82,8 +82,8 @@ function manifestJson(tools: ToolSpec[], providers?: ToolchainManifest["provider
 }
 
 function writeManifestFile(dir: string, tools: ToolSpec[]): void {
-	mkdirSync(join(dir, ".my-pi"), { recursive: true });
-	writeFileSync(join(dir, ".my-pi", "toolchain.json"), manifestJson(tools));
+	mkdirSync(join(dir, ".yoma"), { recursive: true });
+	writeFileSync(join(dir, ".yoma", "toolchain.json"), manifestJson(tools));
 }
 
 /** promptSectionFor 应该给内容的场景里,把 undefined 的可能性提前收掉——断言消息比裸的类型错误好读。 */
@@ -96,7 +96,7 @@ function expectSection(r: ToolchainResolution): string {
 // ─── 没有清单 ────────────────────────────────────────────────────────────────
 
 describe("没有清单", () => {
-	it("projectDir 下没有 .my-pi/toolchain.json 时返回 ok:true、tools 空、manifest 不填,不抛", async () => {
+	it("projectDir 下没有 .yoma/toolchain.json 时返回 ok:true、tools 空、manifest 不填,不抛", async () => {
 		const result = await resolveToolchain({ projectDir, configDir, platform: process.platform, env: baseEnv() });
 		expect(result.ok).toBe(true);
 		expect(result.tools).toEqual([]);
@@ -107,11 +107,11 @@ describe("没有清单", () => {
 });
 
 describe("从磁盘读清单(不注入 manifestText)", () => {
-	it("读取 projectDir/.my-pi/toolchain.json 并把 manifestPath 指向那个文件", async () => {
+	it("读取 projectDir/.yoma/toolchain.json 并把 manifestPath 指向那个文件", async () => {
 		writeManifestFile(projectDir, [{ id: "widget", bin: ["widget"] }]);
 		const result = await resolveToolchain({ projectDir, configDir, platform: process.platform, env: baseEnv() });
 		expect(result.manifest?.tools.map((t) => t.id)).toEqual(["widget"]);
-		expect(result.manifestPath).toBe(join(projectDir, ".my-pi", "toolchain.json"));
+		expect(result.manifestPath).toBe(join(projectDir, ".yoma", "toolchain.json"));
 	});
 });
 
@@ -156,9 +156,9 @@ describe("local override 优先级最高", () => {
 		const localBin = writeFakeExe(binDir, "widget-local", "9.9.9");
 
 		await writeLedgerEntry({ id: "widget", bin: { widget: ledgerBin }, confirmedAt: 1, by: "auto" }, configDir);
-		mkdirSync(join(projectDir, ".my-pi"), { recursive: true });
+		mkdirSync(join(projectDir, ".yoma"), { recursive: true });
 		writeFileSync(
-			join(projectDir, ".my-pi", "toolchain.local.json"),
+			join(projectDir, ".yoma", "toolchain.local.json"),
 			JSON.stringify({ widget: { id: "widget", bin: { widget: localBin }, confirmedAt: 2, by: "user" } }),
 		);
 

@@ -2,7 +2,7 @@
  * 内核模型目录的读取入口。
  *
  * opencode 时代 provider 目录是后端 config 下发的,经 `serverSync().data.provider` +
- * `hooks/use-providers` 一层层规范化;my-pi 没有 config 服务,目录就是
+ * `hooks/use-providers` 一层层规范化;yoma 没有 config 服务,目录就是
  * `kernel.model.list()` 返回的 `ProviderInfo[]`(带 `authenticated` 和每个模型的
  * `thinkingLevels`)。这里是 components/ 下唯一的读取点。
  *

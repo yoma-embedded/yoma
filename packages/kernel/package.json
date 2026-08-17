@@ -3,11 +3,11 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "The my-pi kernel seam: browser-safe view model + protocol + client, and the Node-side host that drives @yoma/my-pi",
+  "description": "The Yoma kernel seam: browser-safe view model + protocol + client, and the Node-side host that drives @yoma/agent",
   "exports": {
     ".": "./src/index.ts",
     "./host": "./src/host/index.ts",
-    "./mypi": "./mypi.ts",
+    "./kernel-alias": "./kernel-alias.ts",
     "./package.json": "./package.json"
   },
   "scripts": {

@@ -6,7 +6,7 @@
  */
 import { describe, expect, test } from "bun:test"
 import type { AssistantMessage, AssistantMessageEvent, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai"
-import type { AgentMessage } from "@yoma/my-pi"
+import type { AgentMessage } from "@yoma/agent"
 
 import { SessionProjection } from "./projector.ts"
 import type { KernelEvent } from "../protocol.ts"
@@ -78,7 +78,7 @@ describe("确定性", () => {
   test("同一段历史投影两次,事件流逐字节相同", () => {
     const history: AgentMessage[] = [
       user("你好"),
-      assistant([{ type: "text", text: "你好,我是 my-pi" }]),
+      assistant([{ type: "text", text: "你好,我是 yoma" }]),
       user("再来一次", T0 + 10),
       assistant([{ type: "text", text: "好的" }], {}, T0 + 11),
     ]
@@ -157,7 +157,7 @@ describe("流式", () => {
   })
 
   test("live 的最终快照 == 直接 replay 同一条消息", () => {
-    // 两条路必须同源。my-pi 自己的 ACP 适配器就是在这里分了叉,导致图片只在重放时可见。
+    // 两条路必须同源。yoma 自己的 ACP 适配器就是在这里分了叉,导致图片只在重放时可见。
     const live = projection()
     live.applyMessage(user("你好"))
     const streaming = assistant([{ type: "text", text: "" }], { stopReason: "toolUse" })
@@ -249,7 +249,7 @@ describe("工具", () => {
 
 describe("错误", () => {
   test("stopReason error/aborted 必须投影成 MessageError,不能变成空白轮次", () => {
-    // my-pi 的内核对 provider 失败永不抛异常,失败就是一条消息。漏投影 = UI 上什么都没有。
+    // yoma 的内核对 provider 失败永不抛异常,失败就是一条消息。漏投影 = UI 上什么都没有。
     const cases: Array<[AssistantMessage["stopReason"], string, string]> = [
       ["aborted", "用户中断", "MessageAbortedError"],
       ["error", "context length exceeded", "ContextOverflowError"],

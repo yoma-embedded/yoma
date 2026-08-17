@@ -9,7 +9,7 @@
 
 ## Local Dev
 
-From the repo root: `bun dev:desktop`. Renderer has HMR; **the kernel process does not** — my-pi / coding-agent changes need a restart of that command.
+From the repo root: `bun dev:desktop`. Renderer has HMR; **the kernel process does not** — yoma / coding-agent changes need a restart of that command.
 
 There is no opencode HTTP server, no `packages/opencode`, and no `app.opencode.ai` proxy. The UI talks to a local kernel over MessagePort.
 

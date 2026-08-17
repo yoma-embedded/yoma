@@ -3,7 +3,7 @@
  *
  * 目录来自 `kernel.model.list()`,连接状态就是 `ProviderInfo.authenticated` 一个布尔值。
  * opencode 那套 source 分类(env / api / config / custom)、`disabled_providers` 配置写回、
- * 自定义 provider 全部删掉 —— my-pi 只有"有没有 API key"这一件事。
+ * 自定义 provider 全部删掉 —— yoma 只有"有没有 API key"这一件事。
  */
 
 import { ButtonV2 } from "@yoma-desktop/ui/v2/button-v2"

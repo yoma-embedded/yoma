@@ -6,7 +6,7 @@
  * 应用层的决定 —— 和自动压缩同构(见 compaction.ts),harness 只提供
  * `retryLastTurn()` 这个机制。
  *
- * my-pi 的 ACP 适配器有自己的一份(`acp/agent.ts` 的 shouldAutoRetry),我们不 import
+ * yoma 的 ACP 适配器有自己的一份(`acp/agent.ts` 的 shouldAutoRetry),我们不 import
  * 它:那个文件会把整个 ACP 适配器和 `@agentclientprotocol/sdk` 拖进 bundle。这里是
  * **同一套参数的第二份实现**,数值故意抄一致(3 次 / 2s 起指数退避)—— 两边行为分叉
  * 会变成"Zed 里能自愈、桌面端不能"这种极难归因的差异。

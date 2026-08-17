@@ -134,7 +134,7 @@ export function stm32Families(options?: EnginePathOptions): string[] {
 // 因为没有任何信息指向持有者。
 //
 // 进程内用一个模块级变量。交互会话(内核 utilityProcess)和调试台轮次子进程
-// 各有一份,互看不见 —— 所以再落一份 `~/.my-pi/probe.lock`,跨进程才能说出
+// 各有一份,互看不见 —— 所以再落一份 `~/.yoma/probe.lock`,跨进程才能说出
 // "谁占着、怎么放",而不是让模型去查焊接。
 
 export interface ProbeLease {
@@ -158,7 +158,7 @@ let probeLease: ProbeLease | undefined;
 export function probeLockFile(): string {
 	const explicit = process.env.YOMA_PROBE_LOCK?.trim();
 	if (explicit) return explicit;
-	return path.join(os.homedir(), ".my-pi", "probe.lock");
+	return path.join(os.homedir(), ".yoma", "probe.lock");
 }
 
 function pidAlive(pid: number): boolean {

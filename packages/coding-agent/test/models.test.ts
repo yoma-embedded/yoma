@@ -9,14 +9,14 @@ import { FileCredentialStore, resolveModel } from "../src/acp/models.ts";
 const tempDirs: string[] = [];
 
 function createTempDir(): string {
-	const dir = join(tmpdir(), `my-pi-models-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+	const dir = join(tmpdir(), `yoma-models-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(dir, { recursive: true });
 	tempDirs.push(dir);
 	return dir;
 }
 
 // 开发机上真实存在的 key 环境变量会污染选择逻辑,逐个摘掉、用完还原。
-const ENV_KEYS = ["DEEPSEEK_API_KEY", "MOONSHOT_API_KEY", "MY_PI_PROVIDER", "MY_PI_MODEL"];
+const ENV_KEYS = ["DEEPSEEK_API_KEY", "MOONSHOT_API_KEY", "YOMA_PROVIDER", "YOMA_MODEL"];
 let savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(() => {
@@ -129,7 +129,7 @@ describe("resolveModel", () => {
 		expect((await models.getAuth(model))?.auth.apiKey).toBe("rotated-key");
 	});
 
-	it("honors settings.json defaults and lets MY_PI_* env vars override them", async () => {
+	it("honors settings.json defaults and lets YOMA_* env vars override them", async () => {
 		const dir = createTempDir();
 		writeAuth(dir, {
 			deepseek: { type: "api_key", key: "sk-d" },
@@ -144,8 +144,8 @@ describe("resolveModel", () => {
 		expect(fromSettings.model.provider).toBe("moonshotai-cn");
 		expect(fromSettings.model.id).toBe("kimi-k2.5");
 
-		process.env.MY_PI_PROVIDER = "deepseek";
-		process.env.MY_PI_MODEL = "deepseek-v4-flash";
+		process.env.YOMA_PROVIDER = "deepseek";
+		process.env.YOMA_MODEL = "deepseek-v4-flash";
 		const fromEnv = await resolveModel(dir);
 		expect(fromEnv.model.provider).toBe("deepseek");
 		expect(fromEnv.model.id).toBe("deepseek-v4-flash");
@@ -155,7 +155,7 @@ describe("resolveModel", () => {
 		const dir = createTempDir();
 		await expect(resolveModel(dir)).rejects.toThrow(/auth\.json/);
 
-		process.env.MY_PI_PROVIDER = "deepseek";
+		process.env.YOMA_PROVIDER = "deepseek";
 		await expect(resolveModel(dir)).rejects.toThrow(/DEEPSEEK_API_KEY/);
 	});
 

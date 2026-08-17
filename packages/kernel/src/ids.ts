@@ -4,7 +4,7 @@
  * 这是整个迁移里最容易静默出错的地方。前端每一个集合都用 Binary.search 按 id 字符串
  * 比较维护有序数组,所以 id 的字典序 **就是** transcript 的显示顺序。
  *
- * my-pi 自己的 entry id 不能用:jsonl-storage.ts 的 generateEntryId() 是
+ * yoma 自己的 entry id 不能用:jsonl-storage.ts 的 generateEntryId() 是
  * `uuidv7().slice(-8)` —— 取的是 uuidv7 的 **随机尾部**(它的注释写着"短 ID 必须取
  * 随机尾部",因为前缀是时间戳、两次调用间几乎不变)。把它透传进前端,消息顺序会
  * 乱,而且不报错。

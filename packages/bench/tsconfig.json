@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/tsconfig",
-  "//": "paths 内联的理由与 packages/kernel/tsconfig.json 相同:bun 不跟随数组形式的 extends,而 bench 直接跑源码(不打包),`bun test` 和 CLI 都要靠这份解析 my-pi。三份映射的一致性由 kernel/src/mypi-alias.test.ts 钉住,新增的这份由 bench/src/mypi-alias.test.ts 钉住。",
-  "extends": ["@tsconfig/bun/tsconfig.json", "../../tsconfig.mypi.json"],
+  "//": "paths 内联的理由与 packages/kernel/tsconfig.json 相同:bun 不跟随数组形式的 extends,而 bench 直接跑源码(不打包),`bun test` 和 CLI 都要靠这份解析 yoma。三份映射的一致性由 kernel/src/kernel-alias.test.ts 钉住,新增的这份由 bench/src/kernel-alias.test.ts 钉住。",
+  "extends": ["@tsconfig/bun/tsconfig.json", "../../tsconfig.yoma.json"],
   "compilerOptions": {
     "noEmit": true,
     "strict": true,
@@ -9,12 +9,12 @@
     "moduleResolution": "bundler",
     "skipLibCheck": true,
     "paths": {
-      "@yoma/my-pi": ["../../packages/agent/src/index.ts"],
-      "@yoma/my-pi/node": ["../../packages/agent/src/node.ts"],
-      "@yoma/my-pi-coding-agent": ["../../packages/coding-agent/src/index.ts"],
-      "@yoma/my-pi-coding-agent/system-prompt": ["../../packages/coding-agent/src/core/system-prompt.ts"],
-      "@yoma/my-pi-coding-agent/models": ["../../packages/coding-agent/src/acp/models.ts"],
-      "@yoma/my-pi-coding-agent/resources": ["../../packages/coding-agent/src/core/resources.ts"],
+      "@yoma/agent": ["../../packages/agent/src/index.ts"],
+      "@yoma/agent/node": ["../../packages/agent/src/node.ts"],
+      "@yoma/coding-agent": ["../../packages/coding-agent/src/index.ts"],
+      "@yoma/coding-agent/system-prompt": ["../../packages/coding-agent/src/core/system-prompt.ts"],
+      "@yoma/coding-agent/models": ["../../packages/coding-agent/src/acp/models.ts"],
+      "@yoma/coding-agent/resources": ["../../packages/coding-agent/src/core/resources.ts"],
       "@earendil-works/pi-ai": ["../../packages/ai/dist/index.js"],
       "@earendil-works/pi-ai/providers/*": ["../../packages/ai/dist/providers/*.js"]
     },

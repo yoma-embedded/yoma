@@ -4,7 +4,7 @@
  * 公开仓库不能把团队机器写进每个人的安装包。没配 YOMA_DATASHEET_SERVER 时,
  * datasheet 工具自己报告查不了,不会去猜芯片手册。
  *
- * 配置和凭据/技能同一个目录:~/.my-pi/.env(可用 YOMA_ENV_FILE 改)。
+ * 配置和凭据/技能同一个目录:~/.yoma/.env(可用 YOMA_ENV_FILE 改)。
  * 内核的 datasheet 工具只读 process.env,看不见这个文件,所以内核进程入口调
  * ensureDatasheetServerEnv(),把文件里的值(若有)喂进 process.env。
  */
@@ -12,19 +12,15 @@ import { readFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
-/** 与 kernel `myPiConfigDir()` 同一个目录。 */
+/** 与 kernel `yomaConfigDir()` 同一个目录。 */
 function configHome(): string {
-  return path.join(os.homedir(), ".my-pi")
+  return path.join(os.homedir(), ".yoma")
 }
 
 function envFiles(): string[] {
   const explicit = process.env.YOMA_ENV_FILE?.trim()
   if (explicit) return [explicit]
-  return [
-    path.join(configHome(), ".env"),
-    // 旧 fork 路径,只读不写、界面不提。
-    path.join(os.homedir(), ".config", "opencode", ".env"),
-  ]
+  return [path.join(configHome(), ".env")]
 }
 
 function fromEnvFile(name: string): string | undefined {
@@ -50,7 +46,7 @@ function fromEnvFile(name: string): string | undefined {
   return undefined
 }
 
-/** 内核进程入口调用:把 ~/.my-pi/.env 里的地址喂进 process.env。没有内置主机。 */
+/** 内核进程入口调用:把 ~/.yoma/.env 里的地址喂进 process.env。没有内置主机。 */
 export function ensureDatasheetServerEnv(): void {
   if (process.env.YOMA_DATASHEET_SERVER?.trim()) return
   const fromFile = fromEnvFile("YOMA_DATASHEET_SERVER")

@@ -5,10 +5,10 @@
  * 1. 提示词元数据(promptSnippet / promptGuidelines)—— 喂给系统提示词生成器(M9)
  * 2. TUI 渲染器(renderCall / renderResult)
  *
- * my-pi 保留第 1 类、去掉第 2 类:没有 TUI,而且渲染信息最终要经 ACP 传给 Zed,
+ * yoma 保留第 1 类、去掉第 2 类:没有 TUI,而且渲染信息最终要经 ACP 传给 Zed,
  * 靠的是结构化的 `details`,不是终端字符串。
  */
-import type { AgentTool, AgentToolResult, AgentToolUpdateCallback, ToolExecutionMode } from "@yoma/my-pi";
+import type { AgentTool, AgentToolResult, AgentToolUpdateCallback, ToolExecutionMode } from "@yoma/agent";
 import type { Static, TSchema } from "typebox";
 
 export interface ToolDefinition<TParameters extends TSchema = TSchema, TDetails = any> {

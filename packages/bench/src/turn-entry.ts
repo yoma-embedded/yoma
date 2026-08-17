@@ -4,7 +4,7 @@
  *
  * `bun turn-entry.ts <input.json> <output.json>`
  *
- * 一轮一个进程是刻意的:my-pi 的探针租约、gdb 会话表、log 采集器都是模块级全局并挂着
+ * 一轮一个进程是刻意的:yoma 的探针租约、gdb 会话表、log 采集器都是模块级全局并挂着
  * 进程退出钩子,进程边界因此是免费且可靠的清理 —— 轮次结束时探针一定被放开,
  * 下一轮不会撞上"探针被占着"。
  *
@@ -49,5 +49,5 @@ const result: TurnResult = await runTurn({
 await writeFile(outputFile, JSON.stringify(result, null, 2))
 say(`轮次结束:${result.toolCalls.length} 次工具调用,${(result.elapsedMs / 1000).toFixed(0)}s`)
 
-// runTurn 已经 dispose 了 host,但 my-pi 的模块级采集器可能还挂着监听。
+// runTurn 已经 dispose 了 host,但 yoma 的模块级采集器可能还挂着监听。
 process.exit(0)

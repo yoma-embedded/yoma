@@ -2,13 +2,13 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "bun:test";
-import { getOrThrow, NodeExecutionEnv } from "@yoma/my-pi/node";
+import { getOrThrow, NodeExecutionEnv } from "@yoma/agent/node";
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "../src/index.ts";
 
 const tempDirs: string[] = [];
 
 function createTempDir(): string {
-	const dir = join(tmpdir(), `my-pi-tools-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+	const dir = join(tmpdir(), `yoma-tools-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(dir, { recursive: true });
 	tempDirs.push(dir);
 	return dir;

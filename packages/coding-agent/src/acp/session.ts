@@ -1,14 +1,14 @@
 /**
  * 一个 ACP 会话 = 一个 AgentHarness + 一条到客户端(Zed)的事件翻译管线。
  *
- * 翻译表(左边是 my-pi 的 harness 事件,右边是 ACP 的 session/update):
+ * 翻译表(左边是 yoma 的 harness 事件,右边是 ACP 的 session/update):
  *   message_update(text_delta)      → agent_message_chunk
  *   message_update(thinking_delta)  → agent_thought_chunk
  *   tool_execution_start            → tool_call        (status: in_progress)
  *   tool_execution_update           → tool_call_update (status: in_progress,内容替换)
  *   tool_execution_end              → tool_call_update (status: completed / failed)
  */
-import type { AgentHarness, AgentHarnessEvent } from "@yoma/my-pi";
+import type { AgentHarness, AgentHarnessEvent } from "@yoma/agent";
 import type { EditToolDetails } from "../core/tools/edit.ts";
 import type { ReadToolDetails } from "../core/tools/read.ts";
 import type { WriteToolDetails } from "../core/tools/write.ts";

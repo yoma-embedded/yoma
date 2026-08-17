@@ -4,7 +4,7 @@
  * 与 pi 的差异:写入走注入的 FileSystem;父目录由 NodeExecutionEnv.writeFile 自己建
  * (pi 是在工具里显式 mkdir),去掉 TUI 渲染器。
  */
-import type { FileSystem } from "@yoma/my-pi";
+import type { FileSystem } from "@yoma/agent";
 import { type Static, Type } from "typebox";
 import { throwIfAborted, withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveToCwd } from "./path-utils.ts";

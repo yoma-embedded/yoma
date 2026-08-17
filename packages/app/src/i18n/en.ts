@@ -274,7 +274,7 @@ export const dict = {
   "error.chain.responseBody": "Response body:\n{{body}}",
   "error.chain.didYouMean": "Did you mean: {{suggestions}}",
   "error.chain.modelNotFound": "Model not found: {{provider}}/{{model}}",
-  "error.chain.checkConfig": "Check your config (~/.my-pi/auth.json) provider/model names",
+  "error.chain.checkConfig": "Check your config (~/.yoma/auth.json) provider/model names",
   "error.chain.mcpFailed": "MCP server \"{{name}}\" failed. Note, Yoma does not support MCP authentication yet.",
   "error.chain.providerAuthFailed": "Provider authentication failed ({{provider}}): {{message}}",
   "error.chain.providerInitFailed": "Failed to initialize provider \"{{provider}}\". Check credentials and configuration.",
@@ -651,10 +651,10 @@ export const dict = {
   "settings.models.description": "Model settings will be configurable here.",
   "settings.toolchain.title": "Toolchain",
   "settings.toolchain.noProject":
-    "Open a project first — this page checks the project's declared toolchain (.my-pi/toolchain.json) against this machine.",
+    "Open a project first — this page checks the project's declared toolchain (.yoma/toolchain.json) against this machine.",
   "settings.toolchain.notDeclared":
-    "This project declares no toolchain. Ask the agent in a session to draft .my-pi/toolchain.json from the build files; once declared, every tool is audited here.",
-  "settings.toolchain.parseError": "Manifest failed to parse — fix .my-pi/toolchain.json and reopen this page:",
+    "This project declares no toolchain. Ask the agent in a session to draft .yoma/toolchain.json from the build files; once declared, every tool is audited here.",
+  "settings.toolchain.parseError": "Manifest failed to parse — fix .yoma/toolchain.json and reopen this page:",
   "settings.toolchain.allOk": "All required tools are ready.",
   "settings.toolchain.attention": "{{count}} required tool(s) need attention.",
   "settings.toolchain.reprobe": "Re-probe",

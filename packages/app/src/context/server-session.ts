@@ -2,10 +2,10 @@
  * 会话内容的**服务器级**缓存:info / status / message / part。
  *
  * 相对 opencode 删掉的四块,以及原因:
- *   session_diff  my-pi 没有文件快照,也就没有"这一轮改了哪些文件"的差异
+ *   session_diff  yoma 没有文件快照,也就没有"这一轮改了哪些文件"的差异
  *   todo          没有 todo 工具
  *   question      没有 ask/question 工具
- *   lineage       会话没有 parentID —— my-pi 里会话是平的,分支是会话内部的树,不是会话之间的
+ *   lineage       会话没有 parentID —— yoma 里会话是平的,分支是会话内部的树,不是会话之间的
  *
  * 其余的结构(乐观插入的对账、分页加载期间的 touched/removed 标记、delta 前缀保护)
  * 一律原样保留 —— 它们解决的是"流式事件和分页请求交错"的时序问题,和后端换不换无关。
@@ -836,7 +836,7 @@ export function createServerSession(client: Sdk, options?: { retry?: typeof retr
     peek: (sessionID: string) => data.info[sessionID],
     remember,
     resolve,
-    // 删掉的 lineage:my-pi 的会话没有 parentID,会话之间是平的(分支是会话**内部**的树)。
+    // 删掉的 lineage:yoma 的会话没有 parentID,会话之间是平的(分支是会话**内部**的树)。
     sync,
     prefetch,
     shouldPrefetch(sessionID: string, limit: number) {
@@ -905,7 +905,7 @@ export function createServerSession(client: Sdk, options?: { retry?: typeof retr
         setData(produce((draft) => deleteMessageParts(draft, input.messageID)))
       },
     },
-    // 删掉的 diff / todo:my-pi 没有文件快照(回滚是挪 leaf 指针,不还原文件),也没有 todo 工具。
+    // 删掉的 diff / todo:yoma 没有文件快照(回滚是挪 leaf 指针,不还原文件),也没有 todo 工具。
     history: {
       more: (sessionID: string) =>
         data.message[sessionID] !== undefined &&

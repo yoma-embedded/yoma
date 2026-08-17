@@ -1,5 +1,5 @@
 {
-  "extends": "../../tsconfig.mypi.json",
+  "extends": "../../tsconfig.yoma.json",
   "compilerOptions": {
     "target": "ESNext",
     "module": "ESNext",

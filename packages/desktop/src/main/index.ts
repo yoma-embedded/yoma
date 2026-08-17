@@ -70,7 +70,7 @@ const pendingDeepLinks: string[] = []
 /**
  * engines/bin + engines/data 的位置。
  *
- * 必须显式传给工具工厂,**不能** 依赖 my-pi 的 enginesDir() 向上查找:那个查找只认
+ * 必须显式传给工具工厂,**不能** 依赖 yoma 的 enginesDir() 向上查找:那个查找只认
  * "名字叫 engines 且存在"的目录,会高高兴兴地找到一个没有 bin/ 的空壳,然后报
  * "去跑 bun engines/build.ts",让人以为是没编译。
  */
@@ -89,7 +89,7 @@ function attachKernelToWindow(win: BrowserWindow): void {
 
 function resolveEnginesDir(): string | undefined {
   if (process.env.YOMA_ENGINES_DIR) return process.env.YOMA_ENGINES_DIR
-  // 打包后走 extraResources;开发期走仓库根的 engines 软链(指向 ../my-pi/engines)。
+  // 打包后走 extraResources;开发期走仓库根的 engines 软链(指向 ../yoma/engines)。
   if (app.isPackaged) return join(process.resourcesPath, "engines")
   return join(app.getAppPath(), "..", "..", "engines")
 }
@@ -382,7 +382,7 @@ const main = Effect.gen(function* () {
     password: null,
   })
 
-  // my-pi 内核进程。整个 app 只 fork 这一个 —— my-pi 的 probe 租约、gdb session 表、
+  // yoma 内核进程。整个 app 只 fork 这一个 —— yoma 的 probe 租约、gdb session 表、
   // log capture 都是模块级全局,分片 fork 会让两个进程各自以为自己独占探针。
   kernelProcess = spawnKernel({
     sessionsRoot: join(app.getPath("userData"), "sessions"),

@@ -6,7 +6,7 @@
  * 请求时(models.streamSimple → resolveProviderAuth):存储的凭证优先,环境变量
  * 兜底 —— 改 auth.json 不用重启。
  *
- * 选择顺序:MY_PI_PROVIDER/MY_PI_MODEL 环境变量 → <configDir>/settings.json 的
+ * 选择顺序:YOMA_PROVIDER/YOMA_MODEL 环境变量 → <configDir>/settings.json 的
  * defaultProvider/defaultModel → 第一个有凭证的 provider。
  *
  * 注册策略:凡是有凭证的 provider,统统注册进同一个 Models 注册表 ——
@@ -340,7 +340,7 @@ export async function resolveModel(configDir: string): Promise<ResolvedModel> {
 	}
 
 	const providerId =
-		process.env.MY_PI_PROVIDER ??
+		process.env.YOMA_PROVIDER ??
 		(settings.defaultProvider && PROVIDERS[settings.defaultProvider] ? settings.defaultProvider : undefined) ??
 		available[0];
 
@@ -364,7 +364,7 @@ export async function resolveModel(configDir: string): Promise<ResolvedModel> {
 	}
 
 	const modelId =
-		process.env.MY_PI_MODEL ??
+		process.env.YOMA_MODEL ??
 		(settings.defaultProvider === providerId ? settings.defaultModel : undefined) ??
 		spec.defaultModel;
 

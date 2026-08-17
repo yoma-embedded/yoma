@@ -16,7 +16,7 @@ import {
 	formatSize,
 	type ShellCaptureProgress,
 	type TruncationResult,
-} from "@yoma/my-pi";
+} from "@yoma/agent";
 import { type Static, Type } from "typebox";
 import { type ToolDefinition, wrapToolDefinition } from "./types.ts";
 

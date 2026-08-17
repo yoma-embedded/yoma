@@ -12,7 +12,7 @@
  * 结果的 error 字段 —— 设置页正是排查清单的地方,错误就是用户要看的答案本身。
  * set 的路径验证失败则直接 reject:那是用户刚敲进输入框的东西,拒绝理由要原地报。
  */
-import { recordToolchainPath, rememberFreshResults, resolveToolchain } from "@yoma/my-pi-coding-agent"
+import { recordToolchainPath, rememberFreshResults, resolveToolchain } from "@yoma/coding-agent"
 
 import type { ToolchainStatusView } from "../types.ts"
 

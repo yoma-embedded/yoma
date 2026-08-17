@@ -5,7 +5,7 @@
  * details 里换成结构化的 oldContent/newContent —— ACP 的 tool_call_update
  * 直接吃这两个字段,由 Zed 画 diff,不需要我们生成带颜色的终端字符串。
  */
-import type { FileSystem } from "@yoma/my-pi";
+import type { FileSystem } from "@yoma/agent";
 import { type Static, Type } from "typebox";
 import {
 	applyEditsToNormalizedContent,

@@ -7,8 +7,8 @@
  *
  * ## configDir 语义对齐
  *
- * 默认目录与 kernel 的 `packages/kernel/src/host/auth.ts` 的 `myPiConfigDir()` 同一个
- * `~/.my-pi`(该文件本身的注释也说了,那是抄的 my-pi ACP 适配器的 CONFIG_DIR)。
+ * 默认目录与 kernel 的 `packages/kernel/src/host/auth.ts` 的 `yomaConfigDir()` 同一个
+ * `~/.yoma`(该文件本身的注释也说了,那是抄的 yoma ACP 适配器的 CONFIG_DIR)。
  * 这里**不 import** 它:coding-agent 在依赖图里比 kernel 更底层(kernel 消费
  * coding-agent 的工具集,resolve.ts 将来会被 kernel 的 host 用来给 agent 子进程铺
  * PATH),反向 import 会成环。默认值就地重新算一遍 —— 两边各自维护同一个常量、
@@ -104,12 +104,12 @@ export function emptyLedger(): Ledger {
 	return { schema: SCHEMA_TAG, entries: {} };
 }
 
-/** 和 kernel `host/auth.ts` 的 `myPiConfigDir()` 同一个目录 —— 见文件头注释。 */
+/** 和 kernel `host/auth.ts` 的 `yomaConfigDir()` 同一个目录 —— 见文件头注释。 */
 function defaultConfigDir(): string {
-	return path.join(homedir(), ".my-pi");
+	return path.join(homedir(), ".yoma");
 }
 
-/** 默认 `<configDir>/toolchains.json`,configDir 默认 `~/.my-pi`。 */
+/** 默认 `<configDir>/toolchains.json`,configDir 默认 `~/.yoma`。 */
 export function ledgerPath(configDir: string = defaultConfigDir()): string {
 	return path.join(configDir, "toolchains.json");
 }
@@ -175,7 +175,7 @@ export async function writeLedgerEntry(entry: LedgerEntry, configDir?: string): 
 }
 
 /**
- * 读 `<projectDir>/.my-pi/toolchain.local.json` —— 项目级覆盖,形状是
+ * 读 `<projectDir>/.yoma/toolchain.local.json` —— 项目级覆盖,形状是
  * `Record<工具 id, LedgerEntry>`,不带 Ledger 那层 `{schema, entries}` 包装:这份
  * 文件不提交、只活在写它的这一台机器上,不需要"整份文件是不是这个版本"的判别,
  * 单纯就是"给这个项目手动钉死的几条路径"。同样容错:文件不存在 / JSON 损坏 /

@@ -59,14 +59,14 @@ describe("工位端自述进提示词", () => {
 
   test("截断时说清全文在哪 —— 只说'截断了'会让人以为剩下的没了", () => {
     const brief = briefWith("噪".repeat(40_000), {
-      staged: { reportPath: ".my-pi/back/001/bench-report.md" },
+      staged: { reportPath: ".yoma/back/001/bench-report.md" },
     })
-    expect(brief).toContain(".my-pi/back/001/bench-report.md")
+    expect(brief).toContain(".yoma/back/001/bench-report.md")
   })
 
   test("回传件给的是本机相对路径,没送成的也要说", () => {
     const brief = briefWith("采完了", {
-      staged: { files: [{ name: "capture/ch2.csv", bytes: 2048, localPath: ".my-pi/back/001/capture/ch2.csv" }] },
+      staged: { files: [{ name: "capture/ch2.csv", bytes: 2048, localPath: ".yoma/back/001/capture/ch2.csv" }] },
       result: {
         round: 1,
         spentTokens: 10,
@@ -75,7 +75,7 @@ describe("工位端自述进提示词", () => {
         backSkipped: [{ name: "raw.npz", bytes: 40 * 1024 * 1024, reason: "超过上限" }],
       },
     })
-    expect(brief).toContain(".my-pi/back/001/capture/ch2.csv")
+    expect(brief).toContain(".yoma/back/001/capture/ch2.csv")
     expect(brief).toContain("自己读、自己画、自己算")
     // 没送成的必须现身:静默丢弃会让它按一份不存在的证据继续推理。
     expect(brief).toContain("raw.npz")

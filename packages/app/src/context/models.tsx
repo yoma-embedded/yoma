@@ -24,7 +24,7 @@ function modelKey(model: ModelKey) {
 export const { use: useModels, provider: ModelsProvider } = createSimpleContext({
   name: "Models",
   gate: false,
-  // directory 保留在签名里但不再使用:my-pi 的模型目录是进程级的,没有"这个工作目录用哪些
+  // directory 保留在签名里但不再使用:yoma 的模型目录是进程级的,没有"这个工作目录用哪些
   // provider"这一层(opencode 的 per-directory config 没有对应物)。
   init: (_props: { directory?: Accessor<string | undefined> } = {}) => {
     // 必须用 createProviderCatalog 而不是一次性的 createResource:后者是挂载时的快照,

@@ -2,7 +2,7 @@
  * 挑一个 provider 去连接。
  *
  * 目录来自 `kernel.model.list()`。自定义 provider(npm 包 + baseURL + 手写模型表)整条
- * 删掉了 —— 那是 opencode config 的能力,my-pi 没有配置服务。
+ * 删掉了 —— 那是 opencode config 的能力,yoma 没有配置服务。
  */
 
 import { Component, Show } from "solid-js"

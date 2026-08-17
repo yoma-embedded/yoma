@@ -10,7 +10,7 @@
  * 不做全局注册表,也不做多端口。
  *
  * 【上下文纪律】(本工具的设计核心 —— 日志最容易淹没上下文)
- * 1. 全量永远落盘(<cwd>/.my-pi/logs/hw-*.log),给模型的永远是节选;
+ * 1. 全量永远落盘(<cwd>/.yoma/logs/hw-*.log),给模型的永远是节选;
  *    查历史复用 read/grep 工具,不在这里造检索。
  * 2. 节选有两道预算:行数(maxLines)和**字符数** —— 只卡行数拦不住 4KB 一行的设备。
  * 3. 连续重复行折叠成 "×N";数字不同、其余相同的行(传感器刷屏)按"首行 + ×N + 末行"折叠。
@@ -42,7 +42,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { closeSync, createWriteStream, type WriteStream } from "node:fs";
 import net from "node:net";
 import path from "node:path";
-import type { ExecutionEnv } from "@yoma/my-pi";
+import type { ExecutionEnv } from "@yoma/agent";
 import { type Static, Type } from "typebox";
 import { clamp, killOnHostExit, killTree, stamp, unrefStream as unref } from "./engines.ts";
 import { parseConnect } from "./gdb.ts";
@@ -979,7 +979,7 @@ export function createLogToolDefinition(env: ExecutionEnv): ToolDefinition<typeo
 						throw new Error('log start: pass exactly one source — port (serial), tcp ("host:port"), or command');
 					}
 
-					const file = path.join(env.cwd, ".my-pi", "logs", logFileName());
+					const file = path.join(env.cwd, ".yoma", "logs", logFileName());
 					const dir = await env.createDir(path.dirname(file), { recursive: true });
 					if (!dir.ok) throw new Error(`could not create the log directory: ${dir.error.message}`);
 

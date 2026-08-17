@@ -1,10 +1,10 @@
 /**
  * 凭据写入端 + CONFIGURABLE_PROVIDERS 副本的防漂移闸 + 老位置迁移。
  *
- * **本进程里绝不碰真实的 ~/.my-pi**:所有入口都注入 configDir,指向 mkdtemp 目录。
+ * **本进程里绝不碰真实的 ~/.yoma**:所有入口都注入 configDir,指向 mkdtemp 目录。
  *
  * 2026-08 之前这套测试要起一个"出生时 HOME 就是临时目录"的子进程 —— 因为当年
- * my-pi 的 resolveModel() 直接读 os.homedir(),而 Bun 的 homedir() 在进程启动时定死,
+ * yoma 的 resolveModel() 直接读 os.homedir(),而 Bun 的 homedir() 在进程启动时定死,
  * 运行时改 process.env.HOME 无效(实测踩过:早先版本以为换了 HOME,实际把开发机上
  * 真实的 auth.json 洗掉了)。现在 resolveModel(configDir) 收显式目录,那套机关连同
  * 它的 fixture 一起退休 —— 注入目录就够了,而且快得多。
@@ -15,13 +15,13 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { homedir, tmpdir } from "node:os"
 import path from "node:path"
 
-import { resolveModel } from "@yoma/my-pi-coding-agent/models"
+import { resolveModel } from "@yoma/coding-agent/models"
 
 import {
   authFilePath,
   CONFIGURABLE_PROVIDERS,
   migrateLegacyPiAuth,
-  myPiConfigDir,
+  yomaConfigDir,
   readAuthFile,
   removeAuthKey,
   writeAuthKey,
@@ -39,27 +39,27 @@ function cleanup(): void {
 }
 
 describe("默认位置", () => {
-  test("跟 my-pi ACP 用同一个目录(~/.my-pi),不再是 ~/.pi/agent", () => {
-    expect(myPiConfigDir()).toBe(path.join(homedir(), ".my-pi"))
-    expect(authFilePath()).toBe(path.join(homedir(), ".my-pi", "auth.json"))
+  test("跟 yoma ACP 用同一个目录(~/.yoma),不再是 ~/.pi/agent", () => {
+    expect(yomaConfigDir()).toBe(path.join(homedir(), ".yoma"))
+    expect(authFilePath()).toBe(path.join(homedir(), ".yoma", "auth.json"))
   })
 })
 
-describe("CONFIGURABLE_PROVIDERS 与 my-pi 的 PROVIDERS 表一致", () => {
-  test("用 MY_PI_PROVIDER 逼出的 Known providers 集合和副本相等", async () => {
+describe("CONFIGURABLE_PROVIDERS 与 yoma 的 PROVIDERS 表一致", () => {
+  test("用 YOMA_PROVIDER 逼出的 Known providers 集合和副本相等", async () => {
     // PROVIDERS 表没有导出,唯一能拿到完整键集合的地方是这条报错:指定一个不存在的
     // provider,resolveModel 在碰任何凭据逻辑之前就抛 Unknown provider + 完整名单。
     // 措辞变了这里会响,照着新措辞修 —— 重点是别让名单默默漂移。
-    const savedProvider = process.env.MY_PI_PROVIDER
-    process.env.MY_PI_PROVIDER = "__yoma_drift_probe__"
+    const savedProvider = process.env.YOMA_PROVIDER
+    process.env.YOMA_PROVIDER = "__yoma_drift_probe__"
     let message = ""
     try {
       await resolveModel(tempDir())
     } catch (error) {
       message = (error as Error).message
     } finally {
-      if (savedProvider === undefined) delete process.env.MY_PI_PROVIDER
-      else process.env.MY_PI_PROVIDER = savedProvider
+      if (savedProvider === undefined) delete process.env.YOMA_PROVIDER
+      else process.env.YOMA_PROVIDER = savedProvider
     }
     const match = message.match(/Known providers: (.+)$/)
     expect([message, Boolean(match)]).toEqual([message, true])
@@ -183,7 +183,7 @@ describe("凭据全链路(注入 configDir,进程内)", () => {
 
     // 开发机上可能真的设了这些,会让"首跑没有任何 key"的前提不成立。
     const saved: Record<string, string | undefined> = {}
-    for (const name of ["MY_PI_PROVIDER", "MY_PI_MODEL", "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY"]) {
+    for (const name of ["YOMA_PROVIDER", "YOMA_MODEL", "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY"]) {
       saved[name] = process.env[name]
       delete process.env[name]
     }
@@ -228,7 +228,7 @@ describe("凭据全链路(注入 configDir,进程内)", () => {
     const sessionsRoot = tempDir("yoma-auth-sessions-")
     writeFileSync(authFilePath(configDir), JSON.stringify({ deepseek: { key: "sk-no-type" } }))
     const saved: Record<string, string | undefined> = {}
-    for (const name of ["MY_PI_PROVIDER", "MY_PI_MODEL", "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY"]) {
+    for (const name of ["YOMA_PROVIDER", "YOMA_MODEL", "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY"]) {
       saved[name] = process.env[name]
       delete process.env[name]
     }

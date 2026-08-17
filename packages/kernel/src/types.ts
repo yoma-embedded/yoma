@@ -2,19 +2,19 @@
  * 视图模型 —— 前端看到的会话数据形状。
  *
  * 刻意保留 opencode SDK 的类型 **名字**(Message/Part/ToolPart/ToolState/Session…),
- * 只把 body 换成 my-pi 能真实产出的东西。这样 packages/session-ui 的 transcript 渲染
+ * 只把 body 换成 yoma 能真实产出的东西。这样 packages/session-ui 的 transcript 渲染
  * 和 packages/app 里有单测的 store reducer 基本原样存活,迁移变成"改 import 说明符 +
  * 让编译器逐字段报错",而不是重写。
  *
  * 相对 opencode 删掉的 Part 变体,以及原因:
- *   step-start / step-finish  my-pi 的每轮状态是 turn_start/turn_end 事件,不落 transcript
- *   snapshot / patch          my-pi 没有文件快照 —— 它的回滚是 Session.moveTo() 挪 leaf 指针
+ *   step-start / step-finish  yoma 的每轮状态是 turn_start/turn_end 事件,不落 transcript
+ *   snapshot / patch          yoma 没有文件快照 —— 它的回滚是 Session.moveTo() 挪 leaf 指针
  *   subtask                   没有子代理
  *   agent                     只有一个系统提示词,没有 persona,也没有 @agent 提及的偏移量
  *   retry                     内核对 provider 失败不重试,失败就是一条带 error 的 assistant 消息
  *
- * 本文件必须保持 **浏览器安全**:不 import my-pi、不 import node:*。
- * 工具 details 的形状是从 my-pi 结构化复制过来的,漂移由 host/details-check.ts 在编译期兜住。
+ * 本文件必须保持 **浏览器安全**:不 import yoma、不 import node:*。
+ * 工具 details 的形状是从 yoma 结构化复制过来的,漂移由 host/details-check.ts 在编译期兜住。
  */
 
 // ---------------------------------------------------------------------------
@@ -23,7 +23,7 @@
 
 export interface Session {
   id: string
-  /** 会话的工作目录(绝对路径)。my-pi 里一个 session 就是一个 cwd,没有 project/worktree 层级。 */
+  /** 会话的工作目录(绝对路径)。yoma 里一个 session 就是一个 cwd,没有 project/worktree 层级。 */
   directory: string
   title: string
   time: {
@@ -36,7 +36,7 @@ export interface Session {
   model?: {
     providerID: string
     modelID: string
-    /** my-pi 的 thinking level(off/minimal/low/medium/high…),内核真有这个能力,opencode 没有。 */
+    /** yoma 的 thinking level(off/minimal/low/medium/high…),内核真有这个能力,opencode 没有。 */
     thinking?: string
   }
   cost?: number
@@ -61,7 +61,7 @@ export type SessionStatus = { type: "idle" } | { type: "busy" } | { type: "compa
 
 /**
  * 错误按 opencode 的判别名保留 —— session-ui 已经按 name 分支渲染。
- * my-pi 的内核对 provider 失败 **永不抛异常**:失败是一条 stopReason:"error" 的 assistant
+ * yoma 的内核对 provider 失败 **永不抛异常**:失败是一条 stopReason:"error" 的 assistant
  * 消息。不投影成这个,UI 上就是一个空白轮次。
  */
 export type MessageError =
@@ -130,7 +130,7 @@ export interface FilePart extends PartBase {
   type: "file"
   mime: string
   filename?: string
-  /** data: URL 或 file: URL。my-pi 的 ImageContent 是 base64,投影成 data: URL。 */
+  /** data: URL 或 file: URL。yoma 的 ImageContent 是 base64,投影成 data: URL。 */
   url: string
 }
 
@@ -145,7 +145,7 @@ export interface CompactionPart extends PartBase {
 export interface ToolPart extends PartBase {
   type: "tool"
   /**
-   * my-pi 的 ToolCall.id。工具调用和结果 **必须按它配对,绝不按到达顺序** ——
+   * yoma 的 ToolCall.id。工具调用和结果 **必须按它配对,绝不按到达顺序** ——
    * 并行工具时 tool_execution_end 按完成序发,而 transcript 是源序。
    */
   callID: string
@@ -199,7 +199,7 @@ export interface ToolStateError {
 export type ToolState = ToolStatePending | ToolStateRunning | ToolStateCompleted | ToolStateError
 
 // ---------------------------------------------------------------------------
-// 工具 details —— 从 my-pi 结构化复制,漂移由 host/details-check.ts 编译期兜住
+// 工具 details —— 从 yoma 结构化复制,漂移由 host/details-check.ts 编译期兜住
 // ---------------------------------------------------------------------------
 
 export const TOOL_NAMES = [
@@ -220,8 +220,8 @@ export const TOOL_NAMES = [
 
 /**
  * 已从内核退役、但必须留在视图词汇表里的工具:旧会话的 JSONL 里还有它们的 part,
- * 重放时 session-ui 要认得。grep 于 my-pi 2026-08 的装配面精简中删除(依赖外部 ripgrep)。
- * 活工具集 = TOOL_NAMES − RETIRED_TOOL_NAMES,由 host/tool-names.test.ts 钉住 my-pi 装配面。
+ * 重放时 session-ui 要认得。grep 于 yoma 2026-08 的装配面精简中删除(依赖外部 ripgrep)。
+ * 活工具集 = TOOL_NAMES − RETIRED_TOOL_NAMES,由 host/tool-names.test.ts 钉住 yoma 装配面。
  */
 export const RETIRED_TOOL_NAMES = ["grep"] as const
 
@@ -453,7 +453,7 @@ export function isTool<K extends ToolName>(
  * Error 压成一个字符串,所以这个形状要顺着协议的 error.data 走。
  *
  * 最常见的触发场景:换内核之后打开一个上个版本残留的标签页(opencode 的 id 是
- * `ses_xxx`,my-pi 的是 UUID)。
+ * `ses_xxx`,yoma 的是 UUID)。
  */
 export interface SessionNotFoundError {
   _tag: "SessionNotFoundError"
@@ -515,7 +515,7 @@ export interface FileContent {
 /**
  * 一个"项目"就是一个最近打开过的工作目录。
  *
- * 顶替 opencode 的 project + worktree 两层结构 —— my-pi 里一个会话就是一个 cwd,
+ * 顶替 opencode 的 project + worktree 两层结构 —— yoma 里一个会话就是一个 cwd,
  * 没有 git worktree 感知,也没有服务端的项目注册表。
  */
 export interface Project {

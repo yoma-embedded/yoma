@@ -212,11 +212,11 @@ describe("mailbox store", () => {
   })
 
   describe("工具链清单副本", () => {
-    /** 研发端的检出:清单住在 `<工程>/.my-pi/toolchain.json`。 */
+    /** 研发端的检出:清单住在 `<工程>/.yoma/toolchain.json`。 */
     function workspaceWithManifest(temp: Temp, text: string): string {
       const dir = temp.dir("ws-")
-      mkdirSync(path.join(dir, ".my-pi"), { recursive: true })
-      writeFileSync(path.join(dir, ".my-pi", "toolchain.json"), text)
+      mkdirSync(path.join(dir, ".yoma"), { recursive: true })
+      writeFileSync(path.join(dir, ".yoma", "toolchain.json"), text)
       return dir
     }
 

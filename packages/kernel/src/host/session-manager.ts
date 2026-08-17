@@ -3,7 +3,7 @@
  *
  * ## 为什么整个 app 只能有一个内核进程
  *
- * my-pi 的 probe 租约(claimProbe/releaseProbe)、gdb session 表、log capture 都是
+ * yoma 的 probe 租约(claimProbe/releaseProbe)、gdb session 表、log capture 都是
  * **模块级全局**(coding-agent/src/core/tools/engines.ts:63-113),还挂了进程退出的
  * SIGKILL 钩子。所以绝不能按窗口或按目录分片 fork 内核 —— 否则两个进程会各自以为
  * 自己独占探针。这个类是进程内单例。
@@ -20,9 +20,9 @@
 import { homedir } from "node:os"
 import path from "node:path"
 
-import { AgentHarness, JsonlSessionRepo, type AgentMessage, type Session as PiSession } from "@yoma/my-pi"
-import type { AgentHarnessEvent, JsonlSessionMetadata } from "@yoma/my-pi"
-import { NodeExecutionEnv } from "@yoma/my-pi/node"
+import { AgentHarness, JsonlSessionRepo, type AgentMessage, type Session as PiSession } from "@yoma/agent"
+import type { AgentHarnessEvent, JsonlSessionMetadata } from "@yoma/agent"
+import { NodeExecutionEnv } from "@yoma/agent/node"
 import {
   createCodingToolDefinitions,
   createDatasheetToolDefinition,
@@ -37,10 +37,10 @@ import {
   wrapToolDefinitions,
   type ToolchainResolution,
   type ToolDef,
-} from "@yoma/my-pi-coding-agent"
-import { buildSystemPrompt, collectToolPromptData } from "@yoma/my-pi-coding-agent/system-prompt"
-import { resolveModel } from "@yoma/my-pi-coding-agent/models"
-import { discoverSkills, loadContextFiles } from "@yoma/my-pi-coding-agent/resources"
+} from "@yoma/coding-agent"
+import { buildSystemPrompt, collectToolPromptData } from "@yoma/coding-agent/system-prompt"
+import { resolveModel } from "@yoma/coding-agent/models"
+import { discoverSkills, loadContextFiles } from "@yoma/coding-agent/resources"
 import {
   clampThinkingLevel,
   getSupportedThinkingLevels,
@@ -61,17 +61,17 @@ import { sessionNotFound } from "../types.ts"
 import { SessionProjection } from "./projector.ts"
 import { shouldAutoCompact } from "./compaction.ts"
 import { retryDelayMs, retrySleep, shouldAutoRetry } from "./retry.ts"
-import { CONFIGURABLE_PROVIDERS, migrateLegacyPiAuth, myPiConfigDir, removeAuthKey, writeAuthKey } from "./auth.ts"
+import { CONFIGURABLE_PROVIDERS, migrateLegacyPiAuth, yomaConfigDir, removeAuthKey, writeAuthKey } from "./auth.ts"
 
 /** 同时活着的 harness 上限。淘汰只是丢弃内存态,重开就是 repo.open + buildContext,很便宜。 */
 const MAX_LIVE_SESSIONS = 8
 
 /**
- * 嵌入式六件套的显式装配,顺序照抄 my-pi 的流水线(netlist → datasheet → stm32config
- * → flash → log → gdb)。my-pi 2026-08 的精简删掉了聚合 Options 的工厂参数
+ * 嵌入式六件套的显式装配,顺序照抄 yoma 的流水线(netlist → datasheet → stm32config
+ * → flash → log → gdb)。yoma 2026-08 的精简删掉了聚合 Options 的工厂参数
  * (createEmbeddedToolDefinitions 只收 env),而 enginesDir 必须显式传
  * (它的向上查找会认下一个没有 bin/ 的空壳)—— 所以按"单工具工厂 + options"自行装配,
- * my-pi 的 tools/index.ts 注释明说这是特殊装配的预期用法。
+ * yoma 的 tools/index.ts 注释明说这是特殊装配的预期用法。
  */
 export function createEmbeddedTools(env: NodeExecutionEnv, enginesDir?: string): ToolDef[] {
   const engines = enginesDir ? { enginesDir } : undefined
@@ -117,13 +117,13 @@ export interface SessionManagerOptions {
   enginesDir?: string
   emit(events: KernelEvent[]): void
   /**
-   * 上下文文件与技能的全局目录,默认 `~/.my-pi` —— 与 my-pi 的 ACP 适配器同一份,
+   * 上下文文件与技能的全局目录,默认 `~/.yoma` —— 与 yoma 的 ACP 适配器同一份,
    * 于是同一份技能在 Zed 和桌面端都生效。测试用它隔离开发机上的真实目录
    * (**注意** bun 的 homedir() 在进程启动时定死,改 process.env.HOME 无效)。
    */
   configDir?: string
   /**
-   * 模型目录的来源。默认复用 my-pi 的 resolveModel()(读 ~/.pi/agent/auth.json)。
+   * 模型目录的来源。默认复用 yoma 的 resolveModel()(读 ~/.pi/agent/auth.json)。
    * 可注入是为了两件事:测试用 pi-ai 的 faux provider 跑完整一轮而不需要网络和 key;
    * 以及 P6 换成我们自己的凭据管理(Electron safeStorage)时不用改这里。
    */
@@ -143,7 +143,7 @@ export interface SessionManagerOptions {
    */
   toolchainSide?: "mother" | "runner"
   /**
-   * 工具链清单的原文,绕开"从 projectDir 读 `.my-pi/toolchain.json`"这一步。
+   * 工具链清单的原文,绕开"从 projectDir 读 `.yoma/toolchain.json`"这一步。
    *
    * 存在的理由只有一个:**工位端没有项目检出**。它的 cwd 是一次性目录,清单文件不在
    * 那儿,于是解析静默短路(`tools: []`),这一侧对"该有什么、缺了怎么装"一无所知 ——
@@ -161,7 +161,7 @@ export class SessionManager {
   private readonly repo: JsonlSessionRepo
   private readonly entries = new Map<string, Entry>()
   private readonly options: SessionManagerOptions
-  /** 凭据、技能、上下文文件共用的一个目录,与 my-pi ACP 的 CONFIG_DIR 同义。 */
+  /** 凭据、技能、上下文文件共用的一个目录,与 yoma ACP 的 CONFIG_DIR 同义。 */
   private readonly configDir: string
 
   private models?: Models
@@ -170,7 +170,7 @@ export class SessionManager {
 
   constructor(options: SessionManagerOptions) {
     this.options = options
-    this.configDir = options.configDir ?? myPiConfigDir()
+    this.configDir = options.configDir ?? yomaConfigDir()
     this.env = new NodeExecutionEnv({ cwd: process.cwd() })
     this.repo = new JsonlSessionRepo({ fs: this.env, sessionsRoot: options.sessionsRoot })
   }
@@ -182,7 +182,7 @@ export class SessionManager {
   /**
    * 延迟解析模型目录。
    *
-   * 复用 my-pi 自己的 resolveModel() —— 它读 ~/.pi/agent/auth.json,也就是用户配 pi/Zed
+   * 复用 yoma 自己的 resolveModel() —— 它读 ~/.pi/agent/auth.json,也就是用户配 pi/Zed
    * 时已经填好的凭据,于是桌面端零配置就能开跑。**不在构造时解析**:没有 key 时它会抛,
    * 那不该让整个内核进程起不来 —— 前端还得能显示会话列表并引导去配置。
    */
@@ -276,14 +276,14 @@ export class SessionManager {
   // -------------------------------------------------------------------------
 
   /**
-   * 写入一个 provider 的 API key(落到 my-pi 读的那份 ~/.pi/agent/auth.json)。
+   * 写入一个 provider 的 API key(落到 yoma 读的那份 ~/.pi/agent/auth.json)。
    *
    * 写完必须丢弃已解析的模型目录:resolveModel() 只注册写入当时有 key 的 provider,
    * 不重解析的话新 key 要等重启进程才生效。注意 **已经开着的会话拿的还是旧注册表**
    * (AgentHarness.models 是 readonly,建好之后换不掉),新开/重开的会话才能用新 provider ——
    * 首跑场景(一个会话都没有)不受影响。
    *
-   * key 本身不做网络验证:my-pi 注册 provider 时不发请求,错 key 的暴露点是第一次
+   * key 本身不做网络验证:yoma 注册 provider 时不发请求,错 key 的暴露点是第一次
    * prompt 的 API 401,那条错误会走正常的会话错误通道显示出来。
    */
   async setAuth(providerID: string, apiKey: string): Promise<ProviderInfo[]> {
@@ -457,9 +457,9 @@ export class SessionManager {
     const env = new NodeExecutionEnv({ cwd: entry.cwd, shellEnv: shellEnvFor(toolchain, process.env) })
 
     // 资源发现:项目的 AGENTS.md/CLAUDE.md(全局 + 祖先链)与技能(全局 + .agents/skills)。
-    // 走 my-pi 自己的 resources.ts,不重写:"从哪些目录找"是内核那边定的产品决策,
+    // 走 yoma 自己的 resources.ts,不重写:"从哪些目录找"是内核那边定的产品决策,
     // 抄一份的结果会是"Zed 读得到项目上下文、桌面端读不到"这种极难归因的差异。
-    // 全局目录与 ACP 一致(~/.my-pi),于是同一份技能在 Zed 和桌面端都生效。
+    // 全局目录与 ACP 一致(~/.yoma),于是同一份技能在 Zed 和桌面端都生效。
     // 快照式:会话创建时读一次,改了技能文件重开会话即生效,不做热重载。
     const [contextFiles, discovered] = await Promise.all([
       loadContextFiles(env, { cwd: entry.cwd, globalDir: this.configDir }),
@@ -476,18 +476,18 @@ export class SessionManager {
     }
 
     // 工具链状态并进系统提示词:追加一条 contextFiles,不新增专门字段——
-    // BuildSystemPromptOptions 定义在 packages/coding-agent(my-pi 那侧),这次改动
+    // BuildSystemPromptOptions 定义在 packages/coding-agent(yoma 那侧),这次改动
     // 范围只有 packages/kernel,加字段等于越界改别的包。path 给一个不会真实存在的
     // 假名,模型才看得出这不是一份项目文件。promptSectionFor 对"没有清单"和"清单
     // 存在但全部 ok(没有需要留意的工具)"都返回 undefined,所以绝大多数项目(没有
-    // .my-pi/toolchain.json)不追加任何东西,系统提示词字节不变。
+    // .yoma/toolchain.json)不追加任何东西,系统提示词字节不变。
     const toolchainSection = promptSectionFor(toolchain)
     const contextFilesWithToolchain = toolchainSection
       ? [...contextFiles, { path: "<toolchain>", content: toolchainSection }]
       : contextFiles
 
     // 工具定义必须过 wrapToolDefinitions 才能交给 harness;系统提示词由工具集反推
-    // (collectToolPromptData 会把每个工具的使用指导拼进去)。这两步照抄 my-pi 自己的
+    // (collectToolPromptData 会把每个工具的使用指导拼进去)。这两步照抄 yoma 自己的
     // ACP 适配器 acp/agent.ts:351-359 —— 系统提示词编码了嵌入式工具的用法,自己重写
     // 等于产品行为分叉。
     const toolDefinitions = [
@@ -826,7 +826,7 @@ export class SessionManager {
   /**
    * 顶替 opencode 的 revert。
    *
-   * my-pi 只能把会话树的 leaf 挪回某条消息,**不还原文件**。所以这不是"回滚",
+   * yoma 只能把会话树的 leaf 挪回某条消息,**不还原文件**。所以这不是"回滚",
    * 是"改上一条重发" —— UI 上绝不能叫回滚,否则在 agent 改过固件源码之后,
    * 用户会以为文件也回去了。
    */

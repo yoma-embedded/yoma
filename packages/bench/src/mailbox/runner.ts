@@ -81,7 +81,7 @@ export interface MailboxRunnerOptions {
   enginesDir?: string
   /** 打包态的 turn 子进程入口(见 TurnInput.turnEntry)。bun 开发态可缺省。 */
   turnEntry?: string
-  /** 技能/上下文/凭据全局目录;演练与测试传临时目录隔离,生产缺省 ~/.my-pi。 */
+  /** 技能/上下文/凭据全局目录;演练与测试传临时目录隔离,生产缺省 ~/.yoma。 */
   configDir?: string
   /** 本机演练的假模型脚本,按轮取 `fauxTurns[round-1]`。生产不传。 */
   fauxTurns?: FauxScript[]

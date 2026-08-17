@@ -19,7 +19,7 @@
  * download_manual(物化本地缓存)随之删除。
  */
 import path from "node:path";
-import type { ExecutionEnv } from "@yoma/my-pi";
+import type { ExecutionEnv } from "@yoma/agent";
 import { type Static, Type } from "typebox";
 import { clamp } from "./engines.ts";
 import { type ToolDefinition, wrapToolDefinition } from "./types.ts";

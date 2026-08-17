@@ -1,19 +1,19 @@
 {
-	"name": "@yoma/my-pi-coding-agent",
+	"name": "@yoma/coding-agent",
 	"version": "0.1.0",
-	"description": "coding agent application layer for my-pi: tools, and the ACP adapter",
+	"description": "Yoma coding agent: tools and the ACP adapter",
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",
 		"./package.json": "./package.json"
 	},
 	"bin": {
-		"my-pi-acp": "./src/acp.ts"
+		"yoma-acp": "./src/acp.ts"
 	},
 	"dependencies": {
 		"@agentclientprotocol/sdk": "^1.3.0",
 		"@earendil-works/pi-ai": "workspace:*",
-		"@yoma/my-pi": "workspace:*",
+		"@yoma/agent": "workspace:*",
 		"diff": "8.0.4",
 		"typebox": "1.1.38"
 	}

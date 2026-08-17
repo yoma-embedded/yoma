@@ -3,7 +3,7 @@
 //   → 注入(system-prompt.ts 的 formatSkillsForSystemPrompt,只放 name/description)
 //   → 调用(formatSkillInvocation:把 SKILL.md 全文包上 <skill> 标签)。
 // 对齐上游 pi packages/agent/src/harness/skills.ts;差异:未移植 loadSourcedSkills
-// (来源标注的泛型封装,my-pi 没有消费方,等真需要溯源再加)。
+// (来源标注的泛型封装,yoma 没有消费方,等真需要溯源再加)。
 //
 // 校验是"宽松警告"式:除了缺 description 会拒载,其余违规(名字大写、超长……)
 // 只出 diagnostics 不拦加载 —— 技能是用户自己的文件,报错要帮人修,不是拦人用。

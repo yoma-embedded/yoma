@@ -35,7 +35,7 @@ export interface SimOptions {
    * 工位端在生产形态下根本没有项目检出,演练必须复现这一点,否则演练是假的。
    */
   projectDir?: string
-  /** 模拟根目录,默认 `<目标仓>/.my-pi/bench/mailbox-sim/<jobId>`。 */
+  /** 模拟根目录,默认 `<目标仓>/.yoma/bench/mailbox-sim/<jobId>`。 */
   root?: string
   /** 已有远端(私有 GitHub 仓等)。不给就在模拟根下建本地裸仓。 */
   remote?: string
@@ -92,7 +92,7 @@ export async function runSim(options: SimOptions): Promise<SimResult> {
   const workspace = resolveWorkspace(job, options.projectDir)
   // root 必须先归一成绝对路径:它还会被当作两个子进程的 cwd,相对路径在子进程里
   // 会再按 cwd 解析一次,拼出双重路径(实测:blocked 无限重试直到墙钟耗尽)。
-  const root = path.resolve(options.root ?? path.join(workspace, ".my-pi", "bench", "mailbox-sim", job.id))
+  const root = path.resolve(options.root ?? path.join(workspace, ".yoma", "bench", "mailbox-sim", job.id))
   const branch = options.branch ?? "main"
   const pollSeconds = options.pollSeconds ?? 3
 

@@ -65,9 +65,9 @@ describe("NodeExecutionEnv exec", () => {
 
 	it("can replace rather than inherit the default shell environment", async () => {
 		const root = createTempDir();
-		const inheritedKey = "MY_PI_NODE_ENV_INHERITED_TEST";
-		const configuredKey = "MY_PI_NODE_ENV_CONFIGURED_TEST";
-		const explicitKey = "MY_PI_NODE_ENV_EXPLICIT_TEST";
+		const inheritedKey = "YOMA_NODE_ENV_INHERITED_TEST";
+		const configuredKey = "YOMA_NODE_ENV_CONFIGURED_TEST";
+		const explicitKey = "YOMA_NODE_ENV_EXPLICIT_TEST";
 		const previousInherited = process.env[inheritedKey];
 		process.env[inheritedKey] = "host";
 		try {

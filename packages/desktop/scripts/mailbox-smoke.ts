@@ -94,7 +94,7 @@ writeFileSync(
       pollSeconds: 1,
       timeoutMin: 4,
       sessionsRoot: join(root, "sessions"),
-      configDir: join(root, "my-pi-config"),
+      configDir: join(root, "yoma-config"),
       turnEntry: turnBundle,
       hostEntry: hostBundle,
       // 假模型脚本:分工与生产一致 —— **代码归研发端,工位端只观察**,而且工位端

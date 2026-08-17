@@ -3,13 +3,13 @@
  *
  * 内核提供机制(loadSkills 递归发现、formatSkillsForSystemPrompt 注入),
  * "从哪些目录找"是产品决定,收在这一个文件里。对应 pi 的 resource-loader.ts,
- * 但只保留 my-pi 用得上的两样:AGENTS.md 与 skills。
+ * 但只保留 yoma 用得上的两样:AGENTS.md 与 skills。
  *
  * 失败语义:发现过程绝不抛错 —— 读不到的文件直接跳过,技能问题以 diagnostics
  * 返回。资源是锦上添花,不能因为一个坏文件让 session/new 失败。
  */
 import { dirname, join } from "node:path";
-import { type FileSystem, loadSkills, type Skill, type SkillDiagnostic } from "@yoma/my-pi";
+import { type FileSystem, loadSkills, type Skill, type SkillDiagnostic } from "@yoma/agent";
 
 /** 每个目录里按此顺序找第一个存在的上下文文件,override 优先(语义同 pi)。 */
 const CONTEXT_FILE_CANDIDATES = ["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"];
@@ -35,7 +35,7 @@ async function contextFileOf(fs: FileSystem, dir: string): Promise<ContextFile |
  *
  * 去重两道:canonical 路径(大小写不敏感文件系统上 AGENTS.md/AGENTS.MD 是同一个文件)
  * 和文件内容(worktree 里主仓与检出副本各有一份同内容 AGENTS.md,读两遍毫无意义 ——
- * pi 用 git 管道精确识别这种遮蔽,my-pi 用内容一致这个更便宜的近似)。
+ * pi 用 git 管道精确识别这种遮蔽,yoma 用内容一致这个更便宜的近似)。
  */
 export async function loadContextFiles(
 	fs: FileSystem,
@@ -73,7 +73,7 @@ export async function loadContextFiles(
 
 /**
  * 技能目录(按此顺序加载,重名时后者覆盖前者,即项目技能压过全局技能):
- *   1. <globalDir>/skills            —— 全局技能(~/.my-pi/skills)
+ *   1. <globalDir>/skills            —— 全局技能(~/.yoma/skills)
  *   2. <cwd>/.agents/skills          —— Agent Skills 标准位置,与 pi / Claude Code 共享
  *
  * 简化:不像 pi 那样沿祖先目录一路找 .agents/skills —— Zed 会话的 cwd 就是项目根,

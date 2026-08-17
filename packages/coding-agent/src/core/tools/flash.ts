@@ -20,7 +20,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import type { ExecutionEnv } from "@yoma/my-pi";
+import type { ExecutionEnv } from "@yoma/agent";
 import { type Static, Type } from "typebox";
 import {
 	assertEngineSettled,
@@ -79,7 +79,7 @@ export interface FlashState {
 	at: number;
 }
 
-export const FLASH_STATE_FILE = path.join(".my-pi", "flash-state.json");
+export const FLASH_STATE_FILE = path.join(".yoma", "flash-state.json");
 
 export async function sha256File(file: string): Promise<string> {
 	return createHash("sha256").update(await readFile(file)).digest("hex");

@@ -1,15 +1,15 @@
-// 无头驱动:把一句 prompt 交给 my-pi 的 AgentHarness 跑到底,不经 Zed/ACP。
+// 无头驱动:把一句 prompt 交给 yoma 的 AgentHarness 跑到底,不经 Zed/ACP。
 //
 // ACP 适配器是给编辑器用的(stdio 上的 JSON-RPC),脚本化跑评测不方便。
 // 这里按 acp/agent.ts:348 的同一套装配复刻一个最小驱动:同样的工具集、
 // 同样由工具自述拼出的系统提示词,只把事件出口换成 stdout + JSONL。
 //
 // 用法:
-//   MY_PI_PROVIDER=deepseek MY_PI_MODEL=deepseek-v4-flash \
+//   YOMA_PROVIDER=deepseek YOMA_MODEL=deepseek-v4-flash \
 //   bun example/99-headless-run.ts <工作目录> <prompt文件> <事件日志.jsonl>
 
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
-import { AgentHarness, InMemorySessionStorage, NodeExecutionEnv, Session } from "@yoma/my-pi/node";
+import { AgentHarness, InMemorySessionStorage, NodeExecutionEnv, Session } from "@yoma/agent/node";
 import { CONFIG_DIR } from "../packages/coding-agent/src/acp/agent.ts";
 import { resolveModel } from "../packages/coding-agent/src/acp/models.ts";
 import { buildSystemPrompt, collectToolPromptData } from "../packages/coding-agent/src/core/system-prompt.ts";

@@ -3,7 +3,7 @@
  *
  * opencode 时代这里是一台状态机:先问后端 `provider.auth()` 拿到该 provider 支持的
  * 认证方式(api key / oauth code / oauth auto),再按方式分支走 OAuth 回调、动态 prompt
- * 表单等等。my-pi 的内核只认一件事 —— `auth.set({ providerID, apiKey })`,
+ * 表单等等。yoma 的内核只认一件事 —— `auth.set({ providerID, apiKey })`,
  * 所以整台状态机连同 OAuth 视图一起删掉,只剩一个 API key 表单。
  */
 

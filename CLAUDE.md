@@ -12,12 +12,12 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
 - **桌面端**(`packages/{desktop,app,kernel,ui,session-ui,util,bench}`)——
   Electron 外壳 + SolidJS UI,fork 自 opencode 的前端;`bench` 是无人值守调试台。
 
-**2026-08 之前这是两个仓库**(`my-pi` 和 `yoma-desktop`,兄弟目录 + alias 接缝)。
+**2026-08 之前这是两个仓库**(`yoma` 和 `yoma-desktop`,兄弟目录 + alias 接缝)。
 合并的决定性理由是**它们从来不独立发布**:打包时 esbuild 把内核源码整个 inline 进
 `out/main/kernel.js`,用户装的 app 里没有"内核这个包",只有一个把两边融在一起的产物。
 仓库该按发布节奏切分,而这两半的发布节奏不是相近 —— 是同一个。
 
-分开时代付出的代价(现在都没了):路径映射要维护 4 份、`bun use-mypi` 切检出、
+分开时代付出的代价(现在都没了):路径映射要维护 4 份、`bun use-yoma` 切检出、
 "半切"(app 跑新代码而 typecheck 验旧检出,两边全绿却说的不是同一件事)、
 以及**跨仓库的静默断裂** —— 一天之内撞过三次,其中"凭据路径 + 格式变了"那次
 类型系统根本抓不到,表现是用户配了 key 而内核静默读不到。
@@ -37,14 +37,14 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
 - `coding-agent` 的 `exports` 里**没有** `/system-prompt`、`/models`、`/resources`
   这三个深引用,它们只靠别名可达。改成 workspace 解析之前必须先补 exports。
 
-映射仍存在 **四份**(被工具链逼的,`packages/kernel/src/mypi-alias.test.ts` 钉住):
+映射仍存在 **四份**(被工具链逼的,`packages/kernel/src/kernel-alias.test.ts` 钉住):
 
 | 位置 | 谁用 |
 |---|---|
-| `tsconfig.mypi.json` 的 `paths` | typecheck(tsgo),被 kernel/desktop 继承 —— **位置的真源** |
+| `tsconfig.yoma.json` 的 `paths` | typecheck(tsgo),被 kernel/desktop 继承 —— **位置的真源** |
 | `packages/kernel/tsconfig.json` 里 **内联** 的同一份 | `bun test` —— bun 不跟随数组形式的 `extends` |
 | `packages/bench/tsconfig.json` 里同样的内联副本 | bench 直接跑源码,同理 |
-| `packages/kernel/mypi.ts` 的 `MY_PI_ALIASES` | 打包期(electron-vite / esbuild),根目录从第一份反推 |
+| `packages/kernel/kernel-alias.ts` 的 `KERNEL_ALIASES` | 打包期(electron-vite / esbuild),根目录从第一份反推 |
 
 两个细节:paths 的值必须是**相对路径**(`./packages/...`),写成 `packages/...` 会
 `TS5090`;pi-ai 的 path 必须指向 **`dist/index.js` 而不是 `.d.ts`**,bun 会照着它真去加载。
@@ -68,11 +68,11 @@ Bun workspace,`packages/` 下 7 个包:
 
 `packages/kernel` 的两个入口边界必须守住:
 
-- `.`(`src/index.ts`)—— **浏览器安全**,不 import my-pi、不 import `node:*`。
-  视图模型里的工具 details 是从 my-pi **结构化复制** 的,不是 import 的。
+- `.`(`src/index.ts`)—— **浏览器安全**,不 import yoma、不 import `node:*`。
+  视图模型里的工具 details 是从 yoma **结构化复制** 的,不是 import 的。
 - `./host`(`src/host/`)—— 只跑在 utilityProcess 里,碰内核、碰文件系统。
 
-复制的漂移由 `src/host/details-check.ts` 在编译期兜住(my-pi 改名/删字段/改类型 → 编译失败)。
+复制的漂移由 `src/host/details-check.ts` 在编译期兜住(yoma 改名/删字段/改类型 → 编译失败)。
 **断言必须写成约束式 `Expect<T extends true>`** —— 写成 `const _: Check = true as never`
 是一个不会响的闸门(`never` 可赋给任何类型,实测踩过)。
 
@@ -93,7 +93,7 @@ Bun workspace,`packages/` 下 7 个包:
 | `bun packages/bench/src/cli.ts check <job.json>` | 校验任务书 + 本机内核装配 |
 | `bun packages/bench/src/cli.ts mailbox sim <job.json> --project <工程目录>` | 信箱闭环单机模拟(`init`/`runner`/`mother`/`status` 是生产形态的四个子命令;工程目录是本机事实,任务书里没有) |
 
-后三个是 CI 里唯一能挡住"my-pi 一次重构悄悄搞死桌面端"的东西 —— 我们是把它整个 inline
+后三个是 CI 里唯一能挡住"yoma 一次重构悄悄搞死桌面端"的东西 —— 我们是把它整个 inline
 进 bundle 的,内核的改动可以在我们这边零编译错误地把 app 弄坏,直到用户点下去才发现。
 
 `e2e:renderer` 单独存在是因为 **contextBridge 是一道序列化边界**,而它的失效是运行时行为:
@@ -118,10 +118,10 @@ renderer  --window.api.kernel-->  preload(MessagePort 留在这一侧)
                                    MessageChannelMain
                                         |
 main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/kernel.js
-                                                          = kernel/src/host + my-pi(inline)
+                                                          = kernel/src/host + yoma(inline)
 ```
 
-- **只 fork 一个内核进程。** my-pi 的 probe 租约(`claimProbe`/`releaseProbe`)、gdb session 表、
+- **只 fork 一个内核进程。** yoma 的 probe 租约(`claimProbe`/`releaseProbe`)、gdb session 表、
   log capture 都是 **模块级全局**,分片 fork 会让两个进程各自以为自己独占探针。
 - **MessagePort 不能过 contextBridge**,所以端口留在 preload world,只暴露
   `{request, subscribe, reattach}`(形状就是 `KernelTransport`)。
@@ -131,13 +131,13 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
 - **请求可能早于端口到达**(provider 树一挂载就拉数据,而 `kernel-port` 是一条 IPC 消息)。
   preload 里排队,不 reject —— 直接 reject 的那一版是启动即崩,而且随机。
 
-### 投影器:my-pi 的模型 → 前端认得的形状
+### 投影器:yoma 的模型 → 前端认得的形状
 
 `packages/kernel/src/host/projector.ts`。三条不变式,违反时全部 **静默**:
 
 1. **live 与 replay 共用同一个 `applyMessage()`。** 快照始终从 `partial.content` 重算,
    delta 只是叠在上面的增量,于是"累积 delta 是快照的严格前缀"天然成立。
-   my-pi 自己的 ACP 适配器在这里分了叉(`pipeHarnessToAcp` / `replayUpdatesOf`),
+   yoma 自己的 ACP 适配器在这里分了叉(`pipeHarnessToAcp` / `replayUpdatesOf`),
    代价是 datasheet 图片只在重放时可见。
 2. **id 自己铸,而且确定。** 内核的 `generateEntryId()` 是 `uuidv7().slice(-8)` ——
    取的是 **随机尾部**,不可排序;而前端每个集合都用 `Binary.search` 按 id 字符串序维护。
@@ -147,7 +147,7 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
 
 ### 内核事件只能用 `subscribe()`
 
-`my-pi/packages/agent/src/harness/agent-harness.ts:230-248` 的 `emitOwn` 和 `emitAny`
+`yoma/packages/agent/src/harness/agent-harness.ts:230-248` 的 `emitOwn` 和 `emitAny`
 **字节相同**,都只遍历订阅者桶。所以这十个 `on()` 类型 **永远不会触发**:
 `save_point` / `settled` / `abort` / `session_compact` / `model_update` / `tools_update` /
 `queue_update` / `after_provider_response` / `session_tree` / `thinking_level_update`。
@@ -175,7 +175,7 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
   刚压完不重压(否则一路压到没东西可压)。
 - **轮级自动重试**(`host/retry.ts`)。内核把 provider 失败当**数据**(stopReason:"error"
   的 assistant 消息),重不重试是应用层的事;`harness.retryLastTurn()` 是机制。
-  3 次 / 2s 起指数退避,与 my-pi 的 ACP 适配器同一组参数 —— 那边有自己的一份,
+  3 次 / 2s 起指数退避,与 yoma 的 ACP 适配器同一组参数 —— 那边有自己的一份,
   我们不 import 它(会把整个 ACP 与 `@agentclientprotocol/sdk` 拖进 bundle),
   但**数值必须抄一致**,否则会变成"Zed 里能自愈、桌面端不能"这种极难归因的差异。
   重试期间 **idle 必须压住**(`entry.retryPending`):退避窗口里漏出 idle,bench 会
@@ -183,7 +183,7 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
 - **模型目录**(`SessionManager.providers()`)。`thinkingLevels` 必须走 pi-ai 的
   `getSupportedThinkingLevels(model)` 去问,编错的后果是档位能选但发不出去。
 - **默认思考档位**(`src/thinking.ts` + `KernelHostOptions.defaultThinkingLevel`)。
-  my-pi 没人指定档位时落到 `"off"`(`agent-harness.ts:214`),而 `"off"` 会把
+  yoma 没人指定档位时落到 `"off"`(`agent-harness.ts:214`),而 `"off"` 会把
   `reasoning` 整个从请求里摘掉(同文件 `:429`)—— 对 reasoning 模型这就是**最强的
   那一档默认关掉,且没有任何地方提示**。这是注入位而不是常量,因为两个宿主的答案
   不一样:**桌面端不传**(档位是模型对话框里的现场选择,经 `setModel` 下发),
@@ -210,29 +210,29 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
   两端模型印出来。faux 演练(`smoke:mailbox` / `sim`)例外:注入了 `resolveModels`
   时 `turn.ts` 不下发模型,否则演练会撞上"注册表里只有假模型"。
 
-项目上下文与技能走 my-pi 的 `core/resources.ts`(`loadContextFiles` / `discoverSkills`),
+项目上下文与技能走 yoma 的 `core/resources.ts`(`loadContextFiles` / `discoverSkills`),
 不重写:"从哪些目录找"是内核那边的产品决策,抄一份的结果是"Zed 读得到项目的 AGENTS.md、
-桌面端读不到"。全局目录默认 `~/.my-pi`,与 ACP 同一份,于是同一份技能两处都生效;
-`configDir` 可注入,**测试必须传它**(否则读的是开发机真实的 `~/.my-pi`,结果取决于
+桌面端读不到"。全局目录默认 `~/.yoma`,与 ACP 同一份,于是同一份技能两处都生效;
+`configDir` 可注入,**测试必须传它**(否则读的是开发机真实的 `~/.yoma`,结果取决于
 跑测试的人装了什么技能)。快照式:建会话时读一次,改了技能文件重开会话即生效。
 
-模型凭据走 my-pi 的 `resolveModel(configDir)` → `<configDir>/auth.json`,默认
-`~/.my-pi/auth.json` —— **2026-08 起不再跟 pi 共用 `~/.pi/agent/auth.json`**,my-pi
+模型凭据走 yoma 的 `resolveModel(configDir)` → `<configDir>/auth.json`,默认
+`~/.yoma/auth.json` —— **2026-08 起不再跟 pi 共用 `~/.pi/agent/auth.json`**,yoma
 那次把凭据独立了出去,同时把 `resolveModel` 改成必须显式收目录(在我们这边是编译期
-硬失败,alias 接缝的设计目的正是如此)。配过 Zed(my-pi 的 ACP)的机器仍然零配置开跑。
+硬失败,alias 接缝的设计目的正是如此)。配过 Zed(yoma 的 ACP)的机器仍然零配置开跑。
 
 两个必须记住的点:
 
 - **格式带判别字段**:条目是 `{"deepseek":{"type":"api_key","key":"sk-…"}}`,少了
   `type` 会被 pi-ai 的 `resolveProviderAuth` 静默忽略(表现是"我明明配了 key 却说没配")。
-  所以写入端直接用 my-pi 导出的 `FileCredentialStore`,不自己拼 JSON。
+  所以写入端直接用 yoma 导出的 `FileCredentialStore`,不自己拼 JSON。
 - **迁移只在没注入 configDir 时做**(`host/auth.ts` 的 `migrateLegacyPiAuth`):
   注入的调用方(测试、隔离跑的 bench)显然是在隔离,不该反手去读真实 HOME 的老凭据
   —— 否则隔离是假的,还会把用户真实的 key 复制进临时目录(实测踩过)。
   迁移幂等、不删旧文件(用户可能还在用 pi 命令行)。
 
-`configDir` 一处管三样:凭据、技能、上下文文件,与 my-pi ACP 的 `CONFIG_DIR` 同义。
-provider 目录在无 key 时来自 `CONFIGURABLE_PROVIDERS`(my-pi `PROVIDERS` 表的结构化
+`configDir` 一处管三样:凭据、技能、上下文文件,与 yoma ACP 的 `CONFIG_DIR` 同义。
+provider 目录在无 key 时来自 `CONFIGURABLE_PROVIDERS`(yoma `PROVIDERS` 表的结构化
 复制,防漂移测试在 `host/auth.test.ts`)。
 
 ### 调试台(`packages/bench`)
@@ -243,18 +243,18 @@ bench 直接 import 它跑无人值守任务,于是投影器、自动压缩、�
 
 两条不变式,动这个包之前先读:
 
-1. **一轮一个子进程**(`turn-entry.ts`)。my-pi 的探针租约/gdb 会话表/log 采集器都是
+1. **一轮一个子进程**(`turn-entry.ts`)。yoma 的探针租约/gdb 会话表/log 采集器都是
    模块级全局,进程边界 = 免费且可靠的清理,下一轮不会撞上"探针被占着"。
    子进程协议是单向的:输入一个 JSON 文件、输出一个 JSON 文件、stdout 是进度。
 2. **代码不裁决任何东西**。跑几轮、花多少、算不算做完,全归模型 —— 没有轮数/token/
    墙钟上限。代码只在"决定 JSON 连着两次读不出来"时终局(记 `by:"policy"`),
    那不是裁决,是没法把它的话变成动作。要提前收工就在桌面端按停止。
 
-**yoma 在用户项目里只有一个落脚点:`<工程>/.my-pi/`**(2026-08-11 起;从前是 `.bench/`
-与 `.my-pi/` 两个目录、两份 .gitignore、两套相反策略):
+**yoma 在用户项目里只有一个落脚点:`<工程>/.yoma/`**(2026-08-11 起;从前是 `.bench/`
+与 `.yoma/` 两个目录、两份 .gitignore、两套相反策略):
 
 ```
-<工程>/.my-pi/
+<工程>/.yoma/
   .gitignore                     ensureYomaDir 写的那一份(黑名单,含忽略自己)
   gdb/  logs/  flash-state.json  工具运行产物
   bench/
@@ -263,7 +263,7 @@ bench 直接 import 它跑无人值守任务,于是投影器、自动压缩、�
 ```
 
 它必须自带 `.gitignore`,否则运行产物被 `git add -A` 卷进提交(实测:信箱闭环首跑,
-17 个改动文件里 16 个是 `.my-pi/gdb/*.mi`);`.gitignore` 还要**忽略它自己**,否则
+17 个改动文件里 16 个是 `.yoma/gdb/*.mi`);`.gitignore` 还要**忽略它自己**,否则
 工作树永远不干净,而研发端每轮开局都要求树干净(实测被自己挡死过)。
 `ensureYomaDir` **会升级自己写过的旧版**(认第一行的 `# yoma` 标志)—— 从前是"文件
 不存在才写",于是老仓库停在旧规则上,合并之后 `bench/turns/` 会照旧漏进版本库。
@@ -271,7 +271,7 @@ bench 直接 import 它跑无人值守任务,于是投影器、自动压缩、�
 
 工程根从模板路径反推时**往上找 `.git`,不数目录层数**(`mailbox.ts` 的
 `inferProjectDir`)。写死 `dirname×2` 的那一版在模板深一层之后会把工程根推成
-`<工程>/.my-pi`,而且不报错 —— 症状是"agent 说它看不到代码"。
+`<工程>/.yoma`,而且不报错 —— 症状是"agent 说它看不到代码"。
 `result.text` 只收 **assistant** 消息的非 synthetic text part(用户消息的 part 也是
 text part,不过滤的话提示词会原样出现在终报的"根因分析"里)。
 
@@ -300,13 +300,13 @@ text part,不过滤的话提示词会原样出现在终报的"根因分析"里)�
 2. **附件是工位端拿到任何东西的唯一通道** —— 固件、诊断脚本、参考数据都走它。
    要给 agent 加工具,就是往 `artifacts` 里多列一个文件,不需要改协议。
    反方向那条是**回传**(2026-08-12 起):工位端工作目录下的 `outbox/`,丢进去的东西
-   被收进本轮 `back/`,再落到研发机的 `.my-pi/back/<轮次>/`,路径每轮列进提示词。
+   被收进本轮 `back/`,再落到研发机的 `.yoma/back/<轮次>/`,路径每轮列进提示词。
    上行**不设"声明"这一步** —— 工位端是唯一挨着板子的一侧,给它加一个"必须写出可解析
    结构"的契约等于在最不该失败的地方多一个解析失败模式;扫目录是确定性动作,不经模型。
    收过的移进 `outbox/.sent/<轮次>/`(留底 + 不重传);超限**跳过不报错**并记进
    `backSkipped`(拦住上行等于把整轮结果一起毙掉),单轮默认 16MB。
 3. **工具链清单是唯一的例外,它走自己那条路**:研发端每轮下发时把
-   `<工程>/.my-pi/toolchain.json` 原样复制进信箱根(`store.ts` 的
+   `<工程>/.yoma/toolchain.json` 原样复制进信箱根(`store.ts` 的
    `syncToolchainManifest`,幂等),工位端读出来经 `TurnInput.toolchainManifestText`
    灌进内核,并钉死 `toolchainSide: "runner"`。不这么做的话工位端那侧
    `resolveToolchain` 找不到清单、**静默返回空**,于是它对"缺什么、按什么方法装"
@@ -369,7 +369,7 @@ text part,不过滤的话提示词会原样出现在终报的"根因分析"里)�
 - **配置页的"工程目录"只有研发端角色要填**(`mailbox-controller` 的开跑守卫按角色
   分):工位端没有项目检出。
 - **信箱克隆落在 `<configDir>/mailbox/clones/<远端+分支哈希>/<角色>`**(configDir 默认
-  `~/.my-pi`,与凭据/技能/上下文同一个目录),**不在 Electron 的 userData 里**
+  `~/.yoma`,与凭据/技能/上下文同一个目录),**不在 Electron 的 userData 里**
   (2026-08-11 搬的)。理由是单实例锁:`.yoma-lock/<role>.pid` 住在**克隆目录里面**,
   锁的是"这个物理目录"而不是"这个信箱" —— 桌面端在 userData、CLI 让你自己指路径,
   两边落在不同目录时两把锁互不知情,同一个信箱同一个角色能被跑起来两个守护,同时推
@@ -378,7 +378,7 @@ text part,不过滤的话提示词会原样出现在终报的"根因分析"里)�
   该文件必须保持**叶子模块**(只依赖 `node:crypto`/`node:os`/`node:path`)并经 bench 的
   `./mailbox/paths` 深引用导出 —— desktop 的 main 要 import 它,而 bench 在 desktop 的
   devDependencies 里,`externalizeDeps` 不碰它,走主入口等于把整个内核 inline 进
-  `out/main/index.js`(实测走叶子模块只涨 373 字节)。它与内核 `myPiConfigDir()` 的漂移
+  `out/main/index.js`(实测走叶子模块只涨 373 字节)。它与内核 `yomaConfigDir()` 的漂移
   由 `paths.test.ts` 的断言兜住。
   **会话(sessions)不跟着搬**,仍在 userData —— 它是给桌面端回放看的,不是跨进程共享的
   agent 状态。
@@ -411,7 +411,7 @@ text part,不过滤的话提示词会原样出现在终报的"根因分析"里)�
   实机代价:host 标好的 `data._tag = "SessionNotFoundError"` 蒸发,前端把"上个版本残留的
   标签页"当成致命错误,整个 app 崩到错误页。这一跳由 `e2e:renderer` 钉住,**类型系统永远
   抓不到**。
-- **engines 目录必须显式传**,别依赖 my-pi 的 `enginesDir()` 向上查找 —— 它只认
+- **engines 目录必须显式传**,别依赖 yoma 的 `enginesDir()` 向上查找 —— 它只认
   "名字叫 engines 且存在",会高高兴兴找到一个没有 `bin/` 的空壳,然后报
   "去跑 `bun engines/build.ts`",让你以为是没编译。合库后 `engines/` 就是仓内真目录
   (引擎源码 + build.ts;2026-08-17 起两个引擎仓已整个吸收进本仓,不再是 submodule
@@ -439,7 +439,7 @@ text part,不过滤的话提示词会原样出现在终报的"根因分析"里)�
   `manifest.json` 逐个核 sha256(挡住"文件在但内容被截断")。
 - **Python 三件套的 shebang 曾经是分发的死穴**:board_ir/connections/controller_map
   在开发期是 venv console script,第一行写死构建机绝对路径,拷到别人电脑必坏,
-  而且报"找不到解释器",看起来像没编译。已由 my-pi 的 `bun engines/build.ts --dist`
+  而且报"找不到解释器",看起来像没编译。已由 yoma 的 `bun engines/build.ts --dist`
   用 PyInstaller 冻结解决(那边的 CI 产出的就是冻结版);本地开发跑普通 `build.ts`
   仍是 console script,所以 stage-engines 的那条警告要留着。
 - **逐 chunk `Buffer.toString()` 会劈断多字节 UTF-8**。守护的一条 `@@event` 行可以
@@ -455,7 +455,7 @@ text part,不过滤的话提示词会原样出现在终报的"根因分析"里)�
   所以裁决是对的,坏掉的恰恰是这套系统的产品:证据,而且一声不吭。
   凡是要读中文输出的子进程,环境里钉死编码(`PYTHONIOENCODING=utf-8` + `PYTHONUTF8=1`)。
   **注意:2026-08-10 删掉判据层之后,我们这边已经没有强制它的落点了** —— 工位端 agent
-  现在是自己经 bash/my-pi 跑脚本的,那条路上没有我们注入的环境。这个坑还在,只是防线
+  现在是自己经 bash/yoma 跑脚本的,那条路上没有我们注入的环境。这个坑还在,只是防线
   没了;真撞上就在任务书里让脚本自己 `sys.stdout.reconfigure(encoding="utf-8")`。
   **它的测试不能写成"跑个打中文的脚本看花不花"** —— 开发机 locale 本来就是 UTF-8,
   那是一个永远不会响的闸门(实测确认)。
@@ -491,7 +491,7 @@ text part,不过滤的话提示词会原样出现在终报的"根因分析"里)�
   结果是数据落真实位置、钥匙串却"找不到",Chromium 初始化 safeStorage 时弹系统级
   "找不到钥匙串"对话框,app 几秒后安静退出。两边语义相反,假 HOME 两头都不干净。
   验证打包产物就用真实 HOME;无 key 首跑路径由 `host/auth.test.ts` 的子进程 e2e 覆盖。
-- **内核没有 HMR。** 改了 my-pi 之后必须重启 `bun dev:desktop`。
+- **内核没有 HMR。** 改了 yoma 之后必须重启 `bun dev:desktop`。
 - **这是一个 fork**:2026-08 起运行时身份已统一为 Yoma(`app.setName("Yoma")`、
   运行时 appId = bundle id = `com.yoma.desktop`、深链 `yoma://`),旧的
   `ai.opencode.desktop*` userData 弃在原地(当时明确决定旧数据不要,顺带消灭了
@@ -514,10 +514,10 @@ text part,不过滤的话提示词会原样出现在终报的"根因分析"里)�
 
 - `ServerConnection` / `ServerKey` 这套概念还散在 app 的路由与标签页里(现在只是空壳,
   `serverReady` 用占位值立刻 resolve)。清除它是独立一件事。
-- **终端(PTY)没有实现** —— my-pi 的 `NodeExecutionEnv.exec` 是一次性 spawn,不是伪终端。
+- **终端(PTY)没有实现** —— yoma 的 `NodeExecutionEnv.exec` 是一次性 spawn,不是伪终端。
   相关设置行现在是退化状态而不是造假。
 - **Python 引擎不可移植**(见"会咬人的地方"):打出的包里 board_ir/connections/
-  controller_map 出了构建机就是坏的,等 my-pi 侧做自包含构建。
+  controller_map 出了构建机就是坏的,等 yoma 侧做自包含构建。
 - **mac 签名/公证没配**:electron-builder 配置在没有 Apple 凭据时自动降级为
   未公证包(用户要右键打开);配齐 `APPLE_ID`+`APPLE_APP_SPECIFIC_PASSWORD`+
   `APPLE_TEAM_ID`(或 `APPLE_KEYCHAIN_PROFILE`)即自动恢复,无需改代码。

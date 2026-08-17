@@ -3,7 +3,7 @@ import { chmodSync, closeSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "bun:test";
-import { NodeExecutionEnv } from "@yoma/my-pi/node";
+import { NodeExecutionEnv } from "@yoma/agent/node";
 import {
 	buildSttyArgs,
 	createLogToolDefinition,
@@ -30,7 +30,7 @@ const openTools: Array<{ execute: (id: string, params: any) => Promise<unknown> 
 const fakeDevices: ChildProcess[] = [];
 
 function createTempDir(): string {
-	const dir = join(tmpdir(), `my-pi-serial-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+	const dir = join(tmpdir(), `yoma-serial-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(dir, { recursive: true });
 	tempDirs.push(dir);
 	return dir;

@@ -69,7 +69,7 @@ function turnOptions(workspace: string, steps: unknown[], overrides: Record<stri
     stateDir: tempDir("bench-state-"),
     prompt: "开始",
     resolveModels: models(steps),
-    // 隔离开发机真实的 ~/.my-pi:否则测试结果取决于跑测试的人装了什么技能。
+    // 隔离开发机真实的 ~/.yoma:否则测试结果取决于跑测试的人装了什么技能。
     configDir: tempDir("bench-config-"),
     settleMs: 120,
     ...overrides,
@@ -185,7 +185,7 @@ describe("runTurn", () => {
 /**
  * 无人值守必须自己给思考档位。
  *
- * 断言的是**真正发给 provider 的 reasoning 参数**,不是配置字段:my-pi 把 `"off"`
+ * 断言的是**真正发给 provider 的 reasoning 参数**,不是配置字段:yoma 把 `"off"`
  * 翻译成"请求里不带 reasoning",所以只有从 provider 那一侧看才知道模型思不思考。
  * 这条闸门守的是一个静默失效 —— 实测 2026-08-11 的信箱闭环,工位端 5 轮 107 条
  * assistant 消息 reasoning token 为 0,而任务书和日志里没有任何地方看得出来。

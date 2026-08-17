@@ -1,4 +1,4 @@
-// 第一次:my-pi 不只是会聊天,而是真的能**干活** —— 读文件、改文件、跑命令。
+// 第一次:yoma 不只是会聊天,而是真的能**干活** —— 读文件、改文件、跑命令。
 //
 // 三幕:
 //   1. 离线(faux 模型):脚本化地驱动工具,证明工具与 harness 接得上
@@ -19,7 +19,7 @@ import {
 	type Model,
 } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
-import { AgentHarness, InMemorySessionStorage, NodeExecutionEnv, Session } from "@yoma/my-pi/node";
+import { AgentHarness, InMemorySessionStorage, NodeExecutionEnv, Session } from "@yoma/agent/node";
 import {
 	createBashTool,
 	createCodingToolDefinitions,
@@ -27,9 +27,9 @@ import {
 	createReadTool,
 	createWriteTool,
 	wrapToolDefinitions,
-} from "@yoma/my-pi-coding-agent";
+} from "@yoma/coding-agent";
 
-const dir = mkdtempSync(join(tmpdir(), "my-pi-tools-demo-"));
+const dir = mkdtempSync(join(tmpdir(), "yoma-tools-demo-"));
 const env = new NodeExecutionEnv({ cwd: dir });
 const tools = {
 	read: createReadTool(env),

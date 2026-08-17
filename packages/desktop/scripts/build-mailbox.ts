@@ -6,7 +6,7 @@
  *   out/main/mailbox-turn-entry.mjs  agent 轮子进程入口(一轮一进程,探针清理靠进程边界)
  *
  * 与 out/main/kernel.js 同一个道理:内核必须被 inline(raw TS 的 strip-only 报错、
- * TS 参数属性,见根 CLAUDE.md"内核接缝"),别名走 MY_PI_ALIASES 同一份 —— 不新增
+ * TS 参数属性,见根 CLAUDE.md"内核接缝"),别名走 KERNEL_ALIASES 同一份 —— 不新增
  * 第五份映射。
  *
  * 走 esbuild 的 **JS API** 而不是 `bunx esbuild`:这条脚本进的是**发布产物管线**
@@ -24,7 +24,7 @@
 import { build } from "esbuild"
 import path from "node:path"
 
-import { MY_PI_ALIASES } from "../../kernel/mypi.ts"
+import { KERNEL_ALIASES } from "../../kernel/kernel-alias.ts"
 
 const desktopDir = path.resolve(import.meta.dir, "..")
 const benchSrc = path.resolve(desktopDir, "..", "bench", "src")
@@ -33,8 +33,8 @@ const benchSrc = path.resolve(desktopDir, "..", "bench", "src")
 // pi-ai 不别名:esbuild 的 alias 是**前缀匹配**,`@earendil-works/pi-ai` 的映射会把
 // 没列进表的子路径(如 /api/openai-completions.lazy)拼到 dist/index.js 后面直接炸掉;
 // 它是有 dist + exports 的真包,交给 node 解析天然全覆盖。
-// (vite 那份没这个问题 —— MY_PI_VITE_ALIAS 包的是精确 ^…$ 正则。)
-const alias = Object.fromEntries(Object.entries(MY_PI_ALIASES).filter(([from]) => from.startsWith("@yoma/")))
+// (vite 那份没这个问题 —— KERNEL_VITE_ALIAS 包的是精确 ^…$ 正则。)
+const alias = Object.fromEntries(Object.entries(KERNEL_ALIASES).filter(([from]) => from.startsWith("@yoma/")))
 
 const bundles = [
   { entry: path.join(benchSrc, "mailbox", "host-entry.ts"), outfile: path.join(desktopDir, "out/main/mailbox-host.mjs") },

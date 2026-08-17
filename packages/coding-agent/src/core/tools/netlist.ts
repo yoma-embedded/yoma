@@ -3,13 +3,13 @@
  *
  * 与 yoma 的差异(同 stm32config):Effect → ToolDefinition,子进程走 runEngine,
  * 去掉 ctx.ask / assertExternalDirectoryEffect,文件访问经注入的 env。
- * 输出目录默认 .my-pi/(yoma 是 .yoma/),描述文本相应调整。
+ * 输出目录默认 `.yoma/`。
  *
  * 两种模式:不带 part 时跑 controller_map(原始逐 pin 连接图);带 part 时跑
  * board_ir(联动 stm32kernel 数据),产出外设建议 stm32_map + 起步配置 cfg_seed。
  */
 import path from "node:path";
-import type { ExecutionEnv } from "@yoma/my-pi";
+import type { ExecutionEnv } from "@yoma/agent";
 import { type Static, Type } from "typebox";
 import {
 	assertEngineSettled,
@@ -42,7 +42,7 @@ const netlistSchema = Type.Object({
 	outDir: Type.Optional(
 		Type.String({
 			description:
-				"Directory to write the board IR JSON files into. Defaults to .my-pi/ under the working directory. Only used when part is provided.",
+				"Directory to write the board IR JSON files into. Defaults to .yoma/ under the working directory. Only used when part is provided.",
 		}),
 	),
 });
@@ -127,7 +127,7 @@ export function createNetlistToolDefinition(
 			const kernel = engineBin("stm32kernel", options);
 			const dataDir = engineDataDir("stm32", options);
 
-			const outDir = await resolveToCwd(env, params.outDir ?? ".my-pi");
+			const outDir = await resolveToCwd(env, params.outDir ?? ".yoma");
 			const created = await env.createDir(outDir, { recursive: true });
 			if (!created.ok) throw new Error(`cannot create output directory ${outDir}: ${created.error.message}`);
 			const stem = sanitizeStem(netlist);

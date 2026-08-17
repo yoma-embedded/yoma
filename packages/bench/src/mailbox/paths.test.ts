@@ -2,21 +2,21 @@ import { describe, expect, test } from "bun:test"
 import { homedir } from "node:os"
 import path from "node:path"
 
-import { myPiConfigDir } from "@yoma-desktop/kernel/host"
+import { yomaConfigDir } from "@yoma-desktop/kernel/host"
 
 import { cloneDirFor, defaultConfigDir, defaultMailboxRoot } from "./paths.ts"
 
 describe("defaultConfigDir", () => {
-  test("与内核的 myPiConfigDir() 是同一个目录 —— 分叉是静默的", () => {
+  test("与内核的 yomaConfigDir() 是同一个目录 —— 分叉是静默的", () => {
     // paths.ts 刻意不 import 内核(它必须是叶子模块,否则桌面端 main 的 bundle 会被
     // 拖进整个内核,见 paths.ts 顶部)。代价是两份实现,这条断言就是那份代价的对冲:
     // 两边分叉的表现是"信箱去了一个目录、凭据在另一个",谁都不报错。
-    expect(defaultConfigDir()).toBe(myPiConfigDir())
+    expect(defaultConfigDir()).toBe(yomaConfigDir())
   })
 
   test("信箱根就在配置目录下面 —— 一处管凭据/技能/上下文/信箱", () => {
     expect(defaultMailboxRoot()).toBe(path.join(defaultConfigDir(), "mailbox"))
-    expect(defaultMailboxRoot()).toBe(path.join(homedir(), ".my-pi", "mailbox"))
+    expect(defaultMailboxRoot()).toBe(path.join(homedir(), ".yoma", "mailbox"))
   })
 })
 

@@ -100,7 +100,7 @@ const getBase = (appId: string): Configuration => ({
     // fork 后该目录已不存在,源码里也无引用,引用一个不存在的 from 会让打包绊倒。
     // 嵌入式引擎(stm32kernel / controller_map / board_ir / connections)
     // 和 stm32 数据包。**必须走 extraResources 而不是 files** —— 它们是原生可执行文件,
-    // 打进 asar 之后不能直接 spawn,而 my-pi 的工具就是 argv 进 JSON 出的黑盒 CLI。
+    // 打进 asar 之后不能直接 spawn,而 yoma 的工具就是 argv 进 JSON 出的黑盒 CLI。
     // 运行时由 main/index.ts 的 resolveEnginesDir() 解析到 process.resourcesPath/engines。
     //
     // **不能直接指向仓库根的 engines/**:那里面全是软链,而 electron-builder 对

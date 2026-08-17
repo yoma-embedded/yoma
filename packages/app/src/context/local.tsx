@@ -87,7 +87,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     })
 
     // 校验必须问内核目录(useModels().providers,活数据),**不能**问 opencode 时代的
-    // useProviders 空壳:那套数据来自 server-sync,my-pi 内核永远不会喂它 —— 老 userData
+    // useProviders 空壳:那套数据来自 server-sync,yoma 内核永远不会喂它 —— 老 userData
     // 里有 opencode 缓存"碰巧能用",全新用户 connected 恒为空,选什么都被静默丢弃,
     // 表现为"模型一直选不中"(实测踩过)。
     const validModel = (model: ModelKey) => {
@@ -136,7 +136,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     }
 
     // opencode 的 per-provider 默认模型来自它的 config 服务,内核没有对应物 ——
-    // 这里的 UI 默认就取第一个已认证 provider 的第一个模型(目录顺序即 my-pi
+    // 这里的 UI 默认就取第一个已认证 provider 的第一个模型(目录顺序即 yoma
     // PROVIDERS 表顺序);真正发请求时的内核默认(~/.pi/agent/settings.json)不受影响。
     const defaultModel = () => {
       for (const provider of models.providers()) {

@@ -317,7 +317,7 @@ export default function Page() {
   /**
    * 变更视图只剩「工作区未提交改动」一种。
    *
-   * my-pi 没有文件快照,所以没有"本轮改了哪些文件"；host 的 vcs.diff 也只给工作区 diff,
+   * yoma 没有文件快照,所以没有"本轮改了哪些文件"；host 的 vcs.diff 也只给工作区 diff,
    * 没有 default_branch,所以 git / branch / turn 三个模式收敛成一个。
    */
   const vcsKey = createMemo(() => ["session-vcs", sdk().directory, sync().data.vcs?.branch ?? ""] as const)

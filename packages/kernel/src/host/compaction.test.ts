@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { AgentMessage } from "@yoma/my-pi"
+import type { AgentMessage } from "@yoma/agent"
 import { shouldAutoCompact } from "./compaction.ts"
 
 const T0 = 1_800_000_000_000

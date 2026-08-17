@@ -3,7 +3,7 @@
  *
  * ## 为什么 agent 轮跑在子进程里
  *
- * my-pi 的探针租约、gdb 会话表、log 采集器都是模块级全局并挂着退出钩子。
+ * yoma 的探针租约、gdb 会话表、log 采集器都是模块级全局并挂着退出钩子。
  * 进程边界 = 免费且可靠的清理:agent 轮一结束,探针/串口/gdbserver 一定被收干净,
  * 下一轮不会撞上"探针被占着"。会话是落盘 JSONL,换进程不丢历史。
  */
@@ -35,7 +35,7 @@ export interface TurnInput {
    * exe 里 process.execPath 是 Electron,不给入口就是配置错误,如实抛。
    */
   turnEntry?: string
-  /** 技能/上下文/凭据的全局目录。生产不传(默认 ~/.my-pi);演练与测试传临时目录隔离。 */
+  /** 技能/上下文/凭据的全局目录。生产不传(默认 ~/.yoma);演练与测试传临时目录隔离。 */
   configDir?: string
   /** 工具链清单按哪一侧筛。信箱工位端传 "runner"。 */
   toolchainSide?: "mother" | "runner"
@@ -46,10 +46,10 @@ export interface TurnInput {
 }
 
 /**
- * `<工程>/.my-pi/` —— yoma 在这个项目里的**唯一**落脚点。
+ * `<工程>/.yoma/` —— yoma 在这个项目里的**唯一**落脚点。
  *
  * ```
- * <工程>/.my-pi/
+ * <工程>/.yoma/
  *   .gitignore                     本文件写的这一份
  *   toolchain.json                 项目配置,**要跟着仓库走**(工具链声明,零绝对路径)
  *   toolchain.local.json           本机覆盖,不提交(可能带绝对路径)
@@ -59,14 +59,14 @@ export interface TurnInput {
  *     turns/  mailbox-sim/         调试台的运行产物
  * ```
  *
- * 2026-08-11 之前是两个目录(`.bench/` 与 `.my-pi/`),各带一份 .gitignore、
+ * 2026-08-11 之前是两个目录(`.bench/` 与 `.yoma/`),各带一份 .gitignore、
  * 两套相反的策略(前者白名单、后者黑名单)。合成一个的理由很直白:它们结构同构
  * (项目配置 + 运行产物),而用户的项目根不该为同一个产品长出两个隐藏目录。
  *
  * ## 为什么必须忽略,以及为什么连 .gitignore 自己也忽略
  *
  * 不忽略运行产物,它们会被 `git add -A` 卷进提交 —— 实测第一次真跑,agent 分支的
- * diff 里 17 个文件有 16 个是 `.my-pi/gdb/*.mi` 这类工具日志,真改动只有 1 个。
+ * diff 里 17 个文件有 16 个是 `.yoma/gdb/*.mi` 这类工具日志,真改动只有 1 个。
  *
  * `.gitignore` 自身也在忽略之列:它是调试台生成的,露出来就是一个"未跟踪又不被忽略"
  * 的条目,工作树因此永远不干净,而研发端每轮开局都要求树干净(实测:漏了这条,
@@ -97,14 +97,14 @@ toolchain.local.json
 const YOMA_IGNORE_MARK = "# yoma"
 
 /**
- * 建 `<工程>/.my-pi/` 并放好忽略文件。
+ * 建 `<工程>/.yoma/` 并放好忽略文件。
  *
  * **已有的会升级**(只要第一行带认领标志)—— 两个 ensure 函数从前都是"文件不存在
- * 才写",于是老仓库永远停在旧规则上:合并之后 `bench/turns/` 会照着旧的 `.my-pi`
+ * 才写",于是老仓库永远停在旧规则上:合并之后 `bench/turns/` 会照着旧的 `.yoma`
  * 规则漏进版本库,而这正是当初加忽略要防的事。用户手写的 .gitignore 仍然不动。
  */
 export async function ensureYomaDir(workspace: string): Promise<void> {
-  const dir = path.join(workspace, ".my-pi")
+  const dir = path.join(workspace, ".yoma")
   await mkdir(dir, { recursive: true })
   const ignore = path.join(dir, ".gitignore")
   if (await fileExists(ignore)) {
@@ -147,7 +147,7 @@ export async function runTurnInChildProcess(
   input: TurnInput,
   handlers: { onProgress?: (message: string) => void },
 ): Promise<TurnResult> {
-  const dir = path.join(input.workspace, ".my-pi", "bench", "turns")
+  const dir = path.join(input.workspace, ".yoma", "bench", "turns")
   await mkdir(dir, { recursive: true })
   const stamp = `${input.job.id}-${input.prompt.length}`
   const inputFile = path.join(dir, `turn-${stamp}.json`)

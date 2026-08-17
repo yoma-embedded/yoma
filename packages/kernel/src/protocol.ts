@@ -87,7 +87,7 @@ export interface KernelMethods {
   "session.abort": { params: { sessionID: string }; result: void }
   "session.compact": { params: { sessionID: string }; result: void }
   /**
-   * 顶替 opencode 的 revert。my-pi 只能把会话树的 leaf 挪回某条消息(navigateTree),
+   * 顶替 opencode 的 revert。yoma 只能把会话树的 leaf 挪回某条消息(navigateTree),
    * **不还原文件** —— 所以 UI 上必须叫"改上一条重发",不能叫"回滚"。返回那条消息的
    * 原文,让 composer 填回输入框。
    */
@@ -110,7 +110,7 @@ export interface KernelMethods {
   "vcs.diff": { params: { directory: string }; result: FileDiff[] }
 
   /**
-   * 工具链核账:项目声明的清单(<directory>/.my-pi/toolchain.json)对上这台机器实际
+   * 工具链核账:项目声明的清单(<directory>/.yoma/toolchain.json)对上这台机器实际
    * 装了什么。fresh:true 是"不信账本重新探一遍并记住"(同 agent 工具的 resolve 动作)。
    */
   "toolchain.status": { params: { directory: string; fresh?: boolean }; result: ToolchainStatusView }

@@ -3,7 +3,7 @@ import { defineConfig } from "electron-vite"
 import appPlugin from "@yoma-desktop/app/vite"
 // 相对路径导入,不走包说明符 —— vite 的 config 加载器对 workspace 符号链接的
 // 外部化行为不稳定,而这张表必须在配置求值时就存在。
-import { MY_PI_VITE_ALIAS } from "../kernel/mypi.ts"
+import { KERNEL_VITE_ALIAS } from "../kernel/kernel-alias.ts"
 
 const channel = (() => {
   const raw = process.env.OPENCODE_CHANNEL
@@ -36,9 +36,9 @@ export default defineConfig({
     define: {
       "import.meta.env.OPENCODE_CHANNEL": JSON.stringify(channel),
     },
-    // my-pi 必须被 inline,不能外部化 —— 见 packages/kernel/mypi.ts 顶部的说明。
+    // yoma 必须被 inline,不能外部化 —— 见 packages/kernel/kernel-alias.ts 顶部的说明。
     // @yoma-desktop/kernel 放在 devDependencies 里,于是 externalizeDeps 不会碰它。
-    resolve: { alias: MY_PI_VITE_ALIAS },
+    resolve: { alias: KERNEL_VITE_ALIAS },
     build: {
       rollupOptions: {
         input: {

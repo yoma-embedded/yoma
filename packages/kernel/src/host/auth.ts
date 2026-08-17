@@ -1,22 +1,22 @@
 /**
- * 应用内凭据配置:读写 my-pi 的 `<configDir>/auth.json`(默认 `~/.my-pi/auth.json`)。
+ * 应用内凭据配置:读写 yoma 的 `<configDir>/auth.json`(默认 `~/.yoma/auth.json`)。
  *
  * ## 2026-08 的搬家:凭据不再跟 pi 共用
  *
- * my-pi 把凭据从 `~/.pi/agent/auth.json` 挪到了自己的 `<configDir>/auth.json`,并且
+ * yoma 把凭据从 `~/.pi/agent/auth.json` 挪到了自己的 `<configDir>/auth.json`,并且
  * `resolveModel()` 现在**要求显式传 configDir**(这一改在我们这边是编译期硬失败,
  * 不是运行时惊喜 —— alias 接缝的设计目的正是如此)。同时格式收紧成 pi-ai 的
  * `Credential` 判别联合:条目**必须带 `type: "api_key"`**,少了这个字段
  * `resolveProviderAuth` 里 `stored.type === "api_key"` 匹配不上,key 会被**静默忽略**
  * —— 表现是"我明明配了 key 却说没配",最难查的那一类。
  *
- * 所以写入端直接用 my-pi 导出的 `FileCredentialStore`,不再自己拼 JSON:
+ * 所以写入端直接用 yoma 导出的 `FileCredentialStore`,不再自己拼 JSON:
  * 格式、0600 权限、目录 0700、写入串行化全都由它负责,我们这边就不存在格式漂移了。
  *
  * 老用户的 key 由 `migrateLegacyPiAuth()` 一次性搬过来(只在新文件不存在时,
  * 且**不删旧文件**)—— 否则升级一次 app 就是"key 不见了",而用户什么都没做。
  *
- * CONFIGURABLE_PROVIDERS 是从 my-pi 的 PROVIDERS 表**结构化复制**的(只抄 id 和 name):
+ * CONFIGURABLE_PROVIDERS 是从 yoma 的 PROVIDERS 表**结构化复制**的(只抄 id 和 name):
  * 那张表没有导出,而首跑时(auth.json 不存在)resolveModel() 直接抛,注册表里一个
  * provider 都没有 —— 不靠这份副本,连接对话框就没有东西可以列,用户被锁在门外。
  * 复制的漂移由 auth.test.ts 兜住。
@@ -26,20 +26,20 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
 
-import { FileCredentialStore } from "@yoma/my-pi-coding-agent/models"
+import { FileCredentialStore } from "@yoma/coding-agent/models"
 
-/** my-pi 能用的 provider(id 必须和它 PROVIDERS 表的键一致,否则写进去也读不出来)。 */
+/** yoma 能用的 provider(id 必须和它 PROVIDERS 表的键一致,否则写进去也读不出来)。 */
 export const CONFIGURABLE_PROVIDERS: ReadonlyArray<{ id: string; name: string }> = [
   { id: "deepseek", name: "DeepSeek" },
   { id: "moonshotai-cn", name: "Moonshot (Kimi)" },
 ]
 
-/** 和 my-pi 的 ACP 适配器同一个默认目录(acp/agent.ts 的 CONFIG_DIR)。 */
-export function myPiConfigDir(): string {
-  return path.join(homedir(), ".my-pi")
+/** 和 yoma 的 ACP 适配器同一个默认目录(acp/agent.ts 的 CONFIG_DIR)。 */
+export function yomaConfigDir(): string {
+  return path.join(homedir(), ".yoma")
 }
 
-export function authFilePath(configDir: string = myPiConfigDir()): string {
+export function authFilePath(configDir: string = yomaConfigDir()): string {
   return path.join(configDir, "auth.json")
 }
 
@@ -54,10 +54,10 @@ type AuthFile = Record<string, AuthEntry>
 // configDir 参数是**测试接缝**,生产代码一律不传(走真实 homedir)。
 // 教训(实测):Bun 的 os.homedir() 在进程启动时就定死了,运行时改 process.env.HOME
 // 对它无效 —— 想靠"临时 HOME"隔离真实凭据文件行不通,会直接读写用户真的那一份。
-// 现在 my-pi 的 resolveModel 也收 configDir 了,所以注入目录就够,不必再起子进程。
+// 现在 yoma 的 resolveModel 也收 configDir 了,所以注入目录就够,不必再起子进程。
 
-/** 容错读:文件不存在或损坏都当成空表 —— 和 my-pi 的 readJson() 行为一致。 */
-export function readAuthFile(configDir: string = myPiConfigDir()): AuthFile {
+/** 容错读:文件不存在或损坏都当成空表 —— 和 yoma 的 readJson() 行为一致。 */
+export function readAuthFile(configDir: string = yomaConfigDir()): AuthFile {
   try {
     const parsed: unknown = JSON.parse(readFileSync(authFilePath(configDir), "utf8"))
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as AuthFile
@@ -67,7 +67,7 @@ export function readAuthFile(configDir: string = myPiConfigDir()): AuthFile {
   return {}
 }
 
-/** 写入/覆盖一个 provider 的 key。走 my-pi 的仓库实现,格式与权限都不由我们决定。 */
+/** 写入/覆盖一个 provider 的 key。走 yoma 的仓库实现,格式与权限都不由我们决定。 */
 export async function writeAuthKey(providerID: string, apiKey: string, configDir?: string): Promise<void> {
   const store = new FileCredentialStore(authFilePath(configDir))
   await store.modify(providerID, async (current) => ({
@@ -79,7 +79,7 @@ export async function writeAuthKey(providerID: string, apiKey: string, configDir
   }))
 }
 
-/** 移除一个 provider 的凭据(整条删掉,与 my-pi 的 logout 语义一致)。 */
+/** 移除一个 provider 的凭据(整条删掉,与 yoma 的 logout 语义一致)。 */
 export async function removeAuthKey(providerID: string, configDir?: string): Promise<void> {
   await new FileCredentialStore(authFilePath(configDir)).delete(providerID)
 }
@@ -98,7 +98,7 @@ export async function removeAuthKey(providerID: string, configDir?: string): Pro
  * @returns 迁移过来的 provider id 列表(没迁就是空数组)
  */
 export function migrateLegacyPiAuth(
-  configDir: string = myPiConfigDir(),
+  configDir: string = yomaConfigDir(),
   legacyFile: string = legacyPiAuthFilePath(),
 ): string[] {
   const target = authFilePath(configDir)

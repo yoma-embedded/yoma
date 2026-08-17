@@ -8,7 +8,7 @@
  *     就没了,那是 desktop 层的事,不是这里能重试回来的。
  *   - 合并已经在 host 的 StreamSink 做完(同 part 的快照折叠 + 连续 delta 拼接,
  *     每 ~16ms 推一批)。越早合并跨进程的数据越少,前端再合一遍纯属浪费。
- *   - 目录分流没有了。opencode 的每条事件带 directory,这里按目录开频道;my-pi 的
+ *   - 目录分流没有了。opencode 的每条事件带 directory,这里按目录开频道;yoma 的
  *     事件只带 sessionID,目录归属由下游拿 session 表自己查。
  *
  * 剩下的职责就一件:把 host 推来的一批事件,在**一个** solid `batch()` 里分发完 ——

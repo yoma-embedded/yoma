@@ -68,7 +68,7 @@ function makeHost(
     sessionsRoot: tempDir("yoma-sessions-"),
     stateDir: tempDir("yoma-state-"),
     enginesDir: options.enginesDir,
-    // 隔离掉开发机真实的 ~/.my-pi:不传的话技能与上下文文件发现会去读它,
+    // 隔离掉开发机真实的 ~/.yoma:不传的话技能与上下文文件发现会去读它,
     // 测试结果就取决于跑测试的人机器上装了什么技能。
     configDir: tempDir("yoma-config-"),
     version: "test",
@@ -323,7 +323,7 @@ describe("项目资源发现", () => {
 /**
  * 思考档位。
  *
- * 钉的是**真的发出去的那个 reasoning 参数** —— 不是 harness 内部字段。my-pi 把
+ * 钉的是**真的发出去的那个 reasoning 参数** —— 不是 harness 内部字段。yoma 把
  * `"off"` 翻译成"请求里不带 reasoning"(agent-harness.ts:429),所以只有从 provider
  * 这一侧看才知道模型到底思不思考。实测代价见 `../thinking.ts` 的头注释。
  */
@@ -344,7 +344,7 @@ describe("思考档位", () => {
     }
   }
 
-  test("宿主不表态时保持 my-pi 的默认(off)", async () => {
+  test("宿主不表态时保持 yoma 的默认(off)", async () => {
     const capture = capturing()
     const { host, workspace } = makeHost(capture.steps, { reasoningModel: true })
     const session = (await host.handle("session.create", { directory: workspace })) as Session

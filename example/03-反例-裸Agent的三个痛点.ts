@@ -7,7 +7,7 @@
 //
 // 运行: bun example/03-反例-裸Agent的三个痛点.ts
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from "@earendil-works/pi-ai";
-import { Agent, type AgentMessage, type AgentTool } from "@yoma/my-pi";
+import { Agent, type AgentMessage, type AgentTool } from "@yoma/agent";
 
 const weatherParams = Type.Object({ city: Type.String() });
 const weatherTool: AgentTool<typeof weatherParams> = {

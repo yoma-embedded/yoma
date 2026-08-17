@@ -2,7 +2,7 @@
 /**
  * 内核冒烟:对 **构建产物** 跑,不对源码跑。
  *
- * 为什么必须存在:my-pi 现在约每天一次提交,而它的 packages/agent/src/index.ts 在近期
+ * 为什么必须存在:yoma 现在约每天一次提交,而它的 packages/agent/src/index.ts 在近期
  * 十几个提交里改过多次。我们通过 alias 把它整个 inline 进 out/main/kernel.js —— 也就是说
  * 内核的一次重构可以在我们这边零编译错误地把桌面端搞死,直到用户点下去才发现。
  * 这个脚本是唯一能在 CI 里挡住那种情况的东西。
@@ -47,7 +47,7 @@ try {
   fail(`内核自检失败:\n${(error as { stdout?: string; message?: string }).stdout ?? (error as Error).message}`)
 }
 
-// grep 已随 my-pi 2026-08 的装配面精简退役(视图侧仍认得它,只为重放旧会话)。
+// grep 已随 yoma 2026-08 的装配面精简退役(视图侧仍认得它,只为重放旧会话)。
 // 对着**构建产物**核对:这个清单落后于内核装配面时,旧 out/ 会在这里如实报缺。
 const EXPECTED = [
   "read",
@@ -85,7 +85,7 @@ const data = join(enginesDir, "data")
 const REQUIRED_BINS = ["stm32kernel", "controller_map", "board_ir", "connections"]
 
 if (!existsSync(bin)) {
-  fail(`${bin} 不存在 —— 跑 \`bun engines/build.ts\`(在仓库根)。\n` + `注意:my-pi 的 enginesDir() 是向上查找 + existsSync,会"找到"一个没有 bin/ 的空壳然后报"去跑 build.ts",别被那条信息带偏。`)
+  fail(`${bin} 不存在 —— 跑 \`bun engines/build.ts\`(在仓库根)。\n` + `注意:yoma 的 enginesDir() 是向上查找 + existsSync,会"找到"一个没有 bin/ 的空壳然后报"去跑 build.ts",别被那条信息带偏。`)
 }
 const present = readdirSync(bin)
 const missingBins = REQUIRED_BINS.filter((name) => !present.includes(name))

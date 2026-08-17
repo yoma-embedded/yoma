@@ -8,7 +8,7 @@
 // (key 只从环境变量读,永远不要写进代码或提交进 git)
 import { createModels, createProvider, envApiKeyAuth, type Model, Type } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
-import { Agent, type AgentTool } from "@yoma/my-pi";
+import { Agent, type AgentTool } from "@yoma/agent";
 
 if (!process.env.DEEPSEEK_API_KEY) {
 	console.error("请先设置环境变量: DEEPSEEK_API_KEY=sk-xxx bun example/05-deepseek真实冒烟.ts");

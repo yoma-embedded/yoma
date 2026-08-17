@@ -4,7 +4,7 @@ import { NormalizedProviderListResponse } from "@yoma-desktop/session-ui/context
 /**
  * 工作目录信息。
  *
- * 原来是后端 /path 路由返回的对象(带 project/worktree/state 等)。my-pi 里一个会话就是
+ * 原来是后端 /path 路由返回的对象(带 project/worktree/state 等)。yoma 里一个会话就是
  * 一个 cwd,没有 project 层级,所以这里收窄成"当前目录"这一件事,并且由前端自己知道 ——
  * 不需要往内核要。
  */
@@ -16,7 +16,7 @@ export type Path = {
  * 应用配置。
  *
  * opencode 的 config 是后端下发的(provider 设置、agent 定义、MCP 服务器…)。
- * my-pi 没有配置服务,所以这里是空对象;这个类型保留是为了让还在读 config 的调用点
+ * yoma 没有配置服务,所以这里是空对象;这个类型保留是为了让还在读 config 的调用点
  * 先编译过去,收尾时逐个清掉。
  */
 export type Config = Record<string, never>

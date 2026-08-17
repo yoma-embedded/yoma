@@ -25,7 +25,7 @@ import {
 	parseCommandArgs,
 	type PromptTemplate,
 	type Skill,
-} from "@yoma/my-pi";
+} from "@yoma/agent";
 
 // ============================================================================
 console.log("━━━ 第 1 幕:技能 = 被格式化的提示词 ━━━\n");

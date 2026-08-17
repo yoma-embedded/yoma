@@ -4,7 +4,7 @@
  * 与 pi 的差异:工厂第一个参数是注入的 ExecutionEnv 而不是 cwd 字符串 ——
  * cwd 从 env.cwd 拿,文件与进程访问都经由 env,于是同一套工具对远程/沙箱环境也成立。
  * 这正是 pi 用 ReadOperations/WriteOperations/BashOperations 那几套
- * 可插拔接口达成的目的,my-pi 用一个能力接口一次性覆盖。
+ * 可插拔接口达成的目的,yoma 用一个能力接口一次性覆盖。
  *
  * 装配面只有两个工厂:编码工具组(四件套 + toolchain)+ 嵌入式六件套。按名挑选、
  * 聚合 Options、grep(依赖外部 ripgrep,本仓永远不可用)等历史装配面在 2026-08
@@ -203,7 +203,7 @@ export {
 	type WriteToolInput,
 } from "./write.ts";
 
-import type { ExecutionEnv } from "@yoma/my-pi";
+import type { ExecutionEnv } from "@yoma/agent";
 import { createBashToolDefinition } from "./bash.ts";
 import { createDatasheetToolDefinition } from "./datasheet.ts";
 import { createEditToolDefinition } from "./edit.ts";
@@ -229,7 +229,7 @@ export type ToolDef = ToolDefinition<any, any>;
  * options.toolchain 是给 kernel host 这类生产调用方的注入口:host 自己拿着
  * configDir / toolchainSide / manifestText(工位端没有项目检出,清单经信箱送来),
  * 不注入的话,系统提示词里是 runner 筛过的清单,agent 自己跑 toolchain check 却按
- * mother + 真实 ~/.my-pi + 磁盘清单来答 —— 两边自相矛盾,工位端直接报"没有清单"。
+ * mother + 真实 ~/.yoma + 磁盘清单来答 —— 两边自相矛盾,工位端直接报"没有清单"。
  * 不传 options 时全部走默认值(ACP 适配器与测试的既有行为,一个字节不变)。
  */
 export function createCodingToolDefinitions(env: ExecutionEnv, options?: { toolchain?: ToolchainToolOptions }): ToolDef[] {

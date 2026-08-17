@@ -4,7 +4,7 @@ import { describe, expect, it } from "bun:test";
 import { replayUpdatesOf, toolContentOf, toolKindOf, toolLocationsOf, toolTitleOf } from "../src/acp/session.ts";
 
 describe("toolKindOf", () => {
-	it("maps my-pi tools onto ACP kinds", () => {
+	it("maps yoma tools onto ACP kinds", () => {
 		expect(toolKindOf("read")).toBe("read");
 		expect(toolKindOf("write")).toBe("edit");
 		expect(toolKindOf("edit")).toBe("edit");

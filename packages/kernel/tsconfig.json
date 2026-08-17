@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/tsconfig",
   "extends": [
     "@tsconfig/bun/tsconfig.json",
-    "../../tsconfig.mypi.json"
+    "../../tsconfig.yoma.json"
   ],
   "compilerOptions": {
     "noEmit": true,
@@ -11,22 +11,22 @@
     "moduleResolution": "bundler",
     "skipLibCheck": true,
     "paths": {
-      "@yoma/my-pi": [
+      "@yoma/agent": [
         "../../packages/agent/src/index.ts"
       ],
-      "@yoma/my-pi/node": [
+      "@yoma/agent/node": [
         "../../packages/agent/src/node.ts"
       ],
-      "@yoma/my-pi-coding-agent": [
+      "@yoma/coding-agent": [
         "../../packages/coding-agent/src/index.ts"
       ],
-      "@yoma/my-pi-coding-agent/system-prompt": [
+      "@yoma/coding-agent/system-prompt": [
         "../../packages/coding-agent/src/core/system-prompt.ts"
       ],
-      "@yoma/my-pi-coding-agent/models": [
+      "@yoma/coding-agent/models": [
         "../../packages/coding-agent/src/acp/models.ts"
       ],
-      "@yoma/my-pi-coding-agent/resources": [
+      "@yoma/coding-agent/resources": [
         "../../packages/coding-agent/src/core/resources.ts"
       ],
       "@earendil-works/pi-ai": [
@@ -40,6 +40,6 @@
   },
   "include": [
     "src",
-    "mypi.ts"
+    "kernel-alias.ts"
   ]
 }

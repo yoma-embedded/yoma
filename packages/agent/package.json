@@ -1,7 +1,7 @@
 {
-	"name": "@yoma/my-pi",
+	"name": "@yoma/agent",
 	"version": "0.1.0",
-	"description": "my-pi agent core, for learning",
+	"description": "Yoma agent core",
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",

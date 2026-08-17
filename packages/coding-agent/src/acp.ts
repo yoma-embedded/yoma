@@ -1,21 +1,21 @@
 #!/usr/bin/env bun
 /**
- * my-pi 的 ACP 入口。Zed(或任何 ACP 客户端)把它当子进程起,用 JSON-RPC over stdio 对话。
+ * yoma 的 ACP 入口。Zed(或任何 ACP 客户端)把它当子进程起,用 JSON-RPC over stdio 对话。
  *
  * 用法(Zed 的 settings.json):
  *   "agent_servers": {
- *     "my-pi": { "type": "custom", "command": "bun",
+ *     "yoma": { "type": "custom", "command": "bun",
  *                "args": ["/绝对路径/packages/coding-agent/src/acp.ts"] }
  *   }
  *
- * 调试:stderr 不参与协议,全部落到 ~/.my-pi/acp.log。Zed 里出问题时 tail -f 它。
+ * 调试:stderr 不参与协议,全部落到 ~/.yoma/acp.log。Zed 里出问题时 tail -f 它。
  */
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
-import { NodeExecutionEnv } from "@yoma/my-pi/node";
-import { CONFIG_DIR, MyPiAcpAgent } from "./acp/agent.ts";
+import { NodeExecutionEnv } from "@yoma/agent/node";
+import { CONFIG_DIR, YomaAcpAgent } from "./acp/agent.ts";
 import { resolveModel } from "./acp/models.ts";
 
 const LOG_PATH = join(CONFIG_DIR, "acp.log");
@@ -36,13 +36,13 @@ process.on("uncaughtException", (error) => log(`uncaughtException: ${String((err
 process.on("unhandledRejection", (reason) => log(`unhandledRejection: ${String(reason)}`));
 
 async function main(): Promise<void> {
-	const cwd = process.env.MY_PI_CWD ?? process.cwd();
+	const cwd = process.env.YOMA_CWD ?? process.cwd();
 	const env = new NodeExecutionEnv({ cwd });
 
 	const resolved = await resolveModel(CONFIG_DIR);
-	log(`starting my-pi acp: provider=${resolved.model.provider} model=${resolved.model.id} cwd=${cwd}`);
+	log(`starting yoma acp: provider=${resolved.model.provider} model=${resolved.model.id} cwd=${cwd}`);
 
-	const agent = new MyPiAcpAgent({
+	const agent = new YomaAcpAgent({
 		env,
 		models: resolved.models,
 		model: resolved.model,
@@ -54,7 +54,7 @@ async function main(): Promise<void> {
 	const stream = acp.ndJsonStream(output, input);
 
 	acp
-		.agent({ name: "my-pi" })
+		.agent({ name: "yoma" })
 		.onRequest("initialize", (ctx: any) => agent.initialize(ctx.params))
 		.onRequest("authenticate", (ctx: any) => agent.authenticate(ctx.params))
 		// newSession 要拿 client 句柄才能推 available_commands_update。

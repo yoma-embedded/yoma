@@ -1,6 +1,6 @@
 // JSONL 会话仓库。对应 pi harness/session/jsonl-repo.ts,逐字移植;
 // 唯一差异:Session 类型直接从 ./session.ts 导入(pi 经 ../types.ts 二手转口,
-// my-pi 的 index.ts 同时星号导出两处,转口会产生歧义导出)。
+// yoma 的 index.ts 同时星号导出两处,转口会产生歧义导出)。
 // 目录布局与 pi 一致:<root>/--<cwd 编码>--/<时间戳>_<sessionId>.jsonl。
 import type {
 	FileSystem,

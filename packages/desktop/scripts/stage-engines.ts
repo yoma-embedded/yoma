@@ -2,17 +2,17 @@
 /**
  * 打包前的 engines 校验 + 实体化 —— 把三种"静默出坏包"的方式变成响亮的失败/警告。
  *
- * 背景:仓库根的 `engines` 是指向 ../my-pi/engines 的软链,bin/ 和 data/ 里又全是
+ * 背景:仓库根的 `engines` 是指向 ../yoma/engines 的软链,bin/ 和 data/ 里又全是
  * 指向各引擎构建产物的软链。三个坑:
  *
- *   1. **没在 my-pi 跑过 `bun engines/build.ts`** → 软链悬空 → 这里直接失败。
+ *   1. **没在 yoma 跑过 `bun engines/build.ts`** → 软链悬空 → 这里直接失败。
  *   2. **electron-builder 对 extraResources 里的软链是原样保留,不 dereference**
  *      (实测:打出来的 Yoma.app 里 engines/bin/board_ir 还是一条指向
  *      ../controller_map/.venv/bin/board_ir 的断链,签名阶段 stat ENOENT)。
  *      → 所以这里把 engines **实体化**拷进 `.engines-stage/`(跟随软链、保留权限位),
  *      electron-builder 的 extraResources 指向暂存目录而不是原始软链。
  *   3. **venv console script**(shebang 指向构建机绝对路径)→ 拷到别人电脑上
- *      "bad interpreter" 必坏。根治要 my-pi 侧把 Python 引擎做成自包含产物,
+ *      "bad interpreter" 必坏。根治要 yoma 侧把 Python 引擎做成自包含产物,
  *      我们不改内核 → 响亮警告并列出受影响的工具。
  */
 
@@ -29,7 +29,7 @@ const cacheDir = path.join(desktopDir, ".engines-cache")
 /**
  * 打包目标平台,由 package.json 的脚本传入(package:win → win32),缺省当前平台。
  * 引擎是原生二进制,mac 的 Mach-O 装进 Windows 安装包一样"打包成功",用户点开才炸 ——
- * 所以按魔数校验格式匹配。my-pi 的内核在 win32 上按 `${name}.exe` 找引擎
+ * 所以按魔数校验格式匹配。yoma 的内核在 win32 上按 `${name}.exe` 找引擎
  * (coding-agent/core/tools/engines.ts),所以 Windows 产物还必须带 .exe 后缀。
  *
  * YOMA_ALLOW_FOREIGN_ENGINES=1 是显式逃生口:只在"引擎还没有对应平台产物,
@@ -65,7 +65,7 @@ function detectFormat(head: Buffer): BinFormat {
 /**
  * 失败并给出**对得上症状**的下一步。
  *
- * hint 可覆盖:默认那句"去 my-pi 跑 build.ts"只适用于"本地产物缺失/悬空",
+ * hint 可覆盖:默认那句"去 yoma 跑 build.ts"只适用于"本地产物缺失/悬空",
  * 拿它去回答"校验和不符"会把人引向完全错误的方向(实测自己就差点被自己误导)。
  */
 function fail(message: string, hint = "先跑 `bun engines/build.ts`(为目标平台),再回来打包。"): never {
@@ -80,7 +80,7 @@ function fail(message: string, hint = "先跑 `bun engines/build.ts`(为目标�
 //   1. YOMA_ENGINES_DIR —— 显式指定目录,一切照它;
 //   2. YOMA_ENGINES_BUNDLE —— 显式指定一个 bundle 压缩包(离线打包 / 验证用);
 //   3. 本地 ../../engines(开发机的软链)—— **仅当它满足目标平台**;
-//   4. 预编译产物 —— 按 engines.lock.json 钉住的 tag 从 my-pi 的 Release 下载。
+//   4. 预编译产物 —— 按 engines.lock.json 钉住的 tag 从 yoma 的 Release 下载。
 //
 // 第 4 条是"在 Mac 上打 Windows 包"能成立的关键:本地那份永远是 Mach-O,
 // 以前只能靠 YOMA_ALLOW_FOREIGN_ENGINES=1 打出一个引擎全坏的包。
@@ -275,7 +275,7 @@ if (foreign.length > 0 || nativeCount === 0) {
     `目标平台 ${TARGET} 需要 ${expected.label} 引擎,当前 engines/bin 不满足:`,
     ...foreign.map((line) => `  ${line}`),
     ...(nativeCount === 0 ? [`  (没有任何 ${expected.label} 二进制)`] : []),
-    `需要 my-pi 侧为 ${TARGET} 构建 engines(win32 命名要带 .exe,内核按 \`\${name}.exe\` 找),`,
+    `需要 yoma 侧为 ${TARGET} 构建 engines(win32 命名要带 .exe,内核按 \`\${name}.exe\` 找),`,
     `把仓库根的 engines 指到那份产物再打包。`,
   ]
   if (ALLOW_FOREIGN) {
@@ -291,7 +291,7 @@ if (nonPortable.length > 0) {
   console.warn("\n[stage-engines] ⚠ 以下引擎是解释器脚本,shebang 指向本机绝对路径,")
   console.warn("[stage-engines] ⚠ 打进安装包后在**别人的电脑上必坏**(bad interpreter):")
   for (const line of nonPortable) console.warn(`[stage-engines] ⚠   ${line}`)
-  console.warn("[stage-engines] ⚠ 根治需要 my-pi 的 engines/build.ts 产出自包含可执行文件。")
+  console.warn("[stage-engines] ⚠ 根治需要 yoma 的 engines/build.ts 产出自包含可执行文件。")
   console.warn("[stage-engines] ⚠ 本次继续打包:除这几个工具外其余功能不受影响。\n")
 }
 

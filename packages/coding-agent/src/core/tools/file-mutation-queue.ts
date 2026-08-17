@@ -8,7 +8,7 @@
  * 与 pi 的差异:键的规范化用注入的 FileSystem.canonicalPath(pi 用 node:fs 的 realpath),
  * 路径不存在时退回绝对路径 —— 新建文件的场景本来就还没有 realpath。
  */
-import type { FileSystem } from "@yoma/my-pi";
+import type { FileSystem } from "@yoma/agent";
 
 const fileMutationQueues = new Map<string, Promise<void>>();
 let registrationQueue = Promise.resolve();

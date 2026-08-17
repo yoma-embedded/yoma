@@ -3,7 +3,7 @@
  *
  * 只移植**正确性相关**的部分:行尾归一化、BOM 处理、模糊匹配、多编辑应用、统一 diff。
  * pi 的 generateDiffString(带颜色的 TUI diff,约 125 行)不移植 ——
- * 它是终端渲染,而 my-pi 把结构化的 oldContent/newContent 交给 ACP,由 Zed 自己画。
+ * 它是终端渲染,而 yoma 把结构化的 oldContent/newContent 交给 ACP,由 Zed 自己画。
  */
 
 import * as Diff from "diff";

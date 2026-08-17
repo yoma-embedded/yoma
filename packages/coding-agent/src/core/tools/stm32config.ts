@@ -2,9 +2,9 @@
  * stm32config 工具。移植自 yoma packages/opencode/src/tool/stm32config.ts。
  *
  * 与 yoma 的差异:
- * - Effect Schema → TypeBox,Tool.define → my-pi 的 ToolDefinition。
+ * - Effect Schema → TypeBox,Tool.define → yoma 的 ToolDefinition。
  * - 子进程走 engines/ 层的 runEngine(argv 直接 spawn),路径解析走双布局 resolver。
- * - 去掉 ctx.ask 权限询问与 assertExternalDirectoryEffect —— my-pi 侧没有权限设施,
+ * - 去掉 ctx.ask 权限询问与 assertExternalDirectoryEffect —— yoma 侧没有权限设施,
  *   整个产品也没有(agent 想调什么工具就调什么,这是产品决定);configPath/out 仍
  *   解析到会话 cwd。原注释说"权限由 ACP 客户端侧把关"是假线索:ACP 的把关要 agent
  *   自己发 session/request_permission 才成立,而这边一次都不发。
@@ -13,7 +13,7 @@
  * 描述文本与 yoma stm32config.txt 逐字一致。
  */
 import path from "node:path";
-import type { ExecutionEnv } from "@yoma/my-pi";
+import type { ExecutionEnv } from "@yoma/agent";
 import { type Static, Type } from "typebox";
 import {
 	assertEngineSettled,

@@ -1,7 +1,7 @@
 /**
  * 工具链核账页(设置 → 工具链)。
  *
- * 项目声明的 `.my-pi/toolchain.json` 对上这台机器实际装了什么:后端是内核的
+ * 项目声明的 `.yoma/toolchain.json` 对上这台机器实际装了什么:后端是内核的
  * `toolchain.status` / `toolchain.set` 两个 RPC(kernel/src/host/toolchain.ts),
  * 与 agent 的 toolchain 工具共用同一套探测与验证 —— 这里打的勾就是系统提示词里
  * agent 看到的那份账,填进去的路径 agent 下个会话自动认得(本机账本 by:"user")。

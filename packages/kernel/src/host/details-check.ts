@@ -1,19 +1,19 @@
 /**
  * 编译期漂移闸门。
  *
- * `../types.ts` 里的工具 details 是从 my-pi 结构化 **复制** 出来的,不是 import 的 ——
+ * `../types.ts` 里的工具 details 是从 yoma 结构化 **复制** 出来的,不是 import 的 ——
  * 因为那份视图模型必须保持浏览器安全,而且 packages/app 不该为了拿几个字段类型就把
  * 整个内核依赖图拉进 typecheck。
  *
- * 复制的代价是会漂移。这个文件就是代价的对冲:它跑在 host 半边(有 my-pi 的 paths),
- * 用类型断言要求"my-pi 的真类型必须能赋给我们的副本"。my-pi 改名、删字段、改字段类型,
- * 这里立刻编译失败;my-pi 新增字段是兼容的,不会误报。
+ * 复制的代价是会漂移。这个文件就是代价的对冲:它跑在 host 半边(有 yoma 的 paths),
+ * 用类型断言要求"yoma 的真类型必须能赋给我们的副本"。yoma 改名、删字段、改字段类型,
+ * 这里立刻编译失败;yoma 新增字段是兼容的,不会误报。
  *
- * 工具名 **集合** 的钉法在 2026-08 之后换到了运行时:my-pi 的装配面精简把 ToolName
+ * 工具名 **集合** 的钉法在 2026-08 之后换到了运行时:yoma 的装配面精简把 ToolName
  * 导出和 grep 工具一并删了,编译期无从比对名集合。现在由 `tool-names.test.ts` 真装配
- * 一遍工具再对 TOOL_NAMES − RETIRED_TOOL_NAMES 逐个核对 —— my-pi 增删改名照样会响,
+ * 一遍工具再对 TOOL_NAMES − RETIRED_TOOL_NAMES 逐个核对 —— yoma 增删改名照样会响,
  * 只是响在 `bun test` 而不是 typecheck。grep 的 details 副本仍留在 types.ts
- * (旧会话重放要认得),但不再钉 my-pi。
+ * (旧会话重放要认得),但不再钉 yoma。
  *
  * 本文件只有类型,没有运行时产物。加进 src/host/index.ts 的 import 只为了让它进编译单元。
  */
@@ -31,7 +31,7 @@ import type {
   Stm32ConfigToolDetails as PiStm32Config,
   ToolchainToolDetails as PiToolchain,
   WriteToolDetails as PiWrite,
-} from "@yoma/my-pi-coding-agent"
+} from "@yoma/coding-agent"
 
 import type { ToolDetailsMap } from "../types.ts"
 
@@ -47,7 +47,7 @@ type Expect<_T extends true> = void
 /** `Assignable<From, To>` 只在 From 能赋给 To 时为 true。 */
 type Assignable<From, To> = [From] extends [To] ? true : false
 
-// my-pi 改名、删字段、改字段类型 → 下面对应那一行立刻编译失败。新增字段是兼容的,不误报。
+// yoma 改名、删字段、改字段类型 → 下面对应那一行立刻编译失败。新增字段是兼容的,不误报。
 export type Check_read = Expect<Assignable<PiRead, ToolDetailsMap["read"]>>
 export type Check_bash = Expect<Assignable<PiBash, ToolDetailsMap["bash"]>>
 export type Check_edit = Expect<Assignable<PiEdit, ToolDetailsMap["edit"]>>

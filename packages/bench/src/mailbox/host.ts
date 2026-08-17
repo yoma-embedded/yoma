@@ -51,7 +51,7 @@ export interface MailboxHostConfig {
   /** 会话 JSONL 根(桌面端传 userData/sessions,回放观战靠它)。runner/mother/sim 必填。 */
   sessionsRoot?: string
   enginesDir?: string
-  /** 技能/上下文/凭据全局目录。生产不传(默认 ~/.my-pi);演练与测试传临时目录。 */
+  /** 技能/上下文/凭据全局目录。生产不传(默认 ~/.yoma);演练与测试传临时目录。 */
   configDir?: string
   /**
    * **这台机器上**的工程目录 —— 只有 `mother`(研发端)需要它:代码在它那儿。

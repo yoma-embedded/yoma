@@ -3,14 +3,14 @@
  *
  * 与 pi 的差异:
  * - 文件访问走注入的 FileSystem,而不是 node:fs + ReadOperations(同一个可插拔目的)。
- * - 暂不支持图片:my-pi 还没有 MIME 探测与图片压缩,先只读文本。接口预留在 ReadToolOptions。
+ * - 暂不支持图片:yoma 还没有 MIME 探测与图片压缩,先只读文本。接口预留在 ReadToolOptions。
  * - 去掉 TUI 渲染器。
  *
  * 给模型看的文案(description、截断提示、续读提示)与 pi 逐字一致 ——
  * 它们直接决定模型会不会用 offset 正确地把长文件读完。
  */
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type FileSystem, formatSize, truncateHead } from "@yoma/my-pi";
-import type { TruncationResult } from "@yoma/my-pi";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type FileSystem, formatSize, truncateHead } from "@yoma/agent";
+import type { TruncationResult } from "@yoma/agent";
 import { type Static, Type } from "typebox";
 import { resolveReadPath } from "./path-utils.ts";
 import { type ToolDefinition, wrapToolDefinition } from "./types.ts";

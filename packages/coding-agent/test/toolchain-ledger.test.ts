@@ -1,6 +1,6 @@
 // 本机工具链账本(ledger.ts)验收:往返读写、损坏文件的容错、原子写、以及
 // configDir/projectDir 注入确实生效。全程用 mkdtemp 建的临时目录,一次都不碰
-// 真实 ~/.my-pi —— 见 ledger.ts 文件头那条硬纪律(Bun 的 os.homedir() 在进程
+// 真实 ~/.yoma —— 见 ledger.ts 文件头那条硬纪律(Bun 的 os.homedir() 在进程
 // 启动时定死,运行时改 HOME 不管用,注入参数是唯一能隔离测试的办法)。
 import { describe, expect, it, beforeEach, afterEach } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -37,8 +37,8 @@ function armGcc(overrides: Partial<LedgerEntry> = {}): LedgerEntry {
 }
 
 describe("ledgerPath", () => {
-	it("默认落在 ~/.my-pi/toolchains.json —— 只比较路径字符串,不碰磁盘", () => {
-		expect(ledgerPath()).toBe(join(homedir(), ".my-pi", "toolchains.json"));
+	it("默认落在 ~/.yoma/toolchains.json —— 只比较路径字符串,不碰磁盘", () => {
+		expect(ledgerPath()).toBe(join(homedir(), ".yoma", "toolchains.json"));
 	});
 
 	it("传 configDir 时用它,不落回默认值", () => {
@@ -66,7 +66,7 @@ describe("configDir 注入生效", () => {
 		}
 	});
 
-	it("configDir 本身还不存在时(比如首次运行的 ~/.my-pi)会被自动建出来", async () => {
+	it("configDir 本身还不存在时(比如首次运行的 ~/.yoma)会被自动建出来", async () => {
 		const fresh = join(dir, "not-yet-created");
 		await writeLedgerEntry(armGcc(), fresh);
 		expect(await readLedger(fresh)).toEqual({ schema: "yoma/toolchains@1", entries: { "arm-gcc": armGcc() } });

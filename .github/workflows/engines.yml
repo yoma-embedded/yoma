@@ -64,7 +64,7 @@ jobs:
         with:
           bun-version: "1.3.14"
 
-      # build.ts 从 @yoma/my-pi-coding-agent 取 engineBin/exe(路径解析和运行时同一套,
+      # build.ts 从 @yoma/coding-agent 取 engineBin/exe(路径解析和运行时同一套,
       # 报告才不会和真实行为漂移)。那是 workspace 包,不装就是
       # "Cannot find module" —— 本机不报是因为早就装过。
       #

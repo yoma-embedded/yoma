@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test"
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { readLedger } from "@yoma/my-pi-coding-agent"
+import { readLedger } from "@yoma/coding-agent"
 
 import { toolchainSet, toolchainStatus } from "./toolchain.ts"
 
@@ -49,8 +49,8 @@ function writeFakeExe(dir: string, name: string, version: string): string {
 }
 
 function writeManifest(tools: unknown[]): void {
-  mkdirSync(path.join(projectDir, ".my-pi"), { recursive: true })
-  writeFileSync(path.join(projectDir, ".my-pi", "toolchain.json"), JSON.stringify({ schema: "yoma/toolchain@1", tools }))
+  mkdirSync(path.join(projectDir, ".yoma"), { recursive: true })
+  writeFileSync(path.join(projectDir, ".yoma", "toolchain.json"), JSON.stringify({ schema: "yoma/toolchain@1", tools }))
 }
 
 function baseOpts(pathDirs: string[] = []) {
@@ -72,8 +72,8 @@ describe("toolchain.status", () => {
   })
 
   it("清单存在但内容坏了:declared:false + error 带人话 —— 设置页正是排查它的地方,不抛", async () => {
-    mkdirSync(path.join(projectDir, ".my-pi"), { recursive: true })
-    writeFileSync(path.join(projectDir, ".my-pi", "toolchain.json"), "{ not json")
+    mkdirSync(path.join(projectDir, ".yoma"), { recursive: true })
+    writeFileSync(path.join(projectDir, ".yoma", "toolchain.json"), "{ not json")
 
     const view = await toolchainStatus(baseOpts())
     expect(view.declared).toBe(false)
@@ -90,7 +90,7 @@ describe("toolchain.status", () => {
 
     const view = await toolchainStatus(baseOpts([binDir]))
     expect(view.declared).toBe(true)
-    expect(view.manifestPath).toBe(path.join(projectDir, ".my-pi", "toolchain.json"))
+    expect(view.manifestPath).toBe(path.join(projectDir, ".yoma", "toolchain.json"))
     expect(view.ok).toBe(false) // gizmo 非 optional 且缺失
     expect(view.tools.map((t) => [t.id, t.status])).toEqual([
       ["widget", "ok"],

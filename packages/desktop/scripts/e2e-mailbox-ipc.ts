@@ -2,7 +2,7 @@
  * 信箱调试台 main 托管的端到端(e2e:ipc 同款,不开窗口):
  *
  * 1. 真 out/main/kernel.js:`model.list` 协议往返 —— 本脚本唯一真打到打包产物的
- *    一步,my-pi 被整个 inline 进 bundle,它那边的重构只有这种真跑抓得住。
+ *    一步,yoma 被整个 inline 进 bundle,它那边的重构只有这种真跑抓得住。
  * 2. 真 createMailboxMain 接线 + **假守护脚本**喂 @@event:开跑 → 事件到达 →
  *    快照进 status → 停止时孙进程一并死掉(SIGTERM 链)。
  * 3. 锁冲突(退出码 3)必须translated成人话,不进重启循环。
@@ -122,9 +122,9 @@ app.whenReady().then(async () => {
         port.postMessage({ kind: "request", id, method, params })
       })
 
-    // model.list 走的是 SessionManager.providers() → my-pi 的 resolveModel + pi-ai 的
+    // model.list 走的是 SessionManager.providers() → yoma 的 resolveModel + pi-ai 的
     // 模型表:无凭据时降级成可配置目录,有凭据时是真注册表 —— 两条路都必须交出
-    // 非空的 provider 列表,而这段代码在 bundle 里是 inline 进来的 my-pi。
+    // 非空的 provider 列表,而这段代码在 bundle 里是 inline 进来的 yoma。
     const providers = (await request("model.list", undefined)) as { id?: string }[]
     check(
       "model.list 在真内核 bundle 上走通",

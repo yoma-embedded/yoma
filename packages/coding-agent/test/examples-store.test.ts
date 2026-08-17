@@ -1,4 +1,4 @@
-// 落盘层:mkdtemp 隔离 configDir(默认值是真实 ~/.my-pi,测试碰它 = 洗开发机数据,
+// 落盘层:mkdtemp 隔离 configDir(默认值是真实 ~/.yoma,测试碰它 = 洗开发机数据,
 // Bun 的 homedir 启动即定死 —— 与 ledger.ts 测试同一纪律)。缓存语义:坏文件当空。
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";

@@ -1,21 +1,21 @@
 /**
  * 内核宿主(Node 侧)。跑在 Electron 的 utilityProcess 里,不在 main、也不在 renderer。
  *
- * 进程模型是刻意的单例:my-pi 的 probe 租约(claimProbe/releaseProbe)、gdb session 表、
+ * 进程模型是刻意的单例:yoma 的 probe 租约(claimProbe/releaseProbe)、gdb session 表、
  * log capture 都是 **模块级全局**(coding-agent/src/core/tools/engines.ts:63-113),
  * 所以整个 app 只能有一个内核进程 —— 绝不按窗口或按目录分片 fork。
  */
 
 import path from "node:path"
 
-import { AgentHarness } from "@yoma/my-pi"
-import { NodeExecutionEnv } from "@yoma/my-pi/node"
-import { createCodingToolDefinitions } from "@yoma/my-pi-coding-agent"
+import { AgentHarness } from "@yoma/agent"
+import { NodeExecutionEnv } from "@yoma/agent/node"
+import { createCodingToolDefinitions } from "@yoma/coding-agent"
 
 import type { KernelEvent, KernelHandlers, KernelMethod, KernelParams, KernelResult } from "../protocol.ts"
 import { createEmbeddedTools, SessionManager, type SessionManagerOptions } from "./session-manager.ts"
 import { runPreflight, inspectEngines } from "./preflight.ts"
-import { myPiConfigDir } from "./auth.ts"
+import { yomaConfigDir } from "./auth.ts"
 import { ProjectStore, listFiles, readFile, searchFiles, vcsDiff, vcsInfo } from "./services.ts"
 import { StreamSink } from "./stream.ts"
 import { toolchainSet, toolchainStatus } from "./toolchain.ts"
@@ -28,7 +28,7 @@ export { SessionManager } from "./session-manager.ts"
 export { StreamSink } from "./stream.ts"
 // 全局配置目录的真源(凭据/技能/上下文)。导出它是为了让 bench 的 paths.ts 副本
 // 有个可断言的对手 —— 那份副本必须是叶子模块,不能反过来 import 这里。
-export { myPiConfigDir } from "./auth.ts"
+export { yomaConfigDir } from "./auth.ts"
 export { inspectEngines, runPreflight } from "./preflight.ts"
 
 export interface KernelHostOptions {
@@ -39,9 +39,9 @@ export interface KernelHostOptions {
   /** 存放 projects.json 的目录。 */
   stateDir: string
   version?: string
-  /** 技能与上下文文件的全局目录,默认 `~/.my-pi`(与 my-pi 的 ACP 适配器同一份)。 */
+  /** 技能与上下文文件的全局目录,默认 `~/.yoma`(与 yoma 的 ACP 适配器同一份)。 */
   configDir?: string
-  /** 模型目录的来源。默认复用 my-pi 的 resolveModel();测试注入 faux provider。 */
+  /** 模型目录的来源。默认复用 yoma 的 resolveModel();测试注入 faux provider。 */
   resolveModels?: SessionManagerOptions["resolveModels"]
   /** 没人选档时的思考档位。不传则 `"off"`。桌面端和 bench 都传 `max`。 */
   defaultThinkingLevel?: SessionManagerOptions["defaultThinkingLevel"]
@@ -91,7 +91,7 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     "app.preflight": () =>
       runPreflight({
         sessions,
-        configDir: options.configDir ?? myPiConfigDir(),
+        configDir: options.configDir ?? yomaConfigDir(),
         enginesDir: options.enginesDir,
       }),
 
@@ -111,7 +111,7 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
 
 
     "model.list": () => sessions.providers(),
-    // 凭据落在 my-pi 读的那份 ~/.pi/agent/auth.json —— 应用内配的 key 和命令行配 pi /
+    // 凭据落在 yoma 读的那份 ~/.pi/agent/auth.json —— 应用内配的 key 和命令行配 pi /
     // 配 Zed 的是同一份,互相可见。见 host/auth.ts。
     "auth.set": ({ providerID, apiKey }) => sessions.setAuth(providerID, apiKey),
     "auth.remove": ({ providerID }) => sessions.removeAuth(providerID),
@@ -129,7 +129,7 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
       toolchainStatus({
         directory,
         fresh,
-        configDir: options.configDir ?? myPiConfigDir(),
+        configDir: options.configDir ?? yomaConfigDir(),
         side: options.toolchainSide ?? "mother",
       }),
     "toolchain.set": ({ directory, id, path: binPath }) =>
@@ -137,7 +137,7 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
         directory,
         id,
         path: binPath,
-        configDir: options.configDir ?? myPiConfigDir(),
+        configDir: options.configDir ?? yomaConfigDir(),
         side: options.toolchainSide ?? "mother",
       }),
 

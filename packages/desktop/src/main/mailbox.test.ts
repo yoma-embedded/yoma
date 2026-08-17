@@ -38,7 +38,7 @@ describe("composeJob", () => {
   test("模板+描述合成任务书;不带绝对路径,项目根单独回给本机", async () => {
     const project = tempDir("proj-")
     mkdirSync(path.join(project, ".git"), { recursive: true })
-    const benchDir = path.join(project, ".my-pi", "bench")
+    const benchDir = path.join(project, ".yoma", "bench")
     mkdirSync(benchDir, { recursive: true })
     const templatePath = path.join(benchDir, "mailbox.template.json")
     writeFileSync(
@@ -115,11 +115,11 @@ describe("composeJob", () => {
 
 describe("inferProjectDir", () => {
   test("往上找 .git,层数不再是承重信息", () => {
-    // 从前写死 dirname×2,于是模板深一层(.bench → .my-pi/bench)就把工程根推成
-    // `<工程>/.my-pi` —— 而且不报错,症状是"agent 说它看不到代码"。
+    // 从前写死 dirname×2,于是模板深一层(.bench → .yoma/bench)就把工程根推成
+    // `<工程>/.yoma` —— 而且不报错,症状是"agent 说它看不到代码"。
     const project = tempDir("infer-")
     mkdirSync(path.join(project, ".git"), { recursive: true })
-    const deep = path.join(project, ".my-pi", "bench")
+    const deep = path.join(project, ".yoma", "bench")
     mkdirSync(deep, { recursive: true })
     expect(inferProjectDir(path.join(deep, "mailbox.template.json"))).toBe(project)
     // 老布局(浅一层)照样对 —— 用户手上已经存在的 .bench 不能因为这次改动坏掉。
@@ -131,7 +131,7 @@ describe("inferProjectDir", () => {
   test("`.git` 是 worktree 里的文件时也认", () => {
     const project = tempDir("infer-wt-")
     writeFileSync(path.join(project, ".git"), "gitdir: /somewhere/else\n")
-    const deep = path.join(project, ".my-pi", "bench")
+    const deep = path.join(project, ".yoma", "bench")
     mkdirSync(deep, { recursive: true })
     expect(inferProjectDir(path.join(deep, "mailbox.template.json"))).toBe(project)
   })

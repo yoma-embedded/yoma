@@ -33,9 +33,9 @@ import {
 	SOURCES_SCHEMA_TAG,
 } from "./schema.ts";
 
-/** 与 kernel `host/auth.ts` 的 `myPiConfigDir()` 同一个目录 —— 漂移只能靠对照,见 ledger.ts 文件头。 */
+/** 与 kernel `host/auth.ts` 的 `yomaConfigDir()` 同一个目录 —— 漂移只能靠对照,见 ledger.ts 文件头。 */
 function defaultConfigDir(): string {
-	return path.join(homedir(), ".my-pi");
+	return path.join(homedir(), ".yoma");
 }
 
 export function examplesDir(configDir: string = defaultConfigDir()): string {

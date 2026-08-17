@@ -1,4 +1,4 @@
-// MyPiAcpAgent 的协议层测试:Zed 真正驱动的那一半。
+// YomaAcpAgent 的协议层测试:Zed 真正驱动的那一半。
 //
 // 之前只有纯映射函数被钉住,类本身和 8 个 RPC 方法一次都没被实例化过 ——
 // 也就是说 session/new 少发一个字段、set_config_option 返回值形状不对这类问题,
@@ -6,12 +6,12 @@
 //
 // 这里全程离线:faux provider 顶掉真模型,会话写进临时目录,cx 换成收集器。
 import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
-import { NodeExecutionEnv } from "@yoma/my-pi/node";
+import { NodeExecutionEnv } from "@yoma/agent/node";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MyPiAcpAgent } from "../src/acp/agent.ts";
+import { YomaAcpAgent } from "../src/acp/agent.ts";
 
 interface Notification {
 	method: string;
@@ -43,21 +43,21 @@ function setup() {
 	models.setProvider(first.provider);
 	models.setProvider(second.provider);
 
-	const agent = new MyPiAcpAgent({
+	const agent = new YomaAcpAgent({
 		env: new NodeExecutionEnv({ cwd: workdir }),
 		models,
 		model: first.getModel(),
 		protocolVersion: 1,
 		sessionsDir: join(workdir, "sessions"),
 		logsDir: join(workdir, "logs"),
-		// 与开发机的真实 ~/.my-pi 切干净,否则那里的 AGENTS.md/skills 会渗进系统提示词。
+		// 与开发机的真实 ~/.yoma 切干净,否则那里的 AGENTS.md/skills 会渗进系统提示词。
 		configDir: join(workdir, "config"),
 	});
 	return { agent, models, first, second };
 }
 
 beforeEach(() => {
-	workdir = mkdtempSync(join(tmpdir(), "mypi-acp-"));
+	workdir = mkdtempSync(join(tmpdir(), "yoma-acp-"));
 });
 
 afterEach(() => {
@@ -239,7 +239,7 @@ describe("session/cancel", () => {
 		const models = createModels();
 		const provider = fauxProvider({ provider: `faux-slow-${++fauxCount}`, tokensPerSecond: 40 });
 		models.setProvider(provider.provider);
-		const agent = new MyPiAcpAgent({
+		const agent = new YomaAcpAgent({
 			env: new NodeExecutionEnv({ cwd: workdir }),
 			models,
 			model: provider.getModel(),
@@ -302,7 +302,7 @@ describe("session/load", () => {
 		await agent.setSessionConfigOption({ sessionId, configId: "model", value: target }, client.cx);
 
 		// 换一个 agent 实例来 load,模拟 Zed 重启后接上同一个会话文件。
-		const reopened = new MyPiAcpAgent({
+		const reopened = new YomaAcpAgent({
 			env: new NodeExecutionEnv({ cwd: workdir }),
 			models: (agent as any).options.models,
 			model: (agent as any).options.model,
@@ -372,7 +372,7 @@ describe("automatic compaction after a turn", () => {
 			models: [{ id: "small", contextWindow, maxTokens: 4096 }],
 		});
 		models.setProvider(faux.provider);
-		const agent = new MyPiAcpAgent({
+		const agent = new YomaAcpAgent({
 			env: new NodeExecutionEnv({ cwd: workdir }),
 			models,
 			model: faux.getModel(),

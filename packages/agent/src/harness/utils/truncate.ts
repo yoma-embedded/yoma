@@ -54,7 +54,7 @@ const nonAsciiPattern = /[^\x00-\x7f]/;
  *
  * 与 pi 的差异:pi 在有 Buffer 的运行时优先走 `Buffer.byteLength`。这里刻意不这么做 ——
  * Bun 1.3 的 `Buffer.byteLength("aa\ud800", "utf8")` 返回 4,而 `Buffer.from` 实际编码出
- * 5 字节(孤立代理项要变成 3 字节的 U+FFFD)。Node 返回 5。my-pi 跑在 Bun 上,
+ * 5 字节(孤立代理项要变成 3 字节的 U+FFFD)。Node 返回 5。yoma 跑在 Bun 上,
  * 用它会让尾部截断在孤立代理项附近算错边界,所以统一走这条自己算的路。
  * 顺带的好处:本文件彻底不碰 Buffer,保持浏览器安全。
  */

@@ -36,7 +36,7 @@ import { createWriteStream, existsSync, type WriteStream } from "node:fs";
 import { open as openFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
-import type { ExecutionEnv } from "@yoma/my-pi";
+import type { ExecutionEnv } from "@yoma/agent";
 import { type Static, Type } from "typebox";
 import {
 	claimProbe,
@@ -1152,7 +1152,7 @@ export interface ResolveGdbResult {
  */
 export function resolveGdbPath(machine: number | undefined, override?: string): ResolveGdbResult {
 	if (override) return { gdbPath: override, tried: [override] };
-	const fromEnv = process.env.MY_PI_GDB;
+	const fromEnv = process.env.YOMA_GDB;
 	if (fromEnv) return { gdbPath: fromEnv, tried: [fromEnv] };
 	const tried = preferredGdbNames(machine);
 	for (const name of tried) {
@@ -1391,7 +1391,7 @@ async function verifyImage(env: ExecutionEnv, elf: string): Promise<{ ok: boolea
 	return {
 		ok: false,
 		note:
-			`image: MISMATCH — .my-pi/flash-state.json records ${state.elfPath} flashed ${Math.round((Date.now() - state.at) / 60_000)} min ago, ` +
+			`image: MISMATCH — .yoma/flash-state.json records ${state.elfPath} flashed ${Math.round((Date.now() - state.at) / 60_000)} min ago, ` +
 			"which is not this ELF. Every line number, local and backtrace below would describe code that is not running. " +
 			"Re-flash this ELF (flash tool, with elfPath), or pass allowUnverified: true if you know the difference does not matter.",
 	};
@@ -1599,7 +1599,7 @@ export function createGdbToolDefinition(
 							await waitForServerReady(server, caps().readyRe, SERVER_READY_MS);
 						}
 
-						const dir = path.join(env.cwd, ".my-pi", "gdb");
+						const dir = path.join(env.cwd, ".yoma", "gdb");
 						const created = await env.createDir(dir, { recursive: true });
 						if (!created.ok) throw new Error(`could not create ${dir}: ${created.error.message}`);
 						const tag = stamp();

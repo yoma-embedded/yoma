@@ -99,7 +99,7 @@ function findEntryAcross(indexes: ExamplesIndex[], id: string): ExampleEntry | u
 
 /**
  * 装配真模型的补全函数。凭据/注册表全部走 acp 的 resolveModel(configDir 必须显式,
- * my-pi 2026-08 的决定)—— 这里不重写 provider 表,免得又长出一份要防漂移的复制。
+ * yoma 2026-08 的决定)—— 这里不重写 provider 表,免得又长出一份要防漂移的复制。
  */
 async function makeCompletion(
 	modelRef: string,
@@ -112,7 +112,7 @@ async function makeCompletion(
 	}
 	const providerId = modelRef.slice(0, slash);
 	const modelId = modelRef.slice(slash + 1);
-	const { models } = await resolveModel(configDir ?? join(homedir(), ".my-pi"));
+	const { models } = await resolveModel(configDir ?? join(homedir(), ".yoma"));
 	const model = models.getModel(providerId, modelId);
 	if (!model) {
 		fail(`模型 ${modelRef} 不可用 —— provider 没配 key,或模型 id 不在目录里`);

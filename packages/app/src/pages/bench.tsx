@@ -324,7 +324,7 @@ export default function BenchPage() {
                   <TextInputV2
                     value={state.task.templatePath}
                     onInput={(event) => setState("task", "templatePath", event.currentTarget.value)}
-                    placeholder="/path/to/project/.my-pi/bench/mailbox.template.json"
+                    placeholder="/path/to/project/.yoma/bench/mailbox.template.json"
                   />
                   <span class="text-[11px] text-v2-text-text-muted">{t("bench.task.template.hint")}</span>
                 </div>
@@ -578,7 +578,7 @@ function RoundCard(props: { round: MailboxRoundView; t: (key: string) => string;
                 {result().incoming!.join(" · ")}
               </div>
             </Show>
-            {/* 上行:工位端回传的原始数据(研发端那侧已落进 .my-pi/back/<轮次>/)。 */}
+            {/* 上行:工位端回传的原始数据(研发端那侧已落进 .yoma/back/<轮次>/)。 */}
             <Show when={result().back?.length}>
               <div class="text-[11px] text-v2-text-text-muted">
                 {t("bench.progress.back")}

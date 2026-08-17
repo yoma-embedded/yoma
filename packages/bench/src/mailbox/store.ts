@@ -60,9 +60,9 @@
 import { copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises"
 import path from "node:path"
 
-// 清单在工程里的相对位置只有一个真源 —— 抄一份的结果会是"研发端读 .my-pi/toolchain.json、
+// 清单在工程里的相对位置只有一个真源 —— 抄一份的结果会是"研发端读 .yoma/toolchain.json、
 // 信箱复制的是别处",而两边都不报错。
-import { MANIFEST_RELATIVE } from "@yoma/my-pi-coding-agent"
+import { MANIFEST_RELATIVE } from "@yoma/coding-agent"
 
 import { fileExists, readJsonFile } from "../fsx.ts"
 
@@ -236,7 +236,7 @@ export const REPORT_FILE = "report.md"
 /**
  * 项目工具链清单在信箱里的副本。
  *
- * **工位端没有项目检出**,`<工程>/.my-pi/toolchain.json` 不在它那儿,于是它对"这台
+ * **工位端没有项目检出**,`<工程>/.yoma/toolchain.json` 不在它那儿,于是它对"这台
  * 机器该有什么、缺了怎么装"一无所知 —— 表现是照着指令跑脚本、撞一个
  * ModuleNotFoundError,再把它当成"脚本坏了"报回去。清单本身是项目配置(跟着仓库走、
  * 零绝对路径),所以原样复制一份进信箱是安全的:两台机器读同一份声明,各自对着自己的

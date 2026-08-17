@@ -6,8 +6,8 @@
       "name": "yoma-pi",
       "dependencies": {
         "@earendil-works/pi-ai": "workspace:*",
-        "@yoma/my-pi": "workspace:*",
-        "@yoma/my-pi-coding-agent": "workspace:*",
+        "@yoma/agent": "workspace:*",
+        "@yoma/coding-agent": "workspace:*",
       },
       "devDependencies": {
         "@tsconfig/bun": "catalog:",
@@ -21,7 +21,7 @@
       },
     },
     "packages/agent": {
-      "name": "@yoma/my-pi",
+      "name": "@yoma/agent",
       "version": "0.1.0",
       "dependencies": {
         "@earendil-works/pi-ai": "workspace:*",
@@ -124,15 +124,15 @@
       },
     },
     "packages/coding-agent": {
-      "name": "@yoma/my-pi-coding-agent",
+      "name": "@yoma/coding-agent",
       "version": "0.1.0",
       "bin": {
-        "my-pi-acp": "./src/acp.ts",
+        "yoma-acp": "./src/acp.ts",
       },
       "dependencies": {
         "@agentclientprotocol/sdk": "^1.3.0",
         "@earendil-works/pi-ai": "workspace:*",
-        "@yoma/my-pi": "workspace:*",
+        "@yoma/agent": "workspace:*",
         "diff": "8.0.4",
         "typebox": "1.1.38",
       },
@@ -1057,9 +1057,9 @@
 
     "@yoma-desktop/util": ["@yoma-desktop/util@workspace:packages/util"],
 
-    "@yoma/my-pi": ["@yoma/my-pi@workspace:packages/agent"],
+    "@yoma/agent": ["@yoma/agent@workspace:packages/agent"],
 
-    "@yoma/my-pi-coding-agent": ["@yoma/my-pi-coding-agent@workspace:packages/coding-agent"],
+    "@yoma/coding-agent": ["@yoma/coding-agent@workspace:packages/coding-agent"],
 
     "@zip.js/zip.js": ["@zip.js/zip.js@2.7.62", "", {}, "sha512-OaLvZ8j4gCkLn048ypkZu29KX30r8/OfFF2w4Jo5WXFr+J04J+lzJ5TKZBVgFXhlvSkqNFQdfnY1Q8TMTCyBVA=="],
 
@@ -2181,7 +2181,7 @@
 
     "@yoma-desktop/ui/@solid-primitives/resize-observer": ["@solid-primitives/resize-observer@2.1.3", "", { "dependencies": { "@solid-primitives/event-listener": "^2.4.3", "@solid-primitives/rootless": "^1.5.2", "@solid-primitives/static-store": "^0.1.2", "@solid-primitives/utils": "^6.3.2" }, "peerDependencies": { "solid-js": "^1.6.12" } }, "sha512-zBLje5E06TgOg93S7rGPldmhDnouNGhvfZVKOp+oG2XU8snA+GoCSSCz1M+jpNAg5Ek2EakU5UVQqL152WmdXQ=="],
 
-    "@yoma/my-pi-coding-agent/diff": ["diff@8.0.4", "", {}, "sha512-DPi0FmjiSU5EvQV0++GFDOJ9ASQUVFh5kD+OzOnYdi7n3Wpm9hWWGfB/O2blfHcMVTL5WkQXSnRiK9makhrcnw=="],
+    "@yoma/coding-agent/diff": ["diff@8.0.4", "", {}, "sha512-DPi0FmjiSU5EvQV0++GFDOJ9ASQUVFh5kD+OzOnYdi7n3Wpm9hWWGfB/O2blfHcMVTL5WkQXSnRiK9makhrcnw=="],
 
     "anymatch/picomatch": ["picomatch@2.3.2", "", {}, "sha512-V7+vQEJ06Z+c5tSye8S+nHUfI51xoXIXjHQ99cQtKUkQqqO1kO/KCJUfZXuB47h/YBlDhah2H3hdUGXn8ie0oA=="],
 

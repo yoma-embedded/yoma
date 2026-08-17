@@ -7,7 +7,7 @@
 //
 // 运行: npx tsx examples/01-minimal-agent.ts
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from "@earendil-works/pi-ai";
-import { Agent, type AgentTool } from "@yoma/my-pi";
+import { Agent, type AgentTool } from "@yoma/agent";
 
 // 一个简单的天气查询工具,模型会在真实调用前先"决定"调用它。
 const weatherParams = Type.Object({ city: Type.String({ description: "城市名称" }) });

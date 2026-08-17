@@ -1,22 +1,22 @@
 /**
- * 投影器:把 my-pi 的 AgentMessage / AgentEvent 变成前端认得的 Message / Part / KernelEvent。
+ * 投影器:把 yoma 的 AgentMessage / AgentEvent 变成前端认得的 Message / Part / KernelEvent。
  *
  * ## 一个函数,两条路
  *
- * live(流式)和 replay(重开会话)**必须走同一份投影逻辑**。my-pi 自己的 ACP 适配器把这
+ * live(流式)和 replay(重开会话)**必须走同一份投影逻辑**。yoma 自己的 ACP 适配器把这
  * 拆成了 pipeHarnessToAcp 和 replayUpdatesOf 两条独立实现,代价是 datasheet 图片只在重放
  * 时可见(acp/session.ts:270 有注释承认)。这里 live 和 replay 都调 `applyMessage()`,
  * 流式 delta 只是叠在它上面的一层增量,快照永远由同一个函数产出。
  *
  * ## id 是自己铸的,而且必须确定
  *
- * my-pi 的消息没有 id,它的 entry id 又是 `uuidv7().slice(-8)`(随机尾部,不可排序)。
+ * yoma 的消息没有 id,它的 entry id 又是 `uuidv7().slice(-8)`(随机尾部,不可排序)。
  * 所以这里从 (消息序号, 消息时间戳) 确定性地铸 id:同一段历史投影两次,结果逐字节相同。
  * 这条是可测的 —— live/replay 等价性测试就靠它。
  *
  * ## 工具调用与结果的配对
  *
- * my-pi 里工具调用在 assistant.content[i](type:"toolCall"),结果是 **另一条**
+ * yoma 里工具调用在 assistant.content[i](type:"toolCall"),结果是 **另一条**
  * role:"toolResult" 消息。前端要的是一个带 4 态机的 ToolPart。配对 **只能按 toolCallId**,
  * 绝不能按到达顺序 —— 并行工具时 tool_execution_end 按完成序发,而 transcript 是源序。
  */
@@ -28,8 +28,8 @@ import type {
   BranchSummaryMessage,
   CompactionSummaryMessage,
   CustomMessage,
-} from "@yoma/my-pi"
-import { bashExecutionToText } from "@yoma/my-pi"
+} from "@yoma/agent"
+import { bashExecutionToText } from "@yoma/agent"
 
 import type { KernelEvent } from "../protocol.ts"
 import type {
@@ -68,12 +68,12 @@ function base62(value: number, width: number): string {
 
 const ZERO_TOKENS = (): Tokens => ({ input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } })
 
-/** my-pi 的 content block 里,哪些下标算"可见 part"。工具调用也占一个下标。 */
+/** yoma 的 content block 里,哪些下标算"可见 part"。工具调用也占一个下标。 */
 type AssistantBlock = TextContent | ThinkingContent | ToolCall
 
 /**
  * 内核的四种自定义消息角色。前端的 Message 只有 user|assistant,所以它们要合成过去。
- * 这里显式列举而不是 `Exclude<AgentMessage, ...>` —— my-pi 以后新增角色时,
+ * 这里显式列举而不是 `Exclude<AgentMessage, ...>` —— yoma 以后新增角色时,
  * 编译器会在 applyMessage 的 switch 上报 default 分支类型不匹配,提醒我们补投影。
  */
 type SyntheticMessage = BashExecutionMessage | CustomMessage | BranchSummaryMessage | CompactionSummaryMessage
@@ -152,7 +152,7 @@ export class SessionProjection {
   }
 
   // -------------------------------------------------------------------------
-  // 主入口:投影一条 my-pi 消息
+  // 主入口:投影一条 yoma 消息
   // -------------------------------------------------------------------------
 
   /**
@@ -220,7 +220,7 @@ export class SessionProjection {
   /**
    * 工具结果回填。
    *
-   * my-pi 把它作为独立消息发出,但前端要的是把它折进 assistant 那条 ToolPart 的 state。
+   * yoma 把它作为独立消息发出,但前端要的是把它折进 assistant 那条 ToolPart 的 state。
    * 找不到对应的 ToolPart 就丢弃 —— 那只可能是流式乱序或历史损坏,凭空造一个 part
    * 只会让 transcript 出现无主的工具卡片。
    */
@@ -257,7 +257,7 @@ export class SessionProjection {
   }
 
   /**
-   * my-pi 的四种自定义消息角色 —— bashExecution / custom / compactionSummary / branchSummary。
+   * yoma 的四种自定义消息角色 —— bashExecution / custom / compactionSummary / branchSummary。
    * 前端的 Message 只有 user|assistant 两种,所以合成一条 synthetic assistant 消息装它们。
    * 不投影的话这些内容会静默消失。
    */
@@ -517,7 +517,7 @@ function asDetails(details: unknown): Record<string, unknown> {
 }
 
 /**
- * my-pi 的内核对 provider 失败 **永不抛异常** —— 失败是一条 stopReason:"error" 的
+ * yoma 的内核对 provider 失败 **永不抛异常** —— 失败是一条 stopReason:"error" 的
  * assistant 消息。不把它投影成 error,UI 上就是一个空白轮次,用户完全不知道发生了什么。
  */
 function errorOf(message: Extract<AgentMessage, { role: "assistant" }>): MessageError | undefined {

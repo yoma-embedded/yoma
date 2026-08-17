@@ -1,5 +1,5 @@
 /**
- * 例程库子系统的桶文件。kernel 与 bench 只认包名(@yoma/my-pi-coding-agent),
+ * 例程库子系统的桶文件。kernel 与 bench 只认包名(@yoma/coding-agent),
  * 不做深引用 —— 本目录的公开面全部经这里再经包主入口 src/index.ts 出去,
  * 与 core/toolchain/index.ts 同一纪律。
  */

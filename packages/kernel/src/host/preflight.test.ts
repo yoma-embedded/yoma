@@ -46,7 +46,7 @@ describe("inspectEngines", () => {
 describe("app.preflight", () => {
   test("no key → auth.missing, no engines dir → engines.missingDir", async () => {
     const saved: Record<string, string | undefined> = {}
-    for (const name of ["MY_PI_PROVIDER", "MY_PI_MODEL", "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY"]) {
+    for (const name of ["YOMA_PROVIDER", "YOMA_MODEL", "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY"]) {
       saved[name] = process.env[name]
       delete process.env[name]
     }

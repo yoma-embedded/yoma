@@ -5,14 +5,14 @@
 // 尤其是 resolve 真的绕过了账本、真的把新结果写回真正的账本(而 check 完全不写)。
 //
 // env 用真实 NodeExecutionEnv(cwd 就是 projectDir),配置目录全程 mkdtemp 注入,
-// 不碰真实 ~/.my-pi(根 CLAUDE.md 与 ledger.ts 头部注释反复强调的纪律)。假工具
+// 不碰真实 ~/.yoma(根 CLAUDE.md 与 ledger.ts 头部注释反复强调的纪律)。假工具
 // 沿用 toolchain-resolve.test.ts 的写法:Windows 是 .bat、其它平台是 #!/bin/sh,
 // 忽略 argv 直接 echo 固定文本。
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { NodeExecutionEnv } from "@yoma/my-pi/node";
+import { NodeExecutionEnv } from "@yoma/agent/node";
 import { createToolchainToolDefinition, type ToolchainToolOptions } from "../src/core/tools/toolchain.ts";
 import { readLedger, writeLedgerEntry } from "../src/core/toolchain/ledger.ts";
 import type { ToolSpec } from "../src/core/toolchain/schema.ts";
@@ -49,8 +49,8 @@ function writeFakeExe(dir: string, name: string, output: string): string {
 }
 
 function writeManifest(tools: ToolSpec[]): void {
-	mkdirSync(join(projectDir, ".my-pi"), { recursive: true });
-	writeFileSync(join(projectDir, ".my-pi", "toolchain.json"), JSON.stringify({ schema: "yoma/toolchain@1", tools }));
+	mkdirSync(join(projectDir, ".yoma"), { recursive: true });
+	writeFileSync(join(projectDir, ".yoma", "toolchain.json"), JSON.stringify({ schema: "yoma/toolchain@1", tools }));
 }
 
 /** PATH 默认空字符串,不让这台开发机真实装了什么悄悄影响判定——同 toolchain-resolve.test.ts 的纪律。 */
@@ -75,10 +75,10 @@ describe("check", () => {
 		const result = await tool.execute("c1", {});
 		const text = textOf(result);
 
-		expect(text).toContain(".my-pi/toolchain.json");
+		expect(text).toContain(".yoma/toolchain.json");
 		expect(text).toContain("draft one");
 		expect(result.details.ok).toBe(true);
-		expect(existsSync(join(projectDir, ".my-pi", "toolchain.json"))).toBe(false);
+		expect(existsSync(join(projectDir, ".yoma", "toolchain.json"))).toBe(false);
 	});
 
 	it("每个工具一行:ok 带路径/版本/来源,missing 带安装指引;check 是纯读,不写账本", async () => {

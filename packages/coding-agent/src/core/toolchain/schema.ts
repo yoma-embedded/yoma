@@ -55,10 +55,10 @@ export interface ToolchainManifest {
 	setup?: SetupStep[];
 }
 
-/** `<工程>/.my-pi/toolchain.json` —— 提交进库,只说"要什么",零绝对路径。 */
-export const MANIFEST_RELATIVE = ".my-pi/toolchain.json";
-/** `<工程>/.my-pi/toolchain.local.json` —— 不提交,项目级覆盖(可选)。 */
-export const LOCAL_RELATIVE = ".my-pi/toolchain.local.json";
+/** `<工程>/.yoma/toolchain.json` —— 提交进库,只说"要什么",零绝对路径。 */
+export const MANIFEST_RELATIVE = ".yoma/toolchain.json";
+/** `<工程>/.yoma/toolchain.local.json` —— 不提交,项目级覆盖(可选)。 */
+export const LOCAL_RELATIVE = ".yoma/toolchain.local.json";
 
 const SCHEMA_TAG = "yoma/toolchain@1";
 

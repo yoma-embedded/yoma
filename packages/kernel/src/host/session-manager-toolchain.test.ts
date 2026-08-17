@@ -53,7 +53,7 @@ function makeManager(steps: unknown[]) {
   const events: KernelEvent[] = []
   const manager = new SessionManager({
     sessionsRoot: tempDir("yoma-tc-sessions-"),
-    // 隔离开发机真实的 ~/.my-pi —— 不传的话 resolveToolchain 会去读它的
+    // 隔离开发机真实的 ~/.yoma —— 不传的话 resolveToolchain 会去读它的
     // toolchains.json 账本,测试结果就取决于跑测试的机器上账本记了什么。
     configDir: tempDir("yoma-tc-config-"),
     emit: (batch) => events.push(...batch),
@@ -81,10 +81,10 @@ function kernelErrorsOf(events: KernelEvent[]): Array<{ type: "kernel.error"; me
 describe("有清单且工具解析成功", () => {
   test("PATH 前置到解析出的目录、exports 变量真的送到 bash 工具 spawn 出来的进程;系统提示词不多话", async () => {
     const workspace = tempDir("yoma-tc-ws-")
-    mkdirSync(path.join(workspace, ".my-pi"), { recursive: true })
+    mkdirSync(path.join(workspace, ".yoma"), { recursive: true })
 
     // 提交进库的那份:只说"要什么",零绝对路径。
-    writeJSON(path.join(workspace, ".my-pi", "toolchain.json"), {
+    writeJSON(path.join(workspace, ".yoma", "toolchain.json"), {
       schema: "yoma/toolchain@1",
       tools: [{ id: "gizmo", bin: ["gizmofake"], exports: { YOMA_TC_TEST_BIN: "{bin}" } }],
     })
@@ -95,7 +95,7 @@ describe("有清单且工具解析成功", () => {
     const binDir = tempDir("yoma-tc-bin-")
     const binPath = path.join(binDir, "gizmofake")
     writeFileSync(binPath, "")
-    writeJSON(path.join(workspace, ".my-pi", "toolchain.local.json"), {
+    writeJSON(path.join(workspace, ".yoma", "toolchain.local.json"), {
       gizmo: { id: "gizmo", bin: { gizmofake: binPath }, confirmedAt: Date.now(), by: "user" },
     })
 
@@ -140,8 +140,8 @@ describe("有清单且工具解析成功", () => {
 describe("有清单但工具缺失", () => {
   test("needsAttention 非空时系统提示词追加一段 <toolchain> 说明,内容点名缺失的工具", async () => {
     const workspace = tempDir("yoma-tc-ws-")
-    mkdirSync(path.join(workspace, ".my-pi"), { recursive: true })
-    writeJSON(path.join(workspace, ".my-pi", "toolchain.json"), {
+    mkdirSync(path.join(workspace, ".yoma"), { recursive: true })
+    writeJSON(path.join(workspace, ".yoma", "toolchain.json"), {
       schema: "yoma/toolchain@1",
       // 名字刻意写得又长又怪——不能是这台机器上真实装过的任何工具,否则 PATH/
       // 已知安装位置/注册表某一档可能真的命中,测试就成了看这台机器装了什么。
@@ -175,7 +175,7 @@ describe("有清单但工具缺失", () => {
 describe("没有清单", () => {
   test("绝大多数项目的路径:系统提示词不受影响,也不发 kernel.error", async () => {
     const workspace = tempDir("yoma-tc-ws-")
-    // 故意不建 .my-pi/toolchain.json —— 这是没有声明工具链需求的普通项目。
+    // 故意不建 .yoma/toolchain.json —— 这是没有声明工具链需求的普通项目。
 
     let systemPrompt = ""
     const { manager, events } = makeManager([
@@ -200,10 +200,10 @@ describe("没有清单", () => {
 describe("清单存在但内容损坏", () => {
   test("发 kernel.error(带 sessionID),但会话照常开、照常聊", async () => {
     const workspace = tempDir("yoma-tc-ws-")
-    mkdirSync(path.join(workspace, ".my-pi"), { recursive: true })
+    mkdirSync(path.join(workspace, ".yoma"), { recursive: true })
     // 坏 JSON——parseManifest 会在这里失败,resolveToolchain 因此抛出(而不是像
     // "文件不存在"那样静默),resolveToolchainSafe 必须把这个异常吞掉。
-    writeFileSync(path.join(workspace, ".my-pi", "toolchain.json"), "{ not json")
+    writeFileSync(path.join(workspace, ".yoma", "toolchain.json"), "{ not json")
 
     const { manager, events } = makeManager([fauxAssistantMessage([fauxText("能聊")])])
 

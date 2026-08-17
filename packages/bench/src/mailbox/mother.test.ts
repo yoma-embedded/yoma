@@ -361,12 +361,12 @@ describe("mailbox mother", () => {
   })
 
   test("下发轮次时把工具链清单同步进信箱 —— 工位端唯一读得到它的途径", async () => {
-    // 工位端没有项目检出,`<工程>/.my-pi/toolchain.json` 只存在于研发端这边。
+    // 工位端没有项目检出,`<工程>/.yoma/toolchain.json` 只存在于研发端这边。
     // 不随轮次推过去,对面就永远不知道自己该装什么 —— 而那一侧恰恰是最可能缺东西的。
     const { target, mailbox } = await fixtureAfterRound({})
-    mkdirSync(path.join(target, ".my-pi"), { recursive: true })
+    mkdirSync(path.join(target, ".yoma"), { recursive: true })
     writeFileSync(
-      path.join(target, ".my-pi", "toolchain.json"),
+      path.join(target, ".yoma", "toolchain.json"),
       '{"schema":"yoma/toolchain@1","tools":[{"id":"jlink","side":"runner"}]}',
     )
     // 清单是**提交进库**的项目配置;留成未跟踪文件会让研发端开局的"工作树必须干净"卡住。
@@ -459,9 +459,9 @@ describe("mailbox mother", () => {
       if (parked.kind === "awaiting-human") expect(parked.ask).toContain("24V")
 
       // 回传件落在工程里,提示词给的是可以直接打开的相对路径(不是"它说它采了一段")。
-      expect(await Bun.file(path.join(target, ".my-pi", "back", "001", "vbus.csv")).text()).toContain("t,vbus")
-      expect(parkPrompts[0]).toContain(".my-pi/back/001/vbus.csv")
-      expect(parkPrompts[0]).toContain(".my-pi/back/001/bench-report.md")
+      expect(await Bun.file(path.join(target, ".yoma", "back", "001", "vbus.csv")).text()).toContain("t,vbus")
+      expect(parkPrompts[0]).toContain(".yoma/back/001/vbus.csv")
+      expect(parkPrompts[0]).toContain(".yoma/back/001/bench-report.md")
       expect(parkPrompts[0]).toContain("需要人动手")
 
       // 挂起期间:两侧都不跑轮,一个 token 都不烧。

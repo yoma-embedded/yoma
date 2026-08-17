@@ -27,9 +27,9 @@ function parseOk(text: string): ToolchainManifest {
 }
 
 describe("path constants", () => {
-	it("point at .my-pi/ under the project, not the config dir", () => {
-		expect(MANIFEST_RELATIVE).toBe(".my-pi/toolchain.json");
-		expect(LOCAL_RELATIVE).toBe(".my-pi/toolchain.local.json");
+	it("point at .yoma/ under the project, not the config dir", () => {
+		expect(MANIFEST_RELATIVE).toBe(".yoma/toolchain.json");
+		expect(LOCAL_RELATIVE).toBe(".yoma/toolchain.local.json");
 	});
 });
 

@@ -18,9 +18,9 @@ import {
 	NodeExecutionEnv,
 	Session,
 	type ThinkingLevel,
-} from "@yoma/my-pi/node";
+} from "@yoma/agent/node";
 
-const dir = mkdtempSync(join(tmpdir(), "my-pi-example-07-"));
+const dir = mkdtempSync(join(tmpdir(), "yoma-example-07-"));
 const sessionPath = join(dir, "session.jsonl");
 const env = new NodeExecutionEnv({ cwd: dir });
 

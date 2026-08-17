@@ -29,7 +29,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 // 经由工具同一套解析代码取路径,报告不会和运行时行为漂移。
-import { engineBin, engineDataDir, exe } from "@yoma/my-pi-coding-agent";
+import { engineBin, engineDataDir, exe } from "@yoma/coding-agent";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const checkOnly = process.argv.includes("--check");

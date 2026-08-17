@@ -16,7 +16,7 @@ import {
 	JsonlSessionStorage,
 	NodeExecutionEnv,
 	Session,
-} from "@yoma/my-pi/node";
+} from "@yoma/agent/node";
 
 const faux = fauxProvider();
 const models = createModels();

@@ -1,7 +1,7 @@
 /**
  * 与内核无关的宿主服务:文件浏览、@提及搜索、git 状态、最近项目。
  *
- * 这些在 opencode 那边是后端路由,现在是 host 里的纯 Node 函数。没有一行碰 my-pi ——
+ * 这些在 opencode 那边是后端路由,现在是 host 里的纯 Node 函数。没有一行碰 yoma ——
  * 放在这里只是因为它们需要 Node 权限,而 renderer 是沙箱化的。
  */
 
@@ -62,7 +62,7 @@ export async function readFile(file: string): Promise<{ content: string; mime: s
 /**
  * @提及用的文件搜索。
  *
- * 走一次广度优先遍历而不是 shell 出去调 fd/rg —— my-pi 的工具集里没有移植 find/ls
+ * 走一次广度优先遍历而不是 shell 出去调 fd/rg —— yoma 的工具集里没有移植 find/ls
  * (它的 index.ts 注释写着"尚未移植:find、ls"),而打包后的 app 不能假设机器上有 fd。
  */
 export async function searchFiles(directory: string, query: string, limit = 50): Promise<string[]> {
@@ -139,7 +139,7 @@ export interface ProjectEntry {
   lastOpened: number
 }
 
-/** 最近打开的目录。顶替 opencode 的 project/worktree 那一整面 —— my-pi 里一个会话就是一个 cwd。 */
+/** 最近打开的目录。顶替 opencode 的 project/worktree 那一整面 —— yoma 里一个会话就是一个 cwd。 */
 export class ProjectStore {
   private entries: ProjectEntry[] = []
 

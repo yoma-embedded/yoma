@@ -1,5 +1,5 @@
 /**
- * `<工程>/.my-pi/.gitignore` 的边界:挡住运行产物,**放行项目配置**(bench 的
+ * `<工程>/.yoma/.gitignore` 的边界:挡住运行产物,**放行项目配置**(bench 的
  * mailbox 模板、toolchain 的工具链声明)。
  *
  * 配置要跟着仓库走到另一台机器上;轮次输入输出、gdb 转录这类运行产物必须挡住 ——
@@ -35,11 +35,11 @@ async function ignored(repo: string, relative: string): Promise<boolean> {
   return (await runGitReal(["check-ignore", "-q", relative], repo)).ok
 }
 
-describe(".my-pi/.gitignore", () => {
+describe(".yoma/.gitignore", () => {
   test("挡住运行产物,放行项目配置(bench 与 toolchain)", async () => {
     const repo = await makeRepo()
     await ensureYomaDir(repo)
-    const yoma = path.join(repo, ".my-pi")
+    const yoma = path.join(repo, ".yoma")
 
     mkdirSync(path.join(yoma, "bench", "turns"), { recursive: true })
     mkdirSync(path.join(yoma, "bench", "mailbox-sim"), { recursive: true })
@@ -56,34 +56,34 @@ describe(".my-pi/.gitignore", () => {
     writeFileSync(path.join(yoma, "toolchain.local.json"), "{}")
 
     // 项目配置跨机器靠它,必须放行 —— 而且不止模板一个文件。
-    expect(await ignored(repo, ".my-pi/bench/mailbox.template.json")).toBe(false)
-    expect(await ignored(repo, ".my-pi/bench/mailbox.shell-faults.json")).toBe(false)
+    expect(await ignored(repo, ".yoma/bench/mailbox.template.json")).toBe(false)
+    expect(await ignored(repo, ".yoma/bench/mailbox.shell-faults.json")).toBe(false)
     // toolchain.json 是同一类东西:项目配置,git add 必须加得进去。
-    expect(await ignored(repo, ".my-pi/toolchain.json")).toBe(false)
+    expect(await ignored(repo, ".yoma/toolchain.json")).toBe(false)
     // 运行产物必须挡住 —— 否则 diff 里全是它们。
-    expect(await ignored(repo, ".my-pi/bench/turns/turn-1.json")).toBe(true)
-    expect(await ignored(repo, ".my-pi/bench/mailbox-sim/x.json")).toBe(true)
-    expect(await ignored(repo, ".my-pi/gdb/s.mi")).toBe(true)
-    expect(await ignored(repo, ".my-pi/logs/l.txt")).toBe(true)
-    expect(await ignored(repo, ".my-pi/flash-state.json")).toBe(true)
+    expect(await ignored(repo, ".yoma/bench/turns/turn-1.json")).toBe(true)
+    expect(await ignored(repo, ".yoma/bench/mailbox-sim/x.json")).toBe(true)
+    expect(await ignored(repo, ".yoma/gdb/s.mi")).toBe(true)
+    expect(await ignored(repo, ".yoma/logs/l.txt")).toBe(true)
+    expect(await ignored(repo, ".yoma/flash-state.json")).toBe(true)
     // toolchain.local.json 是本机路径,绝不能进版本库 —— 跟 toolchain.json 长得像
     // 项目配置,黑名单必须显式挡它,不能靠"没列出来就放行"的默认值蒙混过去。
-    expect(await ignored(repo, ".my-pi/toolchain.local.json")).toBe(true)
+    expect(await ignored(repo, ".yoma/toolchain.local.json")).toBe(true)
     // 忽略文件本身也要挡住:露出来就是一个未跟踪又不被忽略的文件,工作树因此
     // 永远"不干净",而开轮的第一道检查正是它(实测被自己挡死过)。
-    expect(await ignored(repo, ".my-pi/.gitignore")).toBe(true)
+    expect(await ignored(repo, ".yoma/.gitignore")).toBe(true)
 
     // add -A 之后暂存区里只有配置,没有产物,也没有本机路径。
     await runGitReal(["add", "-A"], repo)
     const staged = await runGitReal(["diff", "--cached", "--name-only"], repo)
-    expect(staged.stdout.split("\n").filter((line) => line.startsWith(".my-pi/")).sort()).toEqual([
-      ".my-pi/bench/mailbox.shell-faults.json",
-      ".my-pi/bench/mailbox.template.json",
-      ".my-pi/toolchain.json",
+    expect(staged.stdout.split("\n").filter((line) => line.startsWith(".yoma/")).sort()).toEqual([
+      ".yoma/bench/mailbox.shell-faults.json",
+      ".yoma/bench/mailbox.template.json",
+      ".yoma/toolchain.json",
     ])
   })
 
-  test("干净仓库里建 .my-pi 之后仍然干净 —— 否则每一轮开局就被自己挡死", async () => {
+  test("干净仓库里建 .yoma 之后仍然干净 —— 否则每一轮开局就被自己挡死", async () => {
     const repo = await makeRepo()
     writeFileSync(path.join(repo, "main.c"), "int main(void){return 0;}\n")
     await runGitReal(["add", "-A"], repo)
@@ -96,7 +96,7 @@ describe(".my-pi/.gitignore", () => {
 
   test("用户手写的 .gitignore 不动 —— 那是他的文件", async () => {
     const repo = await makeRepo()
-    const yoma = path.join(repo, ".my-pi")
+    const yoma = path.join(repo, ".yoma")
     mkdirSync(yoma, { recursive: true })
     writeFileSync(path.join(yoma, ".gitignore"), "*\n!我自己加的\n")
     await ensureYomaDir(repo)
@@ -104,11 +104,11 @@ describe(".my-pi/.gitignore", () => {
   })
 
   test("旧版(我们自己写的那份)会被升级 —— 否则老仓库永远漏 bench/turns", async () => {
-    // 合并之前 .my-pi/.gitignore 只挡 gdb/logs/flash-state。两个 ensure 函数当初都是
+    // 合并之前 .yoma/.gitignore 只挡 gdb/logs/flash-state。两个 ensure 函数当初都是
     // "文件不存在才写",于是老仓库停在旧规则上,合并之后 bench/turns/ 会照旧漏进
     // 版本库 —— 而那正是当初加忽略要防的事。认第一行的标志决定敢不敢覆盖。
     const repo = await makeRepo()
-    const yoma = path.join(repo, ".my-pi")
+    const yoma = path.join(repo, ".yoma")
     mkdirSync(yoma, { recursive: true })
     writeFileSync(
       path.join(yoma, ".gitignore"),
@@ -119,14 +119,14 @@ describe(".my-pi/.gitignore", () => {
 
     mkdirSync(path.join(yoma, "bench", "turns"), { recursive: true })
     writeFileSync(path.join(yoma, "bench", "turns", "turn-1.json"), "{}")
-    expect(await ignored(repo, ".my-pi/bench/turns/turn-1.json")).toBe(true)
+    expect(await ignored(repo, ".yoma/bench/turns/turn-1.json")).toBe(true)
   })
 
   test("加 toolchain.local.json 规则之前的旧版也会被升级 —— 否则老仓库会把本机路径的覆盖文件漏进版本库", async () => {
     // 这份是加 toolchain 规则之前、合并之后的版本(没有 toolchain.local.json 这一行)。
     // 认第一行标志就敢覆盖,老仓库下一次 ensureYomaDir 会自动补上新规则。
     const repo = await makeRepo()
-    const yoma = path.join(repo, ".my-pi")
+    const yoma = path.join(repo, ".yoma")
     mkdirSync(yoma, { recursive: true })
     writeFileSync(
       path.join(yoma, ".gitignore"),
@@ -137,7 +137,7 @@ describe(".my-pi/.gitignore", () => {
 
     writeFileSync(path.join(yoma, "toolchain.json"), "{}")
     writeFileSync(path.join(yoma, "toolchain.local.json"), "{}")
-    expect(await ignored(repo, ".my-pi/toolchain.json")).toBe(false)
-    expect(await ignored(repo, ".my-pi/toolchain.local.json")).toBe(true)
+    expect(await ignored(repo, ".yoma/toolchain.json")).toBe(false)
+    expect(await ignored(repo, ".yoma/toolchain.local.json")).toBe(true)
   })
 })

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "bun:test";
-import { NodeExecutionEnv } from "@yoma/my-pi/node";
+import { NodeExecutionEnv } from "@yoma/agent/node";
 import {
 	buildServerArgv,
 	classifyEval,
@@ -31,7 +31,7 @@ const openSessions: GdbSession[] = [];
 const openTools: Array<{ execute: (id: string, params: any) => Promise<unknown> }> = [];
 
 function createTempDir(): string {
-	const dir = join(tmpdir(), `my-pi-gdb-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+	const dir = join(tmpdir(), `yoma-gdb-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(dir, { recursive: true });
 	tempDirs.push(dir);
 	return dir;
@@ -502,7 +502,7 @@ describe.skipIf(!HAS_E2E)("端到端(QEMU + 真 gdb)", () => {
 	// 正好落在 cwd 底下,源码路径才会被相对化。会话产物写在这里,afterEach 清掉。
 	const FIXTURE_DIR = join(import.meta.dir, "fixtures", "gdb");
 
-	afterEach(() => rmSync(join(FIXTURE_DIR, ".my-pi"), { recursive: true, force: true }));
+	afterEach(() => rmSync(join(FIXTURE_DIR, ".yoma"), { recursive: true, force: true }));
 
 	function makeTool() {
 		const env = new NodeExecutionEnv({ cwd: FIXTURE_DIR });

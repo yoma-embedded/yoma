@@ -82,7 +82,7 @@ export interface MailboxMotherOptions {
    */
   projectDir?: string
   enginesDir?: string
-  /** 技能/上下文/凭据全局目录;演练与测试传临时目录隔离,生产缺省 ~/.my-pi。 */
+  /** 技能/上下文/凭据全局目录;演练与测试传临时目录隔离,生产缺省 ~/.yoma。 */
   configDir?: string
   /** 假模型注入(本机演练):跨分析轮共享同一条响应队列。生产不传。 */
   resolveModels?: TurnOptions["resolveModels"]
@@ -263,11 +263,11 @@ function motherTurnJob(mailboxJob: MailboxJob, workspace: string): Job {
 }
 
 /**
- * 回传件在研发机上的落点(相对工程根)。进 `.my-pi/` 是因为那儿本来就是"yoma 在这个
+ * 回传件在研发机上的落点(相对工程根)。进 `.yoma/` 是因为那儿本来就是"yoma 在这个
  * 工程里的运行产物"的地盘,而且已经被 ensureYomaDir 的忽略规则罩住 —— 采集数据不该
  * 跟着代码提交进工程仓,它在信箱仓里已经留了底。
  */
-const BACK_DIR_RELATIVE = ".my-pi/back"
+const BACK_DIR_RELATIVE = ".yoma/back"
 
 /**
  * 目录下的全部文件,相对路径(posix 分隔)。自己走而不用 readdir 的 recursive:
@@ -298,7 +298,7 @@ async function stageBack(
   workspace: string,
 ): Promise<{ files?: { name: string; bytes: number; localPath: string }[]; reportPath?: string }> {
   const bucket = String(round).padStart(3, "0")
-  const targetDir = path.join(workspace, ".my-pi", "back", bucket)
+  const targetDir = path.join(workspace, ".yoma", "back", bucket)
   const relative = (name: string) => `${BACK_DIR_RELATIVE}/${bucket}/${name}`
 
   const copyInto = async (source: string, name: string): Promise<void> => {

@@ -11,7 +11,7 @@
  * "从账本 root 读"这一段(下载到缓存再读),工作区侧(dest 解析)仍走 env。
  */
 import path from "node:path";
-import type { ExecutionEnv } from "@yoma/my-pi";
+import type { ExecutionEnv } from "@yoma/agent";
 import { type Static, Type } from "typebox";
 
 import { listDirNames } from "../examples/extract-util.ts";
@@ -94,7 +94,7 @@ export interface ExamplesToolDetails {
 }
 
 export interface ExamplesToolOptions {
-	/** 索引与语料账本所在,默认 ~/.my-pi(store.ts 的 defaultConfigDir)。测试与工位端注入。 */
+	/** 索引与语料账本所在,默认 ~/.yoma(store.ts 的 defaultConfigDir)。测试与工位端注入。 */
 	configDir?: string;
 }
 

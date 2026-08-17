@@ -57,7 +57,7 @@ NSIS 安装包。
 1. **探针软件 + 驱动**(2026-08 起 Yoma 不再内置探针栈,agent 直接用你机器上的
    工具链):J-Link 探针装 **SEGGER J-Link Software Pack**(自带驱动与
    JLinkGDBServer);ST-Link / CMSIS-DAP 装 **OpenOCD**(加到 PATH)+ ST-Link 驱动。
-   装哪个、装在哪,可以在工程的 `.my-pi/toolchain.json` 里声明,agent 会自己探测。
+   装哪个、装在哪,可以在工程的 `.yoma/toolchain.json` 里声明,agent 会自己探测。
 2. **就这些。** 不要工程检出、不要交叉工具链、也不用预装 Python 之类的脚本运行时 ——
    要跑什么脚本,研发端会当附件送过来(送过来的脚本要能在这台机器上跑,那是研发端
    写指令时该考虑的事)。
@@ -76,12 +76,12 @@ NSIS 安装包。
 ## 3. 项目模板(每个工程配一次,提交进版本库)
 
 模板告诉调试台**这个工程叫什么、板子是什么、有哪些每次都适用的约束**。放在
-`<工程>/.my-pi/bench/mailbox.template.json`。
+`<工程>/.yoma/bench/mailbox.template.json`。
 
 它本身就是一份少了"要修什么"的任务书:出任务时,界面上填的描述会拼到模板的 `task`
 后面,其余字段原样带过去。
 
-> 模板**要提交进版本库**。调试台自己写的 `.my-pi/.gitignore` 只挡运行产物(轮次输入
+> 模板**要提交进版本库**。调试台自己写的 `.yoma/.gitignore` 只挡运行产物(轮次输入
 > 输出、本地状态),`mailbox.template.json` 是白名单放行的。
 
 参考 final_foc 的那份:
@@ -162,7 +162,7 @@ NSIS 安装包。
 Yoma 不保存也不代管密码。所以自检失败的话,先在 PowerShell 里直接跑一次
 `git ls-remote <地址>` —— 那里的报错就是真报错。
 
-**模型凭据**:与 Zed / 命令行共用一份,在 `%USERPROFILE%\.my-pi\auth.json`:
+**模型凭据**:与 Zed / 命令行共用一份,在 `%USERPROFILE%\.yoma\auth.json`:
 
 ```json
 { "deepseek": { "type": "api_key", "key": "sk-…" } }

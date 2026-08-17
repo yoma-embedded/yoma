@@ -1,12 +1,12 @@
 /**
  * 工具的路径解析。
  *
- * 与 pi 的差异:pi 用 node:fs 的 accessSync/access 探测路径,my-pi 一律走注入的
+ * 与 pi 的差异:pi 用 node:fs 的 accessSync/access 探测路径,yoma 一律走注入的
  * FileSystem 能力(env.exists),这样工具对远程/沙箱文件系统同样成立 ——
  * 也就是 pi 靠 ReadOperations/WriteOperations 那套可插拔接口达到的效果。
  * 绝对化本身交给 env.absolutePath,它已经处理了 `~` 与 `file://`。
  */
-import type { FileSystem } from "@yoma/my-pi";
+import type { FileSystem } from "@yoma/agent";
 
 const NARROW_NO_BREAK_SPACE = " ";
 

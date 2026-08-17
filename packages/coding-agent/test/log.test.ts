@@ -3,7 +3,7 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "bun:test";
-import { NodeExecutionEnv } from "@yoma/my-pi/node";
+import { NodeExecutionEnv } from "@yoma/agent/node";
 import {
 	createLogToolDefinition,
 	foldLines,
@@ -27,7 +27,7 @@ const openCaptures: LogCapture[] = [];
 const openTools: Array<{ execute: (id: string, params: any) => Promise<unknown> }> = [];
 
 function createTempDir(): string {
-	const dir = join(tmpdir(), `my-pi-log-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+	const dir = join(tmpdir(), `yoma-log-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(dir, { recursive: true });
 	tempDirs.push(dir);
 	return dir;
@@ -396,7 +396,7 @@ describe("LogCapture", () => {
 	});
 
 	it("never keeps the process alive on its own", async () => {
-		// 高危回归:采集中的子进程和它的管道如果不 unref,ACP 退出时 my-pi 不肯死。
+		// 高危回归:采集中的子进程和它的管道如果不 unref,ACP 退出时 yoma 不肯死。
 		const dir = createTempDir();
 		const source = writeSource(dir, "forever.sh", `#!/bin/sh\nwhile true; do echo tick; sleep 1; done\n`);
 		const script = writeSource(
@@ -511,7 +511,7 @@ describe("log tool", () => {
 
 		const started = await tool.execute("c1", { action: "start", command: source });
 		expect(textOf(started)).toContain("Capturing");
-		expect(textOf(started)).toContain(join(cwd, ".my-pi", "logs"));
+		expect(textOf(started)).toContain(join(cwd, ".yoma", "logs"));
 		expect(detailsOf(started).running).toBe(true);
 
 		await waitForLines(tool, 1);

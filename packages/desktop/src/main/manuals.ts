@@ -5,7 +5,7 @@
 // resumable — the same contract as the agent's download_manual tool), and spawn the
 // rag_yoma CLI to ingest a user PDF into the local overlay tier.
 //
-// Path/env resolution: process.env first, then a KEY=value line in ~/.my-pi/.env
+// Path/env resolution: process.env first, then a KEY=value line in ~/.yoma/.env
 // (override with $YOMA_ENV_FILE). Same directory as auth.json / skills / mailbox.
 
 import { app, ipcMain } from "electron"
@@ -41,15 +41,15 @@ const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 const EMBED_MODEL = "BAAI/bge-m3"
 const EMBED_DIM = 1024
 
-// --- env resolution: ~/.my-pi, same directory as auth.json -----------------------
+// --- env resolution: ~/.yoma, same directory as auth.json -----------------------
 function configHome(): string {
-  return path.join(os.homedir(), ".my-pi")
+  return path.join(os.homedir(), ".yoma")
 }
 
 function envFiles(): string[] {
   const explicit = process.env.YOMA_ENV_FILE?.trim()
   if (explicit) return [explicit]
-  return [path.join(configHome(), ".env"), path.join(os.homedir(), ".config", "opencode", ".env")]
+  return [path.join(configHome(), ".env")]
 }
 
 function envVar(name: string): string | undefined {
@@ -264,7 +264,7 @@ async function loadInventory(chip: string, rev: string): Promise<ArtifactFile[]>
   const local = readManifest("shared").find((e) => e.chip === chip && e.rev === rev)
   if (local?.artifacts?.length) return local.artifacts
   const base = serverUrl()
-  if (!base) throw new Error("未配置文件服务器(在 ~/.my-pi/.env 里设置 YOMA_DATASHEET_SERVER)")
+  if (!base) throw new Error("未配置文件服务器(在 ~/.yoma/.env 里设置 YOMA_DATASHEET_SERVER)")
   const url = `${base}/api/bundles/${encodeURIComponent(chip)}/${encodeURIComponent(rev)}.json`
   const res = await fetch(url)
   if (!res.ok) throw new Error(`服务器上没有 ${chip}/${rev}(HTTP ${res.status})`)
@@ -282,7 +282,7 @@ async function downloadManual(chip: string, rev: string) {
   try {
     const files = await loadInventory(chip, rev)
     const base = serverUrl()
-    if (!base) throw new Error("未配置文件服务器(在 ~/.my-pi/.env 里设置 YOMA_DATASHEET_SERVER)")
+    if (!base) throw new Error("未配置文件服务器(在 ~/.yoma/.env 里设置 YOMA_DATASHEET_SERVER)")
     const root = path.resolve(artifactsRoot())
     let downloaded = 0
     let skipped = 0
@@ -411,7 +411,7 @@ async function updateIndex(): Promise<IndexUpdateResult> {
   if (indexUpdating) return { ok: false, error: "索引更新已在进行中" }
   if (activeDownloads.size > 0) return { ok: false, error: "有手册正在下载,等它结束后再更新索引" }
   const base = serverUrl()
-  if (!base) return { ok: false, error: "未配置文件服务器(在 ~/.my-pi/.env 里设置 YOMA_DATASHEET_SERVER)" }
+  if (!base) return { ok: false, error: "未配置文件服务器(在 ~/.yoma/.env 里设置 YOMA_DATASHEET_SERVER)" }
   indexUpdating = true
   try {
     const res = await fetch(`${base}/api/index/latest.json`)
@@ -517,7 +517,7 @@ async function ingestLocal(req: IngestRequest): Promise<{ ok: boolean; error?: s
   if (!repo || !existsSync(repo)) {
     return {
       ok: false,
-      error: "未配置 rag_yoma 仓库(在 ~/.my-pi/.env 里设置 YOMA_RAG_REPO=<rag_yoma 路径>," +
+      error: "未配置 rag_yoma 仓库(在 ~/.yoma/.env 里设置 YOMA_RAG_REPO=<rag_yoma 路径>," +
         "如需指定解析环境的 Python 再设 YOMA_RAG_PYTHON=<python.exe 路径>)",
     }
   }
