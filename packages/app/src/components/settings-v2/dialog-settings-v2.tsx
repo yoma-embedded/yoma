@@ -8,6 +8,7 @@ import { SettingsGeneralV2 } from "./general"
 import { SettingsKeybinds } from "../settings-keybinds"
 import { SettingsProvidersV2 } from "./providers"
 import { SettingsModelsV2 } from "./models"
+import { SettingsToolchainV2 } from "./toolchain"
 import "./settings-v2.css"
 
 export const DialogSettings: Component = () => {
@@ -46,6 +47,10 @@ export const DialogSettings: Component = () => {
                       <Icon name="models" />
                       {language.t("settings.models.title")}
                     </TabsV2.Trigger>
+                    <TabsV2.Trigger value="toolchain">
+                      <Icon name="checklist" />
+                      {language.t("settings.toolchain.title")}
+                    </TabsV2.Trigger>
                   </div>
                 </div>
               </div>
@@ -67,6 +72,9 @@ export const DialogSettings: Component = () => {
         </TabsV2.Content>
         <TabsV2.Content value="models" class="settings-v2-panel">
           <SettingsModelsV2 />
+        </TabsV2.Content>
+        <TabsV2.Content value="toolchain" class="settings-v2-panel">
+          <SettingsToolchainV2 />
         </TabsV2.Content>
       </TabsV2>
     </Dialog>
