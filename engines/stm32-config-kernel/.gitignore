@@ -1,0 +1,7 @@
+/target
+/data.zip
+# HAL/CMSIS 固件组件(BSD-3,1.1GB)不进主仓 —— tools/fetch-fw.ps1 按需拉取
+/data/fw/
+*.snap.new
+/proj*/
+/cfg-*.json

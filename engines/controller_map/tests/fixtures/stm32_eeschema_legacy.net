@@ -1,0 +1,36 @@
+( { EESchema Netlist Version 1.1 created  2026-08-05T12:00:00 }
+ ( /1aa11aa1-0000-0000-0000-000000000001 Package_QFP:LQFP-32_7x7mm_P0.8mm  U1 STM32G031K8Tx
+  (    1 +3V3 )
+  (    2 /Power/D+3V3 )
+  (    3 GND )
+  (    4 /LED_CTRL )
+  (    5 Net-(D1-A) )
+  (    6 unconnected-(U1-PB0-Pad6) )
+  (    7 /UART_TX )
+ )
+ ( /2bb22bb2-0000-0000-0000-000000000002/3cc33cc3-0000-0000-0000-000000000003 $noname  R1 1k
+  (    1 /LED_CTRL )
+  (    2 Net-(D2-A) )
+ )
+ ( /2bb22bb2-0000-0000-0000-000000000002/4dd44dd4-0000-0000-0000-000000000004 LED_SMD:LED_0603_1608Metric  D2 LED
+  (    1 Net-(D2-A) )
+  (    2 GND )
+ )
+ ( /5ee55ee5-0000-0000-0000-000000000005 LED_SMD:LED_0603_1608Metric  D1 Red LED 0603
+  (    1 Net-(D1-A) )
+  (    2 GND )
+ )
+ ( /6ff66ff6-0000-0000-0000-000000000006 Battery:BatteryHolder_CR2032  BT1 Bat Holder CR2032
+  (    1 +3V3 )
+  (    2 GND )
+ )
+ ( /7aa77aa7-0000-0000-0000-000000000007 Connector:Conn_01x02  J1
+  (    1 /UART_TX )
+  (    2 GND )
+ )
+ ( /8bb88bb8-0000-0000-0000-000000000008 Capacitor_SMD:C_0603_1608Metric  C1 100nF
+  (    1 /Power/D+3V3 )
+  (    2 GND )
+ )
+)
+*

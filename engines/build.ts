@@ -32,7 +32,6 @@ import { fileURLToPath } from "node:url";
 import { engineBin, engineDataDir, exe } from "@yoma/my-pi-coding-agent";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repo = path.dirname(here);
 const checkOnly = process.argv.includes("--check");
 const dist = process.argv.includes("--dist");
 const distDir = (() => {
@@ -40,7 +39,6 @@ const distDir = (() => {
 	return at >= 0 && process.argv[at + 1] ? path.resolve(process.argv[at + 1]!) : path.join(here, "dist");
 })();
 
-const SUBMODULES = ["stm32-config-kernel", "controller_map"];
 /** setuptools 的 console script 入口,冻结时要为每个造一个 __main__ 壳。 */
 const PY_ENTRIES: Array<[string, string]> = [
 	["controller_map", "controller_map.controller_map"],
@@ -123,10 +121,6 @@ function sha256(file: string): string {
 }
 
 if (dist) {
-	if (SUBMODULES.some((s) => !existsSync(path.join(here, s, ".git")))) {
-		console.log("initializing git submodules …");
-		await $`git -C ${repo} submodule update --init --recursive`;
-	}
 	await need("cargo", "install Rust via https://rustup.rs");
 	await need("uv", "install uv via https://docs.astral.sh/uv/getting-started/installation/");
 
@@ -162,17 +156,16 @@ if (dist) {
 		irpacks++;
 	}
 
-	// irpack 数量是"这份产物到底支持几个芯片族"的唯一体现,而它取决于 submodule
-	// 钉在哪个 commit —— 钉旧了就静默少一大半,用户侧表现成"这个族不支持",
-	// 看起来像产品限制而不是构建产物缺料(实测:一次 CI 只产出 2 个,本机是 27 个,
-	// 原因是那次跑在 submodule 还没 bump 的分支上)。少于阈值就红。
+	// irpack 数量是"这份产物到底支持几个芯片族"的唯一体现 —— 少了就静默少一大半,
+	// 用户侧表现成"这个族不支持",看起来像产品限制而不是构建产物缺料
+	// (实测:一次 CI 只产出 2 个,本机是 27 个)。少于阈值就红。
 	const MIN_IRPACKS = 20;
 	const { problems, notes } = auditDist(distDir);
 	if (irpacks < MIN_IRPACKS) {
 		problems.push(
 			`只收到 ${irpacks} 个 irpack(期望 ≥${MIN_IRPACKS})—— ` +
-				`多半是 engines/stm32-config-kernel 这个 submodule 钉在旧 commit 上,` +
-				`先 \`git submodule update --remote engines/stm32-config-kernel\` 再提交那个 gitlink`,
+				`engines/stm32-config-kernel/data/ 里的 *.irpack 缺料,` +
+				`用 stm32ck-importer 对着本机 CubeMX db 重新导入(见该目录 README 的「开发期数据管道」)`,
 		);
 	}
 	const manifest = {
@@ -209,12 +202,6 @@ if (dist) {
 }
 
 if (!checkOnly) {
-	// --check 是只读体检,不该在这里触发网络克隆;submodule 只在真要构建时才补。
-	if (SUBMODULES.some((s) => !existsSync(path.join(here, s, ".git")))) {
-		console.log("initializing git submodules …");
-		await $`git -C ${repo} submodule update --init --recursive`;
-	}
-
 	await need("cargo", "install Rust via https://rustup.rs");
 	await need("uv", "install uv via https://docs.astral.sh/uv/getting-started/installation/");
 

@@ -69,7 +69,7 @@ export function findEnginesDir(start: string): string {
 			throw new Error(
 				"engines/ directory not found." +
 					skipNote +
-					" Run `git submodule update --init --recursive` then `bun engines/build.ts`.",
+					" Run `bun engines/build.ts` to build and install.",
 			);
 		}
 		dir = parent;

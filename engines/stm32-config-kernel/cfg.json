@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "mcu": { "part": "STM32F103C8Tx" },
+  "clock": {
+    "sources": { "HSE": { "kind": "crystal", "freqHz": 8000000 } },
+    "targets": { "SYSCLK": { "hz": 72000000 } }
+  },
+  "peripherals": {
+    "USART1": {
+      "mode": "Asynchronous",
+      "params": { "BaudRate": 115200 },
+      "pins": { "TX": "PA9", "RX": "PA10" },
+      "nvic": { "enabled": true }
+    }
+  },
+  "gpio": {
+    "PC13": { "mode": "output", "initHigh": true, "label": "LED" }
+  },
+  "project": { "name": "bluepill_demo" }
+}

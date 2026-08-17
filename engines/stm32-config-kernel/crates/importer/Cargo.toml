@@ -1,0 +1,24 @@
+[package]
+name = "stm32ck-importer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "stm32ck-import"
+path = "src/main.rs"
+
+[dependencies]
+stm32ck-ir = { path = "../ir" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+postcard = { workspace = true }
+zstd = { workspace = true }
+roxmltree = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+walkdir = { workspace = true }
+num-rational = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }

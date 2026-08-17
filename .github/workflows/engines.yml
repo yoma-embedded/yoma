@@ -56,37 +56,9 @@ jobs:
         include: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     steps:
+      # 引擎源码已吸收进本仓(engines/ 是普通目录),checkout 一步到位,不再需要
+      # 私有 submodule 的 ENGINES_TOKEN。data/fw 不在库里,--dist 也用不到它。
       - uses: actions/checkout@v4
-        # submodule 单独拉:stm32-config-kernel 和 controller_map 是私有仓,
-        # 默认的 GITHUB_TOKEN 只对**当前**仓库有权限,拉不动它们。
-        with:
-          submodules: false
-
-      - name: 拉取 submodule(私有仓走 PAT)
-        shell: bash
-        env:
-          ENGINES_TOKEN: ${{ secrets.ENGINES_TOKEN }}
-        run: |
-          if [ -z "$ENGINES_TOKEN" ]; then
-            echo "::error::缺少 secrets.ENGINES_TOKEN —— 私有 submodule 拉不下来。"
-            echo "去仓库 Settings → Secrets and variables → Actions 加一个对"
-            echo "yoma-embedded/stm32-config-kernel 和 controller_map 有读权限的 PAT。"
-            exit 1
-          fi
-          # .gitmodules 里私有仓用的是 git@github.com: 形式,CI 里没有 SSH key,
-          # 所以把 SSH URL 改写成带 token 的 HTTPS。
-          git config --global url."https://x-access-token:${ENGINES_TOKEN}@github.com/".insteadOf "git@github.com:"
-          if ! git submodule update --init --recursive; then
-            # 令牌存在但拉不动,基本是这三种。GitHub 对"没权限"一律报"仓库不存在",
-            # 照字面找会一直找不到原因,所以这里把三种可能一次说清。
-            echo "::error::submodule 拉取失败。ENGINES_TOKEN 存在,但用不了 —— 常见三种原因:"
-            echo "  1) 令牌过期了(fine-grained token 有有效期,到期当天 CI 才会突然红);"
-            echo "  2) 组织没批:fine-grained token 访问组织仓库要在 yoma-embedded 的"
-            echo "     Settings → Personal access tokens 里批准,没批时 GitHub 报的是"
-            echo "     '仓库不存在',不是'没权限',很容易看错方向;"
-            echo "  3) 令牌没勾上 stm32-config-kernel / controller_map,或 Contents 不是 Read。"
-            exit 1
-          fi
 
       - uses: oven-sh/setup-bun@v2
         with:

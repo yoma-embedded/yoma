@@ -1,0 +1,1286 @@
+( {OrCAD PCB II Netlist Format}
+ ( 00000001 FIDUCIAL FID1 FIDUCIAL
+ )
+ ( 00000002 FIDUCIAL FID2 FIDUCIAL
+ )
+ ( 00000003 FIDUCIAL FID3 FIDUCIAL
+ )
+ ( 00000004 FIDUCIAL FID4 FIDUCIAL
+ )
+ ( 00000005 M3 Hole H1 
+ )
+ ( 00000006 M3 Hole H2 
+ )
+ ( 00000007 M3 Hole H3 
+ )
+ ( 00000008 M3 Hole H4 
+ )
+ ( 00000009 M3 Hole H5 
+ )
+ ( 00000010 M3 Hole H6 
+ )
+ ( 00000011 M3 Hole H7 
+ )
+ ( 00000012 M3 Hole H8 
+ )
+ ( 00000013 M3 Hole H9 
+ )
+ ( 00000014 M3 Hole H10 
+ )
+ ( 00000015 M3 Hole H11 
+ )
+ ( 00000016 M3 Hole H12 
+ )
+ ( 00000017 CAPC1608X09L C1 2.2¦ÌF
+  ( 1 AGND )
+  ( 2 VBUS_S_1 )
+ )
+ ( 00000018 CAPC1608X09L C2 10pF
+  ( 1 NetC2_1 )
+  ( 2 GND )
+ )
+ ( 00000019 CAPC1608X09L C3 10pF
+  ( 1 NetC3_1 )
+  ( 2 GND )
+ )
+ ( 00000020 CAPC1608X09L C4 2.2¦ÌF
+  ( 1 GND )
+  ( 2 NetC4_2 )
+ )
+ ( 00000021 CAPC1608X09L C5 2.2¦ÌF
+  ( 1 GND )
+  ( 2 NetC5_2 )
+ )
+ ( 00000022 CAPC1608X09L C6 0.1uF
+  ( 1 GND )
+  ( 2 nRST_1 )
+ )
+ ( 00000023 CAPC1608X09L C7 0.1uF
+  ( 1 VCC )
+  ( 2 GND )
+ )
+ ( 00000024 CAPC1608X09L C8 0.1uF
+  ( 1 VCC )
+  ( 2 GND )
+ )
+ ( 00000025 CAPC1608X09L C9 0.1uF
+  ( 1 VCC )
+  ( 2 GND )
+ )
+ ( 00000026 CAPC1608X09L C10 0.1uF
+  ( 1 VCC )
+  ( 2 GND )
+ )
+ ( 00000027 CAP_ELEC_SIZE_G C11 120uF
+  ( 1 DCBUS )
+  ( 2 PGND )
+ )
+ ( 00000028 CAP_ELEC_SIZE_G C11 470uF
+  ( 1 DCBUS )
+  ( 2 PGND )
+ )
+ ( 00000029 CAP_ELEC_SIZE_G C12 120uF
+  ( 1 DCBUS )
+  ( 2 PGND )
+ )
+ ( 00000030 CAP_ELEC_SIZE_G C12 470uF
+  ( 1 DCBUS )
+  ( 2 PGND )
+ )
+ ( 00000031 CAP_ELEC_SIZE_G C13 120uF
+  ( 1 DCBUS )
+  ( 2 PGND )
+ )
+ ( 00000032 CAP_ELEC_SIZE_G C13 470uF
+  ( 1 DCBUS )
+  ( 2 PGND )
+ )
+ ( 00000033 CAP_ELEC_SIZE_G C14 120uF
+  ( 1 DCBUS )
+  ( 2 PGND )
+ )
+ ( 00000034 CAP_ELEC_SIZE_G C14 470uF
+  ( 1 DCBUS )
+  ( 2 PGND )
+ )
+ ( 00000035 CAP_ELEC_SIZE_G C15 120uF
+  ( 1 DCBUS )
+  ( 2 PGND )
+ )
+ ( 00000036 CAP_ELEC_SIZE_G C15 470uF
+  ( 1 DCBUS )
+  ( 2 PGND )
+ )
+ ( 00000037 CAP_ELEC_SIZE_G C16 120uF
+  ( 1 DCBUS )
+  ( 2 PGND )
+ )
+ ( 00000038 CAP_ELEC_SIZE_G C16 470uF
+  ( 1 DCBUS )
+  ( 2 PGND )
+ )
+ ( 00000039 CAP_ELEC_SIZE_G C17 120uF
+  ( 1 DCBUS )
+  ( 2 PGND )
+ )
+ ( 00000040 CAP_ELEC_SIZE_G C17 470uF
+  ( 1 DCBUS )
+  ( 2 PGND )
+ )
+ ( 00000041 CAP_ELEC_SIZE_G C18 120uF
+  ( 1 DCBUS )
+  ( 2 PGND )
+ )
+ ( 00000042 CAP_ELEC_SIZE_G C18 470uF
+  ( 1 DCBUS )
+  ( 2 PGND )
+ )
+ ( 00000043 CAPC2012X09N C19 GRM21BR61H475KE51L
+  ( 1 GND )
+  ( 2 VCC )
+ )
+ ( 00000044 CAPC2012X09N C19 4.7uF
+  ( 1 GND )
+  ( 2 VCC )
+ )
+ ( 00000045 CAPC2012X09N C20 GRM21BR61H475KE51L
+  ( 1 GND )
+  ( 2 VCC )
+ )
+ ( 00000046 CAPC2012X09N C20 4.7uF
+  ( 1 GND )
+  ( 2 VCC )
+ )
+ ( 00000047 CAPC2012X09N C21 GRM21BR61H475KE51L
+  ( 1 AGND )
+  ( 2 AVCC )
+ )
+ ( 00000048 CAPC2012X09N C21 4.7uF
+  ( 1 AGND )
+  ( 2 AVCC )
+ )
+ ( 00000049 CAPC1608X09L C22 0.1uF
+  ( 1 AVCC )
+  ( 2 AGND )
+ )
+ ( 00000050 CAPC1608X09L C23 2.2¦ÌF
+  ( 1 AGND )
+  ( 2 M0_TEMP_1 )
+ )
+ ( 00000051 CAPC1608X09L C24 82pF
+  ( 1 NetC24_1 )
+  ( 2 GND )
+ )
+ ( 00000052 CAPC1608X09L C25 0.1uF
+  ( 1 DCBUS )
+  ( 2 GND )
+ )
+ ( 00000053 CAPC2012X09N C26 GRM21BR61H475KE51L
+  ( 1 PGND )
+  ( 2 DCBUS )
+ )
+ ( 00000054 CAPC2012X09N C26 4.7uF
+  ( 1 PGND )
+  ( 2 DCBUS )
+ )
+ ( 00000055 CAPC1608X09L C27 270pF
+  ( 1 NetC27_1 )
+  ( 2 GND )
+ )
+ ( 00000056 CAPC1608X09L C28 0.1uF
+  ( 1 NetC28_1 )
+  ( 2 NetC28_2 )
+ )
+ ( 00000057 CAPCP6032X28N C29 68uF
+  ( 1 5V )
+  ( 2 GND )
+ )
+ ( 00000058 CAPC1608X09L C30 0.1uF
+  ( 1 SH_A_2 )
+  ( 2 NetC30_2 )
+ )
+ ( 00000059 CAPC1608X09L C31 0.1uF
+  ( 1 SH_B_2 )
+  ( 2 NetC31_2 )
+ )
+ ( 00000060 CAPC1608X09L C32 2.2¦ÌF
+  ( 1 GND )
+  ( 2 GVDD )
+ )
+ ( 00000061 CAPC1608X09L C33 0.022¦ÌF
+  ( 1 NetC33_1 )
+  ( 2 NetC33_2 )
+ )
+ ( 00000062 CAPC1608X09L C34 0.1uF
+  ( 1 SH_C_2 )
+  ( 2 NetC34_2 )
+ )
+ ( 00000063 CAPC1608X09L C35 2.2¦ÌF
+  ( 1 AGND )
+  ( 2 NetC35_2 )
+ )
+ ( 00000064 CAPC1608X09L C36 2200pF
+  ( 1 NetC36_1 )
+  ( 2 SP1_2 )
+ )
+ ( 00000065 CAPC1608X09L C37 2.2¦ÌF
+  ( 1 AGND )
+  ( 2 NetC37_2 )
+ )
+ ( 00000066 CAPC1608X09L C38 2200pF
+  ( 1 M0_SO1_1 )
+  ( 2 AGND )
+ )
+ ( 00000067 CAPC1608X09L C39 2200pF
+  ( 1 M0_SO2_1 )
+  ( 2 AGND )
+ )
+ ( 00000068 CAPC2012X09N C40 GRM21BR61H475KE51L
+  ( 1 PGND )
+  ( 2 DCBUS )
+ )
+ ( 00000069 CAPC2012X09N C40 4.7uF
+  ( 1 PGND )
+  ( 2 DCBUS )
+ )
+ ( 00000070 CAPC1608X09L C41 0.1uF
+  ( 1 DCBUS )
+  ( 2 GND )
+ )
+ ( 00000071 CAPC1608X09L C42 2200pF
+  ( 1 NetC42_1 )
+  ( 2 SP2_2 )
+ )
+ ( 00000072 CAPC1608X09L C43 2.2¦ÌF
+  ( 1 AGND )
+  ( 2 M1_TEMP_1 )
+ )
+ ( 00000073 CAPC2012X09N C44 GRM21BR61H475KE51L
+  ( 1 PGND )
+  ( 2 DCBUS )
+ )
+ ( 00000074 CAPC2012X09N C44 4.7uF
+  ( 1 PGND )
+  ( 2 DCBUS )
+ )
+ ( 00000075 CAPC1608X09L C45 0.1uF
+  ( 1 SH_A_3 )
+  ( 2 NetC45_2 )
+ )
+ ( 00000076 CAPC1608X09L C46 0.1uF
+  ( 1 SH_B_3 )
+  ( 2 NetC46_2 )
+ )
+ ( 00000077 CAPC1608X09L C47 2.2¦ÌF
+  ( 1 GND )
+  ( 2 GVDD )
+ )
+ ( 00000078 CAPC1608X09L C48 0.022¦ÌF
+  ( 1 NetC48_1 )
+  ( 2 NetC48_2 )
+ )
+ ( 00000079 CAPC1608X09L C49 0.1uF
+  ( 1 SH_C_3 )
+  ( 2 NetC49_2 )
+ )
+ ( 00000080 CAPC1608X09L C50 2.2¦ÌF
+  ( 1 AGND )
+  ( 2 NetC50_2 )
+ )
+ ( 00000081 CAPC1608X09L C51 2200pF
+  ( 1 NetC51_1 )
+  ( 2 SP1_3 )
+ )
+ ( 00000082 CAPC1608X09L C52 2.2¦ÌF
+  ( 1 AGND )
+  ( 2 NetC52_2 )
+ )
+ ( 00000083 CAPC1608X09L C53 2200pF
+  ( 1 M1_SO1_1 )
+  ( 2 AGND )
+ )
+ ( 00000084 CAPC1608X09L C54 2200pF
+  ( 1 M1_SO2_1 )
+  ( 2 AGND )
+ )
+ ( 00000085 CAPC2012X09N C55 GRM21BR61H475KE51L
+  ( 1 PGND )
+  ( 2 DCBUS )
+ )
+ ( 00000086 CAPC2012X09N C55 4.7uF
+  ( 1 PGND )
+  ( 2 DCBUS )
+ )
+ ( 00000087 CAPC1608X09L C56 0.1uF
+  ( 1 DCBUS )
+  ( 2 GND )
+ )
+ ( 00000088 CAPC1608X09L C57 2200pF
+  ( 1 NetC57_1 )
+  ( 2 SP2_3 )
+ )
+ ( 00000089 CAPC1608X09L C58 2.2¦ÌF
+  ( 1 AGND )
+  ( 2 AUX_TEMP_1 )
+ )
+ ( 00000090 CAPC1608X09L C59 0.1uF
+  ( 1 NetC59_1 )
+  ( 2 NetC59_2 )
+ )
+ ( 00000091 CAPC2012X09N C60 GRM21BR61H475KE51L
+  ( 1 GND )
+  ( 2 DCBUS )
+ )
+ ( 00000092 CAPC2012X09N C60 4.7uF
+  ( 1 GND )
+  ( 2 DCBUS )
+ )
+ ( 00000093 CAPC1608X09L C61 2.2¦ÌF
+  ( 1 PGND )
+  ( 2 GVDD )
+ )
+ ( 00000094 CAPC1608X09L C62 2200pF
+  ( 1 NetC62_1 )
+  ( 2 NetC62_2 )
+ )
+ ( 00000095 CAPC1608X09L C63 0.1uF
+  ( 1 AVCC )
+  ( 2 AGND )
+ )
+ ( 00000096 CAPC1608X09L C64 2200pF
+  ( 1 AUX_I_1 )
+  ( 2 AGND )
+ )
+ ( 00000097 CAPC1608X09L C65 2.2¦ÌF
+  ( 1 GND )
+  ( 2 5V )
+ )
+ ( 00000098 DIOM2717X10N D1 
+  ( A GND )
+  ( K NetC28_1 )
+ )
+ ( 00000099 DIOM2717X10N D2 
+  ( A GVDD )
+  ( K NetC59_1 )
+ )
+ ( 00000100 USB_0103594-0001LF J1 
+  ( 1 NetJ1_1 )
+  ( 2 NetJ1_2 )
+  ( 3 NetJ1_3 )
+  ( 4 NetJ1_4 )
+  ( 5 GND )
+  ( SH GND )
+ )
+ ( 00000101 HDR1X5 J2 
+  ( 1 VCC )
+  ( 2 NetJ2_2 )
+  ( 3 GND )
+  ( 4 NetJ2_4 )
+  ( 5 nRST_1 )
+ )
+ ( 00000102 HDR1X18 J3 Leftheader
+  ( 1 VCC )
+  ( 2 GND )
+  ( 3 CAN_H_1 )
+  ( 4 CAN_L_1 )
+  ( 5 GND )
+  ( 6 AVCC )
+  ( 7 AGND )
+  ( 8 SPI_SCK_1 )
+  ( 9 SPI_MISO_1 )
+  ( 10 SPI_MOSI_1 )
+  ( 11 GPIO_1_1 )
+  ( 12 GPIO_2_1 )
+  ( 13 GPIO_3_1 )
+  ( 14 GPIO_4_1 )
+  ( 15 GPIO_5_1 )
+  ( 16 nRST_1 )
+  ( 17 M0_ENC_Z_1 )
+  ( 18 M1_ENC_Z_1 )
+ )
+ ( 00000103 HDR1X12 J4 Rightheader
+  ( 1 VCC )
+  ( 2 5V )
+  ( 3 M1_ENC_A_1 )
+  ( 4 M1_ENC_B_1 )
+  ( 5 M1_ENC_Z_1 )
+  ( 6 GND )
+  ( 7 VCC )
+  ( 8 5V )
+  ( 9 M0_ENC_A_1 )
+  ( 10 M0_ENC_B_1 )
+  ( 11 M0_ENC_Z_1 )
+  ( 12 GND )
+ )
+ ( 00000104 M3 Spade Hole J7 
+  ( 1 DCBUS )
+ )
+ ( 00000105 M3 Spade Hole J8 
+  ( 1 PGND )
+ )
+ ( 00000106 1868076 J9 1868076
+  ( 1 PGND )
+  ( 2 DCBUS )
+ )
+ ( 00000107 M3 Spade Hole J11 
+  ( 1 SH_A_2 )
+ )
+ ( 00000108 M3 Spade Hole J12 
+  ( 1 SH_B_2 )
+ )
+ ( 00000109 M3 Spade Hole J13 
+  ( 1 SH_C_2 )
+ )
+ ( 00000110 1704936 J14 1704936
+  ( 1 SH_C_2 )
+  ( 2 SH_B_2 )
+  ( 3 SH_A_2 )
+ )
+ ( 00000111 M3 Spade Hole J16 
+  ( 1 SH_A_3 )
+ )
+ ( 00000112 M3 Spade Hole J17 
+  ( 1 SH_B_3 )
+ )
+ ( 00000113 M3 Spade Hole J18 
+  ( 1 SH_C_3 )
+ )
+ ( 00000114 1704936 J19 1704936
+  ( 1 SH_C_3 )
+  ( 2 SH_B_3 )
+  ( 3 SH_A_3 )
+ )
+ ( 00000115 M3 Spade Hole J21 
+  ( 1 NetC59_2 )
+ )
+ ( 00000116 M3 Spade Hole J22 
+  ( 1 NetJ22_1 )
+ )
+ ( 00000117 1868076 J23 1868076
+  ( 1 NetJ22_1 )
+  ( 2 NetC59_2 )
+ )
+ ( 00000118 INDC6060X28N L2 22uH
+  ( 1 NetC28_1 )
+  ( 2 5V )
+ )
+ ( 00000119 LED-0603-GREEN LED1 Green
+  ( A VCC )
+  ( K NetLED1_K )
+ )
+ ( 00000120 NetTie_2mm NT1 
+  ( 1 GND )
+  ( 2 AGND )
+ )
+ ( 00000121 NetTie_0.25mm NT2 0.25mm
+  ( 1 SP1_2 )
+  ( 2 PGND )
+ )
+ ( 00000122 NetTie_0.25mm NT3 0.25mm
+  ( 1 SP2_2 )
+  ( 2 PGND )
+ )
+ ( 00000123 NetTie_0.25mm NT4 0.25mm
+  ( 1 SP1_3 )
+  ( 2 PGND )
+ )
+ ( 00000124 NetTie_0.25mm NT5 0.25mm
+  ( 1 SP2_3 )
+  ( 2 PGND )
+ )
+ ( 00000125 NetTie_0.25mm NT6 0.25mm
+  ( 1 NetC62_2 )
+  ( 2 PGND )
+ )
+ ( 00000126 NetTie_0.25mm NT7 0.25mm
+  ( 1 GND )
+  ( 2 PGND )
+ )
+ ( 00000127 NetTie_0.25mm NT8 0.25mm
+  ( 1 SN1_2 )
+  ( 2 SL_B_2 )
+ )
+ ( 00000128 NetTie_0.25mm NT9 0.25mm
+  ( 1 SN2_2 )
+  ( 2 SL_C_2 )
+ )
+ ( 00000129 NetTie_0.25mm NT10 0.25mm
+  ( 1 SN1_3 )
+  ( 2 SL_B_3 )
+ )
+ ( 00000130 NetTie_0.25mm NT11 0.25mm
+  ( 1 SN2_3 )
+  ( 2 SL_C_3 )
+ )
+ ( 00000131 SO8FL Q1 NTMFS5C628NLT
+  ( D DCBUS )
+  ( G NetQ1_G )
+  ( S SH_A_2 )
+ )
+ ( 00000132 SO8FL Q1 
+  ( D DCBUS )
+  ( G NetQ1_G )
+  ( S SH_A_2 )
+ )
+ ( 00000133 SO8FL_FILL Q2 NTMFS5C628NLT
+  ( D DCBUS )
+  ( G NetQ1_G )
+  ( S SH_A_2 )
+ )
+ ( 00000134 SO8FL_FILL Q2 FILL_FOOTPRINT
+  ( D DCBUS )
+  ( G NetQ1_G )
+  ( S SH_A_2 )
+ )
+ ( 00000135 SO8FL Q3 NTMFS5C628NLT
+  ( D DCBUS )
+  ( G NetQ3_G )
+  ( S SH_B_2 )
+ )
+ ( 00000136 SO8FL Q3 
+  ( D DCBUS )
+  ( G NetQ3_G )
+  ( S SH_B_2 )
+ )
+ ( 00000137 SO8FL_FILL Q4 NTMFS5C628NLT
+  ( D DCBUS )
+  ( G NetQ3_G )
+  ( S SH_B_2 )
+ )
+ ( 00000138 SO8FL_FILL Q4 FILL_FOOTPRINT
+  ( D DCBUS )
+  ( G NetQ3_G )
+  ( S SH_B_2 )
+ )
+ ( 00000139 SO8FL Q5 NTMFS5C628NLT
+  ( D DCBUS )
+  ( G NetQ5_G )
+  ( S SH_C_2 )
+ )
+ ( 00000140 SO8FL Q5 
+  ( D DCBUS )
+  ( G NetQ5_G )
+  ( S SH_C_2 )
+ )
+ ( 00000141 SO8FL_FILL Q6 NTMFS5C628NLT
+  ( D DCBUS )
+  ( G NetQ5_G )
+  ( S SH_C_2 )
+ )
+ ( 00000142 SO8FL_FILL Q6 FILL_FOOTPRINT
+  ( D DCBUS )
+  ( G NetQ5_G )
+  ( S SH_C_2 )
+ )
+ ( 00000143 SO8FL Q7 NTMFS5C628NLT
+  ( D SH_A_2 )
+  ( G NetQ7_G )
+  ( S PGND )
+ )
+ ( 00000144 SO8FL Q7 
+  ( D SH_A_2 )
+  ( G NetQ7_G )
+  ( S PGND )
+ )
+ ( 00000145 SO8FL Q8 NTMFS5C628NLT
+  ( D SH_A_2 )
+  ( G NetQ7_G )
+  ( S PGND )
+ )
+ ( 00000146 SO8FL Q8 
+  ( D SH_A_2 )
+  ( G NetQ7_G )
+  ( S PGND )
+ )
+ ( 00000147 SO8FL Q9 NTMFS5C628NLT
+  ( D SH_B_2 )
+  ( G NetQ9_G )
+  ( S SL_B_2 )
+ )
+ ( 00000148 SO8FL Q9 
+  ( D SH_B_2 )
+  ( G NetQ9_G )
+  ( S SL_B_2 )
+ )
+ ( 00000149 SO8FL Q10 NTMFS5C628NLT
+  ( D SH_B_2 )
+  ( G NetQ9_G )
+  ( S SL_B_2 )
+ )
+ ( 00000150 SO8FL Q10 
+  ( D SH_B_2 )
+  ( G NetQ9_G )
+  ( S SL_B_2 )
+ )
+ ( 00000151 SO8FL Q11 NTMFS5C628NLT
+  ( D SH_C_2 )
+  ( G NetQ11_G )
+  ( S SL_C_2 )
+ )
+ ( 00000152 SO8FL Q11 
+  ( D SH_C_2 )
+  ( G NetQ11_G )
+  ( S SL_C_2 )
+ )
+ ( 00000153 SO8FL Q12 NTMFS5C628NLT
+  ( D SH_C_2 )
+  ( G NetQ11_G )
+  ( S SL_C_2 )
+ )
+ ( 00000154 SO8FL Q12 
+  ( D SH_C_2 )
+  ( G NetQ11_G )
+  ( S SL_C_2 )
+ )
+ ( 00000155 SO8FL Q13 NTMFS5C628NLT
+  ( D DCBUS )
+  ( G NetQ13_G )
+  ( S SH_A_3 )
+ )
+ ( 00000156 SO8FL Q13 
+  ( D DCBUS )
+  ( G NetQ13_G )
+  ( S SH_A_3 )
+ )
+ ( 00000157 SO8FL_FILL Q14 NTMFS5C628NLT
+  ( D DCBUS )
+  ( G NetQ13_G )
+  ( S SH_A_3 )
+ )
+ ( 00000158 SO8FL_FILL Q14 FILL_FOOTPRINT
+  ( D DCBUS )
+  ( G NetQ13_G )
+  ( S SH_A_3 )
+ )
+ ( 00000159 SO8FL Q15 NTMFS5C628NLT
+  ( D DCBUS )
+  ( G NetQ15_G )
+  ( S SH_B_3 )
+ )
+ ( 00000160 SO8FL Q15 
+  ( D DCBUS )
+  ( G NetQ15_G )
+  ( S SH_B_3 )
+ )
+ ( 00000161 SO8FL_FILL Q16 NTMFS5C628NLT
+  ( D DCBUS )
+  ( G NetQ15_G )
+  ( S SH_B_3 )
+ )
+ ( 00000162 SO8FL_FILL Q16 FILL_FOOTPRINT
+  ( D DCBUS )
+  ( G NetQ15_G )
+  ( S SH_B_3 )
+ )
+ ( 00000163 SO8FL Q17 NTMFS5C628NLT
+  ( D DCBUS )
+  ( G NetQ17_G )
+  ( S SH_C_3 )
+ )
+ ( 00000164 SO8FL Q17 
+  ( D DCBUS )
+  ( G NetQ17_G )
+  ( S SH_C_3 )
+ )
+ ( 00000165 SO8FL_FILL Q18 NTMFS5C628NLT
+  ( D DCBUS )
+  ( G NetQ17_G )
+  ( S SH_C_3 )
+ )
+ ( 00000166 SO8FL_FILL Q18 FILL_FOOTPRINT
+  ( D DCBUS )
+  ( G NetQ17_G )
+  ( S SH_C_3 )
+ )
+ ( 00000167 SO8FL Q19 NTMFS5C628NLT
+  ( D SH_A_3 )
+  ( G NetQ19_G )
+  ( S PGND )
+ )
+ ( 00000168 SO8FL Q19 
+  ( D SH_A_3 )
+  ( G NetQ19_G )
+  ( S PGND )
+ )
+ ( 00000169 SO8FL Q20 NTMFS5C628NLT
+  ( D SH_A_3 )
+  ( G NetQ19_G )
+  ( S PGND )
+ )
+ ( 00000170 SO8FL Q20 
+  ( D SH_A_3 )
+  ( G NetQ19_G )
+  ( S PGND )
+ )
+ ( 00000171 SO8FL Q21 NTMFS5C628NLT
+  ( D SH_B_3 )
+  ( G NetQ21_G )
+  ( S SL_B_3 )
+ )
+ ( 00000172 SO8FL Q21 
+  ( D SH_B_3 )
+  ( G NetQ21_G )
+  ( S SL_B_3 )
+ )
+ ( 00000173 SO8FL Q22 NTMFS5C628NLT
+  ( D SH_B_3 )
+  ( G NetQ21_G )
+  ( S SL_B_3 )
+ )
+ ( 00000174 SO8FL Q22 
+  ( D SH_B_3 )
+  ( G NetQ21_G )
+  ( S SL_B_3 )
+ )
+ ( 00000175 SO8FL Q23 NTMFS5C628NLT
+  ( D SH_C_3 )
+  ( G NetQ23_G )
+  ( S SL_C_3 )
+ )
+ ( 00000176 SO8FL Q23 
+  ( D SH_C_3 )
+  ( G NetQ23_G )
+  ( S SL_C_3 )
+ )
+ ( 00000177 SO8FL Q24 NTMFS5C628NLT
+  ( D SH_C_3 )
+  ( G NetQ23_G )
+  ( S SL_C_3 )
+ )
+ ( 00000178 SO8FL Q24 
+  ( D SH_C_3 )
+  ( G NetQ23_G )
+  ( S SL_C_3 )
+ )
+ ( 00000179 SO8FL_FILL Q25 NTMFS5C628NLT
+  ( D DCBUS )
+  ( G NetQ25_G )
+  ( S NetC59_2 )
+ )
+ ( 00000180 SO8FL_FILL Q25 FILL_FOOTPRINT
+  ( D DCBUS )
+  ( G NetQ25_G )
+  ( S NetC59_2 )
+ )
+ ( 00000181 SO8FL Q26 NTMFS5C628NLT
+  ( D DCBUS )
+  ( G NetQ25_G )
+  ( S NetC59_2 )
+ )
+ ( 00000182 SO8FL Q26 
+  ( D DCBUS )
+  ( G NetQ25_G )
+  ( S NetC59_2 )
+ )
+ ( 00000183 SO8FL Q27 NTMFS5C628NLT
+  ( D NetC59_2 )
+  ( G NetQ27_G )
+  ( S PGND )
+ )
+ ( 00000184 SO8FL Q27 
+  ( D NetC59_2 )
+  ( G NetQ27_G )
+  ( S PGND )
+ )
+ ( 00000185 SO8FL Q28 NTMFS5C628NLT
+  ( D NetC59_2 )
+  ( G NetQ27_G )
+  ( S PGND )
+ )
+ ( 00000186 SO8FL Q28 
+  ( D NetC59_2 )
+  ( G NetQ27_G )
+  ( S PGND )
+ )
+ ( 00000187 RESC1608X55N R1 22R
+  ( 1 USB_DM_1 )
+  ( 2 NetJ1_2 )
+ )
+ ( 00000188 RESC1608X55N R2 22R
+  ( 1 NetJ2_2 )
+  ( 2 SWCLK_1 )
+ )
+ ( 00000189 RESC1608X55N R3 22R
+  ( 1 USB_DP_1 )
+  ( 2 NetJ1_3 )
+ )
+ ( 00000190 RESC1608X55N R4 22R
+  ( 1 NetJ2_4 )
+  ( 2 SWDIO_1 )
+ )
+ ( 00000191 RESC1608X55N R5 120R
+  ( 1 CAN_L_1 )
+  ( 2 CAN_H_1 )
+ )
+ ( 00000192 RESC1608X55N R6 18k
+  ( 1 VBUS_S_1 )
+  ( 2 DCBUS )
+ )
+ ( 00000193 RESC1608X55N R6 10K
+  ( 1 VBUS_S_1 )
+  ( 2 DCBUS )
+ )
+ ( 00000194 RESC1608X55N R7 1k
+  ( 1 AGND )
+  ( 2 VBUS_S_1 )
+ )
+ ( 00000195 RESC1608X55N R8 47K
+  ( 1 GND )
+  ( 2 BOOT0_1 )
+ )
+ ( 00000196 RESC1608X55N R9 3.3k
+  ( 1 M0_ENC_A_1 )
+  ( 2 VCC )
+ )
+ ( 00000197 RESC1608X55N R10 3.3k
+  ( 1 M0_ENC_B_1 )
+  ( 2 VCC )
+ )
+ ( 00000198 RESC1608X55N R11 3.3k
+  ( 1 M0_ENC_Z_1 )
+  ( 2 VCC )
+ )
+ ( 00000199 RESC1005X40N R12 10k
+  ( 1 M0_TEMP_1 )
+  ( 2 AVCC )
+ )
+ ( 00000200 RESC1608X55N R13 3.3k
+  ( 1 M0_TEMP_1 )
+  ( 2 AGND )
+ )
+ ( 00000201 RESC1608X55N R14 47K
+  ( 1 NetC24_1 )
+  ( 2 NetC27_1 )
+ )
+ ( 00000202 RESC1608X55N R15 220k
+  ( 1 NetR15_1 )
+  ( 2 GND )
+ )
+ ( 00000203 RESC1608X55N R16 18k
+  ( 1 5V )
+  ( 2 NetR16_2 )
+ )
+ ( 00000204 RESC1608X55N R17 2.2R
+  ( 1 NetQ1_G )
+  ( 2 GH_A_2 )
+ )
+ ( 00000205 RESC1608X55N R18 2.2R
+  ( 1 NetQ3_G )
+  ( 2 GH_B_2 )
+ )
+ ( 00000206 RESC1608X55N R19 2.2R
+  ( 1 NetQ5_G )
+  ( 2 GH_C_2 )
+ )
+ ( 00000207 RESC1608X55N R20 3.3k
+  ( 1 NetR16_2 )
+  ( 2 GND )
+ )
+ ( 00000208 RESC1608X55N R21 18k
+  ( 1 NetR21_1 )
+  ( 2 GND )
+ )
+ ( 00000209 RESC1608X55N R22 2.2R
+  ( 1 NetQ7_G )
+  ( 2 GL_A_2 )
+ )
+ ( 00000210 RESC1608X55N R23 2.2R
+  ( 1 NetQ9_G )
+  ( 2 GL_B_2 )
+ )
+ ( 00000211 RESC1608X55N R24 2.2R
+  ( 1 NetQ11_G )
+  ( 2 GL_C_2 )
+ )
+ ( 00000212 RESC1608X55N R25 120R
+  ( 1 SN1_2 )
+  ( 2 NetC36_1 )
+ )
+ ( 00000213 RESC1608X55N R26 22R
+  ( 1 NetR26_1 )
+  ( 2 M0_SO1_1 )
+ )
+ ( 00000214 RESC6432X09N R27 500uOhm
+  ( 1 PGND )
+  ( 2 SL_B_2 )
+ )
+ ( 00000215 RESC6432X09N R28 500uOhm
+  ( 1 PGND )
+  ( 2 SL_C_2 )
+ )
+ ( 00000216 RESC1608X55N R29 22R
+  ( 1 NetR29_1 )
+  ( 2 M0_SO2_1 )
+ )
+ ( 00000217 RESC1608X55N R30 120R
+  ( 1 SN2_2 )
+  ( 2 NetC42_1 )
+ )
+ ( 00000218 RESC1005X40N R31 10k
+  ( 1 M1_TEMP_1 )
+  ( 2 AVCC )
+ )
+ ( 00000219 RESC1608X55N R32 3.3k
+  ( 1 VCC )
+  ( 2 M1_ENC_A_1 )
+ )
+ ( 00000220 RESC1608X55N R33 3.3k
+  ( 1 VCC )
+  ( 2 M1_ENC_B_1 )
+ )
+ ( 00000221 RESC1608X55N R34 3.3k
+  ( 1 VCC )
+  ( 2 M1_ENC_Z_1 )
+ )
+ ( 00000222 RESC1608X55N R35 3.3k
+  ( 1 M1_TEMP_1 )
+  ( 2 AGND )
+ )
+ ( 00000223 RESC1608X55N R36 2.2R
+  ( 1 GH_A_3 )
+  ( 2 NetQ13_G )
+ )
+ ( 00000224 RESC1608X55N R37 2.2R
+  ( 1 GH_B_3 )
+  ( 2 NetQ15_G )
+ )
+ ( 00000225 RESC1608X55N R38 2.2R
+  ( 1 GH_C_3 )
+  ( 2 NetQ17_G )
+ )
+ ( 00000226 RESC1608X55N R39 18k
+  ( 1 NetR39_1 )
+  ( 2 GND )
+ )
+ ( 00000227 RESC1608X55N R40 2.2R
+  ( 1 GL_A_3 )
+  ( 2 NetQ19_G )
+ )
+ ( 00000228 RESC1608X55N R41 2.2R
+  ( 1 GL_B_3 )
+  ( 2 NetQ21_G )
+ )
+ ( 00000229 RESC1608X55N R42 2.2R
+  ( 1 GL_C_3 )
+  ( 2 NetQ23_G )
+ )
+ ( 00000230 RESC1608X55N R43 120R
+  ( 1 SN1_3 )
+  ( 2 NetC51_1 )
+ )
+ ( 00000231 RESC1608X55N R44 22R
+  ( 1 NetR44_1 )
+  ( 2 M1_SO1_1 )
+ )
+ ( 00000232 RESC6432X09N R45 500uOhm
+  ( 1 PGND )
+  ( 2 SL_B_3 )
+ )
+ ( 00000233 RESC6432X09N R46 500uOhm
+  ( 1 PGND )
+  ( 2 SL_C_3 )
+ )
+ ( 00000234 RESC1608X55N R47 22R
+  ( 1 NetR47_1 )
+  ( 2 M1_SO2_1 )
+ )
+ ( 00000235 RESC1608X55N R48 120R
+  ( 1 SN2_3 )
+  ( 2 NetC57_1 )
+ )
+ ( 00000236 RESC1005X40N R49 10k
+  ( 1 AUX_TEMP_1 )
+  ( 2 AVCC )
+ )
+ ( 00000237 RESC1608X55N R50 3.3k
+  ( 1 AUX_TEMP_1 )
+  ( 2 AGND )
+ )
+ ( 00000238 RESC1608X55N R51 2.2R
+  ( 1 NetR51_1 )
+  ( 2 NetQ25_G )
+ )
+ ( 00000239 RESC1608X55N R54 2.2R
+  ( 1 NetR54_1 )
+  ( 2 NetQ27_G )
+ )
+ ( 00000240 RESC1608X55N R55 120R
+  ( 1 NetC62_1 )
+  ( 2 NetJ22_1 )
+ )
+ ( 00000241 RESC6432X09N R56 500uOhm
+  ( 1 NetJ22_1 )
+  ( 2 PGND )
+ )
+ ( 00000242 RESC1608X06L R57 120R
+  ( 1 NetR57_1 )
+  ( 2 AUX_I_1 )
+ )
+ ( 00000243 RESC1608X55N R58 1k
+  ( 1 NetLED1_K )
+  ( 2 GND )
+ )
+ ( 00000244 TP-R60 TP1 TESTPOINT
+  ( 1 NetJ1_2 )
+ )
+ ( 00000245 TP-R60 TP2 TESTPOINT
+  ( 1 NetJ1_3 )
+ )
+ ( 00000246 TP-R60 TP3 TESTPOINT
+  ( 1 GND )
+ )
+ ( 00000247 TP-R30 TP4 TESTPOINT
+  ( 1 AVCC )
+ )
+ ( 00000248 TP-R30 TP5 TESTPOINT
+  ( 1 AGND )
+ )
+ ( 00000249 TP-R30 TP6 TESTPOINT
+  ( 1 M0_SO1_1 )
+ )
+ ( 00000250 TP-R30 TP7 TESTPOINT
+  ( 1 M0_SO2_1 )
+ )
+ ( 00000251 TP-R30 TP8 TESTPOINT
+  ( 1 M1_SO1_1 )
+ )
+ ( 00000252 TP-R30 TP9 TESTPOINT
+  ( 1 M1_SO2_1 )
+ )
+ ( 00000253 TP-R30 TP10 TESTPOINT
+  ( 1 AUX_I_1 )
+ )
+ ( 00000254 SOIC127P600X175-8N U1 SN65HVD232D
+  ( 1 CAN_D_1 )
+  ( 2 GND )
+  ( 3 VCC )
+  ( 4 CAN_R_1 )
+  ( 5 NetU1_5 )
+  ( 6 CAN_L_1 )
+  ( 7 CAN_H_1 )
+  ( 8 NetU1_8 )
+ )
+ ( 00000255 STM-LQFP64_N U2 
+  ( 1 VCC )
+  ( 2 M0_nCS_1 )
+  ( 3 M1_nCS_1 )
+  ( 4 M1_DC_CAL_1 )
+  ( 5 NetC3_1 )
+  ( 6 NetC2_1 )
+  ( 7 nRST_1 )
+  ( 8 M0_SO1_1 )
+  ( 9 M0_SO2_1 )
+  ( 10 M1_SO2_1 )
+  ( 11 M1_SO1_1 )
+  ( 12 AGND )
+  ( 13 AVCC )
+  ( 14 GPIO_1_1 )
+  ( 15 GPIO_2_1 )
+  ( 16 GPIO_3_1 )
+  ( 17 GPIO_4_1 )
+  ( 18 GND )
+  ( 19 VCC )
+  ( 20 M1_TEMP_1 )
+  ( 21 AUX_I_1 )
+  ( 22 VBUS_S_1 )
+  ( 23 M1_AL_1 )
+  ( 24 AUX_TEMP_1 )
+  ( 25 M0_TEMP_1 )
+  ( 26 M1_BL_1 )
+  ( 27 M1_CL_1 )
+  ( 28 GPIO_5_1 )
+  ( 29 AUX_L_1 )
+  ( 30 AUX_H_1 )
+  ( 31 NetC5_2 )
+  ( 32 VCC )
+  ( 33 EN_GATE_1 )
+  ( 34 M0_AL_1 )
+  ( 35 M0_BL_1 )
+  ( 36 M0_CL_1 )
+  ( 37 M1_AH_1 )
+  ( 38 M1_BH_1 )
+  ( 39 M1_CH_1 )
+  ( 40 M0_DC_CAL_1 )
+  ( 41 M0_AH_1 )
+  ( 42 M0_BH_1 )
+  ( 43 M0_CH_1 )
+  ( 44 USB_DM_1 )
+  ( 45 USB_DP_1 )
+  ( 46 SWDIO_1 )
+  ( 47 NetC4_2 )
+  ( 48 VCC )
+  ( 49 SWCLK_1 )
+  ( 50 M0_ENC_Z_1 )
+  ( 51 SPI_SCK_1 )
+  ( 52 SPI_MISO_1 )
+  ( 53 SPI_MOSI_1 )
+  ( 54 nFAULT_1 )
+  ( 55 M1_ENC_Z_1 )
+  ( 56 M0_ENC_A_1 )
+  ( 57 M0_ENC_B_1 )
+  ( 58 M1_ENC_A_1 )
+  ( 59 M1_ENC_B_1 )
+  ( 60 BOOT0_1 )
+  ( 61 CAN_R_1 )
+  ( 62 CAN_D_1 )
+  ( 63 GND )
+  ( 64 VCC )
+ )
+ ( 00000256 SOT223 U3 3.3V
+  ( 1 GND )
+  ( 2 VCC )
+  ( 3 5V )
+  ( 4 VCC )
+ )
+ ( 00000257 TSSOP50P810X120_HS-57N U4 
+  ( 1 NetR15_1 )
+  ( 2 NetC24_1 )
+  ( 3 NetR16_2 )
+  ( 4 NetU4_4 )
+  ( 5 NetU4_5 )
+  ( 6 nFAULT_1 )
+  ( 7 NetR21_1 )
+  ( 8 M0_nCS_1 )
+  ( 9 SPI_MOSI_1 )
+  ( 10 SPI_MISO_1 )
+  ( 11 SPI_SCK_1 )
+  ( 12 M0_DC_CAL_1 )
+  ( 13 GVDD )
+  ( 14 NetC33_1 )
+  ( 15 NetC33_2 )
+  ( 16 EN_GATE_1 )
+  ( 17 M0_AH_1 )
+  ( 18 M0_AL_1 )
+  ( 19 M0_BH_1 )
+  ( 20 M0_BL_1 )
+  ( 21 M0_CH_1 )
+  ( 22 M0_CL_1 )
+  ( 23 NetC35_2 )
+  ( 24 AVCC )
+  ( 25 NetR26_1 )
+  ( 26 NetR29_1 )
+  ( 27 NetC37_2 )
+  ( 28 AGND )
+  ( 29 DCBUS )
+  ( 30 SP2_2 )
+  ( 31 NetC42_1 )
+  ( 32 SP1_2 )
+  ( 33 NetC36_1 )
+  ( 34 SL_C_2 )
+  ( 35 GL_C_2 )
+  ( 36 SH_C_2 )
+  ( 37 GH_C_2 )
+  ( 38 NetC34_2 )
+  ( 39 SL_B_2 )
+  ( 40 GL_B_2 )
+  ( 41 SH_B_2 )
+  ( 42 GH_B_2 )
+  ( 43 NetC31_2 )
+  ( 44 PGND )
+  ( 45 GL_A_2 )
+  ( 46 SH_A_2 )
+  ( 47 GH_A_2 )
+  ( 48 NetC30_2 )
+  ( 49 VCC )
+  ( 50 NetC28_1 )
+  ( 51 NetC28_1 )
+  ( 52 NetC28_2 )
+  ( 53 DCBUS )
+  ( 54 DCBUS )
+  ( 55 NetU4_55 )
+  ( 56 NetU4_56 )
+  ( 57 GND )
+ )
+ ( 00000258 TSSOP50P810X120_HS-57N U5 
+  ( 1 NetU5_1 )
+  ( 2 NetU5_2 )
+  ( 3 NetU5_3 )
+  ( 4 NetU5_4 )
+  ( 5 NetU5_5 )
+  ( 6 nFAULT_1 )
+  ( 7 NetR39_1 )
+  ( 8 M1_nCS_1 )
+  ( 9 SPI_MOSI_1 )
+  ( 10 SPI_MISO_1 )
+  ( 11 SPI_SCK_1 )
+  ( 12 M1_DC_CAL_1 )
+  ( 13 GVDD )
+  ( 14 NetC48_1 )
+  ( 15 NetC48_2 )
+  ( 16 EN_GATE_1 )
+  ( 17 M1_AH_1 )
+  ( 18 M1_AL_1 )
+  ( 19 M1_BH_1 )
+  ( 20 M1_BL_1 )
+  ( 21 M1_CH_1 )
+  ( 22 M1_CL_1 )
+  ( 23 NetC50_2 )
+  ( 24 AVCC )
+  ( 25 NetR44_1 )
+  ( 26 NetR47_1 )
+  ( 27 NetC52_2 )
+  ( 28 AGND )
+  ( 29 DCBUS )
+  ( 30 SP2_3 )
+  ( 31 NetC57_1 )
+  ( 32 SP1_3 )
+  ( 33 NetC51_1 )
+  ( 34 SL_C_3 )
+  ( 35 GL_C_3 )
+  ( 36 SH_C_3 )
+  ( 37 GH_C_3 )
+  ( 38 NetC49_2 )
+  ( 39 SL_B_3 )
+  ( 40 GL_B_3 )
+  ( 41 SH_B_3 )
+  ( 42 GH_B_3 )
+  ( 43 NetC46_2 )
+  ( 44 PGND )
+  ( 45 GL_A_3 )
+  ( 46 SH_A_3 )
+  ( 47 GH_A_3 )
+  ( 48 NetC45_2 )
+  ( 49 VCC )
+  ( 50 NetU5_50 )
+  ( 51 NetU5_51 )
+  ( 52 NetU5_52 )
+  ( 53 NetU5_53 )
+  ( 54 NetU5_54 )
+  ( 55 GND )
+  ( 56 NetU5_56 )
+  ( 57 GND )
+ )
+ ( 00000259 SON80P400X80_HS-9N U6 
+  ( 1 GVDD )
+  ( 2 AUX_H_1 )
+  ( 3 AUX_L_1 )
+  ( 4 PGND )
+  ( 5 NetR54_1 )
+  ( 6 NetC59_2 )
+  ( 7 NetR51_1 )
+  ( 8 NetC59_1 )
+  ( 9 PGND )
+ )
+ ( 00000260 SOIC127P600X175-8N U7 
+  ( 1 NetC62_1 )
+  ( 2 AGND )
+  ( 3 AGND )
+  ( 4 NetU7_4 )
+  ( 5 NetR57_1 )
+  ( 6 AVCC )
+  ( 7 AVCC )
+  ( 8 NetC62_2 )
+ )
+ ( 00000261 SOT23-5 U8 3.3V
+  ( 1 5V )
+  ( 2 AGND )
+  ( 3 5V )
+  ( 4 AVCC )
+  ( 5 AVCC )
+ )
+ ( 00000262 DFN220P320X110-4N XT1 8 MHz
+  ( 1 NetC2_1 )
+  ( 3 NetC3_1 )
+  ( G GND )
+ )
+)

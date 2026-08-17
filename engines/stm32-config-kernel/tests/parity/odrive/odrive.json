@@ -1,0 +1,450 @@
+{
+  "schemaVersion": 1,
+  "mcu": { "part": "STM32F405RGTx" },
+  "power": { "vddMv": 3300 },
+  "clock": {
+    "sources": {
+      "HSE": { "kind": "crystal", "freqHz": 8000000 }
+    },
+    "assignments": {
+      "APB1CLKDivider": "RCC_HCLK_DIV4",
+      "APB2CLKDivider": "RCC_HCLK_DIV2",
+      "PLLM": 4,
+      "PLLN": 168,
+      "PLLP": "RCC_PLLP_DIV2",
+      "PLLQ": 7,
+      "PLLSourceVirtual": "RCC_PLLSOURCE_HSE",
+      "SYSCLKSource": "RCC_SYSCLKSOURCE_PLLCLK"
+    }
+  },
+  "peripherals": {
+    "ADC1": {
+      "mode": ["IN4", "IN5", "IN6", "IN10", "IN11", "IN12", "IN13", "IN15"],
+      "params": {
+        "ClockPrescaler": "ADC_CLOCK_SYNC_PCLK_DIV4",
+        "Resolution": "ADC_RESOLUTION_12B",
+        "DataAlign": "ADC_DATAALIGN_RIGHT",
+        "ScanConvMode": "DISABLE",
+        "ContinuousConvMode": "DISABLE",
+        "DiscontinuousConvMode": "DISABLE",
+        "DMAContinuousRequests": "DISABLE",
+        "EOCSelection": "ADC_EOC_SINGLE_CONV",
+        "EnableAnalogWatchDog": false,
+        "NbrOfConversion": 1,
+        "ExternalTrigConv": "ADC_SOFTWARE_START",
+        "ExternalTrigConvEdge": "ADC_EXTERNALTRIGCONVEDGE_NONE",
+        "InjNumberOfConversion": 1,
+        "InjectedConvMode": "None",
+        "ExternalTrigInjecConv": "ADC_EXTERNALTRIGINJECCONV_T1_TRGO",
+        "ExternalTrigInjecConvEdge": "ADC_EXTERNALTRIGINJECCONVEDGE_RISING",
+        "Channel-ChannelRegularConversion": "ADC_CHANNEL_6",
+        "Rank-ChannelRegularConversion": 1,
+        "SamplingTime-ChannelRegularConversion": "ADC_SAMPLETIME_3CYCLES",
+        "Channel-ChannelInjectedConversion": "ADC_CHANNEL_6",
+        "InjectedRank-ChannelInjectedConversion": 1,
+        "SamplingTime-ChannelInjectedConversion": "ADC_SAMPLETIME_3CYCLES",
+        "InjectedOffset-ChannelInjectedConversion": 0
+      },
+      "pins": {
+        "IN4": "PA4",
+        "IN5": "PA5",
+        "IN6": "PA6",
+        "IN10": "PC0",
+        "IN11": "PC1",
+        "IN12": "PC2",
+        "IN13": "PC3",
+        "IN15": "PC5"
+      },
+      "nvic": { "enabled": true, "preemptionPriority": 5, "subPriority": 0 },
+      "dma": {
+        "ADC1": {
+          "instance": "DMA2_Stream0",
+          "direction": "DMA_PERIPH_TO_MEMORY",
+          "periphInc": "DMA_PINC_DISABLE",
+          "memInc": "DMA_MINC_ENABLE",
+          "periphDataAlignment": "DMA_PDATAALIGN_HALFWORD",
+          "memDataAlignment": "DMA_MDATAALIGN_HALFWORD",
+          "mode": "DMA_CIRCULAR",
+          "priority": "DMA_PRIORITY_LOW",
+          "fifoMode": "DMA_FIFOMODE_DISABLE",
+          "nvic": { "enabled": true, "preemptionPriority": 5, "subPriority": 0 },
+          "generateHandler": false
+        }
+      }
+    },
+    "ADC2": {
+      "mode": ["IN4", "IN5", "IN6", "IN10", "IN11", "IN12", "IN13", "IN15"],
+      "params": {
+        "ClockPrescaler": "ADC_CLOCK_SYNC_PCLK_DIV4",
+        "Resolution": "ADC_RESOLUTION_12B",
+        "DataAlign": "ADC_DATAALIGN_RIGHT",
+        "ScanConvMode": "DISABLE",
+        "ContinuousConvMode": "DISABLE",
+        "DiscontinuousConvMode": "DISABLE",
+        "DMAContinuousRequests": "DISABLE",
+        "EOCSelection": "ADC_EOC_SINGLE_CONV",
+        "EnableAnalogWatchDog": false,
+        "NbrOfConversion": 1,
+        "ExternalTrigConv": "ADC_EXTERNALTRIGCONV_T8_TRGO",
+        "ExternalTrigConvEdge": "ADC_EXTERNALTRIGCONVEDGE_RISING",
+        "InjNumberOfConversion": 1,
+        "InjectedConvMode": "None",
+        "ExternalTrigInjecConv": "ADC_EXTERNALTRIGINJECCONV_T1_TRGO",
+        "ExternalTrigInjecConvEdge": "ADC_EXTERNALTRIGINJECCONVEDGE_RISING",
+        "Channel-ChannelRegularConversion": "ADC_CHANNEL_13",
+        "Rank-ChannelRegularConversion": 1,
+        "SamplingTime-ChannelRegularConversion": "ADC_SAMPLETIME_3CYCLES",
+        "Channel-ChannelInjectedConversion": "ADC_CHANNEL_10",
+        "InjectedRank-ChannelInjectedConversion": 1,
+        "SamplingTime-ChannelInjectedConversion": "ADC_SAMPLETIME_3CYCLES",
+        "InjectedOffset-ChannelInjectedConversion": 0
+      },
+      "pins": {
+        "IN4": "PA4",
+        "IN5": "PA5",
+        "IN6": "PA6",
+        "IN10": "PC0",
+        "IN11": "PC1",
+        "IN12": "PC2",
+        "IN13": "PC3",
+        "IN15": "PC5"
+      }
+    },
+    "ADC3": {
+      "mode": ["IN10", "IN11", "IN12", "IN13"],
+      "params": {
+        "ClockPrescaler": "ADC_CLOCK_SYNC_PCLK_DIV4",
+        "Resolution": "ADC_RESOLUTION_12B",
+        "DataAlign": "ADC_DATAALIGN_RIGHT",
+        "ScanConvMode": "DISABLE",
+        "ContinuousConvMode": "DISABLE",
+        "DiscontinuousConvMode": "DISABLE",
+        "DMAContinuousRequests": "DISABLE",
+        "EOCSelection": "ADC_EOC_SINGLE_CONV",
+        "EnableAnalogWatchDog": false,
+        "NbrOfConversion": 1,
+        "ExternalTrigConv": "ADC_EXTERNALTRIGCONV_T8_TRGO",
+        "ExternalTrigConvEdge": "ADC_EXTERNALTRIGCONVEDGE_RISING",
+        "InjNumberOfConversion": 1,
+        "InjectedConvMode": "None",
+        "ExternalTrigInjecConv": "ADC_EXTERNALTRIGINJECCONV_T1_TRGO",
+        "ExternalTrigInjecConvEdge": "ADC_EXTERNALTRIGINJECCONVEDGE_RISING",
+        "Channel-ChannelRegularConversion": "ADC_CHANNEL_12",
+        "Rank-ChannelRegularConversion": 1,
+        "SamplingTime-ChannelRegularConversion": "ADC_SAMPLETIME_3CYCLES",
+        "Channel-ChannelInjectedConversion": "ADC_CHANNEL_11",
+        "InjectedRank-ChannelInjectedConversion": 1,
+        "SamplingTime-ChannelInjectedConversion": "ADC_SAMPLETIME_3CYCLES",
+        "InjectedOffset-ChannelInjectedConversion": 0
+      },
+      "pins": {
+        "IN10": "PC0",
+        "IN11": "PC1",
+        "IN12": "PC2",
+        "IN13": "PC3"
+      }
+    },
+    "CAN1": {
+      "mode": "CAN_Activate",
+      "params": {
+        "Prescaler": 7,
+        "BS1": "CAN_BS1_6TQ",
+        "BS2": "CAN_BS2_5TQ"
+      },
+      "pins": { "RX": "PB8", "TX": "PB9" },
+      "interrupts": {
+        "CAN1_TX_IRQn":  { "enabled": true, "preemptionPriority": 6, "subPriority": 0 },
+        "CAN1_RX0_IRQn": { "enabled": true, "preemptionPriority": 6, "subPriority": 0 },
+        "CAN1_RX1_IRQn": { "enabled": true, "preemptionPriority": 6, "subPriority": 0 },
+        "CAN1_SCE_IRQn": { "enabled": true, "preemptionPriority": 6, "subPriority": 0 }
+      }
+    },
+    "SPI3": {
+      "mode": "Full_Duplex_Master",
+      "params": {
+        "Mode": "SPI_MODE_MASTER",
+        "Direction": "SPI_DIRECTION_2LINES",
+        "DataSize": "SPI_DATASIZE_16BIT",
+        "CLKPhase": "SPI_PHASE_2EDGE",
+        "BaudRatePrescaler": "SPI_BAUDRATEPRESCALER_16",
+        "FirstBit": "SPI_FIRSTBIT_MSB"
+      },
+      "pins": { "SCK": "PC10", "MISO": "PC11", "MOSI": "PC12" },
+      "nvic": { "enabled": true, "preemptionPriority": 5, "subPriority": 0 },
+      "dma": {
+        "SPI3_RX": {
+          "instance": "DMA1_Stream0",
+          "direction": "DMA_PERIPH_TO_MEMORY",
+          "periphInc": "DMA_PINC_DISABLE",
+          "memInc": "DMA_MINC_ENABLE",
+          "periphDataAlignment": "DMA_PDATAALIGN_HALFWORD",
+          "memDataAlignment": "DMA_MDATAALIGN_HALFWORD",
+          "mode": "DMA_NORMAL",
+          "priority": "DMA_PRIORITY_MEDIUM",
+          "fifoMode": "DMA_FIFOMODE_DISABLE",
+          "nvic": { "enabled": true, "preemptionPriority": 5, "subPriority": 0 }
+        },
+        "SPI3_TX": {
+          "instance": "DMA1_Stream5",
+          "direction": "DMA_MEMORY_TO_PERIPH",
+          "periphInc": "DMA_PINC_DISABLE",
+          "memInc": "DMA_MINC_ENABLE",
+          "periphDataAlignment": "DMA_PDATAALIGN_HALFWORD",
+          "memDataAlignment": "DMA_MDATAALIGN_HALFWORD",
+          "mode": "DMA_NORMAL",
+          "priority": "DMA_PRIORITY_MEDIUM",
+          "fifoMode": "DMA_FIFOMODE_DISABLE",
+          "nvic": { "enabled": true, "preemptionPriority": 5, "subPriority": 0 }
+        }
+      }
+    },
+    "TIM1": {
+      "mode": [
+        "Internal",
+        "PWM Generation1 CH1 CH1N",
+        "PWM Generation2 CH2 CH2N",
+        "PWM Generation3 CH3 CH3N",
+        "Output Compare4 No Output"
+      ],
+      "params": {
+        "CounterMode": "TIM_COUNTERMODE_CENTERALIGNED3",
+        "Period": "TIM_1_8_PERIOD_CLOCKS",
+        "RepetitionCounter": "TIM_1_8_RCR",
+        "DeadTime": "TIM_1_8_DEADTIME_CLOCKS",
+        "OffStateRunMode": "TIM_OSSR_ENABLE",
+        "OffStateIDLEMode": "TIM_OSSI_ENABLE",
+        "TIM_MasterOutputTrigger": "TIM_TRGO_UPDATE",
+        "OCMode_PWM-CH1": "TIM_OCMODE_PWM2",
+        "OCMode_PWM-CH2": "TIM_OCMODE_PWM2",
+        "OCMode_PWM-CH3": "TIM_OCMODE_PWM2",
+        "OCNPolarity-CH1": "TIM_OCNPOLARITY_HIGH",
+        "OCNPolarity-CH2": "TIM_OCNPOLARITY_HIGH",
+        "OCNPolarity-CH3": "TIM_OCNPOLARITY_HIGH"
+      },
+      "pins": {
+        "CH1": "PA8",
+        "CH2": "PA9",
+        "CH3": "PA10",
+        "CH1N": "PB13",
+        "CH2N": "PB14",
+        "CH3N": "PB15"
+      },
+      "interrupts": {
+        "TIM1_UP_TIM10_IRQn": {
+          "enabled": true, "preemptionPriority": 5, "subPriority": 0,
+          "generateHandler": false
+        }
+      }
+    },
+    "TIM13": {
+      "mode": "Enable_Timer",
+      "params": {
+        "Period": "(2 * TIM_1_8_PERIOD_CLOCKS * (TIM_1_8_RCR+1)) * (TIM_APB1_CLOCK_HZ / TIM_1_8_CLOCK_HZ)"
+      }
+    },
+    "TIM2": {
+      "mode": ["PWM Generation3 CH3", "PWM Generation4 CH4"],
+      "params": {
+        "CounterMode": "TIM_COUNTERMODE_CENTERALIGNED3",
+        "Period": "TIM_APB1_PERIOD_CLOCKS",
+        "OCMode_PWM-CH3": "TIM_OCMODE_PWM2",
+        "OCMode_PWM-CH4": "TIM_OCMODE_PWM2",
+        "OCPolarity-CH3": "TIM_OCPOLARITY_LOW",
+        "Pulse-CH4": "TIM_APB1_PERIOD_CLOCKS+1"
+      },
+      "pins": { "CH3": "PB10", "CH4": "PB11" }
+    },
+    "TIM3": {
+      "mode": "Encoder_Interface",
+      "params": {
+        "EncoderMode": "TIM_ENCODERMODE_TI12",
+        "IC1Polarity": "TIM_ICPOLARITY_RISING",
+        "IC2Polarity": "TIM_ICPOLARITY_RISING",
+        "IC1Filter": 4,
+        "IC2Filter": 4,
+        "Period": "0xffff"
+      },
+      "pins": { "CH1": "PB4", "CH2": "PB5" }
+    },
+    "TIM4": {
+      "mode": "Encoder_Interface",
+      "params": {
+        "EncoderMode": "TIM_ENCODERMODE_TI12",
+        "IC1Polarity": "TIM_ICPOLARITY_RISING",
+        "IC2Polarity": "TIM_ICPOLARITY_RISING",
+        "IC1Filter": 4,
+        "IC2Filter": 4,
+        "Period": "0xffff"
+      },
+      "pins": { "CH1": "PB6", "CH2": "PB7" }
+    },
+    "TIM5": {
+      "mode": ["Input_Capture3_from_TI3", "Input_Capture4_from_TI4"],
+      "params": {
+        "Period": "0xFFFFFFFF",
+        "ICFilter-CH3": 15,
+        "ICFilter-CH4": 15,
+        "ICPolarity-CH3": "TIM_INPUTCHANNELPOLARITY_BOTHEDGE",
+        "ICPolarity-CH4": "TIM_INPUTCHANNELPOLARITY_BOTHEDGE"
+      },
+      "pins": { "CH3": "PA2", "CH4": "PA3" },
+      "nvic": { "enabled": true, "preemptionPriority": 5, "subPriority": 0 }
+    },
+    "TIM8": {
+      "mode": [
+        "PWM Generation1 CH1 CH1N",
+        "PWM Generation2 CH2 CH2N",
+        "PWM Generation3 CH3 CH3N"
+      ],
+      "params": {
+        "CounterMode": "TIM_COUNTERMODE_CENTERALIGNED3",
+        "Period": "TIM_1_8_PERIOD_CLOCKS",
+        "RepetitionCounter": "TIM_1_8_RCR",
+        "DeadTime": "TIM_1_8_DEADTIME_CLOCKS",
+        "OffStateRunMode": "TIM_OSSR_ENABLE",
+        "OffStateIDLEMode": "TIM_OSSI_ENABLE",
+        "TIM_MasterOutputTrigger": "TIM_TRGO_UPDATE",
+        "OCMode_PWM-CH1": "TIM_OCMODE_PWM2",
+        "OCMode_PWM-CH2": "TIM_OCMODE_PWM2",
+        "OCMode_PWM-CH3": "TIM_OCMODE_PWM2"
+      },
+      "pins": {
+        "CH1": "PC6",
+        "CH2": "PC7",
+        "CH3": "PC8",
+        "CH1N": "PA7",
+        "CH2N": "PB0",
+        "CH3N": "PB1"
+      },
+      "interrupts": {
+        "TIM8_UP_TIM13_IRQn": {
+          "enabled": true, "preemptionPriority": 5, "subPriority": 0,
+          "generateHandler": false
+        },
+        "TIM8_TRG_COM_TIM14_IRQn": {
+          "enabled": true, "preemptionPriority": 0, "subPriority": 0
+        }
+      }
+    },
+    "UART4": {
+      "mode": "Asynchronous",
+      "pins": { "TX": "PA0", "RX": "PA1" },
+      "nvic": { "enabled": true, "preemptionPriority": 5, "subPriority": 0 },
+      "dma": {
+        "UART4_RX": {
+          "instance": "DMA1_Stream2",
+          "direction": "DMA_PERIPH_TO_MEMORY",
+          "periphInc": "DMA_PINC_DISABLE",
+          "memInc": "DMA_MINC_ENABLE",
+          "periphDataAlignment": "DMA_PDATAALIGN_BYTE",
+          "memDataAlignment": "DMA_MDATAALIGN_BYTE",
+          "mode": "DMA_CIRCULAR",
+          "priority": "DMA_PRIORITY_LOW",
+          "nvic": { "enabled": true, "preemptionPriority": 5, "subPriority": 0 },
+          "fifoMode": "DMA_FIFOMODE_DISABLE"
+        },
+        "UART4_TX": {
+          "instance": "DMA1_Stream4",
+          "direction": "DMA_MEMORY_TO_PERIPH",
+          "periphInc": "DMA_PINC_DISABLE",
+          "memInc": "DMA_MINC_ENABLE",
+          "periphDataAlignment": "DMA_PDATAALIGN_BYTE",
+          "memDataAlignment": "DMA_MDATAALIGN_BYTE",
+          "mode": "DMA_NORMAL",
+          "priority": "DMA_PRIORITY_LOW",
+          "nvic": { "enabled": true, "preemptionPriority": 5, "subPriority": 0 },
+          "fifoMode": "DMA_FIFOMODE_DISABLE"
+        }
+      }
+    },
+    "USB_OTG_FS": {
+      "mode": "Device_Only",
+      "params": {
+        "vbus_sensing_enable": "DISABLE"
+      },
+      "pins": { "DM": "PA11", "DP": "PA12" },
+      "interrupts": {
+        "OTG_FS_IRQn": {
+          "enabled": true, "preemptionPriority": 5, "subPriority": 0,
+          "generateHandler": false
+        }
+      }
+    }
+  },
+  "gpio": {
+    "PA0": { "mode": "exti", "pull": "down", "label": "GPIO_1", "sharedWith": ["UART4_TX"] },
+    "PA1": { "mode": "input", "pull": "none", "label": "GPIO_2", "sharedWith": ["UART4_RX"] },
+    "PA15": { "mode": "input", "label": "GPIO_7" },
+    "PB2": { "mode": "input", "label": "GPIO_6" },
+    "PB3": { "mode": "input", "label": "GPIO_8" },
+    "PB12": { "mode": "output", "label": "EN_GATE" },
+    "PC4": { "mode": "input", "label": "GPIO_5" },
+    "PC9": { "mode": "input", "label": "M0_ENC_Z" },
+    "PC13": { "mode": "output", "initHigh": true, "label": "M0_nCS" },
+    "PC14": { "mode": "output", "initHigh": true, "label": "M1_nCS" },
+    "PC15": { "mode": "input", "label": "M1_ENC_Z" },
+    "PD2": { "mode": "input", "pull": "up", "label": "nFAULT" }
+  },
+  "debug": "swd",
+  "nvic": {
+    "priorityGroup": "NVIC_PRIORITYGROUP_4",
+    "systemHandlers": {
+      "PendSV": { "enabled": true, "preemptionPriority": 15, "subPriority": 0 },
+      "SysTick": { "enabled": true, "preemptionPriority": 15, "subPriority": 0 }
+    }
+  },
+  "middleware": {
+    "freertos": {
+      "api": "CMSIS_V1",
+      "heapSize": 65536,
+      "tasks": [
+        {
+          "name": "defaultTask",
+          "priority": 0,
+          "stackSize": 256,
+          "entryFunction": "StartDefaultTask",
+          "codeGeneration": "Default",
+          "parameter": "NULL",
+          "allocation": "Dynamic",
+          "buffer": "NULL",
+          "controlBlock": "NULL"
+        }
+      ],
+      "config": {
+        "configCHECK_FOR_STACK_OVERFLOW": 1,
+        "configUSE_IDLE_HOOK": 1,
+        "INCLUDE_vTaskDelayUntil": 1,
+        "INCLUDE_uxTaskGetStackHighWaterMark": 1
+      }
+    },
+    "usbDevice": {
+      "class": "CDC",
+      "vid": "0x1209",
+      "pid": "0x0D32",
+      "manufacturerString": "ODrive Robotics",
+      "productString": "ODrive v3.3",
+      "serialNumberString": "000000000001",
+      "appRxDataSize": 64,
+      "appTxDataSize": 64
+    }
+  },
+  "project": {
+    "name": "odrive_cubemx_demo",
+    "minHeapSize": "0x3C00",
+    "minStackSize": "0x800",
+    "halTimebase": "TIM14",
+    "initOrder": [
+      "ADC1", "ADC2", "CAN1", "TIM1", "TIM8", "TIM3", "TIM4",
+      "SPI3", "ADC3", "TIM2", "UART4", "TIM5", "TIM13"
+    ],
+    "userConstants": {
+      "TIM_1_8_CLOCK_HZ": "168000000",
+      "TIM_1_8_PERIOD_CLOCKS": "3500",
+      "TIM_1_8_DEADTIME_CLOCKS": "20",
+      "TIM_APB1_CLOCK_HZ": "84000000",
+      "TIM_APB1_PERIOD_CLOCKS": "4096",
+      "TIM_APB1_DEADTIME_CLOCKS": "40",
+      "TIM_1_8_RCR": "2"
+    }
+  }
+}

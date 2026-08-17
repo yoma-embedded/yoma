@@ -1,0 +1,300 @@
+( { EESchema Netlist Version 1.1 created  2026-08-05T16:22:01 }
+ ( /078b6bfe-0bb0-4274-9f05-6644f3ee0f40 LED_SMD:LED_0402_1005Metric  D11 LED
+  (    1 Net-(D11-K) )
+  (    2 GND )
+ )
+ ( /0c43537f-1843-4ca7-92ee-0f1f28a2dc7b Capacitor_SMD:C_0402_1005Metric  C20 100n
+  (    1 5V )
+  (    2 GND )
+ )
+ ( /151513e3-474d-4247-ab82-83313c8ef286 L7805CV:TO255P1040X460X1968-3  U4 L7805CV
+  (    1 9V )
+  (    2 GND )
+  (    3 5V )
+ )
+ ( /1e7d9b81-bafb-42e1-b2fa-2e399cd0a717 Resistor_SMD:R_0402_1005Metric  R05 1k
+  (    1 /LED105 )
+  (    2 Net-(D15-K) )
+ )
+ ( /22de8ad9-f44f-424c-960f-e5203a43231a Connector_AMASS:AMASS_XT30U-F_1x02_P5.0mm_Vertical  JB1 XT30
+  (    1 VBAT )
+  (    2 GND )
+ )
+ ( /23d993e1-5517-473b-94f0-b3581398f957 LED_SMD:LED_0402_1005Metric  D13 LED
+  (    1 Net-(D13-K) )
+  (    2 GND )
+ )
+ ( /2a4ec4f7-5494-4efd-9d3d-4481b1ee8d4c TerminalBlock:TerminalBlock_Xinya_XY308-2.54-2P_1x02_P2.54mm_Horizontal  M1 Motor
+  (    1 Net-(M1-Pin_1) )
+  (    2 Net-(M1-Pin_2) )
+ )
+ ( /2fbe73a3-6d9e-4efc-8c1e-52aac57cdc9d MountingHole:MountingHole_3.2mm_M3  H4 M3
+ )
+ ( /31fcf167-edd6-4094-9612-914ec9d7e099 Resistor_SMD:R_0402_1005Metric  R04 1k
+  (    1 /LED104 )
+  (    2 Net-(D14-K) )
+ )
+ ( /3fd86cc5-8ff3-4430-8e6f-8be8a5fe3315 Capacitor_SMD:C_0402_1005Metric  C05 100n
+  (    1 9V )
+  (    2 GND )
+ )
+ ( /4028749e-cac2-424b-b1ff-62c2abc632c8 Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical  S1 Servo
+  (    1 /S101 )
+  (    2 5V )
+  (    3 GND )
+ )
+ ( /422113a0-80d2-499a-a2c7-a02dbc05e22c Capacitor_SMD:C_0402_1005Metric  C18 100n
+  (    1 GND )
+  (    2 5V )
+ )
+ ( /4b8e27e7-a67a-4298-bcf1-66e7f5658b3e Capacitor_SMD:C_0402_1005Metric  C13 100n
+  (    1 5V )
+  (    2 GND )
+ )
+ ( /4bfa61b0-bcdf-431b-a581-b2a452d3e4b3 TerminalBlock:TerminalBlock_Xinya_XY308-2.54-3P_1x03_P2.54mm_Horizontal  D2 Distance_Sensor
+  (    1 GND )
+  (    2 /D102 )
+  (    3 5V )
+ )
+ ( /532e5ba4-8fb9-4f6c-abf3-c046aeafeaf6 MountingHole:MountingHole_3.2mm_M3  H2 M3
+ )
+ ( /5546ca51-4902-41ab-abd0-ba83c575adca Capacitor_SMD:C_0402_1005Metric  C09 100n
+  (    1 5V )
+  (    2 GND )
+ )
+ ( /5639e3ce-d917-4dc5-99d8-f2e91f28b597 Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical  T1 On/Off
+  (    1 unconnected-(T1-Pin_1-Pad1) )
+  (    2 VBAT )
+  (    3 9V )
+ )
+ ( /603ca73d-b625-4cd9-85b5-4445d3db1862 Capacitor_SMD:C_0402_1005Metric  C02 100n
+  (    1 GND )
+  (    2 5V )
+ )
+ ( /6078e572-7dd4-4e86-a49a-2e3fa053ef8b TerminalBlock:TerminalBlock_Xinya_XY308-2.54-3P_1x03_P2.54mm_Horizontal  D4 Distance_Sensor
+  (    1 GND )
+  (    2 /D104 )
+  (    3 5V )
+ )
+ ( /6cfacde3-7007-48ff-97fb-ae3db65ce46c LED_SMD:LED_0402_1005Metric  D17 LED
+  (    1 Net-(D17-K) )
+  (    2 GND )
+ )
+ ( /707e7f54-720a-46cb-a177-9851b94b759f LED_SMD:LED_0402_1005Metric  D16 LED
+  (    1 Net-(D16-K) )
+  (    2 GND )
+ )
+ ( /72eb9f97-9f52-4e6c-9c68-49d0677c355d Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical  S2 Servo
+  (    1 /S102 )
+  (    2 5V )
+  (    3 GND )
+ )
+ ( /730d3c48-81c5-444e-bc26-23f145e55d11 Capacitor_SMD:C_0402_1005Metric  C19 100n
+  (    1 GND )
+  (    2 5V )
+ )
+ ( /8917e450-56be-4bab-b50e-6881be5cd3ae MountingHole:MountingHole_3.2mm_M3  H3 M3
+ )
+ ( /8d8e6285-a891-4938-afbb-3cd2020bbfdf TerminalBlock:TerminalBlock_Xinya_XY308-2.54-3P_1x03_P2.54mm_Horizontal  D1 Distance_Sensor
+  (    1 GND )
+  (    2 /D101 )
+  (    3 5V )
+ )
+ ( /8eba8954-5cbe-473f-8619-28f27daa83ab LED_SMD:LED_0402_1005Metric  D14 LED
+  (    1 Net-(D14-K) )
+  (    2 GND )
+ )
+ ( /92726b04-1af2-4e37-80ab-951523e61301 Capacitor_SMD:C_0402_1005Metric  C16 100n
+  (    1 GND )
+  (    2 VBAT )
+ )
+ ( /93e48ea3-5141-49a5-a572-c18d0b1a4c6c Resistor_SMD:R_0402_1005Metric  R02 1k
+  (    1 /LED102 )
+  (    2 Net-(D12-K) )
+ )
+ ( /9966f721-7ab9-4211-b76d-b822ca3447f7 Capacitor_SMD:C_0402_1005Metric  C03 100n
+  (    1 9V )
+  (    2 GND )
+ )
+ ( /9a47ea81-0b87-4111-84fe-40599a24aa01 Capacitor_SMD:C_0402_1005Metric  C11 100n
+  (    1 5V )
+  (    2 GND )
+ )
+ ( /9bf3b63f-7d97-4a04-8ba1-2ebcfa47c3d7 Capacitor_SMD:C_1210_3225Metric  C06 47u
+  (    1 9V )
+  (    2 GND )
+ )
+ ( /9cf2b474-663e-4290-83b3-761b6503a0c4 DRV8871DDAR:VREG_LM5017MR_NOPB  U2 DRV8871DDAR
+  (    1 GND )
+  (    2 /M104 )
+  (    3 /M103 )
+  (    4 Net-(U2-ILIM) )
+  (    5 9V )
+  (    6 Net-(M2-Pin_1) )
+  (    7 GND )
+  (    8 Net-(M2-Pin_2) )
+  (    9 GND )
+ )
+ ( /a036c7e7-e7bc-41fb-84f5-2f6ca7a656fa MountingHole:MountingHole_3.2mm_M3  H1 M3
+ )
+ ( /aa3ff598-df39-449a-8650-d1e90c4255b2 Capacitor_SMD:C_0402_1005Metric  C07 100n
+  (    1 5V )
+  (    2 GND )
+ )
+ ( /ab648266-ee11-445e-8f9f-60baee15291b Resistor_SMD:R_0402_1005Metric  R03 1k
+  (    1 /LED103 )
+  (    2 Net-(D13-K) )
+ )
+ ( /b6f853a4-581e-4cc8-8b2f-a7e8a7d3a4be Resistor_SMD:R_0402_1005Metric  R08 30K
+  (    1 GND )
+  (    2 Net-(U1-ILIM) )
+ )
+ ( /b8efd0a0-dc53-438f-8012-674788f759f2 Capacitor_SMD:C_1210_3225Metric  C14 47u
+  (    1 GND )
+  (    2 5V )
+ )
+ ( /bbe8225f-a829-4bd0-8fe9-c791c99eacf9 Capacitor_SMD:C_0402_1005Metric  C15 100n
+  (    1 5V )
+  (    2 GND )
+ )
+ ( /bed58ef2-b40b-4648-a837-2fc94f604485 Capacitor_SMD:C_0402_1005Metric  C01 330n
+  (    1 GND )
+  (    2 9V )
+ )
+ ( /c02483e8-2f63-48d2-bcb9-3d4b108f8e43 TerminalBlock:TerminalBlock_Xinya_XY308-2.54-3P_1x03_P2.54mm_Horizontal  D3 Distance_Sensor
+  (    1 GND )
+  (    2 /D103 )
+  (    3 5V )
+ )
+ ( /c10dbcea-3859-4310-8057-d4cc58840619 TerminalBlock:TerminalBlock_Xinya_XY308-2.54-3P_1x03_P2.54mm_Horizontal  L1 Line_Sensor
+  (    1 GND )
+  (    2 5V )
+  (    3 /L101 )
+ )
+ ( /c289f2b7-68c6-49ae-ad0f-5c33f30bb399 LED_SMD:LED_0402_1005Metric  D15 LED
+  (    1 Net-(D15-K) )
+  (    2 GND )
+ )
+ ( /c84bee2d-6410-4503-adc6-273149d7c398 TerminalBlock:TerminalBlock_Xinya_XY308-2.54-2P_1x02_P2.54mm_Horizontal  M2 Motor
+  (    1 Net-(M2-Pin_1) )
+  (    2 Net-(M2-Pin_2) )
+ )
+ ( /cc1af963-bd76-4c6c-a4b3-1e38e8d34a9d 210-4MS:210-4MS  SW1 210-4MS
+  (    1 /SW101 )
+  (    2 /SW102 )
+  (    3 /SW103 )
+  (    4 /SW104 )
+  (    5 GND )
+  (    6 GND )
+  (    7 GND )
+  (    8 GND )
+ )
+ ( /d461a695-0465-4bba-8dc3-734dbe50954d Resistor_SMD:R_0402_1005Metric  R07 1k
+  (    1 /LED107 )
+  (    2 Net-(D17-K) )
+ )
+ ( /d4dea653-9b7b-4bf5-8d43-d4742d5c5d11 Resistor_SMD:R_0402_1005Metric  R06 1k
+  (    1 /LED106 )
+  (    2 Net-(D16-K) )
+ )
+ ( /d6e5c695-b36e-4dc5-8e6f-1212352db933 DRV8871DDAR:VREG_LM5017MR_NOPB  U1 DRV8871DDAR
+  (    1 GND )
+  (    2 /M102 )
+  (    3 /M101 )
+  (    4 Net-(U1-ILIM) )
+  (    5 9V )
+  (    6 Net-(M1-Pin_1) )
+  (    7 GND )
+  (    8 Net-(M1-Pin_2) )
+  (    9 GND )
+ )
+ ( /d809411d-b19f-4f7f-9c73-43f9c0796438 Capacitor_SMD:C_0402_1005Metric  C08 100n
+  (    1 5V )
+  (    2 GND )
+ )
+ ( /db1fcc1c-5e73-4d29-ab0b-f3bfff9b37a0 Resistor_SMD:R_0402_1005Metric  R09 30K
+  (    1 GND )
+  (    2 Net-(U2-ILIM) )
+ )
+ ( /db2239f7-adb6-452c-aa94-9770758c5bad TerminalBlock:TerminalBlock_Xinya_XY308-2.54-3P_1x03_P2.54mm_Horizontal  D5 Distance_Sensor
+  (    1 GND )
+  (    2 /D105 )
+  (    3 5V )
+ )
+ ( /e2211f0b-962a-4be9-8099-97116a08b885 Capacitor_SMD:C_1210_3225Metric  C04 47u
+  (    1 9V )
+  (    2 GND )
+ )
+ ( /e8b5d005-a645-4cce-9a0b-ce08800df2a9 Resistor_SMD:R_0402_1005Metric  R01 1k
+  (    1 /LED101 )
+  (    2 Net-(D11-K) )
+ )
+ ( /ed69c6af-401e-490a-8db5-9d1b1a7a0a24 Capacitor_THT:CP_Radial_D8.0mm_P3.50mm  C17 470u
+  (    1 VBAT )
+  (    2 GND )
+ )
+ ( /f0c43318-60e8-4f98-9b82-80ea0ad87f71 TerminalBlock:TerminalBlock_Xinya_XY308-2.54-3P_1x03_P2.54mm_Horizontal  L2 Line_Sensor
+  (    1 GND )
+  (    2 5V )
+  (    3 /L102 )
+ )
+ ( /f5c8c4f7-b524-492e-b506-be0696daa3f0 Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical  T2 Remote_Start
+  (    1 /R101 )
+  (    2 GND )
+  (    3 5V )
+ )
+ ( /f674da43-b2d2-462c-8277-7f0b399c873d LED_SMD:LED_0402_1005Metric  D12 LED
+  (    1 Net-(D12-K) )
+  (    2 GND )
+ )
+ ( /fb21580e-d2f0-43a2-b979-330c3968c791 Capacitor_SMD:C_0402_1005Metric  C12 100n
+  (    1 5V )
+  (    2 GND )
+ )
+ ( /fb6b9f28-ebe6-4edf-823a-3e0afdf91c25 Capacitor_SMD:C_0402_1005Metric  C10 100n
+  (    1 5V )
+  (    2 GND )
+ )
+ ( /ff296f91-bc4b-43f2-88c6-9ced9c8e4b7b blue_pill:blue_pill  U3 BP
+  (  3V3 unconnected-(U3-3.3V-Pad3V3) )
+  (   5V 5V )
+  (    G GND )
+  ( NRST unconnected-(U3-RESET-PadNRST) )
+  (  PA0 /LED107 )
+  (  PA1 /LED106 )
+  (  PA2 /M101 )
+  (  PA3 /M102 )
+  (  PA4 /SW104 )
+  (  PA5 /SW103 )
+  (  PA6 /SW102 )
+  (  PA7 /SW101 )
+  (  PA8 /LED101 )
+  (  PA9 unconnected-(U3-PadPA9) )
+  ( PA10 unconnected-(U3-PadPA10) )
+  ( PA11 unconnected-(U3-PadPA11) )
+  ( PA12 unconnected-(U3-PadPA12) )
+  ( PA15 /LED102 )
+  (  PB0 /S101 )
+  (  PB1 /S102 )
+  (  PB3 /LED103 )
+  (  PB4 /LED104 )
+  (  PB5 /LED105 )
+  (  PB6 /L101 )
+  (  PB7 /L102 )
+  (  PB8 /M104 )
+  (  PB9 /M103 )
+  ( PB10 /D105 )
+  ( PB11 /D104 )
+  ( PB12 /D101 )
+  ( PB13 /D102 )
+  ( PB14 /D103 )
+  ( PB15 /R101 )
+  ( PC13 unconnected-(U3-PadPC13) )
+  ( PC14 unconnected-(U3-PadPC14) )
+  ( PC15 unconnected-(U3-PadPC15) )
+  ( SWCLK unconnected-(U3-PadSWCLK) )
+  (  SWO unconnected-(U3-PadSWO) )
+  ( VBAT unconnected-(U3-Vbat-PadVBAT) )
+ )
+)
+*

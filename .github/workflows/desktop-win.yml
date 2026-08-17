@@ -35,23 +35,9 @@ jobs:
   package:
     runs-on: windows-latest
     steps:
+      # 引擎源码已吸收进本仓(engines/ 是普通目录),engines=build 从源码构建
+      # 不再需要私有 submodule 的 ENGINES_TOKEN。
       - uses: actions/checkout@v4
-        with:
-          submodules: false
-
-      # 只有从源码构建引擎才需要私有 submodule;走预编译产物时跳过,省掉一次凭据依赖。
-      - name: 拉取 submodule(仅 engines=build)
-        if: inputs.engines == 'build'
-        shell: bash
-        env:
-          ENGINES_TOKEN: ${{ secrets.ENGINES_TOKEN }}
-        run: |
-          if [ -z "$ENGINES_TOKEN" ]; then
-            echo "::error::engines=build 需要 secrets.ENGINES_TOKEN 才能拉私有 submodule"
-            exit 1
-          fi
-          git config --global url."https://x-access-token:${ENGINES_TOKEN}@github.com/".insteadOf "git@github.com:"
-          git submodule update --init --recursive
 
       - uses: oven-sh/setup-bun@v2
         with:
