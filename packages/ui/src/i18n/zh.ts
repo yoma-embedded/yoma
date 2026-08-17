@@ -114,12 +114,8 @@ export const dict = {
   "ui.tool.netlist.file.cfgSeed": "配置种子",
 
   "ui.tool.flash": "烧录",
-  "ui.tool.flash.chip": "芯片",
-  "ui.tool.flash.action.list": "列出目标",
-  "ui.tool.flash.action.info": "目标信息",
-  "ui.tool.flash.action.download": "烧写",
-  "ui.tool.flash.action.erase": "擦除",
-  "ui.tool.flash.action.reset": "复位",
+  "ui.tool.flash.command": "命令",
+  "ui.tool.flash.recorded": "已记录镜像",
 
   "ui.tool.datasheet": "数据手册",
   "ui.tool.datasheet.action.search": "搜索",

@@ -132,7 +132,7 @@ export const dict = {
   "prompt.example.4": "What is connected to this pin on the schematic?",
   "prompt.example.5": "Look up ADC sampling time in the reference manual",
   "prompt.example.6": "Generate STM32 clock and GPIO init for this board",
-  "prompt.example.7": "Why can't probe-rs connect to the target?",
+  "prompt.example.7": "Why can't OpenOCD connect to the target?",
   "prompt.example.8": "Watch this variable and tell me if the RTOS is alive",
   "prompt.example.9": "Compare on-chip flash with this firmware image",
   "prompt.example.10": "Help me reproduce this bug on the bench",
@@ -775,6 +775,4 @@ export const dict = {
   "preflight.engines.missingDir": "Debug engines folder is missing.",
   "preflight.engines.emptyShell": "Debug engines folder has no binaries. Reinstall Yoma (or run bun engines/build.ts in a source checkout).",
   "preflight.engines.missingBin": "Debug engines missing: {{missing}}. Reinstall Yoma.",
-  "preflight.probe.none": "No debug probe found. Plug in an ST-Link / J-Link / CMSIS-DAP.",
-  "preflight.probe.error": "Could not list probes: {{detail}}",
 }

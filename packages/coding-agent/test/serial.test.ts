@@ -6,7 +6,6 @@ import { afterEach, beforeAll, describe, expect, it } from "bun:test";
 import { NodeExecutionEnv } from "@yoma/my-pi/node";
 import {
 	buildSttyArgs,
-	claimProbe,
 	createLogToolDefinition,
 	DEFAULT_BAUD,
 	listSerialPorts,
@@ -14,7 +13,6 @@ import {
 	parsePortLines,
 	powershellArgv,
 	prepareSerial,
-	releaseProbe,
 	serialArgv,
 	serialOpenConfirmMs,
 	unsupportedBaud,
@@ -295,7 +293,7 @@ describe("log start port", () => {
 		await expect(
 			tool.execute("t", { action: "start", port: "/dev/ttyUSB0", command: "cat /dev/ttyUSB0" }),
 		).rejects.toThrow(/exactly one source, got port \+ command/);
-		await expect(tool.execute("t", { action: "start", port: "/dev/ttyUSB0", chip: "STM32G431CB" })).rejects.toThrow(
+		await expect(tool.execute("t", { action: "start", port: "/dev/ttyUSB0", tcp: "localhost:19021" })).rejects.toThrow(
 			/exactly one source/,
 		);
 	});
@@ -321,33 +319,6 @@ describe("log start port", () => {
 		expect(DEFAULT_BAUD).toBe(115_200);
 	});
 
-	// 探针租约的 isLive 看的是工具当前那个采集器。RTT 自己死掉之后再开一个串口采集,
-	// 租约就会指着**新**采集说"我还活着" —— 于是一个早就退了的 RTT 把探针锁死,
-	// flash 被拒,理由指向一个不存在的会话。评审时真复现出来过。
-	it.skipIf(!havePython())("RTT 自己死掉之后开串口,不会把探针租约留成一份假的活约", async () => {
-		releaseProbe("log");
-		releaseProbe("flash");
-		const cwd = createTempDir();
-		const elf = join(cwd, "fw.elf");
-		writeFileSync(elf, "not really an elf");
-		// 假 probe-rs:打一行错就退,模拟"RTT control block not found"。
-		const enginesDir = join(createTempDir(), "engines");
-		mkdirSync(join(enginesDir, "bin"), { recursive: true });
-		const bin = join(enginesDir, "bin", "probe-rs");
-		writeFileSync(bin, '#!/bin/sh\necho "Error: RTT control block not found"\nsleep 0.15\nexit 1\n');
-		chmodSync(bin, 0o755);
-		const tool = createLogToolDefinition(new NodeExecutionEnv({ cwd }), { enginesDir });
-		openTools.push(tool as any);
-
-		await tool.execute("r1", { action: "start", chip: "STM32G431CB", elfPath: elf });
-		const deadline = Date.now() + 5000;
-		while (!/exited/.test(textOf(await tool.execute("r2", { action: "status" })))) {
-			if (Date.now() > deadline) throw new Error("fake probe-rs never exited");
-			await Bun.sleep(20);
-		}
-		await tool.execute("r3", { action: "start", port: await startFakeDevice(), baud: 115200 });
-
-		expect(claimProbe("flash", "probe-rs download")).toBeUndefined();
-		releaseProbe("flash");
-	}, 20_000);
+	// 从前这里还有一条"RTT 死掉后租约不留假活约"的 e2e —— 2026-08 移除 probe-rs 后
+	// log 工具不再持有探针(RTT 改从 gdb server 的 TCP 口读),那个场景不复存在。
 });

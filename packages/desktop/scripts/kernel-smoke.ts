@@ -81,7 +81,8 @@ console.log(`✓ 内核加载正常 (node ${report.node} / electron ${report.ele
 
 const bin = join(enginesDir, "bin")
 const data = join(enginesDir, "data")
-const REQUIRED_BINS = ["stm32kernel", "probe-rs", "controller_map", "board_ir", "connections"]
+// TODO(win32):这里按裸名比对,不带 .exe 后缀 —— Windows 上本来就数不对(既有缺陷,本次不修)。
+const REQUIRED_BINS = ["stm32kernel", "controller_map", "board_ir", "connections"]
 
 if (!existsSync(bin)) {
   fail(`${bin} 不存在 —— 跑 \`bun engines/build.ts\`(在仓库根)。\n` + `注意:my-pi 的 enginesDir() 是向上查找 + existsSync,会"找到"一个没有 bin/ 的空壳然后报"去跑 build.ts",别被那条信息带偏。`)

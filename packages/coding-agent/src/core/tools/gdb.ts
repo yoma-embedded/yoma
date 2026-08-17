@@ -42,8 +42,6 @@ import {
 	claimProbe,
 	clamp,
 	describeProbeConflict,
-	type EnginePathOptions,
-	engineBin,
 	exe,
 	killOnHostExit,
 	killTree,
@@ -100,7 +98,7 @@ export const EXEC_OPS = [
 ] as const;
 export type ExecOp = (typeof EXEC_OPS)[number];
 
-export const GDB_SERVERS = ["qemu", "openocd", "jlink", "probe-rs", "external"] as const;
+export const GDB_SERVERS = ["qemu", "openocd", "jlink", "external"] as const;
 export type GdbServerKind = (typeof GDB_SERVERS)[number];
 
 /** 单条 MI 命令的默认上限。gdb 卡住是常态(探针掉了、目标进 WFI),每条都要有界。 */
@@ -124,20 +122,19 @@ const SERVER_TAIL_LINES = 20;
 // ─── 服务器适配表 ────────────────────────────────────────────────────────────
 //
 // 只放三样东西:argv 怎么拼、就绪怎么判、能力有哪些。能力不是装饰:
-// probe-rs 的 gdb stub 实测 support_sw_breakpoint() 和 support_hw_watchpoint()
-// 都返回 None(engines/probe-rs/.../gdb_server/target/breakpoints.rs),
-// 也就是**连 RAM 里的软断点都没有、观察点完全没有**;它的 monitor 词汇只有
-// info / reset / reset halt 三条,别的会**假装成功**然后打帮助文本。
-// 不把这些写进表里,模型就会对着一个永远不会命中的观察点推理半小时。
+// qemu 的观察点实测 Z2/Z3/Z4 返回 OK、命中后 100% CPU 永久空转 —— 不把这类事实
+// 写进表里,模型就会对着一个永远不会命中的观察点推理半小时。rttHint 同理:
+// RTT 从 server 自己的 TCP 口读(J-Link 的 19021 / OpenOCD 的 rtt server),
+// 不写进 attach 报告模型就不知道日志从哪来。
 
 export interface ServerCaps {
 	/** 观察点:hw 表示可用,none 表示这个 server 根本不支持,要当场拒绝。 */
 	watchpoints: "hw" | "none";
 	resetHalt?: string;
 	resetRun?: string;
-	/** RTT 能不能和 gdb 并存 —— 决定 log 工具要不要先停。 */
-	rttWithGdb: boolean;
-	/** 就绪判据。probe-rs 在**绑定 socket 之前**就打印"stub 起来了",所以它只能靠 TCP 轮询。 */
+	/** attach 报告里的一句话:这个 server 的 RTT 从哪拿。没有(qemu/external)就不提。 */
+	rttHint?: string;
+	/** 就绪判据。没有的(qemu)只能靠 TCP 轮询。 */
 	readyRe?: RegExp;
 }
 
@@ -148,30 +145,23 @@ export const SERVER_CAPS: Record<GdbServerKind, ServerCaps> = {
 		watchpoints: "hw",
 		resetHalt: "monitor reset halt",
 		resetRun: "monitor reset run",
-		rttWithGdb: true,
+		rttHint:
+			'RTT: gdb eval (write: true) `monitor rtt setup <ctrl-block-addr> <size> "SEGGER RTT"`, `monitor rtt start`, `monitor rtt server start <port> 0`, then `log start tcp:"localhost:<port>"`',
 		readyRe: /Listening on port \d+ for gdb connections/,
 	},
 	jlink: {
 		watchpoints: "hw",
 		resetHalt: "monitor reset",
 		resetRun: "monitor go",
-		rttWithGdb: true,
+		rttHint: 'RTT: JLinkGDBServer already serves it — `log start tcp:"localhost:19021"`',
 		readyRe: /Listening on TCP\/IP port \d+/,
-	},
-	"probe-rs": {
-		watchpoints: "none",
-		resetHalt: "monitor reset halt",
-		resetRun: "monitor reset",
-		rttWithGdb: false,
 	},
 	// QEMU 成功时 stdout/stderr 都是空的(实测),只能轮询端口。
 	qemu: {
 		watchpoints: "none", // 实测:Z2/Z3/Z4 返回 OK,一旦命中 QEMU 100% CPU 永久空转
-		rttWithGdb: false,
 	},
 	external: {
 		watchpoints: "hw",
-		rttWithGdb: true,
 	},
 };
 
@@ -182,8 +172,6 @@ export interface ServerArgvInput {
 	elfPath?: string;
 	config?: string[];
 	machine?: string;
-	probe?: string;
-	probeRsPath?: string;
 }
 
 /** 纯 argv 构造,导出给测试。external 不起进程。 */
@@ -219,14 +207,6 @@ export function buildServerArgv(input: ServerArgvInput): string[] {
 				"-nogui",
 				"-silent",
 			];
-		}
-		case "probe-rs": {
-			if (!input.chip) throw new Error('gdb start with server:"probe-rs" needs chip, e.g. chip:"STM32G431CB"');
-			const argv = [input.probeRsPath ?? "probe-rs", "gdb", "--chip", input.chip];
-			if (input.probe) argv.push("--probe", input.probe);
-			argv.push("--gdb-connection-string", `127.0.0.1:${port}`);
-			if (input.elfPath) argv.push(input.elfPath);
-			return argv;
 		}
 		case "qemu": {
 			if (!input.machine) {
@@ -918,7 +898,7 @@ export function spawnServer(argv: string[], port: number, cwd: string): ServerPr
 			if (server.tail.length > SERVER_TAIL_LINES) server.tail.shift();
 		}
 	};
-	// OpenOCD / pyOCD 打 stderr,J-Link / probe-rs 打 stdout —— 两个都得收,
+	// OpenOCD / pyOCD 打 stderr,J-Link 打 stdout —— 两个都得收,
 	// 只读 stdout 会在 OpenOCD 上永远等不到就绪串。
 	child.stdout?.setEncoding("utf8");
 	child.stderr?.setEncoding("utf8");
@@ -1209,13 +1189,7 @@ const gdbSchema = Type.Object({
 	),
 	server: Type.Optional(
 		Type.Union(
-			[
-				Type.Literal("qemu"),
-				Type.Literal("openocd"),
-				Type.Literal("jlink"),
-				Type.Literal("probe-rs"),
-				Type.Literal("external"),
-			],
+			[Type.Literal("qemu"), Type.Literal("openocd"), Type.Literal("jlink"), Type.Literal("external")],
 			{ description: "start: which gdb server to launch. Use external together with connect to attach to one already running." },
 		),
 	),
@@ -1223,14 +1197,15 @@ const gdbSchema = Type.Object({
 		Type.String({ description: 'start: "host:port" of an already-running gdb server (implies server: "external").' }),
 	),
 	elfPath: Type.Optional(Type.String({ description: "start: the ELF with debug info that matches what is on the target." })),
-	chip: Type.Optional(Type.String({ description: 'start: target for jlink/probe-rs, e.g. "STM32G431CB".' })),
+	chip: Type.Optional(Type.String({ description: 'start (jlink): -device name, e.g. "STM32G431CB".' })),
 	config: Type.Optional(
 		Type.Array(Type.String(), {
 			description: 'start (openocd): -f config files, e.g. ["interface/stlink.cfg","target/stm32g4x.cfg"].',
 		}),
 	),
 	machine: Type.Optional(Type.String({ description: 'start (qemu): -machine, e.g. "netduinoplus2" (STM32F405, Cortex-M4F).' })),
-	probe: Type.Optional(Type.String({ description: 'start: probe selector "VID:PID" or "VID:PID:Serial".' })),
+	// 多探针选择刻意不做:openocd 用 config 里的 `adapter serial`,jlink 要接 `-select USB=<sn>`,
+	// 语义按 server 各表 —— 需要时在各自的配置里表达,不给一个跨 server 的假统一参数。
 	gdbPath: Type.Optional(Type.String({ description: "start: gdb binary to use; defaults to arm-none-eabi-gdb on PATH." })),
 	allowUnverified: Type.Optional(
 		Type.Boolean({ description: "start: proceed even when the ELF does not match the last flashed image." }),
@@ -1287,9 +1262,9 @@ const gdbSchema = Type.Object({
 
 export type GdbToolInput = Static<typeof gdbSchema>;
 
-export type GdbToolOptions = EnginePathOptions & { gdbPath?: string };
+export type GdbToolOptions = { gdbPath?: string };
 
-const DESCRIPTION = `Drives a live GDB session against embedded firmware — breakpoints, run control, expression evaluation, and automatic fault analysis. Works with OpenOCD, J-Link, probe-rs, QEMU, or any gdb server already listening on a port.
+const DESCRIPTION = `Drives a live GDB session against embedded firmware — breakpoints, run control, expression evaluation, and automatic fault analysis. Works with OpenOCD, J-Link, QEMU, or any gdb server already listening on a port.
 
 Actions:
 - start (elfPath + either server+its options, or connect): attach. Launches the server when asked, waits until its gdb port is really listening, loads symbols, and reports the core, the hardware breakpoint budget, and whether the ELF matches the last image flashed by the flash tool. Calling start on a live session is safe — it just reports the session's state.
@@ -1303,11 +1278,11 @@ Rules:
 - Prefer one exec over several eval calls: exec already returns the stop reason, frames, source line and locals.
 - A halted target produces no log output. Silence in the log tool after a stop is expected, not evidence of a crash.
 - Hardware breakpoints are a small fixed budget (6 on a typical Cortex-M4, 4 on M0+); break reports how many remain. Delete before adding.
-- A debug probe can only be held by one process. If the log tool is capturing RTT over the probe, stop it first (a UART log is fine alongside gdb).
+- A debug probe can only be held by one process: the gdb server owns it while attached. RTT is read from the server's own TCP port (the start report says where), so logs and gdb coexist — but stop the session before running a flash command, or the probe lease will refuse it and point back here.
 - Never state that a line executed, a variable held a value, or a fault occurred at a given place unless a stop report here shows it. When the report says the build is optimized, do not present locals as fact.`;
 
 /** 需要独占探针的 server。qemu 是纯软件,external 由对方负责。 */
-const PROBE_SERVERS = new Set<GdbServerKind>(["openocd", "jlink", "probe-rs"]);
+const PROBE_SERVERS = new Set<GdbServerKind>(["openocd", "jlink"]);
 
 /**
  * 中断也没落地时,读 DHCSR 说清楚到底是哪一种 —— 目标在正常跑、进了 WFI 睡着、
@@ -1418,7 +1393,7 @@ async function verifyImage(env: ExecutionEnv, elf: string): Promise<{ ok: boolea
 		note:
 			`image: MISMATCH — .my-pi/flash-state.json records ${state.elfPath} flashed ${Math.round((Date.now() - state.at) / 60_000)} min ago, ` +
 			"which is not this ELF. Every line number, local and backtrace below would describe code that is not running. " +
-			"Run flash download with this ELF, or pass allowUnverified: true if you know the difference does not matter.",
+			"Re-flash this ELF (flash tool, with elfPath), or pass allowUnverified: true if you know the difference does not matter.",
 	};
 }
 
@@ -1575,7 +1550,7 @@ export function createGdbToolDefinition(
 					const kind: GdbServerKind = params.server ?? "external";
 					if (kind === "external" && !params.connect) {
 						throw new Error(
-							'gdb start needs either connect:"host:port" (attach to a running server) or server:"openocd|jlink|probe-rs|qemu" plus its options.',
+							'gdb start needs either connect:"host:port" (attach to a running server) or server:"openocd|jlink|qemu" plus its options.',
 						);
 					}
 
@@ -1619,8 +1594,6 @@ export function createGdbToolDefinition(
 								elfPath: elf,
 								config: params.config,
 								machine: params.machine,
-								probe: params.probe,
-								probeRsPath: kind === "probe-rs" ? engineBin("probe-rs", options) : undefined,
 							});
 							server = spawnServer(argv, port, env.cwd);
 							await waitForServerReady(server, caps().readyRe, SERVER_READY_MS);
@@ -1682,7 +1655,7 @@ export function createGdbToolDefinition(
 							? `core: ${core.name} ${core.revision}${session.breakpointUnits ? `, ${session.breakpointUnits} hardware breakpoints` : ""}${session.watchpointUnits ? `, ${session.watchpointUnits} watchpoints` : ""}`
 							: "core: not a Cortex-M (no PPB) — fault decoding and hardware budgets are unavailable",
 						caps().watchpoints === "none" ? `note: ${kind} does not support watchpoints at all` : "",
-						caps().rttWithGdb ? "" : `note: ${kind} cannot serve RTT while gdb is attached — the log tool must use another source`,
+						caps().rttHint ? `note: ${caps().rttHint}` : "",
 						...notes,
 						`session log: ${session.file}`,
 						session.lastStop ? await renderStopReport(session, { relativeTo: env.cwd }) : "target state unknown — run gdb exec op:\"interrupt\" or op:\"continue\"",

@@ -1,10 +1,9 @@
-import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "bun:test";
 import { NodeExecutionEnv } from "@yoma/my-pi/node";
 import {
-	buildFlashArgs,
 	buildStm32ConfigArgs,
 	claimProbe,
 	createFlashToolDefinition,
@@ -62,6 +61,14 @@ function makeEnginesDir(bins: Record<string, string> = {}): string {
 const ECHO_ARGS_KERNEL = `#!/bin/sh
 echo "argv: $@"
 `;
+
+/** 造一个独立的假烧录器脚本 —— flash 不再走 enginesDir,命令由模型自带。 */
+function fakeFlasher(script: string): string {
+	const file = join(createTempDir(), exe("flasher"));
+	writeFileSync(file, script);
+	chmodSync(file, 0o755);
+	return file;
+}
 
 describe("engine path resolution", () => {
 	it("resolves binaries and data from the bin/data layout", () => {
@@ -183,12 +190,12 @@ describe("engine settle labels", () => {
 		);
 	});
 
-	it("flash 的 label 带上具体动作,而且中断照样把探针租约还回去", async () => {
-		const enginesRoot = makeEnginesDir({ "probe-rs": ECHO_ARGS_KERNEL });
-		const tool = createFlashToolDefinition(new NodeExecutionEnv({ cwd: createTempDir() }), { enginesDir: enginesRoot });
-		await expect(tool.execute("c1", { action: "info" }, aborted())).rejects.toThrow("probe-rs info was aborted");
+	it("flash 中断时抛 aborted,而且照样把探针租约还回去", async () => {
+		const flasher = fakeFlasher(ECHO_ARGS_KERNEL);
+		const tool = createFlashToolDefinition(new NodeExecutionEnv({ cwd: createTempDir() }));
+		await expect(tool.execute("c1", { command: [flasher, "info"] }, aborted())).rejects.toThrow("was aborted");
 		// 租约在 finally 里放,所以下一次还能拿到(拿不到会报 probe is held by)。
-		await expect(tool.execute("c2", { action: "info" }, aborted())).rejects.toThrow("probe-rs info was aborted");
+		await expect(tool.execute("c2", { command: [flasher, "info"] }, aborted())).rejects.toThrow("was aborted");
 	});
 });
 
@@ -495,102 +502,22 @@ echo "argv: $ALL" 1>&2
 	});
 });
 
-describe("flash buildArgs", () => {
-	it("builds list and info argv", () => {
-		expect(buildFlashArgs({ action: "list" })).toEqual(["list"]);
-		expect(buildFlashArgs({ action: "info", probe: "0483:374B" })).toEqual(["info", "--probe", "0483:374B"]);
-	});
-
-	it("builds erase and reset argv with the chip", () => {
-		expect(buildFlashArgs({ action: "erase", chip: "STM32F405RG" })).toEqual(["erase", "--chip", "STM32F405RG"]);
-		expect(buildFlashArgs({ action: "reset", chip: "STM32F405RG" })).toEqual(["reset", "--chip", "STM32F405RG"]);
-	});
-
-	it("defaults download format from the extension", () => {
-		expect(buildFlashArgs({ action: "download", chip: "C", firmwarePath: "/w/fw.elf" })).toEqual([
-			"download",
-			"--chip",
-			"C",
-			"/w/fw.elf",
-		]);
-		expect(buildFlashArgs({ action: "download", chip: "C", firmwarePath: "/w/fw.hex" })).toEqual([
-			"download",
-			"--chip",
-			"C",
-			"--binary-format",
-			"hex",
-			"/w/fw.hex",
-		]);
-		expect(buildFlashArgs({ action: "download", chip: "C", firmwarePath: "/w/fw.bin" })).toEqual([
-			"download",
-			"--chip",
-			"C",
-			"--binary-format",
-			"bin",
-			"--base-address",
-			"0x08000000",
-			"/w/fw.bin",
-		]);
-	});
-
-	it("lets an explicit format override the extension inference", () => {
-		// format:"elf" 压过 .bin 扩展名 → 不加 --binary-format/--base-address。
-		expect(buildFlashArgs({ action: "download", chip: "C", firmwarePath: "/w/fw.bin", format: "elf" })).toEqual([
-			"download",
-			"--chip",
-			"C",
-			"/w/fw.bin",
-		]);
-		expect(buildFlashArgs({ action: "download", chip: "C", firmwarePath: "/w/fw.dat", format: "hex" })).toEqual([
-			"download",
-			"--chip",
-			"C",
-			"--binary-format",
-			"hex",
-			"/w/fw.dat",
-		]);
-	});
-
-	it("honors baseAddress and verify", () => {
-		expect(
-			buildFlashArgs({
-				action: "download",
-				chip: "C",
-				firmwarePath: "/w/fw.bin",
-				baseAddress: "0x08004000",
-				verify: true,
-			}),
-		).toEqual([
-			"download",
-			"--chip",
-			"C",
-			"--binary-format",
-			"bin",
-			"--base-address",
-			"0x08004000",
-			"--verify",
-			"/w/fw.bin",
-		]);
-	});
-
-	it("throws when required fields are missing", () => {
-		expect(() => buildFlashArgs({ action: "erase" })).toThrow(/erase requires chip/);
-		expect(() => buildFlashArgs({ action: "download", chip: "C" })).toThrow(/download requires firmwarePath/);
-	});
-});
-
 describe("probe lease", () => {
 	it("in-process conflict names the holder and how to release it", () => {
-		expect(claimProbe("flash", "probe-rs download")).toBeUndefined();
-		const holder = claimProbe("gdb", "probe-rs gdb");
+		expect(claimProbe("flash", "openocd")).toBeUndefined();
+		const holder = claimProbe("gdb", "openocd on STM32G431CB");
 		expect(holder?.owner).toBe("flash");
-		expect(describeProbeConflict(holder!)).toContain("run `flash` action:\"stop\" first");
+		// flash 是一次性调用,冲突话术不能指一条不存在的 stop 路。
+		expect(describeProbeConflict(holder!)).toContain("wait for that command to finish");
 		releaseProbe("flash");
-		expect(claimProbe("gdb", "probe-rs gdb")).toBeUndefined();
+		expect(claimProbe("gdb", "openocd on STM32G431CB")).toBeUndefined();
+		const fromFlash = claimProbe("flash", "openocd");
+		expect(fromFlash?.owner).toBe("gdb");
+		expect(describeProbeConflict(fromFlash!)).toContain('run `gdb` action:"stop" first');
 		releaseProbe("gdb");
 	});
 
-	it("classifies probe-rs exclusive access as occupied, not missing hardware", () => {
+	it("classifies exclusive access as occupied, not missing hardware", () => {
 		const hint = describeProbeHardwareError("Error: exclusive access (0xe00002c5)");
 		expect(hint).toContain("already in use");
 		expect(hint).toContain("NOT a disconnected board");
@@ -602,59 +529,70 @@ describe("probe lease", () => {
 });
 
 describe("flash tool", () => {
-	const ECHO_PROBE_RS = `#!/bin/sh
+	const ECHO_FLASHER = `#!/bin/sh
 echo "argv: $@"
 `;
 
 	function makeTool(script: string) {
-		const enginesRoot = makeEnginesDir({ "probe-rs": script });
+		const flasher = fakeFlasher(script);
 		const cwd = createTempDir();
 		const env = new NodeExecutionEnv({ cwd });
-		return { tool: createFlashToolDefinition(env, { enginesDir: enginesRoot }), cwd };
+		return { tool: createFlashToolDefinition(env), cwd, flasher };
 	}
 
-	it("runs list and returns the output", async () => {
-		const { tool } = makeTool(ECHO_PROBE_RS);
-		const result = await tool.execute("c1", { action: "list" });
-		expect(textOf(result)).toBe("argv: list");
-		expect(result.details).toEqual({ action: "list", chip: undefined, exitCode: 0 });
+	it("runs the given argv and returns the output", async () => {
+		const { tool, flasher } = makeTool(ECHO_FLASHER);
+		const result = await tool.execute("c1", { command: [flasher, "program", "fw.elf"] });
+		expect(textOf(result)).toBe("argv: program fw.elf");
+		expect(result.details).toEqual({ command: [flasher, "program", "fw.elf"], exitCode: 0 });
 	});
 
 	it("returns a non-zero exit as a normal result with probe guidance, not an error", async () => {
-		const { tool } = makeTool(`#!/bin/sh\necho "Error: no probe found" 1>&2\nexit 1\n`);
-		const result = await tool.execute("c1", { action: "info" });
+		const { tool, flasher } = makeTool(`#!/bin/sh\necho "Error: no probe found" 1>&2\nexit 1\n`);
+		const result = await tool.execute("c1", { command: [flasher, "program"] });
 		const text = textOf(result);
-		expect(text).toContain("probe-rs info failed (exit 1)");
+		expect(text).toContain("failed (exit 1)");
 		expect(text).toContain("Error: no probe found");
 		expect(text).toContain("connect an ST-Link/J-Link/CMSIS-DAP probe");
 		expect(text).toContain("another program is using the probe");
 		expect(result.details.exitCode).toBe(1);
 	});
 
-	it("says the probe is occupied when probe-rs reports exclusive access, not a missing board", async () => {
-		const { tool } = makeTool(
+	it("says the probe is occupied on exclusive access, not a missing board", async () => {
+		const { tool, flasher } = makeTool(
 			`#!/bin/sh\necho "Error: Attaching to probe failed: exclusive access (0xe00002c5)" 1>&2\nexit 1\n`,
 		);
-		const result = await tool.execute("c1", { action: "info" });
+		const result = await tool.execute("c1", { command: [flasher, "program"] });
 		const text = textOf(result);
 		expect(text).toContain("already in use");
 		expect(text).toContain("NOT a disconnected board");
 		expect(text).not.toMatch(/If no debug probe was found/);
 	});
 
-	it("resolves the firmware path against the cwd and passes bin flags", async () => {
-		const { tool, cwd } = makeTool(ECHO_PROBE_RS);
-		writeFileSync(join(cwd, "fw.bin"), "fw");
-		const result = await tool.execute("c1", { action: "download", chip: "STM32F405RG", firmwarePath: "fw.bin" });
-		expect(textOf(result)).toBe(
-			`argv: download --chip STM32F405RG --binary-format bin --base-address 0x08000000 ${join(cwd, "fw.bin")}`,
+	it("records elfPath into flash-state.json on success, resolved against the cwd", async () => {
+		const { tool, cwd, flasher } = makeTool(ECHO_FLASHER);
+		writeFileSync(join(cwd, "fw.elf"), "fw");
+		const result = await tool.execute("c1", { command: [flasher, "program"], elfPath: "fw.elf" });
+		expect(result.details.recordedElf).toBe(join(cwd, "fw.elf"));
+		expect(textOf(result)).toContain("gdb start will verify against it");
+		const state = JSON.parse(readFileSync(join(cwd, ".my-pi", "flash-state.json"), "utf8"));
+		expect(state.elfPath).toBe(join(cwd, "fw.elf"));
+		expect(typeof state.sha256).toBe("string");
+	});
+
+	it("does not record on failure, and rejects a missing elfPath up front", async () => {
+		const { tool, cwd, flasher } = makeTool(`#!/bin/sh\nexit 1\n`);
+		writeFileSync(join(cwd, "fw.elf"), "fw");
+		const failed = await tool.execute("c1", { command: [flasher, "program"], elfPath: "fw.elf" });
+		expect(failed.details.recordedElf).toBeUndefined();
+		expect(existsSync(join(cwd, ".my-pi", "flash-state.json"))).toBe(false);
+		await expect(tool.execute("c2", { command: [flasher, "program"], elfPath: "nope.elf" })).rejects.toThrow(
+			/elfPath not found/,
 		);
 	});
 
-	it("throws when the firmware file is missing", async () => {
-		const { tool } = makeTool(ECHO_PROBE_RS);
-		await expect(tool.execute("c1", { action: "download", chip: "C", firmwarePath: "nope.elf" })).rejects.toThrow(
-			/firmware file not found/,
-		);
+	it("rejects an empty command instead of spawning nothing", async () => {
+		const { tool } = makeTool(ECHO_FLASHER);
+		await expect(tool.execute("c1", { command: [] })).rejects.toThrow(/requires command/);
 	});
 });

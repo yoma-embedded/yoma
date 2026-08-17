@@ -56,14 +56,14 @@ export {
 } from "./examples.ts";
 export { withFileMutationQueue } from "./file-mutation-queue.ts";
 export {
-	buildFlashArgs,
 	createFlashTool,
 	createFlashToolDefinition,
-	FLASH_ACTIONS,
-	type FlashAction,
+	FLASH_STATE_FILE,
+	type FlashState,
 	type FlashToolDetails,
 	type FlashToolInput,
-	type FlashToolOptions,
+	readFlashState,
+	sha256File,
 } from "./flash.ts";
 export {
 	buildServerArgv,
@@ -132,7 +132,6 @@ export {
 	unwrapList,
 } from "./gdb-mi.ts";
 export {
-	buildAttachArgs,
 	createLogTool,
 	createLogToolDefinition,
 	foldLines,
@@ -140,6 +139,7 @@ export {
 	LogCapture,
 	type LogAction,
 	type LogLine,
+	type LogSource,
 	type LogToolDetails,
 	type LogToolInput,
 	renderRows,

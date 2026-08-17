@@ -85,7 +85,7 @@ Bun workspace,`packages/` 下 7 个包:
 | `bun package:mac` / `:win` / `:linux` | electron-builder 安装包 |
 | `bun typecheck` | turbo 跑全部 7 个包 —— **必须常绿 7/7** |
 | `bun lint` | oxlint |
-| `bun --cwd packages/desktop smoke` | 内核冒烟:对 **构建产物** 验证 10 个工具 + 5 个引擎二进制 |
+| `bun --cwd packages/desktop smoke` | 内核冒烟:对 **构建产物** 验证 12 个工具 + 4 个引擎二进制 |
 | `bun --cwd packages/desktop e2e:ipc` | 生产路径:真 utilityProcess + 真 MessagePort + 真协议帧(不开窗口) |
 | `bun --cwd packages/desktop e2e:renderer` | 最后一跳:真窗口 + 真 preload + **真 contextBridge**(含 mailbox 桥三条) |
 | `bun --cwd packages/desktop smoke:mailbox` | 调试台冒烟:Electron RUN_AS_NODE 对打包产物跑完整**本机演练**(假模型,零 key 零硬件) |
@@ -385,7 +385,7 @@ text part,不过滤的话提示词会原样出现在终报的"根因分析"里)�
 - **退出 app 必须带走守护树**(`stopSidecars` → `mailboxMain.stopAll`):任务在飞时
   Cmd+Q 或自动更新 relaunch,守护与 turn 孙进程会变成**还在烧录/gdb 的孤儿**。
   先 SIGTERM 让守护自己转杀孙进程,宽限后硬杀。`runner.ts` 的 `activeTurnChildren`
-  是这条杀树链的中间一环 —— 漏掉就是 `probe-rs attach` 攥着探针不放,而报错长得和
+  是这条杀树链的中间一环 —— 漏掉就是孤儿 gdbserver/烧录器攥着探针不放,而报错长得和
   "没插板子"一模一样。
 - 浏览器侧类型是 kernel 的 `mailbox-view.ts`(结构化复制,View 后缀),漂移由
   bench 的 `mailbox/view-check.ts` 约束式断言兜住 —— 与工具 details 同一套纪律。
@@ -414,7 +414,15 @@ text part,不过滤的话提示词会原样出现在终报的"根因分析"里)�
 - **engines 目录必须显式传**,别依赖 my-pi 的 `enginesDir()` 向上查找 —— 它只认
   "名字叫 engines 且存在",会高高兴兴找到一个没有 `bin/` 的空壳,然后报
   "去跑 `bun engines/build.ts`",让你以为是没编译。合库后 `engines/` 就是仓内真目录
-  (三个 submodule + build.ts),不再是软链。
+  (两个 submodule + build.ts),不再是软链。
+- **探针栈不在引擎里**(2026-08-17 起,probe-rs 整体移除):烧录命令由模型自带
+  (OpenOCD / J-Link / 厂商 CLI),flash 工具只管探针租约 + 超时杀树 + flash-state
+  落账;RTT 从 gdb server 的 TCP 口读(J-Link 19021 / OpenOCD `rtt server start`,
+  log 工具的 `tcp` 源);gdb 只剩 openocd/jlink/qemu/external 四后端。移除的动机是
+  Windows 驱动:probe-rs 要 WinUSB(Zadig),与厂商驱动互斥,对 J-Link 用户等于
+  弄坏 SEGGER 全家。代价:零安装探针故事结束 —— 用户机器(尤其工位机)必须自装
+  J-Link 软件或 OpenOCD,声明走 `toolchain.json`(J-Link 的 well-known/注册表探测
+  已内建);首跑预检的"探针在不在"横幅一并移除(它就是 `probe-rs list`)。
 - **engines 有两个来源,`scripts/stage-engines.ts` 按目标平台自动选**:本地
   `engines/`(跑过 `bun engines/build.ts` 之后,仅当它满足目标平台)或**预编译 Release
   产物**(按 `packages/desktop/engines.lock.json` 钉住的 tag,用 `gh` 下载)。

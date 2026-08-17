@@ -1,11 +1,20 @@
 /**
- * flash 工具。移植自 yoma packages/opencode/src/tool/flash.ts。
+ * flash 工具:探针独占执行器。
  *
- * 与 yoma 的差异(同 stm32config):Effect → ToolDefinition,子进程走 runEngine,
- * 去掉 ctx.ask / assertExternalDirectoryEffect。
+ * 2026-08 起不再内置 probe-rs(Windows 上它要求换 WinUSB 驱动,与厂商驱动互斥 ——
+ * 对 J-Link 用户等于弄坏 SEGGER 全家)。烧录命令由模型自带(OpenOCD / J-Link
+ * Commander / STM32CubeProgrammer CLI / pyocd / west / esptool …),这个工具只管
+ * 三件 bash 给不了的事:
  *
- * 错误分类学与其他引擎工具不同:probe-rs 非零退出**不抛错**,而是把输出连同
- * "检查探针连接"的指引当正常结果返回 —— 没插探针是常态而非异常,模型要读到
+ * 1. 探针租约:gdb server、日志采集与烧录抢同一个探针时,错误要指名持有者 ——
+ *    bash 起的进程在租约体系里是隐形的,所以凡碰探针的命令都该走这里。
+ * 2. 有界超时 + 杀树(runEngine):挂死的烧录器攥着探针不放,下一次失败长得和
+ *    硬件坏了一模一样。
+ * 3. flash-state 落账:exit 0 且给了 elfPath 时记录 sha256,gdb attach 用它判断
+ *    "手里的 ELF 是不是就是片子里跑的那个"。
+ *
+ * 错误分类学与其他引擎工具不同:烧录器非零退出**不抛错**,而是把输出连同
+ * "占用/没插"的分诊当正常结果返回 —— 没插探针是常态而非异常,模型要读到
  * 提示才知道让用户接硬件。只有超时/中断才抛。
  */
 import { createHash } from "node:crypto";
@@ -16,9 +25,8 @@ import { type Static, Type } from "typebox";
 import {
 	assertEngineSettled,
 	claimProbe,
+	clamp,
 	describeProbeConflict,
-	type EnginePathOptions,
-	engineBin,
 	probeFailedHint,
 	releaseProbe,
 	runEngine,
@@ -26,55 +34,37 @@ import {
 import { resolveToCwd } from "./path-utils.ts";
 import { type ToolDefinition, wrapToolDefinition } from "./types.ts";
 
-export const FLASH_ACTIONS = ["list", "info", "download", "erase", "reset"] as const;
-
-export type FlashAction = (typeof FLASH_ACTIONS)[number];
-
 const flashSchema = Type.Object({
-	// 显式元组而非 .map():数组会丢掉元组结构,Static 推导塌成 never。
-	action: Type.Union(
-		[Type.Literal("list"), Type.Literal("info"), Type.Literal("download"), Type.Literal("erase"), Type.Literal("reset")],
-		{ description: "probe-rs action: list | info | download | erase | reset" },
-	),
-	chip: Type.Optional(
+	command: Type.Array(Type.String(), {
+		description:
+			'The flasher argv (no shell), e.g. ["openocd","-f","interface/stlink.cfg","-f","target/stm32g4x.cfg","-c","program build/fw.elf verify reset exit"].',
+	}),
+	elfPath: Type.Optional(
 		Type.String({
-			description: 'Target chip name from the probe-rs registry, e.g. "STM32F405RG". Required for download/erase/reset.',
+			description:
+				"The image this command flashes. On success its hash is recorded so gdb start can verify the chip runs exactly this build. Pass it whenever the command programs firmware.",
 		}),
 	),
-	firmwarePath: Type.Optional(
-		Type.String({ description: "Firmware file to flash (.elf, .hex or .bin). Required for download." }),
-	),
-	format: Type.Optional(
-		Type.Union([Type.Literal("elf"), Type.Literal("hex"), Type.Literal("bin")], {
-			description: "Firmware format. Omit to infer from the file extension (default elf).",
+	timeoutMs: Type.Optional(
+		Type.Number({
+			description: "Kill the command after this long (default 120000, clamped to 5000–600000). Flashing normally takes seconds; a hung flasher keeps the probe hostage.",
 		}),
 	),
-	baseAddress: Type.Optional(
-		Type.String({
-			description: 'Flash base address for raw .bin images, e.g. "0x08000000" (the default for STM32 internal flash).',
-		}),
-	),
-	probe: Type.Optional(
-		Type.String({ description: 'Probe selector "VID:PID" or "VID:PID:Serial" when several debug probes are connected.' }),
-	),
-	verify: Type.Optional(Type.Boolean({ description: "Verify flash contents after downloading" })),
 });
 
 export type FlashToolInput = Static<typeof flashSchema>;
 
 export interface FlashToolDetails {
-	action: FlashAction;
-	chip?: string;
+	command: string[];
 	exitCode: number | null;
+	/** elfPath 给了且 exit 0 时:已写进 flash-state.json 的镜像绝对路径。 */
+	recordedElf?: string;
 }
 
-export type FlashToolOptions = EnginePathOptions;
-
-/** download/erase 直接动真实硬件,给 probe-rs 的超时比引擎默认值紧。 */
+/** 烧录动真实硬件,默认超时比引擎默认值紧。 */
 const FLASH_TIMEOUT_MS = 2 * 60 * 1000;
-
-/** 真正独占探针的动作。list 只枚举 USB 设备,不开会话,不用抢。 */
-const EXCLUSIVE_ACTIONS = new Set<FlashAction>(["download", "erase", "reset", "info"]);
+const MIN_TIMEOUT_MS = 5 * 1000;
+const MAX_TIMEOUT_MS = 10 * 60 * 1000;
 
 /**
  * 最后一次成功烧录的记录。gdb 会话靠它判断"手里的 ELF 是不是就是片子里跑的那个"。
@@ -86,8 +76,6 @@ const EXCLUSIVE_ACTIONS = new Set<FlashAction>(["download", "erase", "reset", "i
 export interface FlashState {
 	elfPath: string;
 	sha256: string;
-	chip?: string;
-	probe?: string;
 	at: number;
 }
 
@@ -116,108 +104,82 @@ async function writeFlashState(env: ExecutionEnv, state: FlashState): Promise<vo
 	await env.writeFile(file, `${JSON.stringify(state, null, "\t")}\n`);
 }
 
-const DESCRIPTION = `Flashes and controls embedded targets over a debug probe (ST-Link, J-Link, CMSIS-DAP, ...) using probe-rs.
+const DESCRIPTION = `Runs a flashing or probe-control command (OpenOCD, J-Link Commander, STM32CubeProgrammer CLI, pyocd, west, esptool, ...) with exclusive access to the debug probe.
 
-- Actions: list (enumerate connected probes), info (probe/target details), download (flash a firmware image), erase (full chip erase), reset (reset the target so freshly flashed firmware starts running).
-- Typical flow after a successful build: download the .elf, then reset to start it. download leaves the core halted.
-- chip is the probe-rs registry name, e.g. "STM32F405RG" — it usually drops the temperature/packaging suffix of the ordering code (STM32F405RGT6 → STM32F405RG).
-- Formats: .elf (default, addresses embedded), .hex (addresses embedded), .bin (raw — needs baseAddress; defaults to 0x08000000, the STM32 internal-flash origin).
-- A physical debug probe must be connected; run list first when unsure. If several probes are attached, select one with probe ("VID:PID" or "VID:PID:Serial").
-- erase wipes the entire flash — only use it when the user asks or a download demands a clean chip.
-- Never claim firmware is running on hardware unless download and reset both succeeded.`;
+- Use this instead of bash for ANY command that touches the debug probe (flash, erase, reset, option bytes). The probe lease lives here: a concurrent gdb or log session is told who holds the probe instead of a fake "no probe found", and a hung flasher is killed with its whole process tree instead of keeping the probe hostage.
+- command is an argv array; it runs without a shell. Typical recipes:
+  - OpenOCD: ["openocd","-f","interface/stlink.cfg","-f","target/stm32g4x.cfg","-c","program build/fw.elf verify reset exit"]
+  - J-Link: write a command file first (r / loadfile build/fw.hex / r / g / qc), then ["JLink","-Device","STM32G431CB","-If","SWD","-Speed","4000","-AutoConnect","1","-CommanderScript","flash.jlink"] (the binary is JLinkExe on macOS/Linux). J-Link Commander can exit 0 even when it failed — read the output, never trust its exit code alone.
+  - STM32CubeProgrammer: ["STM32_Programmer_CLI","-c","port=SWD","-w","build/fw.elf","-v","-rst"]
+- Always pass elfPath (the image the command flashes) when programming firmware: on success its hash is recorded, and gdb start verifies the chip is running exactly this build — the guard against debugging stale firmware.
+- A non-zero exit comes back as data, not an error. It usually means no probe connected, a vendor-driver mismatch, or the probe is held by another process — read the output and the appended hint.
+- There is no built-in probe enumeration; use bash for that (J-Link's ShowEmuList, lsusb, Get-PnpDevice) or the vendor tool itself.
+- Make sure the firmware actually starts afterwards: include a reset in the command (OpenOCD "reset", J-Link "r" then "g", CubeProgrammer "-rst") or reset through gdb. Never claim firmware is running on hardware unless flashing and a reset both succeeded.`;
 
-/** 纯 argv 构造,导出给测试。firmwarePath 必须已经是绝对路径。 */
-export function buildFlashArgs(params: FlashToolInput): string[] {
-	const chip = () => {
-		if (!params.chip) throw new Error(`flash ${params.action} requires chip (e.g. "STM32F405RG")`);
-		return params.chip;
-	};
-	const probe = params.probe ? ["--probe", params.probe] : [];
-	switch (params.action) {
-		case "list":
-			return ["list"];
-		case "info":
-			return ["info", ...probe];
-		case "erase":
-			return ["erase", "--chip", chip(), ...probe];
-		case "reset":
-			return ["reset", "--chip", chip(), ...probe];
-		case "download": {
-			if (!params.firmwarePath) throw new Error("flash download requires firmwarePath");
-			const ext = path.extname(params.firmwarePath).toLowerCase();
-			const format = params.format ?? (ext === ".hex" ? "hex" : ext === ".bin" ? "bin" : "elf");
-			const args = ["download", "--chip", chip(), ...probe];
-			if (format !== "elf") args.push("--binary-format", format);
-			if (format === "bin") args.push("--base-address", params.baseAddress ?? "0x08000000");
-			if (params.verify) args.push("--verify");
-			args.push(params.firmwarePath);
-			return args;
-		}
-	}
-}
-
-export function createFlashToolDefinition(
-	env: ExecutionEnv,
-	options?: FlashToolOptions,
-): ToolDefinition<typeof flashSchema, FlashToolDetails> {
+export function createFlashToolDefinition(env: ExecutionEnv): ToolDefinition<typeof flashSchema, FlashToolDetails> {
 	return {
 		name: "flash",
 		label: "flash",
 		description: DESCRIPTION,
-		promptSnippet: "Flash and control embedded targets over a debug probe (probe-rs)",
+		promptSnippet: "Run flashing / probe commands (OpenOCD, J-Link, vendor CLIs) with exclusive probe access",
 		promptGuidelines: [
-			"Never claim firmware is running on hardware unless flash download and reset both succeeded.",
+			"Run every command that touches the debug probe through the flash tool, not bash — the probe lease and hung-flasher cleanup live there.",
+			"Never claim firmware is running on hardware unless flashing and a reset both succeeded.",
 		],
 		parameters: flashSchema,
 		execute: async (_toolCallId, params, signal) => {
-			const firmware = params.firmwarePath ? await resolveToCwd(env, params.firmwarePath) : undefined;
-			if (firmware) {
-				const exists = await env.exists(firmware);
-				if (!exists.ok || !exists.value) throw new Error(`firmware file not found: ${firmware}`);
+			const command = params.command;
+			if (command.length === 0 || !command[0]?.trim()) {
+				throw new Error('flash requires command — the flasher argv, e.g. ["openocd","-f",...] or ["JLink","-CommanderScript",...]');
+			}
+			const elf = params.elfPath ? await resolveToCwd(env, params.elfPath) : undefined;
+			if (elf) {
+				const exists = await env.exists(elf);
+				if (!exists.ok || !exists.value) throw new Error(`elfPath not found: ${elf}`);
 			}
 
-			const args = buildFlashArgs({ ...params, firmwarePath: firmware });
-			const bin = engineBin("probe-rs", options);
-
-			const exclusive = EXCLUSIVE_ACTIONS.has(params.action);
-			if (exclusive) {
-				// runEngine 是一次性调用,租约只在这一次调用期间成立。
-				const holder = claimProbe("flash", `probe-rs ${params.action}`);
-				if (holder) throw new Error(`flash ${params.action}: ${describeProbeConflict(holder)}`);
-			}
+			const label = path.basename(command[0]!);
+			// runEngine 是一次性调用,租约只在这一次调用期间成立。
+			const holder = claimProbe("flash", label);
+			if (holder) throw new Error(`flash: ${describeProbeConflict(holder)}`);
 			let result: Awaited<ReturnType<typeof runEngine>>;
 			try {
-				result = await runEngine(bin, args, { cwd: env.cwd, signal, timeoutMs: FLASH_TIMEOUT_MS });
+				result = await runEngine(command[0]!, command.slice(1), {
+					cwd: env.cwd,
+					signal,
+					timeoutMs: clamp(params.timeoutMs, FLASH_TIMEOUT_MS, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS),
+				});
 			} finally {
-				if (exclusive) releaseProbe("flash");
+				releaseProbe("flash");
 			}
-			// 只判超时/中断:probe-rs 非零退出不抛错(见文件头),那条策略留在下面。
-			assertEngineSettled(result, `probe-rs ${params.action}`);
+			// 只判超时/中断:烧录器非零退出不抛错(见文件头),那条策略留在下面。
+			assertEngineSettled(result, `flash ${label}`);
 
 			const output = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n");
-			const details: FlashToolDetails = { action: params.action, chip: params.chip, exitCode: result.exitCode };
-			if (result.exitCode === 0 && params.action === "download" && firmware) {
-				// 落盘失败不该让一次成功的烧录变成报错 —— 它只是让 gdb 少一条校验线索。
-				await writeFlashState(env, {
-					elfPath: firmware,
-					sha256: await sha256File(firmware),
-					chip: params.chip,
-					probe: params.probe,
-					at: Date.now(),
-				}).catch(() => {});
-			}
+			const details: FlashToolDetails = { command, exitCode: result.exitCode };
 			if (result.exitCode !== 0) {
-				const text = `probe-rs ${params.action} failed (exit ${result.exitCode}):\n${output || "(no output)"}\n${probeFailedHint(output)}`;
+				const text = `flash \`${label}\` failed (exit ${result.exitCode}):\n${output || "(no output)"}\n${probeFailedHint(output)}`;
 				return { content: [{ type: "text", text }], details };
 			}
+			let recorded = "";
+			if (elf) {
+				// 落盘失败不该让一次成功的烧录变成报错 —— 它只是让 gdb 少一条校验线索。
+				const ok = await writeFlashState(env, { elfPath: elf, sha256: await sha256File(elf), at: Date.now() })
+					.then(() => true)
+					.catch(() => false);
+				if (ok) {
+					details.recordedElf = elf;
+					recorded = `\nrecorded ${elf} as the image on the target — gdb start will verify against it.`;
+				}
+			}
 			return {
-				content: [{ type: "text", text: output || `probe-rs ${params.action} completed` }],
+				content: [{ type: "text", text: `${output || `flash \`${label}\` completed (exit 0)`}${recorded}` }],
 				details,
 			};
 		},
 	};
 }
 
-export function createFlashTool(env: ExecutionEnv, options?: FlashToolOptions) {
-	return wrapToolDefinition(createFlashToolDefinition(env, options));
+export function createFlashTool(env: ExecutionEnv) {
+	return wrapToolDefinition(createFlashToolDefinition(env));
 }

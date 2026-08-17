@@ -123,7 +123,7 @@ Working principles:
 Evidence rules:
 - A file edit does not prove that the project builds.
 - A successful build does not prove that firmware was flashed.
-- Flash download/reset only proves programming and reset.
+- A successful flash and reset only prove programming and reset.
 - Runtime behavior requires evidence from log or gdb.
 - Register-level claims require datasheet evidence with page or section citations.
 - Never present assumptions, low-confidence netlist suggestions, or optimized-out debugger values as facts.

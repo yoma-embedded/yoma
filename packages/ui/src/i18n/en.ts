@@ -123,12 +123,8 @@ export const dict: Record<string, string> = {
   "ui.tool.netlist.file.cfgSeed": "Config seed",
 
   "ui.tool.flash": "Flash",
-  "ui.tool.flash.chip": "Chip",
-  "ui.tool.flash.action.list": "List targets",
-  "ui.tool.flash.action.info": "Target info",
-  "ui.tool.flash.action.download": "Download",
-  "ui.tool.flash.action.erase": "Erase",
-  "ui.tool.flash.action.reset": "Reset",
+  "ui.tool.flash.command": "Command",
+  "ui.tool.flash.recorded": "Recorded image",
 
   "ui.tool.datasheet": "Datasheet",
   "ui.tool.datasheet.action.search": "Search",

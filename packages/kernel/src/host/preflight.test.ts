@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
-import { inspectEngines, parseProbeList } from "./preflight.ts"
+import { inspectEngines } from "./preflight.ts"
 import { createKernelHost } from "./index.ts"
 
 const roots: string[] = []
@@ -15,25 +15,6 @@ function tempDir(prefix: string): string {
   roots.push(dir)
   return dir
 }
-
-describe("parseProbeList", () => {
-  test("picks indexed probe-rs list rows", () => {
-    const output = [
-      "The following debug probes were found:",
-      "[0]: STLink V2 (VID:PID 0483:374b, Serial: 1234)",
-      "[1]: J-Link (VID:PID 1366:0105)",
-    ].join("\n")
-    expect(parseProbeList(output)).toEqual([
-      "STLink V2 (VID:PID 0483:374b, Serial: 1234)",
-      "J-Link (VID:PID 1366:0105)",
-    ])
-  })
-
-  test("empty / prose does not invent a device", () => {
-    expect(parseProbeList("Error: no probe found")).toEqual([])
-    expect(parseProbeList("")).toEqual([])
-  })
-})
 
 describe("inspectEngines", () => {
   test("missingDir / emptyShell / missingBin / ok", () => {
@@ -55,7 +36,7 @@ describe("inspectEngines", () => {
     const bin = path.join(ok, "bin")
     mkdirSync(bin, { recursive: true })
     const exe = process.platform === "win32" ? ".exe" : ""
-    for (const name of ["stm32kernel", "probe-rs", "controller_map", "board_ir", "connections"]) {
+    for (const name of ["stm32kernel", "controller_map", "board_ir", "connections"]) {
       writeFileSync(path.join(bin, name + exe), "")
     }
     expect(inspectEngines(ok)).toEqual({ ok: true, code: "ok", dir: ok, missing: [] })
@@ -63,7 +44,7 @@ describe("inspectEngines", () => {
 })
 
 describe("app.preflight", () => {
-  test("no key → auth.missing, no engines dir → engines.missingDir, probe skipped", async () => {
+  test("no key → auth.missing, no engines dir → engines.missingDir", async () => {
     const saved: Record<string, string | undefined> = {}
     for (const name of ["MY_PI_PROVIDER", "MY_PI_MODEL", "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY"]) {
       saved[name] = process.env[name]
@@ -83,7 +64,6 @@ describe("app.preflight", () => {
       expect(report.auth.detail).toMatch(/type":"api_key"/)
       expect(report.engines.ok).toBe(false)
       expect(report.engines.code).toBe("missingDir")
-      expect(report.probe.code).toBe("skipped")
       await host.dispose()
     } finally {
       for (const [name, value] of Object.entries(saved)) {

@@ -79,9 +79,11 @@ export function createEmbeddedTools(env: NodeExecutionEnv, enginesDir?: string):
     createNetlistToolDefinition(env, engines),
     createDatasheetToolDefinition(env),
     createStm32ConfigToolDefinition(env, engines),
-    createFlashToolDefinition(env, engines),
-    createLogToolDefinition(env, engines),
-    createGdbToolDefinition(env, engines),
+    // flash/log/gdb 自 2026-08 起不吃 enginesDir:烧录命令模型自带,RTT 走 TCP,
+    // gdb server 从 PATH 起 —— 引擎目录只剩上面两个还要。
+    createFlashToolDefinition(env),
+    createLogToolDefinition(env),
+    createGdbToolDefinition(env),
   ]
 }
 

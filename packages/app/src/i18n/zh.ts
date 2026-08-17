@@ -125,7 +125,7 @@ export const dict = {
   "prompt.example.4": "原理图上这个脚连的是什么？",
   "prompt.example.5": "查参考手册里 ADC 的采样时间",
   "prompt.example.6": "给这块板生成 STM32 时钟和 GPIO 初始化",
-  "prompt.example.7": "probe-rs 为什么连不上目标？",
+  "prompt.example.7": "OpenOCD 为什么连不上目标？",
   "prompt.example.8": "盯这个变量，看 RTOS 还活不活",
   "prompt.example.9": "把片上 flash 和这份固件比对一下",
   "prompt.example.10": "帮我在工位上把这个 bug 复现出来",
@@ -745,6 +745,4 @@ export const dict = {
   "preflight.engines.missingDir": "找不到调试引擎目录。",
   "preflight.engines.emptyShell": "调试引擎目录是空壳（没有 bin/）。安装包请重装 Yoma；源码请在仓库根跑 bun engines/build.ts。",
   "preflight.engines.missingBin": "调试引擎缺：{{missing}}。安装包请重装 Yoma。",
-  "preflight.probe.none": "没检测到调试器。插上 ST-Link / J-Link / CMSIS-DAP 再烧录。",
-  "preflight.probe.error": "列举探针失败：{{detail}}",
 }

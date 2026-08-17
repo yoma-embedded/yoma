@@ -359,12 +359,11 @@ export interface Stm32ConfigToolDetails {
   exitCode: number | null
 }
 
-export type FlashAction = "list" | "info" | "download" | "erase" | "reset"
-
 export interface FlashToolDetails {
-  action: FlashAction
-  chip?: string
+  command: string[]
   exitCode: number | null
+  /** elfPath 给了且 exit 0 时:已落进 flash-state.json 的镜像绝对路径。 */
+  recordedElf?: string
 }
 
 export type LogAction = "start" | "read" | "wait" | "status" | "stop" | "ports"

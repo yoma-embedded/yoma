@@ -6,7 +6,3 @@
 	path = engines/controller_map
 	url = git@github.com:yoma-embedded/controller_map.git
 	branch = main
-[submodule "engines/probe-rs"]
-	path = engines/probe-rs
-	url = https://github.com/probe-rs/probe-rs.git
-	shallow = true

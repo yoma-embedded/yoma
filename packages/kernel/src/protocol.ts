@@ -61,14 +61,9 @@ export interface PreflightEngines extends PreflightCheck {
   missing: string[]
 }
 
-export interface PreflightProbe extends PreflightCheck {
-  devices: string[]
-}
-
 export interface PreflightReport {
   auth: PreflightAuth
   engines: PreflightEngines
-  probe: PreflightProbe
 }
 
 export interface KernelMethods {
@@ -76,7 +71,7 @@ export interface KernelMethods {
     params: void
     result: { version: string; enginesDir: string | null; sessionsRoot: string; node: string }
   }
-  /** 首跑预检:key / 引擎 / 探针。失败带 code。 */
+  /** 首跑预检:key / 引擎。失败带 code。 */
   "app.preflight": { params: void; result: PreflightReport }
 
   "session.list": { params: { directory?: string }; result: Session[] }

@@ -392,12 +392,15 @@ export function getToolInfo(tool: string, input: any = {}, _metadata?: ToolDetai
         title: i18n.t("ui.tool.netlist"),
         subtitle: input.part,
       }
-    case "flash":
+    case "flash": {
+      // command[0] 的 basename:烧录器的名字比整条 argv 更适合当副标题。
+      const argv = Array.isArray(input.command) ? (input.command as string[]) : []
       return {
         icon: "download",
         title: i18n.t("ui.tool.flash"),
-        subtitle: input.chip,
+        subtitle: argv[0]?.split(/[\\/]/).pop(),
       }
+    }
     case "datasheet":
       return {
         icon: "review",
@@ -1693,62 +1696,52 @@ ToolRegistry.register({
   },
 })
 
-const FLASH_DESTRUCTIVE_ACTIONS = new Set(["download", "erase"])
-const FLASH_ACTION_KEYS = {
-  list: "ui.tool.flash.action.list",
-  info: "ui.tool.flash.action.info",
-  download: "ui.tool.flash.action.download",
-  erase: "ui.tool.flash.action.erase",
-  reset: "ui.tool.flash.action.reset",
-} as const
-
 ToolRegistry.register({
   name: "flash",
   render(props) {
     const i18n = useI18n()
     const metadata = () => props.metadata as Partial<FlashToolDetails>
-    const action = createMemo(() => metadata().action || (props.input.action as string | undefined) || "")
-    const chip = createMemo(() => metadata().chip || (props.input.chip as string | undefined) || "")
+    // details 在结果落地前是空的,argv 从 input 兜底 —— 流式期卡片才有内容可显。
+    const command = createMemo<string[]>(() => {
+      const meta = metadata().command
+      if (Array.isArray(meta) && meta.length) return meta
+      const raw = props.input.command
+      return Array.isArray(raw) ? (raw as string[]) : []
+    })
+    const flasher = createMemo(() => command()[0]?.split(/[\\/]/).pop() ?? "")
     const exitCode = createMemo<number | null>(() =>
       typeof metadata().exitCode === "number" ? (metadata().exitCode as number) : null,
     )
     const failed = createMemo(() => exitCode() !== null && exitCode() !== 0)
-    const destructive = createMemo(() => FLASH_DESTRUCTIVE_ACTIONS.has(action()))
-    const actionLabel = createMemo(() => {
-      const value = action()
-      const key = FLASH_ACTION_KEYS[value as keyof typeof FLASH_ACTION_KEYS]
-      return key ? i18n.t(key) : value
-    })
-    const subtitle = createMemo(() => [actionLabel(), chip()].filter(Boolean).join(" · "))
+    const recorded = createMemo(() => metadata().recordedElf ?? "")
 
     return (
-      <div data-component="flash-tool" data-action={action()}>
+      <div data-component="flash-tool">
         <BasicTool
           {...props}
           icon="download"
           trigger={{
             title: i18n.t("ui.tool.flash"),
-            subtitle: subtitle(),
-            action: (
-              <Show when={destructive()}>
-                <span data-component="tool-badge" data-tone="danger">
-                  {actionLabel()}
-                </span>
-              </Show>
-            ),
+            subtitle: flasher(),
           }}
         >
           <div data-component="tool-kv">
-            <Show when={chip()}>
+            <Show when={command().length > 0}>
               <div data-slot="tool-kv-row">
-                <span data-slot="tool-kv-label">{i18n.t("ui.tool.flash.chip")}</span>
-                <span data-slot="tool-kv-value">{chip()}</span>
+                <span data-slot="tool-kv-label">{i18n.t("ui.tool.flash.command")}</span>
+                <span data-slot="tool-kv-value">{command().join(" ")}</span>
               </div>
             </Show>
             <Show when={exitCode() !== null}>
               <div data-slot="tool-kv-row" data-tone={failed() ? "danger" : undefined}>
                 <span data-slot="tool-kv-label">{i18n.t("ui.tool.exitCode")}</span>
                 <span data-slot="tool-kv-value">{exitCode()}</span>
+              </div>
+            </Show>
+            <Show when={recorded()}>
+              <div data-slot="tool-kv-row">
+                <span data-slot="tool-kv-label">{i18n.t("ui.tool.flash.recorded")}</span>
+                <span data-slot="tool-kv-value">{recorded()}</span>
               </div>
             </Show>
           </div>

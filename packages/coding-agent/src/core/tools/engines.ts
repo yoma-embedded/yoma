@@ -4,7 +4,7 @@
  * 与 path-utils.ts、edit-diff.ts 同类,是工具旁边的辅助模块,不是工具。
  * 改这里(尤其 killTree / runEngine)的回归面是这**六个**文件,不是三个:写着"三个"
  * 的时候,动 killTree 的人只会去回归引擎工具,而真正被打坏的是 gdb 的杀树链和 log
- * 的采集子进程 —— 也就是"probe-rs attach 攥着探针不放,报错长得和没插板子一模一样"
+ * 的采集子进程 —— 也就是"孤儿 gdbserver 攥着探针不放,报错长得和没插板子一模一样"
  * 那条疤。另外它整个经 src/index.ts 的 `export *` 抬成了包的公共 API。
  *
  * 为什么不用 bash 工具那条 env.exec 路径:它吃 shell 字符串(参数会被二次解释)、
@@ -51,7 +51,7 @@ export interface EnginePathOptions {
 }
 
 /** engines/bin 下必须有的可执行文件。 */
-export const ENGINE_BINARIES = ["stm32kernel", "probe-rs", "controller_map", "board_ir", "connections"] as const;
+export const ENGINE_BINARIES = ["stm32kernel", "controller_map", "board_ir", "connections"] as const;
 
 /** 向上找带 bin/ 的 engines 目录,跳过空壳。 */
 export function findEnginesDir(start: string): string {
@@ -215,7 +215,7 @@ function writeCrossProcessLock(owner: string, label: string, since: number): voi
 		try {
 			writeFileSync(file, body, { flag: "wx" });
 		} catch {
-			// 抢不到就继续:进程内租约仍在,跨进程提示走 probe-rs 的 exclusive access。
+			// 抢不到就继续:进程内租约仍在,跨进程冲突由烧录器/服务器自己的 exclusive access 报错兜着。
 		}
 	}
 }
@@ -267,14 +267,16 @@ export function describeProbeConflict(holder: ProbeLease): string {
 			`${NOT_HARDWARE} Stop that Yoma session (desktop Stop, or the mailbox runner) or close the other debugger, then retry.`
 		);
 	}
-	return `the debug probe is held by the \`${holder.owner}\` tool (${holder.label}) since ${held}s ago — run \`${holder.owner}\` action:"stop" first`;
+	// flash 是一次性调用(finally 放锁),对它说 action:"stop" 是指一条不存在的路。
+	const release = holder.owner === "flash" ? "wait for that command to finish" : `run \`${holder.owner}\` action:"stop" first`;
+	return `the debug probe is held by the \`${holder.owner}\` tool (${holder.label}) since ${held}s ago — ${release}`;
 }
 
 const EXCLUSIVE_RE =
 	/0xe00002c5|exclusive access|already in use|probe.*busy|busy.*probe|resource busy|in use by another/i;
 
 /**
- * probe-rs 把"被别的进程占着"和"没插板子"打成很像的非零退出。
+ * 烧录器/调试服务器把"被别的进程占着"和"没插板子"打成很像的非零退出。
  * 认出来就说占着;认不出来也先提占用,再提没插,不要只说去接 ST-Link。
  */
 export function describeProbeHardwareError(output: string): string | undefined {
@@ -282,8 +284,8 @@ export function describeProbeHardwareError(output: string): string | undefined {
 	const other = readCrossProcessLock();
 	if (other) return describeProbeConflict({ ...other, pid: other.pid, isLive: () => pidAlive(other.pid) });
 	return (
-		`the debug probe is already in use by another process (probe-rs exclusive access / 0xe00002c5). ` +
-		`${NOT_HARDWARE} A Yoma interactive session, a mailbox runner, STM32CubeIDE, OpenOCD, or another probe-rs may be holding it. ` +
+		`the debug probe is already in use by another process (exclusive access / 0xe00002c5). ` +
+		`${NOT_HARDWARE} A Yoma interactive session, a mailbox runner, STM32CubeIDE, OpenOCD, or a J-Link tool may be holding it. ` +
 		`Stop that, then retry. If nothing else is running, unplug/replug the probe.`
 	);
 }
@@ -299,8 +301,8 @@ export function probeFailedHint(output: string): string {
 	const occupied = describeProbeHardwareError(output);
 	if (occupied) return occupied;
 	return (
-		`If another program is using the probe (Yoma session, mailbox runner, CubeIDE, OpenOCD), stop it — that error often looks like a disconnected board but is not. ` +
-		`If nothing else is running, connect an ST-Link/J-Link/CMSIS-DAP probe and re-run \`list\`.`
+		`If another program is using the probe (Yoma session, mailbox runner, CubeIDE, OpenOCD, a J-Link tool), stop it — that error often looks like a disconnected board but is not. ` +
+		`If nothing else is running, connect an ST-Link/J-Link/CMSIS-DAP probe and check the OS actually sees it (lsusb / Get-PnpDevice / the vendor tool's own probe listing).`
 	);
 }
 
@@ -392,7 +394,7 @@ export function killTree(child: ChildProcess, signal: NodeJS.Signals): void {
 }
 
 /**
- * 宿主退出/被信号打断时,兜底杀掉还活着的那批子进程 —— 否则 probe-rs / gdbserver 会
+ * 宿主退出/被信号打断时,兜底杀掉还活着的那批子进程 —— 否则烧录器 / gdbserver 会
  * 一直握着探针。log 与 gdb 两条路各写过一份逐行同构的拷贝,与 killTree 同属"付过学费
  * 的疤痕组织",收在这里。
  *
@@ -438,10 +440,10 @@ function terminate(child: ChildProcess): void {
 /**
  * 超时/中断在所有引擎工具里都是异常,这两句话本来在四个调用点各抄了一遍。
  *
- * **退出码故意不在这里** —— 每个引擎的非零退出含义不同:stm32kernel exit 1 = 有 ERROR
- * 诊断(正常结果,是修复回路的一部分),probe-rs 非零 = 多半没插板子(也是正常结果,
- * 见 flash.ts 头注释),controller_map / board_ir 非零才是真失败。谁的退出码策略留在
- * 谁自己那儿 —— 把它折进来正是 flash.ts 那条头注释在防的事。
+ * **退出码故意不在这里** —— 每个调用方的非零退出含义不同:stm32kernel exit 1 = 有 ERROR
+ * 诊断(正常结果,是修复回路的一部分),flash 的烧录器非零 = 多半没插板子(也是正常
+ * 结果,见 flash.ts 头注释),controller_map / board_ir 非零才是真失败。谁的退出码策略
+ * 留在谁自己那儿 —— 把它折进来正是 flash.ts 那条头注释在防的事。
  */
 export function assertEngineSettled(result: EngineRunResult, label: string): EngineRunResult {
 	if (result.timedOut) throw new Error(`${label} timed out`);

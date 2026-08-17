@@ -442,7 +442,7 @@ describe("skills over ACP", () => {
 	}
 
 	it("announces /skill: commands and injects the skill list into the system prompt", async () => {
-		writeSkill("flash-triage", "Diagnose probe-rs flash failures");
+		writeSkill("flash-triage", "Diagnose OpenOCD flash failures");
 		const { agent, first } = setup();
 		const client = createClient();
 		const { sessionId }: any = await agent.newSession({ cwd: workdir }, client.cx);
@@ -463,11 +463,11 @@ describe("skills over ACP", () => {
 		await agent.prompt({ sessionId, prompt: [{ type: "text", text: "hi" }] }, client.cx);
 		expect(systemPrompt).toContain("<available_skills>");
 		expect(systemPrompt).toContain("flash-triage");
-		expect(systemPrompt).toContain("Diagnose probe-rs flash failures");
+		expect(systemPrompt).toContain("Diagnose OpenOCD flash failures");
 	});
 
 	it("runs /skill:name as a real turn with the formatted skill as the prompt", async () => {
-		writeSkill("flash-triage", "Diagnose probe-rs flash failures");
+		writeSkill("flash-triage", "Diagnose OpenOCD flash failures");
 		const { agent, first } = setup();
 		const client = createClient();
 		const { sessionId }: any = await agent.newSession({ cwd: workdir }, client.cx);
