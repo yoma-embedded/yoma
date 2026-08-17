@@ -5,12 +5,11 @@
 // resumable — the same contract as the agent's download_manual tool), and spawn the
 // rag_yoma CLI to ingest a user PDF into the local overlay tier.
 //
-// Path/env resolution mirrors yoma-config/tool/lib/paths.ts: process.env first, then
-// a KEY=value line in ~/.config/opencode/.env (override with $YOMA_ENV_FILE).
+// Path/env resolution: process.env first, then a KEY=value line in ~/.my-pi/.env
+// (override with $YOMA_ENV_FILE). Same directory as auth.json / skills / mailbox.
 
 import { app, ipcMain } from "electron"
 import type { IpcMainInvokeEvent } from "electron"
-import { DEFAULT_DATASHEET_SERVER } from "./datasheet-server.ts"
 import { spawn, type ChildProcess } from "node:child_process"
 import { createHash } from "node:crypto"
 import { once } from "node:events"
@@ -42,32 +41,38 @@ const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 const EMBED_MODEL = "BAAI/bge-m3"
 const EMBED_DIM = 1024
 
-// --- env resolution (== tool/datasheet/paths.ts, incl. XDG_CONFIG_HOME) -----------
+// --- env resolution: ~/.my-pi, same directory as auth.json -----------------------
 function configHome(): string {
-  const xdg = process.env.XDG_CONFIG_HOME?.trim()
-  return path.join(xdg || path.join(os.homedir(), ".config"), "opencode")
+  return path.join(os.homedir(), ".my-pi")
 }
-const ENV_FILE = process.env.YOMA_ENV_FILE?.trim() || path.join(configHome(), ".env")
+
+function envFiles(): string[] {
+  const explicit = process.env.YOMA_ENV_FILE?.trim()
+  if (explicit) return [explicit]
+  return [path.join(configHome(), ".env"), path.join(os.homedir(), ".config", "opencode", ".env")]
+}
 
 function envVar(name: string): string | undefined {
   const fromProcess = process.env[name]?.trim()
   if (fromProcess) return fromProcess
-  let raw: string
-  try {
-    raw = readFileSync(ENV_FILE, "utf8")
-  } catch {
-    return undefined
-  }
-  for (const line of raw.split("\n")) {
-    const trimmed = line.trim()
-    if (!trimmed || trimmed.startsWith("#")) continue
-    const eq = trimmed.indexOf("=")
-    if (eq === -1 || trimmed.slice(0, eq).trim() !== name) continue
-    let val = trimmed.slice(eq + 1).trim()
-    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-      val = val.slice(1, -1)
+  for (const file of envFiles()) {
+    let raw: string
+    try {
+      raw = readFileSync(file, "utf8")
+    } catch {
+      continue
     }
-    return val || undefined
+    for (const line of raw.split("\n")) {
+      const trimmed = line.trim()
+      if (!trimmed || trimmed.startsWith("#")) continue
+      const eq = trimmed.indexOf("=")
+      if (eq === -1 || trimmed.slice(0, eq).trim() !== name) continue
+      let val = trimmed.slice(eq + 1).trim()
+      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+        val = val.slice(1, -1)
+      }
+      if (val) return val
+    }
   }
   return undefined
 }
@@ -79,8 +84,7 @@ function artifactsRoot(): string {
   return envVar("YOMA_DATASHEET_ARTIFACTS") ?? path.join(configHome(), "datasheet-artifacts")
 }
 function serverUrl(): string | null {
-  // 团队服务器地址固定,产品要求下载即用 —— env / .env 都没配时落到内置默认。
-  return envVar("YOMA_DATASHEET_SERVER")?.replace(/\/+$/, "") ?? DEFAULT_DATASHEET_SERVER
+  return envVar("YOMA_DATASHEET_SERVER")?.replace(/\/+$/, "") ?? null
 }
 function ragRepo(): string | null {
   return envVar("YOMA_RAG_REPO") ?? null
@@ -260,7 +264,7 @@ async function loadInventory(chip: string, rev: string): Promise<ArtifactFile[]>
   const local = readManifest("shared").find((e) => e.chip === chip && e.rev === rev)
   if (local?.artifacts?.length) return local.artifacts
   const base = serverUrl()
-  if (!base) throw new Error("未配置文件服务器(在 ~/.config/opencode/.env 里设置 YOMA_DATASHEET_SERVER)")
+  if (!base) throw new Error("未配置文件服务器(在 ~/.my-pi/.env 里设置 YOMA_DATASHEET_SERVER)")
   const url = `${base}/api/bundles/${encodeURIComponent(chip)}/${encodeURIComponent(rev)}.json`
   const res = await fetch(url)
   if (!res.ok) throw new Error(`服务器上没有 ${chip}/${rev}(HTTP ${res.status})`)
@@ -278,7 +282,7 @@ async function downloadManual(chip: string, rev: string) {
   try {
     const files = await loadInventory(chip, rev)
     const base = serverUrl()
-    if (!base) throw new Error("未配置文件服务器(在 ~/.config/opencode/.env 里设置 YOMA_DATASHEET_SERVER)")
+    if (!base) throw new Error("未配置文件服务器(在 ~/.my-pi/.env 里设置 YOMA_DATASHEET_SERVER)")
     const root = path.resolve(artifactsRoot())
     let downloaded = 0
     let skipped = 0
@@ -407,7 +411,7 @@ async function updateIndex(): Promise<IndexUpdateResult> {
   if (indexUpdating) return { ok: false, error: "索引更新已在进行中" }
   if (activeDownloads.size > 0) return { ok: false, error: "有手册正在下载,等它结束后再更新索引" }
   const base = serverUrl()
-  if (!base) return { ok: false, error: "未配置文件服务器(在 ~/.config/opencode/.env 里设置 YOMA_DATASHEET_SERVER)" }
+  if (!base) return { ok: false, error: "未配置文件服务器(在 ~/.my-pi/.env 里设置 YOMA_DATASHEET_SERVER)" }
   indexUpdating = true
   try {
     const res = await fetch(`${base}/api/index/latest.json`)
@@ -513,7 +517,7 @@ async function ingestLocal(req: IngestRequest): Promise<{ ok: boolean; error?: s
   if (!repo || !existsSync(repo)) {
     return {
       ok: false,
-      error: "未配置 rag_yoma 仓库(在 ~/.config/opencode/.env 里设置 YOMA_RAG_REPO=<rag_yoma 路径>," +
+      error: "未配置 rag_yoma 仓库(在 ~/.my-pi/.env 里设置 YOMA_RAG_REPO=<rag_yoma 路径>," +
         "如需指定解析环境的 Python 再设 YOMA_RAG_PYTHON=<python.exe 路径>)",
     }
   }

@@ -85,8 +85,8 @@ function fail(message: string, hint = "先跑 `bun engines/build.ts`(为目标�
 // 第 4 条是"在 Mac 上打 Windows 包"能成立的关键:本地那份永远是 Mach-O,
 // 以前只能靠 YOMA_ALLOW_FOREIGN_ENGINES=1 打出一个引擎全坏的包。
 //
-// 私有仓的 Release 资产要鉴权,但**下载发生在打包期**(开发机或 CI,手上有凭据),
-// 终端用户拿到的是安装包里已经躺好的文件,不需要任何令牌。
+// Release 资产的下载发生在打包期;终端用户拿到的是安装包里已经躺好的文件,
+// 不需要任何令牌。
 
 const TARGET_ARCH = process.argv[3] ?? (TARGET === "win32" ? "x64" : process.arch)
 
@@ -196,11 +196,11 @@ function resolveEnginesDir(): string {
     if (!existsSync(archive)) fail(`YOMA_ENGINES_BUNDLE 指向的文件不存在:${archive}`)
   } else {
     mkdirSync(path.dirname(archive), { recursive: true })
-    // gh 带着登录态,私有仓也能下;没有 gh 就明确告诉人装它,别在这儿造第二套鉴权。
+    // 公开 Release 用 gh 下载即可;没有 gh 就明确告诉人装它,别在这儿造第二套鉴权。
     if (!Bun.which("gh")) {
       fail(
         `需要下载预编译引擎,但没装 gh CLI。\n` +
-          `[stage-engines] 装 gh 并 \`gh auth login\`(私有仓 Release 要鉴权),\n` +
+          `[stage-engines] 装 gh(https://cli.github.com),\n` +
           `[stage-engines] 或者自己下 ${asset} 后用 YOMA_ENGINES_BUNDLE=<路径> 指过来。`,
       )
     }
@@ -214,7 +214,7 @@ function resolveEnginesDir(): string {
     if (!result.ok) {
       fail(
         `下载 ${asset} 失败(${lock.repo}@${tag}):\n${result.out}\n` +
-          `[stage-engines] 常见原因:tag 还没发布、当前账号对私有仓没权限、该平台的产物没构建。`,
+          `[stage-engines] 常见原因:tag 还没发布、该平台的产物没构建、gh 未登录且 API 限额用尽。`,
       )
     }
   }

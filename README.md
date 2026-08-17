@@ -11,6 +11,8 @@
 
 它**不是** Cursor / Claude 的替代品。写这个仓库本身、问概念、贴一段 log 去想，继续用那些工具。
 
+**使用前：**这是一个能烧录、能 gdb、能在你机器上跑命令的 agent，没有权限确认。只在你信任的本机上用。信箱闭环还没在当前协议下用真板子跑过，标 experimental。细节见 `SECURITY.md`。
+
 ## 快速开始
 
 ```bash
@@ -41,8 +43,8 @@ bun dev:desktop      # 开发模式；改内核源码没有热更新，要重启
 - **数据手册**：需要自建 `YOMA_DATASHEET_SERVER`，没配就查不了，不是装完就能搜芯片手册。
 - **远程 OpenCode 服务器 / 免费 Zen 模型 / `opencode` CLI**：都不是这个产品。
 
-更细的架构、信箱协议和会踩的坑见 `CLAUDE.md`。例程库施工说明见 `docs/施工指南-例程库.md`。
+更细的架构、信箱协议和会踩的坑见 `CLAUDE.md`。怎么跑测试见 `CONTRIBUTING.md`。例程库施工说明见 `docs/施工指南-例程库.md`。
 
 ## 许可
 
-MIT。桌面端继承自 opencode；`packages/ai` 来自 [pi](https://github.com/earendil-works/pi)。
+MIT。第三方来源见 `NOTICE`：桌面端继承自 [opencode](https://github.com/anomalyco/opencode)；`packages/ai` 来自 [pi](https://github.com/earendil-works/pi)。

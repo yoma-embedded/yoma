@@ -188,7 +188,7 @@ export default function ManualsPage() {
         </Show>
         <Show when={config() && !config()!.serverUrl}>
           <div class="rounded-[8px] border border-v2-border-border-base px-3 py-2 text-[12px] text-v2-text-text-muted">
-            未配置文件服务器:在 ~/.config/opencode/.env 中加一行 YOMA_DATASHEET_SERVER=http://服务器:端口,
+            未配置文件服务器:在 ~/.my-pi/.env 中加一行 YOMA_DATASHEET_SERVER=http://服务器:端口,
             「更新索引」与官方手册下载才能工作。检索(datasheet_search)不受影响。
           </div>
         </Show>

@@ -1,0 +1,9 @@
+title = "yoma-pi"
+
+[allowlist]
+description = "generic-api-key false positives (CubeMX pin names, keybinds, generated SDK ids)"
+regexes = [
+  '''Mcu\.Pin\d+=VP_''',
+  '''shift\+alt\+arrow(up|down)''',
+  '''questionV2Reply''',
+]

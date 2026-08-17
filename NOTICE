@@ -1,0 +1,20 @@
+Yoma
+Copyright (c) 2026 Yoma contributors
+
+This repository includes third-party software:
+
+- Desktop UI (`packages/app`, `packages/desktop`, `packages/ui`,
+  `packages/session-ui`, `packages/util`): forked from
+  [opencode](https://github.com/anomalyco/opencode) (MIT).
+- `packages/ai`: vendored from [pi](https://github.com/earendil-works/pi)
+  by Mario Zechner (MIT).
+- `engines/stm32-config-kernel`: STM32 configuration / codegen kernel.
+  `data/*.irpack` is compiled from the STM32CubeMX device database.
+  ST HAL / CMSIS sources (`data/fw/`, ~1.1GB) are **not** in this
+  repository; fetch them locally with `tools/fetch-fw.ps1` if you need
+  the compile-gate tests.
+- `engines/controller_map`: board netlist pin extraction.
+- `packages/coding-agent/test/fixtures/examples/cube-mini`: a stub
+  fixture that mimics an STM32Cube tree layout. It is not ST HAL source.
+
+See `LICENSE` for the MIT text that covers this repository.

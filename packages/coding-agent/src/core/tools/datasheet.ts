@@ -1,8 +1,8 @@
 /**
  * datasheet 工具:数据手册 RAG 的三个动作合一(search / read_section / view_figure)。
  *
- * 【架构】完全在线,零本地状态:检索、解析文本、图片全部按需从同事的数据手册
- * 文件服务器读取(YOMA_DATASHEET_SERVER,配置在环境变量里)。
+ * 【架构】完全在线,零本地状态:检索、解析文本、图片全部按需从数据手册
+ * 文件服务器读取(YOMA_DATASHEET_SERVER,配置在环境变量里)。没有内置服务器。
  * 客户端不落索引、不落产物、不需要 SiliconFlow key —— embedding 与向量检索
  * 都是服务器的事。本机唯一的配置就是服务器地址。
  *
