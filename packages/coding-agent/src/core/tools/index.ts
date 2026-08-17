@@ -214,7 +214,7 @@ import { createLogToolDefinition } from "./log.ts";
 import { createNetlistToolDefinition } from "./netlist.ts";
 import { createReadToolDefinition } from "./read.ts";
 import { createStm32ConfigToolDefinition } from "./stm32config.ts";
-import { createToolchainToolDefinition } from "./toolchain.ts";
+import { createToolchainToolDefinition, type ToolchainToolOptions } from "./toolchain.ts";
 import type { ToolDefinition } from "./types.ts";
 import { createWriteToolDefinition } from "./write.ts";
 
@@ -224,19 +224,21 @@ export type ToolDef = ToolDefinition<any, any>;
  * 编码四件套 + toolchain,顺序前四与 pi 一致。toolchain 归在这一档而不是嵌入式
  * 六件套:它解决的是"这台机器能不能编译/调试这个项目",跟 netlist/datasheet/
  * flash/log/gdb 那条"板子在手上之后"的流水线是两回事,反而更接近 bash 会撞见的
- * 那类问题(命令找不到)。不带 options 调用:configDir/side/platform/env 全部走
- * 各自默认值(生产用真实 ~/.my-pi、真实 process.platform/env)。需要注入的调用方
- * (测试、工位端)和 embedded 六件套的 enginesDir 同一个先例——不改这个聚合工厂
- * 的签名,直接用 createToolchainToolDefinition(env, options) 自行装配
- * (session-manager.ts 的 createEmbeddedTools 就是这么处理 enginesDir 的)。
+ * 那类问题(命令找不到)。
+ *
+ * options.toolchain 是给 kernel host 这类生产调用方的注入口:host 自己拿着
+ * configDir / toolchainSide / manifestText(工位端没有项目检出,清单经信箱送来),
+ * 不注入的话,系统提示词里是 runner 筛过的清单,agent 自己跑 toolchain check 却按
+ * mother + 真实 ~/.my-pi + 磁盘清单来答 —— 两边自相矛盾,工位端直接报"没有清单"。
+ * 不传 options 时全部走默认值(ACP 适配器与测试的既有行为,一个字节不变)。
  */
-export function createCodingToolDefinitions(env: ExecutionEnv): ToolDef[] {
+export function createCodingToolDefinitions(env: ExecutionEnv, options?: { toolchain?: ToolchainToolOptions }): ToolDef[] {
 	return [
 		createReadToolDefinition(env),
 		createBashToolDefinition(env),
 		createEditToolDefinition(env),
 		createWriteToolDefinition(env),
-		createToolchainToolDefinition(env),
+		createToolchainToolDefinition(env, options?.toolchain),
 		// examples 与 toolchain 同档:回答"这个工程从哪来"(种子起步),不依赖 engines。
 		createExamplesToolDefinition(env),
 	];

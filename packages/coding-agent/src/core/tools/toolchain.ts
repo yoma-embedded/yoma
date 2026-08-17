@@ -11,14 +11,11 @@
  * 让这一次解析看不见账本,然后把新鲜结果写回真正的账本(见 rememberFreshResults);
  * check 是纯读,谁都不写。
  */
-import { existsSync } from "node:fs";
-import path from "node:path";
 import type { AgentToolResult, ExecutionEnv } from "@yoma/my-pi";
 import { type Static, Type } from "typebox";
-import { writeLedgerEntry } from "../toolchain/ledger.ts";
+import { recordToolchainPath, rememberFreshResults } from "../toolchain/actions.ts";
 import { type ResolvedTool, resolveToolchain, type ToolchainResolution } from "../toolchain/resolve.ts";
 import { MANIFEST_RELATIVE } from "../toolchain/schema.ts";
-import { probeVersion } from "../toolchain/version.ts";
 import { type ToolDefinition, wrapToolDefinition } from "./types.ts";
 
 export const TOOLCHAIN_ACTIONS = ["check", "resolve", "set"] as const;
@@ -62,6 +59,12 @@ export interface ToolchainToolOptions {
 	platform?: string;
 	/** 默认 process.env;测试用它隔离真实环境变量、注入假 PATH。 */
 	env?: NodeJS.ProcessEnv;
+	/**
+	 * 清单原文,绕开"从 cwd 读 .my-pi/toolchain.json"。**工位端必须注入**:它没有项目
+	 * 检出,清单是经信箱送来的 —— 不注入的话,系统提示词里是 runner 筛过的清单,而
+	 * agent 自己跑 toolchain check 却报"没有清单",两边自相矛盾(实测踩过)。
+	 */
+	manifestText?: string;
 }
 
 const DESCRIPTION = `Resolves the project's declared host toolchain (compiler, cmake, ninja, debug-probe drivers, python, ...) against what is actually installed on this machine, using the project's ${MANIFEST_RELATIVE} manifest.
@@ -130,39 +133,13 @@ function renderResolution(resolution: ToolchainResolution, action: ToolchainActi
 	};
 }
 
-// ─── resolve 动作:跳过账本、写回账本 ───────────────────────────────────────────
-
-/**
- * 把这次新鲜探测到的 ok 结果写回账本,by:"auto"。跳过 source==="local" 的:那是
- * 这一个项目的覆盖(可能是仓库里 vendor 的专属工具链),写进机器级账本会让同一台
- * 机器上不相关的项目也悄悄捡到它——正是这套系统要挡的"选错还编得过"那类坑(根
- * CLAUDE.md 反复出现的教训)。逐条 await 而不是 Promise.all:writeLedgerEntry 是
- * 读改写整份文件,并发写会互相踩丢更新(ledger.ts 头部注释),工具通常个位数,
- * 串行的代价可以忽略。
- */
-async function rememberFreshResults(resolution: ToolchainResolution, configDir: string | undefined): Promise<void> {
-	for (const tool of resolution.tools) {
-		if (tool.status !== "ok" || tool.source === "local") continue;
-		await writeLedgerEntry(
-			{ id: tool.id, bin: tool.bin, version: tool.version, confirmedAt: Date.now(), by: "auto" },
-			configDir,
-		);
-	}
-}
-
 // ─── set 动作 ────────────────────────────────────────────────────────────────
 
 /**
- * 账本条目的 key 用真实可执行文件名(不带扩展名),不用清单里的抽象 id——与既有
- * 账本条目的形态一致(ledger.ts 头部注释里的例子就是拿真实文件名当 key)。set 只
- * 产出单条 bin 记录,下游不管是 shellEnvFor(取 Object.values)还是 primaryBinPath
- * 的兜底分支(找不到声明名字就退回 Object.values(bin)[0])都不依赖 key 具体叫
- * 什么,选真实文件名单纯是为了以后人肉翻 toolchains.json 时一眼看出这是哪个东西。
+ * 参数校验留在工具层(缺参是模型没按 schema 来,话术要教它怎么补);路径验证与写
+ * 账本在 toolchain/actions.ts 的 recordToolchainPath —— 与桌面端 RPC 同一套实现,
+ * 两个入口的拒绝理由、账本形态因此不可能分叉。
  */
-function execNameOf(resolvedPath: string): string {
-	return path.parse(resolvedPath).name;
-}
-
 async function runSet(
 	params: ToolchainToolInput,
 	configDir: string | undefined,
@@ -171,28 +148,10 @@ async function runSet(
 	if (!id) throw new Error('toolchain set requires "id" (the tool id from toolchain.json, e.g. "arm-gcc")');
 	const rawPath = params.path?.trim();
 	if (!rawPath) throw new Error('toolchain set requires "path" (the absolute path the user gave you)');
-	if (!path.isAbsolute(rawPath)) {
-		throw new Error(
-			`toolchain set: path must be absolute (got "${rawPath}") — the toolchain ledger is read by every project on this machine, a relative path would resolve differently each time`,
-		);
-	}
-	if (!existsSync(rawPath)) {
-		throw new Error(`toolchain set: ${rawPath} does not exist`);
-	}
 
-	const version = await probeVersion(rawPath);
-	if (version === undefined) {
-		throw new Error(
-			`toolchain set: ran "${rawPath} --version" and found no recognizable version number in the output — double-check this is the right executable before recording it`,
-		);
-	}
+	const recorded = await recordToolchainPath({ id, path: rawPath, configDir });
 
-	await writeLedgerEntry(
-		{ id, bin: { [execNameOf(rawPath)]: rawPath }, version, confirmedAt: Date.now(), by: "user" },
-		configDir,
-	);
-
-	const text = `Recorded ${id} -> ${rawPath} (version ${version}) in the toolchain ledger. Every later session on this machine will find it automatically — no need to ask again.`;
+	const text = `Recorded ${recorded.id} -> ${recorded.binPath} (version ${recorded.version}) in the toolchain ledger. Every later session on this machine will find it automatically — no need to ask again.`;
 	return { content: [{ type: "text", text }], details: { action: "set", ok: true, id } };
 }
 
@@ -224,6 +183,7 @@ export function createToolchainToolDefinition(
 				side: options?.side,
 				platform: options?.platform,
 				env: options?.env,
+				manifestText: options?.manifestText,
 			});
 
 			if (action === "resolve") await rememberFreshResults(resolution, options?.configDir);

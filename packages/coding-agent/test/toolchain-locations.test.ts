@@ -20,8 +20,10 @@ import {
 	findOnPath,
 	parseInstallLocations,
 	registryCandidates,
+	tableLookup,
 	WELL_KNOWN_LOCATIONS,
 	wellKnownCandidates,
+	type LocationTable,
 } from "../src/core/toolchain/locations.ts";
 import type { PlatformKey } from "../src/core/toolchain/schema.ts";
 
@@ -210,6 +212,43 @@ describe("wellKnownCandidates", () => {
 	it("已知 toolId 但表里没有这个平台(比如 aix)返回 []", () => {
 		expect(wellKnownCandidates("jlink", "aix")).toEqual([]);
 	});
+
+	// 表键失配的真实形状:清单给编译器起项目内短名(id "arm-gcc"),厂商身份放在
+	// from("arm-gnu-toolchain"),而表键是厂商名 —— 只按 id 查,这一档永远不命中,
+	// 静默退化成只剩 PATH(bk64.jsonc 实测踩过)。表可注入,回落才能在临时目录上
+	// 真展开一次 —— 用真表的话键值全是系统路径,断言只能是空对空,永远不会响。
+	it("toolId 不在表里时回落 tool.from 查,pattern 真的展开", () => {
+		mkdirSync(join(dir, "gnu-13.2", "bin"), { recursive: true });
+		const table: LocationTable = { "arm-gnu-toolchain": { win32: [join(dir, "gnu-*", "bin")] } };
+		expect(wellKnownCandidates("arm-gcc", "win32", { from: "arm-gnu-toolchain", table })).toEqual([
+			join(dir, "gnu-13.2", "bin"),
+		]);
+	});
+
+	it("toolId 自己在表里时不看 from —— 更具体的键赢,不做并集", () => {
+		mkdirSync(join(dir, "by-id"));
+		mkdirSync(join(dir, "by-from"));
+		const table: LocationTable = {
+			widget: { win32: [join(dir, "by-id")] },
+			"widget-vendor": { win32: [join(dir, "by-from")] },
+		};
+		expect(wellKnownCandidates("widget", "win32", { from: "widget-vendor", table })).toEqual([join(dir, "by-id")]);
+	});
+});
+
+describe("tableLookup", () => {
+	it("id 命中时直接返回,忽略 from", () => {
+		expect(tableLookup({ a: 1, b: 2 }, "a", "b")).toBe(1);
+	});
+
+	it("id 不在表里时回落 from", () => {
+		expect(tableLookup({ b: 2 }, "a", "b")).toBe(2);
+	});
+
+	it("两个键都不在、或 from 未提供时返回 undefined", () => {
+		expect(tableLookup({ c: 3 }, "a", "b")).toBeUndefined();
+		expect(tableLookup({ c: 3 }, "a")).toBeUndefined();
+	});
 });
 
 // ─── registryCandidates / parseInstallLocations ─────────────────────────────
@@ -262,6 +301,10 @@ describe("registryCandidates", () => {
 		// 这台开发机本身就是 win32(见根 CLAUDE.md 环境信息),不需要注入 platform
 		// 也能跑到"平台判断通过、查表未命中"这一段 —— 用不在表里的 id 断言提前退出。
 		expect(registryCandidates("not-a-real-tool")).toEqual([]);
+	});
+
+	it("id 与 from 都不在搜索词表里时返回 [],注入的 terms 表生效(不碰真注册表,快速返回)", () => {
+		expect(registryCandidates("arm-gcc", "win32", { from: "unknown-vendor", terms: {} })).toEqual([]);
 	});
 
 	it(
