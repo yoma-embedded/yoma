@@ -495,10 +495,10 @@ text part,不过滤的话提示词会原样出现在终报的"根因分析"里)�
 - **这是一个 fork**:2026-08 起运行时身份已统一为 Yoma(`app.setName("Yoma")`、
   运行时 appId = bundle id = `com.yoma.desktop`、深链 `yoma://`),旧的
   `ai.opencode.desktop*` userData 弃在原地(当时明确决定旧数据不要,顺带消灭了
-  跨签名钥匙串弹窗;tauri→electron 的 .dat 迁移一并摘除)。**内部名字仍是 opencode**:
-  localStorage `opencode.*`、store 文件 `opencode.updater`、`OPENCODE_CHANNEL` 等
-  env、工具链共享的 `~/.config/opencode/`、shiki 主题名 —— 这些是承重标识符,
-  与品牌无关,别盲目"修正"。
+  跨签名钥匙串弹窗;tauri→electron 的 .dat 迁移一并摘除)。**内部 persist/store/env 已改成 yoma**:
+  localStorage `yoma.*`、store 文件 `yoma.updater`、`YOMA_CHANNEL` 等
+  env。旧的 `opencode.*` 键不迁移,设置会重置一次。shiki 主题名、pi-ai 的 OpenCode Zen
+  provider id、以及 Linux 遗留 desktop entry 仍是 opencode —— 那些不是我们的产品标识。
 - `@tanstack/virtual-core` 的 patch 是承重的,没有它 timeline 会抛
   `getLogicalScrollOffset is not a function`。
 

@@ -1,6 +1,6 @@
 import type { ServerConnection } from "@/context/server"
 
-export const SESSION_TABS_REMOVED_EVENT = "opencode:session-tabs-removed"
+export const SESSION_TABS_REMOVED_EVENT = "yoma:session-tabs-removed"
 
 export type SessionTabsRemovedDetail = {
   server?: ServerConnection.Key

@@ -56,7 +56,7 @@ const APP_IDS: Record<string, string> = {
   beta: "com.yoma.desktop.beta",
   prod: "com.yoma.desktop",
 }
-const TEST_ONBOARDING = process.env.OPENCODE_TEST_ONBOARDING === "1"
+const TEST_ONBOARDING = process.env.YOMA_TEST_ONBOARDING === "1"
 const jsCallStackFeature = "DocumentPolicyIncludeJSCallStacksInCrashReports"
 
 let logger: ReturnType<typeof initLogging>
@@ -140,18 +140,18 @@ const main = Effect.gen(function* () {
     process.chdir(homedir())
   } catch {}
 
-  process.env.OPENCODE_DISABLE_EMBEDDED_WEB_UI = "true"
+  process.env.YOMA_DISABLE_EMBEDDED_WEB_UI = "true"
 
   const appId = app.isPackaged ? APP_IDS[CHANNEL] : "com.yoma.desktop.dev"
   const onboardingTestRoot = ((): string | undefined => {
     if (!TEST_ONBOARDING) return
 
-    const root = join(tmpdir(), `opencode-onboarding-${randomUUID()}`)
+    const root = join(tmpdir(), `yoma-onboarding-${randomUUID()}`)
     rmSync(root, { recursive: true, force: true })
     ;["data", "config", "cache", "state", "desktop", "session"].forEach((dir) =>
       mkdirSync(join(root, dir), { recursive: true }),
     )
-    process.env.OPENCODE_DB = ":memory:"
+    process.env.YOMA_DB = ":memory:"
     process.env.XDG_DATA_HOME = join(root, "data")
     process.env.XDG_CONFIG_HOME = join(root, "config")
     process.env.XDG_CACHE_HOME = join(root, "cache")
@@ -280,12 +280,12 @@ const main = Effect.gen(function* () {
     },
     persistence: {
       get: () => {
-        const value = getStore("opencode.mailbox").get("settings") as MailboxSettings | undefined
+        const value = getStore("yoma.mailbox").get("settings") as MailboxSettings | undefined
         return value && typeof value.remote === "string" && (value.role === "runner" || value.role === "mother")
           ? value
           : undefined
       },
-      set: (settings) => getStore("opencode.mailbox").set("settings", settings),
+      set: (settings) => getStore("yoma.mailbox").set("settings", settings),
     },
     // 挂起等人时喊一声。**不看窗口有没有聚焦** —— 要动手的人多半在板子那边,
     // 而这条通知就是把"闭环停在这儿了"送出去的唯一手段。
@@ -348,7 +348,7 @@ const main = Effect.gen(function* () {
   )
 
   const port = yield* Effect.gen(function* () {
-    const fromEnv = process.env.OPENCODE_PORT
+    const fromEnv = process.env.YOMA_PORT
     if (fromEnv) {
       const parsed = Number.parseInt(fromEnv, 10)
       if (!Number.isNaN(parsed)) return parsed

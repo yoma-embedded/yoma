@@ -75,8 +75,8 @@ describe("buildRequestParts", () => {
         {
           type: "image",
           id: "img_external",
-          filename: "opencode.global.dat",
-          sourcePath: "C:\\Users\\Luke\\AppData\\Roaming\\ai.opencode.desktop.beta\\opencode.global.dat",
+          filename: "yoma.global.dat",
+          sourcePath: "C:\\Users\\Luke\\AppData\\Roaming\\com.yoma.desktop.beta\\yoma.global.dat",
           mime: "text/plain",
           dataUrl: "data:text/plain;base64,AAA",
         },
@@ -88,7 +88,7 @@ describe("buildRequestParts", () => {
     })
 
     expect(result.input.files?.[0]?.filename).toBe(
-      "C:\\Users\\Luke\\AppData\\Roaming\\ai.opencode.desktop.beta\\opencode.global.dat",
+      "C:\\Users\\Luke\\AppData\\Roaming\\com.yoma.desktop.beta\\yoma.global.dat",
     )
   })
 

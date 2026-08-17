@@ -62,14 +62,14 @@ jobs:
 
       - name: 构建 renderer / main / preload
         env:
-          OPENCODE_CHANNEL: ${{ inputs.channel }}
+          YOMA_CHANNEL: ${{ inputs.channel }}
         run: bun build:desktop
 
       # stage-engines 自己会判断:本地 engines 满足 win32 就用本地(engines=build 的情况),
       # 否则按 engines.lock.json 下载预编译产物。gh 用内置令牌鉴权(同仓 Release)。
       - name: 出安装包
         env:
-          OPENCODE_CHANNEL: ${{ inputs.channel }}
+          YOMA_CHANNEL: ${{ inputs.channel }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bun --cwd packages/desktop package:win
 

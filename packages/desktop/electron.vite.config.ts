@@ -6,9 +6,9 @@ import appPlugin from "@yoma-desktop/app/vite"
 import { KERNEL_VITE_ALIAS } from "../kernel/kernel-alias.ts"
 
 const channel = (() => {
-  const raw = process.env.OPENCODE_CHANNEL
+  const raw = process.env.YOMA_CHANNEL
   if (raw === "dev" || raw === "beta" || raw === "prod") return raw
-  if (process.env.OPENCODE_CHANNEL === "latest") return "prod"
+  if (process.env.YOMA_CHANNEL === "latest") return "prod"
   return "dev"
 })()
 
@@ -34,7 +34,7 @@ const sentry =
 export default defineConfig({
   main: {
     define: {
-      "import.meta.env.OPENCODE_CHANNEL": JSON.stringify(channel),
+      "import.meta.env.YOMA_CHANNEL": JSON.stringify(channel),
     },
     // yoma 必须被 inline,不能外部化 —— 见 packages/kernel/kernel-alias.ts 顶部的说明。
     // @yoma-desktop/kernel 放在 devDependencies 里,于是 externalizeDeps 不会碰它。
@@ -50,7 +50,7 @@ export default defineConfig({
     },
     plugins: [
       {
-        name: "opencode:node-pty-narrower",
+        name: "yoma:node-pty-narrower",
         enforce: "pre",
         resolveId(s) {
           if (s === "@lydell/node-pty") return nodePtyPkg

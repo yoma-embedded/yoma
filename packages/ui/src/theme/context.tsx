@@ -12,10 +12,10 @@ import type { DesktopTheme } from "./types"
 export type ColorScheme = "light" | "dark" | "system"
 
 const STORAGE_KEYS = {
-  THEME_ID: "opencode-theme-id",
-  COLOR_SCHEME: "opencode-color-scheme",
-  THEME_CSS_LIGHT: "opencode-theme-css-light",
-  THEME_CSS_DARK: "opencode-theme-css-dark",
+  THEME_ID: "yoma-theme-id",
+  COLOR_SCHEME: "yoma-color-scheme",
+  THEME_CSS_LIGHT: "yoma-theme-css-light",
+  THEME_CSS_DARK: "yoma-theme-css-dark",
 } as const
 
 const THEME_STYLE_ID = "oc-theme"

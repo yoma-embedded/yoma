@@ -11,14 +11,14 @@ const channels = [
 
 for (const channel of channels) {
   test(`uses one Linux desktop identity for ${channel.channel}`, async () => {
-    const previous = process.env.OPENCODE_CHANNEL
-    process.env.OPENCODE_CHANNEL = channel.channel
+    const previous = process.env.YOMA_CHANNEL
+    process.env.YOMA_CHANNEL = channel.channel
 
     const module = await import(`./electron-builder.config.ts?channel=${channel.channel}`)
     const config = module.default as Configuration
 
-    if (previous === undefined) delete process.env.OPENCODE_CHANNEL
-    else process.env.OPENCODE_CHANNEL = previous
+    if (previous === undefined) delete process.env.YOMA_CHANNEL
+    else process.env.YOMA_CHANNEL = previous
 
     expect(config.appId).toBe(channel.appId)
     expect(config.extraMetadata?.desktopName).toBe(`${channel.appId}.desktop`)
@@ -50,14 +50,14 @@ test("没有 Apple 公证凭据时降级为不公证、dmg 不签名,而不是�
 })
 
 test("keeps a hidden prod launcher for old Linux pins", async () => {
-  const previous = process.env.OPENCODE_CHANNEL
-  process.env.OPENCODE_CHANNEL = "prod"
+  const previous = process.env.YOMA_CHANNEL
+  process.env.YOMA_CHANNEL = "prod"
 
   const module = await import("./electron-builder.config.ts?compat=prod")
   const config = module.default as Configuration
 
-  if (previous === undefined) delete process.env.OPENCODE_CHANNEL
-  else process.env.OPENCODE_CHANNEL = previous
+  if (previous === undefined) delete process.env.YOMA_CHANNEL
+  else process.env.YOMA_CHANNEL = previous
 
   expect(config.deb?.fpm?.[0]).toEndWith(`${legacyDesktopEntry}=/usr/share/applications/opencode-desktop.desktop`)
   expect(config.rpm?.fpm?.[0]).toEndWith(`${legacyDesktopEntry}=/usr/share/applications/opencode-desktop.desktop`)
