@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use stm32ck_importer::{pack, Lint};
 
 #[derive(Parser)]
-#[command(about = "Compile the CubeMX database into distributable IR packs")]
+#[command(about = "Compile the CubeMX database into IR packs (build artifacts, not committed)")]
 struct Args {
     /// CubeMX db directory (the one containing mcu/, plugins/, templates/).
     /// Defaults to the local CubeMX installation (see also

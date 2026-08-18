@@ -1,5 +1,8 @@
 /target
 /data.zip
+# CubeMX 器件库经 stm32ck-import 解析出的 IR。构建产物,不进仓。
+/data/*.irpack
+/data/*.debug.json
 # HAL/CMSIS 固件组件(BSD-3,1.1GB)不进主仓 —— tools/fetch-fw.ps1 按需拉取
 /data/fw/
 *.snap.new

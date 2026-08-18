@@ -17,7 +17,9 @@
 // 冻结进可执行文件本身,产出真正与路径无关的二进制(dist 阶段会验这一点)。
 //
 // data 分两半,处理方式不同:
-//   - irpacks(27 个族一共 ~6MB)—— 随产物一起发,小到可以忽略;
+//   - irpacks —— CubeMX 器件库经 stm32ck-import 解析出的构建产物,**不进 git**。
+//     本机有 CubeMX(或 STM32CK_CUBEMX_DB)时,build.ts 会自己导入;装进运行时
+//     布局 / --dist 产物。没有 CubeMX 就硬失败,缺料不能装成"这个族不支持"。
 //   - fw/(ST 官方 HAL 组件,**1.1GB**,压缩后仍有 ~174MB)—— **不进分发产物**。
 //     它只有 `stm32kernel generate` 用得到,而那条命令本来就收 --fw-dir,
 //     所以按族按需取(STM32G4 压缩后才 4MB)远比让每个人下 1.1GB 合理。
@@ -120,12 +122,46 @@ function sha256(file: string): string {
 	return createHash("sha256").update(readFileSync(file)).digest("hex");
 }
 
+const kernelDir = path.join(here, "stm32-config-kernel");
+const kernelData = path.join(kernelDir, "data");
+// irpack 数量是"这份产物到底支持几个芯片族"的唯一体现 —— 少了就静默少一大半,
+// 用户侧表现成"这个族不支持",看起来像产品限制而不是构建产物缺料
+// (实测:一次 CI 只产出 2 个,本机是 27 个)。少于阈值就红。
+const MIN_IRPACKS = 20;
+
+function countIrpacks(dir: string): number {
+	if (!existsSync(dir)) return 0;
+	return readdirSync(dir).filter((entry) => entry.endsWith(".irpack")).length;
+}
+
+/** 缺 pack 就对着本机 CubeMX db 解析。已经够数则跳过(解析全库要几分钟)。 */
+async function ensureIrpacks(): Promise<number> {
+	mkdirSync(kernelData, { recursive: true });
+	const have = countIrpacks(kernelData);
+	if (have >= MIN_IRPACKS) {
+		console.log(`  irpacks ${have} 个族(已解析,跳过导入)`);
+		return have;
+	}
+	console.log(`\n[import] CubeMX db → ${kernelData} (现有 ${have},需要 ≥${MIN_IRPACKS})`);
+	console.log("  装过 STM32CubeMX 会自动探测;否则设 STM32CK_CUBEMX_DB 或传 --cubemx-db");
+	await $`cargo run --release -p stm32ck-importer -- --all --out data`.cwd(kernelDir);
+	const after = countIrpacks(kernelData);
+	if (after < MIN_IRPACKS) {
+		throw new Error(
+			`stm32ck-import 只写出 ${after} 个 irpack(期望 ≥${MIN_IRPACKS})。` +
+				`装 STM32CubeMX,或设 STM32CK_CUBEMX_DB 指向其 db/ 目录(含 mcu/)。`,
+		);
+	}
+	return after;
+}
+
 if (dist) {
 	await need("cargo", "install Rust via https://rustup.rs");
 	await need("uv", "install uv via https://docs.astral.sh/uv/getting-started/installation/");
 
-	console.log("\n[1/4] stm32-config-kernel — cargo build --release");
-	await $`cargo build --release`.cwd(path.join(here, "stm32-config-kernel"));
+	console.log("\n[1/4] stm32-config-kernel — cargo build --release + import irpacks");
+	await $`cargo build --release`.cwd(kernelDir);
+	await ensureIrpacks();
 
 	console.log("\n[2/4] controller_map — uv sync");
 	await $`uv sync`.cwd(path.join(here, "controller_map"));
@@ -147,25 +183,19 @@ if (dist) {
 		path.join(here, "stm32-config-kernel", "target", "release", exe("stm32kernel")),
 		path.join(distDir, "bin", exe("stm32kernel")),
 	);
-	// irpacks 随产物走(27 个族一共 ~6MB);fw/ 故意不带 —— 见文件头。
-	const dataSrc = path.join(here, "stm32-config-kernel", "data");
+	// irpacks 是本机解析产物,打进包;fw/ 故意不带 —— 见文件头。
 	let irpacks = 0;
-	for (const entry of readdirSync(dataSrc)) {
+	for (const entry of readdirSync(kernelData)) {
 		if (!entry.endsWith(".irpack")) continue;
-		copyFileSync(path.join(dataSrc, entry), path.join(distDir, "data", "stm32", entry));
+		copyFileSync(path.join(kernelData, entry), path.join(distDir, "data", "stm32", entry));
 		irpacks++;
 	}
 
-	// irpack 数量是"这份产物到底支持几个芯片族"的唯一体现 —— 少了就静默少一大半,
-	// 用户侧表现成"这个族不支持",看起来像产品限制而不是构建产物缺料
-	// (实测:一次 CI 只产出 2 个,本机是 27 个)。少于阈值就红。
-	const MIN_IRPACKS = 20;
 	const { problems, notes } = auditDist(distDir);
 	if (irpacks < MIN_IRPACKS) {
 		problems.push(
-			`只收到 ${irpacks} 个 irpack(期望 ≥${MIN_IRPACKS})—— ` +
-				`engines/stm32-config-kernel/data/ 里的 *.irpack 缺料,` +
-				`用 stm32ck-importer 对着本机 CubeMX db 重新导入(见该目录 README 的「开发期数据管道」)`,
+			`只收到 ${irpacks} 个 irpack(期望 ≥${MIN_IRPACKS})—— CubeMX 解析没跑完。` +
+				`装 STM32CubeMX 或设 STM32CK_CUBEMX_DB,再跑 \`bun engines/build.ts --dist\`。`,
 		);
 	}
 	const manifest = {
@@ -205,19 +235,20 @@ if (!checkOnly) {
 	await need("cargo", "install Rust via https://rustup.rs");
 	await need("uv", "install uv via https://docs.astral.sh/uv/getting-started/installation/");
 
-	console.log("\n[1/3] stm32-config-kernel — cargo build --release");
-	await $`cargo build --release`.cwd(path.join(here, "stm32-config-kernel"));
+	console.log("\n[1/3] stm32-config-kernel — cargo build --release + import irpacks");
+	await $`cargo build --release`.cwd(kernelDir);
+	await ensureIrpacks();
 
 	console.log("\n[2/3] controller_map — uv sync");
 	await $`uv sync`.cwd(path.join(here, "controller_map"));
 
 	console.log("\n[3/3] install — engines/bin + engines/data");
 	const venvBin = path.join(here, "controller_map", ".venv", process.platform === "win32" ? "Scripts" : "bin");
-	install(path.join(here, "stm32-config-kernel", "target", "release", exe("stm32kernel")), path.join(here, "bin", exe("stm32kernel")), "file");
+	install(path.join(kernelDir, "target", "release", exe("stm32kernel")), path.join(here, "bin", exe("stm32kernel")), "file");
 	for (const entry of ["controller_map", "board_ir", "connections"]) {
 		install(path.join(venvBin, exe(entry)), path.join(here, "bin", exe(entry)), "file");
 	}
-	install(path.join(here, "stm32-config-kernel", "data"), path.join(here, "data", "stm32"), "dir");
+	install(kernelData, path.join(here, "data", "stm32"), "dir");
 }
 
 // doctor:每一行是工具运行时会解析到的真实路径。
@@ -235,6 +266,16 @@ const rows: [string, string, boolean][] = [
 	probe("controller_map", () => engineBin("controller_map", at)),
 	probe("board_ir", () => engineBin("board_ir", at)),
 	probe("stm32 data", () => engineDataDir("stm32", at)),
+	probe("irpacks", () => {
+		const dir = engineDataDir("stm32", at);
+		const n = countIrpacks(dir);
+		if (n < MIN_IRPACKS) {
+			throw new Error(
+				`${n} packs in ${dir} (need ≥${MIN_IRPACKS}) — install STM32CubeMX and re-run bun engines/build.ts`,
+			);
+		}
+		return `${n} families`;
+	}),
 ];
 
 console.log("\n─ doctor ─────────────────────────────────────────────");

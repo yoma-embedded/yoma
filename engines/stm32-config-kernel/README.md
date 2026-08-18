@@ -2,7 +2,7 @@
 
 确定性 STM32「配置 → 校验 → 代码生成」内核。AI(yoma)决定配置什么;本内核保证如何正确生成 —— LLM 绝不书写驱动代码。
 
-- 数据:CubeMX db 经离线导入器编译为 IR 包随软件分发(开发期需要本机 CubeMX;用户不需要)。
+- 数据:CubeMX db 经导入器编译为 IR 包(构建产物,不进 git;开发期需要本机 CubeMX)。
 - 引擎:忠实实现 CubeMX 数据语义(条件 DSL、信号量黑板、参数重载、OR/XOR 模式树、时钟 DAG)。
 - 输出:HAL 完整可编译工程(CMake + arm-none-eabi-gcc)。
 - 契约:`stm32kernel` CLI,JSON stdin/stdout,无状态;同版本 + 同 IR + 同输入 → **字节级相同输出**。
@@ -115,12 +115,13 @@ crates/importer  [bin stm32ck-import] CubeMX db XML → IR 包
 crates/engine    语义引擎:黑板/求值/参数重载/模式树/时钟求解/引脚分配/NVIC
 crates/codegen   Resolved 模型 → C 文件 + 工程组装(CMake/链接脚本/启动/HAL 子集)
 crates/cli       [bin stm32kernel] JSON 命令行
-data/            *.irpack(预编译 IR)+ fw/(HAL/CMSIS 组件)
+data/            *.irpack(CubeMX 解析产物,不入库)+ fw/(HAL/CMSIS,fetch-fw.ps1)
 ```
 
 ## 家族支持
 
-db 里的 27 个家族全部有 irpack(`data/*.irpack`,合计 5.6 MB,2240 个器件组)。
+db 里能扫到的家族全部可导入(`stm32ck-import --all` → `data/*.irpack`,合计约 5.6 MB,2240 个器件组)。
+这些 pack **不进 git**,本机有 CubeMX 时 `bun engines/build.ts` 会生成。
 其中 23 个能 `generate` 出交叉编译通过的工程 —— 由 `every_family_project_compiles`
 一次性门禁覆盖:每家族一个代表器件,配置为 **UART(含 NVIC 向量)+ DMA 请求 +
 求解出来的时钟目标**,`cmake --build` 产出 .elf/.hex/.bin。19/23 带真实 DMA 请求,

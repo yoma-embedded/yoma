@@ -33,7 +33,7 @@
 git clone https://github.com/yoma-embedded/yoma-pi.git yoma-pi
 cd yoma-pi
 bun install
-bun engines/build.ts    # 网表解析 / STM32 工具
+bun engines/build.ts    # 网表解析 / STM32 工具。STM32 配置需要本机已装 CubeMX：build 会解析器件库生成 irpack(不入库)
 bun dev:desktop         # 改内核要重启这条命令
 ```
 

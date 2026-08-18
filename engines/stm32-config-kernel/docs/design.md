@@ -14,7 +14,7 @@
 
 | 决策 | 结论 |
 |---|---|
-| 芯片数据源 | **预编译 IR 随软件分发**。开发期用导入器解析本机 CubeMX db(v6.x;安装位置自动探测,`STM32CK_CUBEMX_DB` 可覆盖),用户无需安装 CubeMX。当前为学习用途,ST SLA 再分发风险已知晓并接受 |
+| 芯片数据源 | **IR 是构建产物,不进源码仓**。开发期用导入器解析本机 CubeMX db(v6.x;安装位置自动探测,`STM32CK_CUBEMX_DB` 可覆盖)。桌面安装包可以带上打包机解析出的 pack,源码树不能带。 |
 | 家族范围 | 起步 **F1 + F4**(F103 BluePill 为主力;F4 证明 AF 号体制与现代 PLL/VCO 约束),2026-07-31 起加入 **H5 + H7**(小数 PLL、Cortex-M33、多区内存布局)。导入器写成全库通用,其余 18 家族仅跑解析冒烟 |
 | 生成目标 | **HAL + 完整可编译工程**(main/msp/it/gpio/clock + 启动文件 + 链接脚本 + CMake + HAL 源码子集);LL 属 v2 |
 | API 模型 | **无状态命令 + 查询命令**,JSON stdin/stdout;配置文档是唯一真相文件(可入 git,类比 .ioc) |
@@ -40,7 +40,7 @@
 ## 4. 架构
 
 ```
-CubeMX db ──(开发期)──> importer ──> IR 包(per-family, postcard+zstd, 随软件分发)
+CubeMX db ──(构建期)──> importer ──> IR 包(per-family, postcard+zstd, 不进 git)
                                         │
 配置文档 JSON ──> cli ──> engine(validate/solve:模式树+参数+时钟+引脚+NVIC/DMA)
                                         │

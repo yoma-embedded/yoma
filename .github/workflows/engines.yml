@@ -57,7 +57,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       # 引擎源码已吸收进本仓(engines/ 是普通目录),checkout 一步到位,不再需要
-      # 私有 submodule 的 ENGINES_TOKEN。data/fw 不在库里,--dist 也用不到它。
+      # 私有 submodule 的 ENGINES_TOKEN。data/fw 不在库里;*.irpack 也是构建产物,
+      # --dist 会在本机有 CubeMX(或 STM32CK_CUBEMX_DB)时解析生成。没有 CubeMX 会红。
       - uses: actions/checkout@v4
 
       - uses: oven-sh/setup-bun@v2

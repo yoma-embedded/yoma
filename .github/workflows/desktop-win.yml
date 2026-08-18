@@ -56,6 +56,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         if: inputs.engines == 'build'
 
+      # 仅 engines=build:当场 cargo+uv。irpack 要本机 CubeMX 解析,没有会红。
       - name: 构建引擎(仅 engines=build)
         if: inputs.engines == 'build'
         run: bun engines/build.ts

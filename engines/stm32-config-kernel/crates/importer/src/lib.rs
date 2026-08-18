@@ -56,19 +56,26 @@ pub fn read_text(path: &Path) -> anyhow::Result<String> {
     })
 }
 
-/// Install layouts the CubeMX installer has used, relative to a drive root.
-/// Probed in declaration order under every existing drive root, so discovery
-/// is deterministic regardless of where the tool was installed.
-const DB_LAYOUTS: &[&str] = &[
+/// Windows install layouts, relative to a drive root. Probed in declaration
+/// order under every existing drive, so discovery is deterministic regardless
+/// of where the tool was installed.
+const WIN_DB_LAYOUTS: &[&str] = &[
     r"Program Files\STMicroelectronics\STM32Cube\STM32CubeMX\db",
     r"Program Files (x86)\STMicroelectronics\STM32Cube\STM32CubeMX\db",
     r"STMicroelectronics\STM32Cube\STM32CubeMX\db",
 ];
 
-/// Every candidate CubeMX db path, in probe order: the per-user AppData
-/// layout (`…\AppData\Local\Programs\STM32CubeMX\db`, replicated onto each
-/// drive because the installer lets you redirect it) followed by the
-/// system-wide layouts. Existence is *not* checked here.
+/// macOS / Linux layouts. Existence is *not* checked here.
+const UNIX_DB_LAYOUTS: &[&str] = &[
+    "/Applications/STMicroelectronics/STM32CubeMX.app/Contents/Resources/db",
+    "/Applications/STM32CubeMX.app/Contents/Resources/db",
+    "/usr/local/STMicroelectronics/STM32Cube/STM32CubeMX/db",
+    "/opt/STMicroelectronics/STM32Cube/STM32CubeMX/db",
+];
+
+/// Every candidate CubeMX db path, in probe order: Windows AppData + Program
+/// Files layouts, then Unix app-bundle / opt paths, then `$HOME/STM32CubeMX/db`.
+/// Existence is *not* checked here.
 pub fn db_candidates() -> Vec<PathBuf> {
     // Drive roots, ascending — a fixed order keeps discovery reproducible.
     let roots: Vec<PathBuf> = ('A'..='Z')
@@ -88,8 +95,14 @@ pub fn db_candidates() -> Vec<PathBuf> {
     if let Some(tail) = &user_tail {
         out.extend(roots.iter().map(|r| r.join(tail)));
     }
-    for layout in DB_LAYOUTS {
+    for layout in WIN_DB_LAYOUTS {
         out.extend(roots.iter().map(|r| r.join(layout)));
+    }
+    out.extend(UNIX_DB_LAYOUTS.iter().map(PathBuf::from));
+    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+        let home = PathBuf::from(home);
+        out.push(home.join("STM32CubeMX/db"));
+        out.push(home.join("STM32Cube/STM32CubeMX/db"));
     }
     out
 }
@@ -107,4 +120,22 @@ pub fn discover_db() -> Option<PathBuf> {
 /// The db used by importer tests on a dev machine; tests skip when absent.
 pub fn test_db() -> Option<PathBuf> {
     discover_db()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn candidates_include_unix_app_bundle() {
+        let text: Vec<String> = db_candidates()
+            .iter()
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .collect();
+        assert!(
+            text.iter()
+                .any(|s| s.contains("STM32CubeMX.app/Contents/Resources/db")),
+            "unix CubeMX layouts missing from probe list: {text:?}"
+        );
+    }
 }

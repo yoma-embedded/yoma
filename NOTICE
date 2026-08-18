@@ -9,10 +9,11 @@ This repository includes third-party software:
 - `packages/ai`: vendored from [pi](https://github.com/earendil-works/pi)
   by Mario Zechner (MIT).
 - `engines/stm32-config-kernel`: STM32 configuration / codegen kernel.
-  `data/*.irpack` is compiled from the STM32CubeMX device database.
-  ST HAL / CMSIS sources (`data/fw/`, ~1.1GB) are **not** in this
-  repository; fetch them locally with `tools/fetch-fw.ps1` if you need
-  the compile-gate tests.
+  `data/*.irpack` is a **build artifact**: parse the local STM32CubeMX
+  device database with `stm32ck-import` (`bun engines/build.ts` does this).
+  Packs are not committed. ST HAL / CMSIS sources (`data/fw/`, ~1.1GB)
+  are also not in this repository; fetch them locally with
+  `tools/fetch-fw.ps1` if you need the compile-gate tests.
 - `engines/controller_map`: board netlist pin extraction.
 - `packages/coding-agent/test/fixtures/examples/cube-mini`: a stub
   fixture that mimics an STM32Cube tree layout. It is not ST HAL source.
