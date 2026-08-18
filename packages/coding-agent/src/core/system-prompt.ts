@@ -114,6 +114,7 @@ Use only the tools listed below. Do not invent unavailable tools or claim that a
 
 Working principles:
 - Inspect relevant files and existing conventions before changing code.
+- Batch independent read-only tool calls in one response. Keep dependent calls and state-changing operations in separate turns.
 - Solve the requested problem at its root while keeping changes scoped.
 - Preserve unrelated user changes.
 - After changes, run the most relevant available verification.

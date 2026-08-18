@@ -32,7 +32,7 @@
  * 0 → 2,825,990 → 5,672,733)。这条别再提。
  */
 import { type ChildProcess, spawn } from "node:child_process";
-import { createWriteStream, existsSync, type WriteStream } from "node:fs";
+import { appendFileSync, createWriteStream, existsSync, type WriteStream } from "node:fs";
 import { open as openFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
@@ -394,7 +394,6 @@ export class GdbSession {
 	/** 串行闸:上一条命令没落地就不发下一条。 */
 	private queue: Promise<unknown> = Promise.resolve();
 	private stopWaiters: ((r: MiRecord) => void)[] = [];
-	private logStream?: WriteStream;
 	private miStream?: WriteStream;
 	private stopsStream?: WriteStream;
 	private nextToken = 1;
@@ -445,7 +444,6 @@ export class GdbSession {
 	// ── 生命周期 ──────────────────────────────────────────────────────────────
 
 	async spawnGdb(): Promise<void> {
-		this.logStream = createWriteStream(this.options.logFile, { flags: "a" });
 		this.miStream = createWriteStream(this.options.miFile, { flags: "a" });
 		this.stopsStream = createWriteStream(this.options.stopsFile, { flags: "a" });
 
@@ -695,7 +693,9 @@ export class GdbSession {
 	}
 
 	private writeLog(text: string): void {
-		this.logStream?.write(`${text}\n`);
+		// 同步落盘:假 gdb 集成测试在 send() resolve 后立刻 readFileSync,
+		// WriteStream 缓冲会让 [foreign] 行还没刷到磁盘。
+		appendFileSync(this.options.logFile, `${text}\n`, "utf8");
 	}
 
 	/**
@@ -796,10 +796,8 @@ export class GdbSession {
 		this.child?.stderr?.removeAllListeners("data");
 		this.child?.stdout?.destroy();
 		this.child?.stderr?.destroy();
-		this.logStream?.end();
 		this.miStream?.end();
 		this.stopsStream?.end();
-		this.logStream = undefined;
 		this.miStream = undefined;
 		this.stopsStream = undefined;
 	}

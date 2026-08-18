@@ -101,6 +101,7 @@ export function createBashToolDefinition(
 			"Prefer the read tool over cat/sed when inspecting files.",
 		],
 		parameters: bashSchema,
+		executionMode: "sequential",
 		async execute(_toolCallId, { command, timeout }, signal, onUpdate) {
 
 			let updateTimer: ReturnType<typeof setTimeout> | undefined;

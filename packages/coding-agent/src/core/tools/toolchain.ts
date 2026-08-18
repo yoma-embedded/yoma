@@ -176,6 +176,7 @@ export function createToolchainToolDefinition(
 			"If toolchain check reports no manifest, ask the user before drafting .yoma/toolchain.json — never generate it unprompted.",
 		],
 		parameters: toolchainSchema,
+		executionMode: "sequential",
 		execute: async (_toolCallId, params) => {
 			const action: ToolchainAction = params.action ?? "check";
 			if (action === "set") return runSet(params, env, options);

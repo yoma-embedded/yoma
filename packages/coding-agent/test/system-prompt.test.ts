@@ -4,7 +4,7 @@
 import { describe, expect, it } from "bun:test";
 import { NodeExecutionEnv } from "@yoma/agent/node";
 import { buildSystemPrompt, collectToolPromptData } from "../src/core/system-prompt.ts";
-import { createCodingToolDefinitions } from "../src/core/tools/index.ts";
+import { createCodingToolDefinitions, createEmbeddedToolDefinitions } from "../src/core/tools/index.ts";
 
 describe("buildSystemPrompt", () => {
 	describe("empty tools", () => {
@@ -107,6 +107,7 @@ describe("buildSystemPrompt", () => {
 			const prompt = buildSystemPrompt({ cwd: process.cwd() });
 
 			expect(prompt).toContain("Working principles:");
+			expect(prompt).toContain("Batch independent read-only tool calls in one response.");
 			expect(prompt).toContain("Evidence rules:");
 			expect(prompt).toContain("Safety:");
 			expect(prompt).toContain("Runtime behavior requires evidence from log or gdb.");
@@ -197,6 +198,16 @@ describe("buildSystemPrompt", () => {
 });
 
 describe("collectToolPromptData", () => {
+	it("keeps mixed and state-changing tools sequential", () => {
+		const env = new NodeExecutionEnv({ cwd: process.cwd() });
+		const definitions = [...createCodingToolDefinitions(env), ...createEmbeddedToolDefinitions(env)];
+		const modes = Object.fromEntries(definitions.map((definition) => [definition.name, definition.executionMode]));
+
+		for (const name of ["bash", "toolchain", "examples", "netlist", "stm32config", "flash"]) {
+			expect(modes[name]).toBe("sequential");
+		}
+	});
+
 	it("collects names, snippets, and guidelines from real tool definitions", () => {
 		const env = new NodeExecutionEnv({ cwd: process.cwd() });
 		const data = collectToolPromptData(createCodingToolDefinitions(env));

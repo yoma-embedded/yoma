@@ -169,6 +169,7 @@ export function createExamplesToolDefinition(
 			"Before merging donor example code into the chassis, run examples preflight (chassis id first, donor ids after): it reports pin / peripheral-instance / link-symbol / task-priority overlaps from the enriched cards before you hit a build or runtime error. It reports facts, not verdicts — judge shared-bus overlaps yourself.",
 		],
 		parameters: examplesSchema,
+		executionMode: "sequential",
 		execute: async (_toolCallId, params) => {
 			const action: ExamplesAction = params.action ?? "search";
 			const indexes = readAllIndexes(configDir);

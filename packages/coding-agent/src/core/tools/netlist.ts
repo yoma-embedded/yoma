@@ -89,6 +89,7 @@ export function createNetlistToolDefinition(
 			"Hardware bring-up starts from the schematic: run netlist first (pass part when known), including when the user gives a local Altium Smart PDF path; do not read or send the whole PDF to the model. Treat low-confidence peripheral suggestions as hypotheses to verify.",
 		],
 		parameters: netlistSchema,
+		executionMode: "sequential",
 		execute: async (_toolCallId, params, signal) => {
 			// 两个分支跑的是两个不同的引擎,善后那五行却逐字一样;非零退出对这两个引擎
 			// 都是真失败(不像 stm32kernel 的 exit 1 和 flash 的烧录器),所以退出码检查可以留在这。

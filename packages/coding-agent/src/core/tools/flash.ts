@@ -127,6 +127,7 @@ export function createFlashToolDefinition(env: ExecutionEnv): ToolDefinition<typ
 			"Never claim firmware is running on hardware unless flashing and a reset both succeeded.",
 		],
 		parameters: flashSchema,
+		executionMode: "sequential",
 		execute: async (_toolCallId, params, signal) => {
 			const command = params.command;
 			if (command.length === 0 || !command[0]?.trim()) {

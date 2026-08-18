@@ -205,6 +205,7 @@ export function createStm32ConfigToolDefinition(
 			"stm32config describe-mcu is authoritative for a part's pads, signals and ADC channels — do not go to the datasheet for pin/signal mapping.",
 		],
 		parameters: stm32ConfigSchema,
+		executionMode: "sequential",
 		execute: async (_toolCallId, params, signal) => {
 			const resolved: Stm32ConfigToolInput = {
 				...params,

@@ -39,6 +39,16 @@ jobs:
           bun-version: "1.3.14"
       - name: 安装依赖
         run: bun install --frozen-lockfile
+      - name: 下载 Electron 二进制
+        shell: pwsh
+        run: |
+          if (Test-Path packages/desktop/node_modules/electron/install.js) {
+            node packages/desktop/node_modules/electron/install.js
+          } elseif (Test-Path node_modules/electron/install.js) {
+            node node_modules/electron/install.js
+          } else {
+            throw "electron install.js not found after bun install"
+          }
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
