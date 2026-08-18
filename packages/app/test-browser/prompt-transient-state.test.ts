@@ -14,7 +14,6 @@ test("resets transient prompt input state when the prompt session changes", () =
         comments: [],
       },
       draggingType: "image",
-      mode: "shell",
       applyingHistory: true,
       variantOpen: true,
     })
@@ -27,7 +26,6 @@ test("resets transient prompt input state when the prompt session changes", () =
       savedPrompt: null,
       placeholder: 3,
       draggingType: null,
-      mode: "normal",
       applyingHistory: false,
       variantOpen: false,
     })
