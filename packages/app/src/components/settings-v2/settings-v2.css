@@ -679,6 +679,43 @@
   padding-bottom: 12px;
 }
 
+/* 芯片平台切换(本机工具链分区) */
+.settings-v2-toolchain-families {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-block: 12px;
+}
+
+.settings-v2-toolchain-family-chip {
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: 0.5px solid var(--v2-border-border-base);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 440;
+  color: var(--v2-text-text-muted);
+  cursor: pointer;
+}
+
+.settings-v2-toolchain-family-chip:hover {
+  color: var(--v2-text-text-base);
+}
+
+.settings-v2-toolchain-family-chip[data-active="true"] {
+  border-color: var(--v2-border-border-strong);
+  background: var(--v2-surface-bg-elevated);
+  color: var(--v2-text-text-strong);
+  font-weight: 530;
+}
+
+/* 机器分区行标题旁的工具 id(账本/清单里认的名字) */
+.settings-v2-toolchain-id {
+  font-size: 11px;
+  font-family: var(--font-family-mono, monospace);
+  color: var(--v2-text-text-muted);
+}
+
 .settings-v2-toolchain-error pre {
   margin-top: 8px;
   padding: 12px;

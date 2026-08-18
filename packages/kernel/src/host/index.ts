@@ -18,7 +18,7 @@ import { runPreflight, inspectEngines } from "./preflight.ts"
 import { yomaConfigDir } from "./auth.ts"
 import { ProjectStore, listFiles, readFile, searchFiles, vcsDiff, vcsInfo } from "./services.ts"
 import { StreamSink } from "./stream.ts"
-import { toolchainSet, toolchainStatus } from "./toolchain.ts"
+import { toolchainFamilies, toolchainFamilySet, toolchainFamilyStatus, toolchainSet, toolchainStatus } from "./toolchain.ts"
 
 // 纯类型模块,无运行时产物。re-export 只为把工具 details 的漂移闸门拉进编译单元。
 export type * from "./details-check.ts"
@@ -135,6 +135,22 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     "toolchain.set": ({ directory, id, path: binPath }) =>
       toolchainSet({
         directory,
+        id,
+        path: binPath,
+        configDir: options.configDir ?? yomaConfigDir(),
+        side: options.toolchainSide ?? "mother",
+      }),
+    "toolchain.families": () => toolchainFamilies({ configDir: options.configDir ?? yomaConfigDir() }),
+    "toolchain.familyStatus": ({ family, fresh }) =>
+      toolchainFamilyStatus({
+        family,
+        fresh,
+        configDir: options.configDir ?? yomaConfigDir(),
+        side: options.toolchainSide ?? "mother",
+      }),
+    "toolchain.familySet": ({ family, id, path: binPath }) =>
+      toolchainFamilySet({
+        family,
         id,
         path: binPath,
         configDir: options.configDir ?? yomaConfigDir(),

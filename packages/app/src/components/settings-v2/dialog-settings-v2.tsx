@@ -11,13 +11,13 @@ import { SettingsModelsV2 } from "./models"
 import { SettingsToolchainV2 } from "./toolchain"
 import "./settings-v2.css"
 
-export const DialogSettings: Component = () => {
+export const DialogSettings: Component<{ initialTab?: string }> = (props) => {
   const language = useLanguage()
   const platform = usePlatform()
 
   return (
     <Dialog size="x-large" variant="settings" class="settings-v2-dialog">
-      <TabsV2 orientation="vertical" variant="settings" defaultValue="general" class="settings-v2">
+      <TabsV2 orientation="vertical" variant="settings" defaultValue={props.initialTab ?? "general"} class="settings-v2">
         <TabsV2.List>
           <div class="flex flex-col justify-between h-full w-full">
             <div class="flex flex-col gap-3 w-full">

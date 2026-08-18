@@ -650,6 +650,11 @@ export const dict = {
   "settings.models.title": "Models",
   "settings.models.description": "Model settings will be configurable here.",
   "settings.toolchain.title": "Toolchain",
+  "settings.toolchain.machine.title": "This machine's toolchains (by chip family)",
+  "settings.toolchain.machine.description":
+    "Pick the chip family you build for and audit this computer's toolchain. Recorded paths go to ~/.yoma/toolchains.json — a machine-level ledger shared by every project and session, so the agent never hunts for tools again.",
+  "settings.toolchain.machine.summary": "{{ok}} of {{total}} ready",
+  "settings.toolchain.project.title": "Current project manifest (.yoma/toolchain.json)",
   "settings.toolchain.noProject":
     "Open a project first — this page checks the project's declared toolchain (.yoma/toolchain.json) against this machine.",
   "settings.toolchain.notDeclared":
@@ -666,7 +671,8 @@ export const dict = {
   "settings.toolchain.status.ambiguous": "Multiple candidates",
   "settings.toolchain.wanted": "needs {{version}}",
   "settings.toolchain.candidates": "Multiple installs found with inconsistent versions — enter the one to use below:",
-  "settings.toolchain.pathPlaceholder": "Already installed? Paste the absolute path to the executable",
+  "settings.toolchain.pathPlaceholder": "Already installed? Paste the absolute path to the executable or its folder",
+  "settings.toolchain.dirPlaceholder": "Already installed? Paste the absolute path to the install directory",
   "settings.toolchain.record": "Verify & remember",
   "settings.toolchain.recording": "Verifying…",
   "settings.toolchain.toast.recorded": "Recorded the path for {{id}} — later sessions will find it automatically",
@@ -800,4 +806,9 @@ export const dict = {
   "preflight.engines.missingDir": "Debug engines folder is missing.",
   "preflight.engines.emptyShell": "Debug engines folder has no binaries. Reinstall Yoma (or run bun engines/build.ts in a source checkout).",
   "preflight.engines.missingBin": "Debug engines missing: {{missing}}. Reinstall Yoma.",
+  "preflight.toolchain.title": "Getting set up",
+  "preflight.toolchain.unconfigured":
+    "No machine toolchains recorded yet. Set them up once by chip family and every later session will find them.",
+  "preflight.toolchain.configure": "Set up",
+  "preflight.toolchain.dismiss": "Dismiss",
 }

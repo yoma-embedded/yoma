@@ -1,5 +1,6 @@
 // toolchain 工具(core/tools/toolchain.ts)验收:三个 action 各至少一条、set 的
-// 拒绝路径(不存在 / 探不出版本 / 相对路径 / 缺参数)、没有清单时的话术。工具层很
+// 拒绝路径(不存在 / 相对路径 / 缺参数)与宽容路径(目录解析、版本探不出照记)、
+// 没有清单时的话术。工具层很
 // 薄,七档探测的组合已经在 toolchain-resolve.test.ts 里测过——这里只验证"参数
 // -> 调用 resolveToolchain/writeLedgerEntry -> 渲染成人话"这条胶水本身接对了,
 // 尤其是 resolve 真的绕过了账本、真的把新结果写回真正的账本(而 check 完全不写)。
@@ -203,12 +204,46 @@ describe("set", () => {
 		expect(ledger.entries).toEqual({});
 	});
 
-	it("拒绝探不出版本号的路径", async () => {
+	it("探不出版本号不拒绝:照记,版本留空(J-Link 这类 --version 不标准的工具从前被误拒过)", async () => {
 		// 存在、能跑,但输出里没有任何看起来像版本号的 token。
 		const bin = writeFakeExe(binDir, "noversion", "hello there, nothing to see here");
 		const tool = makeTool();
 
-		await expect(tool.execute("c1", { action: "set", id: "arm-gcc", path: bin })).rejects.toThrow(/version/);
+		const result = await tool.execute("c1", { action: "set", id: "arm-gcc", path: bin });
+		expect(result.details).toEqual({ action: "set", ok: true, id: "arm-gcc" });
+		// 话术不出现 "(version …)" 的编造 —— 没探到就不提(路径里可能天然含 version 字样,只查标注格式)。
+		expect(textOf(result)).not.toContain("(version");
+
+		const ledger = await readLedger(configDir);
+		expect(ledger.entries["arm-gcc"].by).toBe("user");
+		expect(ledger.entries["arm-gcc"].version).toBeUndefined();
+		expect(Object.values(ledger.entries["arm-gcc"].bin)).toEqual([bin]);
+	});
+
+	it("贴目录:按清单声明的可执行名在目录里解析(用户对着资源管理器复制的天然是目录)", async () => {
+		const bin = writeFakeExe(binDir, "mytool", "4.5.6");
+		writeManifest([{ id: "arm-gcc", bin: ["mytool"] }]);
+		const tool = makeTool();
+
+		const result = await tool.execute("c1", { action: "set", id: "arm-gcc", path: binDir });
+		expect(textOf(result)).toContain("4.5.6");
+
+		const ledger = await readLedger(configDir);
+		// PATHEXT 展开出的扩展名大小写取自 PATHEXT 本身(通常大写),Windows 文件系统
+		// 不分大小写 —— 按小写比较,别让 .BAT/.bat 的字面差异假红。
+		expect(Object.values(ledger.entries["arm-gcc"].bin).map((p) => p.toLowerCase())).toEqual([bin.toLowerCase()]);
+	});
+
+	it("贴目录但声明的名字都不在里面:不拒绝,原样记录目录本身 —— 只有不存在/相对路径才拦", async () => {
+		writeManifest([{ id: "arm-gcc", bin: ["arm-none-eabi-gcc"] }]);
+		const tool = makeTool();
+
+		const result = await tool.execute("c1", { action: "set", id: "arm-gcc", path: binDir });
+		expect(result.details).toEqual({ action: "set", ok: true, id: "arm-gcc" });
+
+		const ledger = await readLedger(configDir);
+		expect(Object.values(ledger.entries["arm-gcc"].bin)).toEqual([binDir]);
+		expect(ledger.entries["arm-gcc"].version).toBeUndefined();
 	});
 
 	it("拒绝相对路径", async () => {

@@ -270,6 +270,49 @@ export const WELL_KNOWN_LOCATIONS: LocationTable = {
 		darwin: ["/opt/homebrew/bin", "/usr/local/bin", "/Library/Frameworks/Python.framework/Versions/3.*/bin", "/usr/bin"],
 		linux: ["/usr/bin", "/usr/local/bin", `${HOME}/.pyenv/shims`],
 	},
+	openocd: {
+		win32: [
+			// xpm 的默认落点;CubeIDE 自带一份 ST 定制 openocd;scoop/choco 的垫片目录。
+			`${HOME}\\AppData\\Roaming\\xPacks\\@xpack-dev-tools\\openocd\\*\\.content\\bin`,
+			"C:\\ST\\STM32CubeIDE_*\\STM32CubeIDE\\plugins\\com.st.stm32cube.ide.mcu.externaltools.openocd.*\\tools\\bin",
+			`${HOME}\\scoop\\shims`,
+			"C:\\ProgramData\\chocolatey\\bin",
+		],
+		darwin: ["/opt/homebrew/bin", "/usr/local/bin"],
+		linux: ["/usr/bin", "/usr/local/bin"],
+	},
+	stm32cubeprog: {
+		win32: [
+			"C:\\Program Files\\STMicroelectronics\\STM32Cube\\STM32CubeProgrammer\\bin",
+			"C:\\ST\\STM32CubeIDE_*\\STM32CubeIDE\\plugins\\com.st.stm32cube.ide.mcu.externaltools.cubeprogrammer.*\\tools\\bin",
+		],
+		darwin: ["/Applications/STMicroelectronics/STM32Cube/STM32CubeProgrammer/STM32CubeProgrammer.app/Contents/MacOs/bin"],
+		linux: [`${HOME}/STMicroelectronics/STM32Cube/STM32CubeProgrammer/bin`, "/usr/local/STMicroelectronics/STM32Cube/STM32CubeProgrammer/bin"],
+	},
+	// idf.py 住在 esp-idf 检出的 tools/ 子目录(仓根没有可执行文件),pattern 直接指进去。
+	idf: {
+		win32: ["C:\\Espressif\\frameworks\\esp-idf-v*\\tools", `${HOME}\\esp\\esp-idf\\tools`],
+		darwin: [`${HOME}/esp/esp-idf/tools`],
+		linux: [`${HOME}/esp/esp-idf/tools`],
+	},
+	"zephyr-sdk": {
+		win32: [`${HOME}\\zephyr-sdk-*\\arm-zephyr-eabi\\bin`, "C:\\zephyr-sdk-*\\arm-zephyr-eabi\\bin"],
+		darwin: [`${HOME}/zephyr-sdk-*/arm-zephyr-eabi/bin`, "/opt/zephyr-sdk-*/arm-zephyr-eabi/bin"],
+		linux: [`${HOME}/zephyr-sdk-*/arm-zephyr-eabi/bin`, "/opt/zephyr-sdk-*/arm-zephyr-eabi/bin"],
+	},
+	// Keil 只有 Windows;探测的是编译器(armclang/armcc)而不是 UV4 —— 见 families.ts
+	// KEIL 条目的注释(对 GUI spawn --version 会真的弹起 IDE)。装盘符可选,同 jlink;
+	// AC6(armclang)在 ARM\ARMCLANG\bin,AC5(armcc)在 ARM\BIN(实机核对过,不是
+	// 想当然的 ARM\ARMCC\bin)。Users\*\AppData\Local 是安装器"仅为我安装"的落点,
+	// 用户目录可以不在 C 盘(实机:D:\Users\admin\AppData\Local\Keil_v5)。
+	keil: {
+		win32: [
+			...winDriveVariants("Keil_v5\\ARM\\ARMCLANG\\bin"),
+			...winDriveVariants("Keil_v5\\ARM\\BIN"),
+			...winDriveVariants("Users\\*\\AppData\\Local\\Keil_v5\\ARM\\ARMCLANG\\bin"),
+			...winDriveVariants("Users\\*\\AppData\\Local\\Keil_v5\\ARM\\BIN"),
+		],
+	},
 };
 
 /**
@@ -303,6 +346,9 @@ const REGISTRY_SEARCH_TERM: Record<string, string> = {
 	jlink: "SEGGER",
 	"arm-gnu-toolchain": "Arm GNU Toolchain",
 	stm32cubemx: "STMicroelectronics",
+	// 不复用 "STMicroelectronics":那个词会同时命中 CubeMX 与 CubeProgrammer 的卸载键,
+	// 用产品名把搜索面钉到最窄(见本表头注释 —— 面越宽,凑巧命中的概率越高)。
+	stm32cubeprog: "STM32CubeProgrammer",
 };
 
 // 三个 Uninstall 根都要查:只查 64 位视图会漏掉 32 位安装包(J-Link 官方安装包

@@ -182,7 +182,21 @@ describe("expandGlobPath", () => {
 
 // ─── WELL_KNOWN_LOCATIONS / wellKnownCandidates ─────────────────────────────
 
-const REQUIRED_TOOL_IDS = ["arm-gnu-toolchain", "jlink", "cmake", "ninja", "clangd", "stm32cubemx", "python"];
+const REQUIRED_TOOL_IDS = [
+	"arm-gnu-toolchain",
+	"jlink",
+	"cmake",
+	"ninja",
+	"clangd",
+	"stm32cubemx",
+	"python",
+	// 芯片平台预设(families.ts)带进来的四个 —— keil 不在这份"三平台全覆盖"名单里,
+	// 它是 Windows 独占产品,darwin/linux 没有条目是事实而不是遗漏(单独断言在下面)。
+	"openocd",
+	"stm32cubeprog",
+	"idf",
+	"zephyr-sdk",
+];
 const PLATFORMS: PlatformKey[] = ["win32", "darwin", "linux"];
 
 describe("WELL_KNOWN_LOCATIONS 数据表", () => {
@@ -201,6 +215,14 @@ describe("WELL_KNOWN_LOCATIONS 数据表", () => {
 		expect(nonC.length).toBeGreaterThan(0);
 		// 顺带确认真的是"盘符变了"而不是拼写错误 —— 拼出来的路径形状要合理。
 		expect(nonC.some((p) => /^[D-G]:\\/i.test(p))).toBe(true);
+	});
+
+	it("keil 只有 win32 条目 —— Windows 独占产品,darwin/linux 缺席是事实不是遗漏;安装盘符同样可选", () => {
+		const win32Patterns = WELL_KNOWN_LOCATIONS.keil?.win32 ?? [];
+		expect(win32Patterns.length).toBeGreaterThan(0);
+		expect(win32Patterns.some((p) => /^[D-G]:\\/i.test(p))).toBe(true);
+		expect(WELL_KNOWN_LOCATIONS.keil?.darwin).toBeUndefined();
+		expect(WELL_KNOWN_LOCATIONS.keil?.linux).toBeUndefined();
 	});
 });
 

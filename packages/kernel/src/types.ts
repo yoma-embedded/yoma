@@ -316,6 +316,36 @@ export interface ToolchainStatusView {
 }
 
 /**
+ * 芯片平台预设目录里单个工具的浏览器安全视图,从 coding-agent 的
+ * ToolchainFamilyTool 结构化复制(只取 UI 要的四个字段 —— bin/install/env 那些
+ * 探测细节留在内核侧,核账结果里的 ResolvedTool 已经带回 UI 需要的部分)。
+ */
+export interface ToolchainFamilyToolView {
+  id: string
+  /** 行标题,专有名词(Arm GNU Toolchain / ESP-IDF / …),中英一致,不进 i18n。 */
+  title: string
+  optional: boolean
+  /** 手填路径的形态:exe = 可执行文件(记账要验版本),dir = 安装目录(只验存在)。 */
+  pathKind: "exe" | "dir"
+}
+
+export interface ToolchainFamilyView {
+  id: string
+  name: string
+  tools: ToolchainFamilyToolView[]
+}
+
+/**
+ * `toolchain.families` RPC 的结果:预设目录 + 机器账本(<configDir>/toolchains.json)
+ * 里已有记录的工具 id。recordedIds 给"这台机器还没配置过任何工具链"的首跑提醒判断
+ * 用 —— 空数组即从没配置过(不管是手填还是重新探测都会让它非空)。
+ */
+export interface ToolchainFamiliesView {
+  families: ToolchainFamilyView[]
+  recordedIds: string[]
+}
+
+/**
  * examples(例程库)工具的 details,从 coding-agent 的 ExamplesToolDetails 结构化
  * 复制(公共契约见 core/tools/examples.ts)。暂无专门卡片消费它(GenericTool 兜底,
  * 与 toolchain 同一先例),提前钉住形状,漂移由 details-check.ts 兜底。

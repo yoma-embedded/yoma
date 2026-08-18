@@ -22,6 +22,7 @@ import type {
   ProviderInfo,
   Session,
   SessionStatus,
+  ToolchainFamiliesView,
   ToolchainStatusView,
   VcsInfo,
 } from "./types.ts"
@@ -119,6 +120,16 @@ export interface KernelMethods {
    * 最新核账结果 —— 与 agent 工具的 set 动作同一套验证实现,拒绝理由不会分叉。
    */
   "toolchain.set": { params: { directory: string; id: string; path: string }; result: ToolchainStatusView }
+  /** 芯片平台预设目录 + 机器账本里已记录的工具 id(首跑提醒的判断依据)。不探测,轻调用。 */
+  "toolchain.families": { params: void; result: ToolchainFamiliesView }
+  /**
+   * 机器级核账:按平台预设(虚拟清单)对上这台机器,不需要打开任何工程,结果只受
+   * 机器账本 / 环境 / 已知安装位置影响(刻意不掺项目的 toolchain.local.json 覆盖)。
+   * fresh 语义同 toolchain.status。
+   */
+  "toolchain.familyStatus": { params: { family: string; fresh?: boolean }; result: ToolchainStatusView }
+  /** 机器级手填:按预设的 pathKind 决定验证档(exe 验版本 / dir 只验存在),落进机器账本。 */
+  "toolchain.familySet": { params: { family: string; id: string; path: string }; result: ToolchainStatusView }
 
   "project.list": { params: void; result: Array<{ directory: string; lastOpened: number }> }
   "project.add": { params: { directory: string }; result: Array<{ directory: string; lastOpened: number }> }

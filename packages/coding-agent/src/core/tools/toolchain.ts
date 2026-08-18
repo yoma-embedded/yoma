@@ -13,7 +13,7 @@
  */
 import type { AgentToolResult, ExecutionEnv } from "@yoma/agent";
 import { type Static, Type } from "typebox";
-import { recordToolchainPath, rememberFreshResults } from "../toolchain/actions.ts";
+import { declaredToolBins, recordToolchainPath, rememberFreshResults } from "../toolchain/actions.ts";
 import { type ResolvedTool, resolveToolchain, type ToolchainResolution } from "../toolchain/resolve.ts";
 import { MANIFEST_RELATIVE } from "../toolchain/schema.ts";
 import { type ToolDefinition, wrapToolDefinition } from "./types.ts";
@@ -72,7 +72,7 @@ const DESCRIPTION = `Resolves the project's declared host toolchain (compiler, c
 Actions:
 - check (default): report each declared tool's status — ok / missing / version mismatch / ambiguous — with its resolved path, version, and how it was found (cached ledger, PATH, a known install location, ...). Missing or wrong-version tools come with an install hint when the manifest has one.
 - resolve: like check, but skips the cached ledger and probes fresh, then remembers what it finds for every later session on this machine.
-- set (id, path): after asking the user where a tool lives and getting an answer, call this with the tool's id and the path they gave you. It verifies the path exists and actually reports a version before recording it — a bad path is rejected with a clear reason, not silently accepted.
+- set (id, path): after asking the user where a tool lives and getting an answer, call this with the tool's id and the path they gave you — either the executable itself or a directory (the tool's declared executable names are resolved inside the directory and its bin/ subdirectory; when none match, the directory itself is recorded as the user gave it). Only a nonexistent or relative path is rejected; a version is recorded when the tool reports one.
 
 When to reach for this: the moment a command fails with "command not found", "'cmake' is not recognized as an internal or external command" (or the Chinese-Windows wording, "不是内部或外部命令"), or the build system reports it can't find a compiler, run \`toolchain check\` FIRST. Do not go hunting for the binary yourself with where/which, do not guess an install path, and never hard-code a path into a script or command — an ad-hoc find like that is never remembered and silently drifts the moment this project is built on a different machine, which is exactly the failure mode this tool exists to prevent. If check reports a tool missing or the wrong version, relay its install hint to the user; once they tell you where the right one actually is, call \`toolchain set\`.
 
@@ -138,20 +138,25 @@ function renderResolution(resolution: ToolchainResolution, action: ToolchainActi
 /**
  * 参数校验留在工具层(缺参是模型没按 schema 来,话术要教它怎么补);路径验证与写
  * 账本在 toolchain/actions.ts 的 recordToolchainPath —— 与桌面端 RPC 同一套实现,
- * 两个入口的拒绝理由、账本形态因此不可能分叉。
+ * 两个入口的拒绝理由、账本形态因此不可能分叉。bins 从清单里查(工位端走注入的
+ * manifestText,和 check/resolve 同一个来源),让"用户报了个安装目录"的常见回答
+ * 直接可用,不逼模型先去目录里翻出 exe 再来调一次。
  */
 async function runSet(
 	params: ToolchainToolInput,
-	configDir: string | undefined,
+	env: ExecutionEnv,
+	options: ToolchainToolOptions | undefined,
 ): Promise<AgentToolResult<ToolchainToolDetails>> {
 	const id = params.id?.trim();
 	if (!id) throw new Error('toolchain set requires "id" (the tool id from toolchain.json, e.g. "arm-gcc")');
 	const rawPath = params.path?.trim();
 	if (!rawPath) throw new Error('toolchain set requires "path" (the absolute path the user gave you)');
 
-	const recorded = await recordToolchainPath({ id, path: rawPath, configDir });
+	const bins = await declaredToolBins({ id, projectDir: env.cwd, manifestText: options?.manifestText });
+	const recorded = await recordToolchainPath({ id, path: rawPath, configDir: options?.configDir, bins });
 
-	const text = `Recorded ${recorded.id} -> ${recorded.binPath} (version ${recorded.version}) in the toolchain ledger. Every later session on this machine will find it automatically — no need to ask again.`;
+	const versionNote = recorded.version ? ` (version ${recorded.version})` : "";
+	const text = `Recorded ${recorded.id} -> ${recorded.binPath}${versionNote} in the toolchain ledger. Every later session on this machine will find it automatically — no need to ask again.`;
 	return { content: [{ type: "text", text }], details: { action: "set", ok: true, id } };
 }
 
@@ -173,7 +178,7 @@ export function createToolchainToolDefinition(
 		parameters: toolchainSchema,
 		execute: async (_toolCallId, params) => {
 			const action: ToolchainAction = params.action ?? "check";
-			if (action === "set") return runSet(params, options?.configDir);
+			if (action === "set") return runSet(params, env, options);
 
 			const resolution = await resolveToolchain({
 				projectDir: env.cwd,

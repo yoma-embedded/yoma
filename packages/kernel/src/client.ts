@@ -24,6 +24,7 @@ import type {
   ProviderInfo,
   Session,
   SessionStatus,
+  ToolchainFamiliesView,
   ToolchainStatusView,
   VcsInfo,
 } from "./types.ts"
@@ -87,6 +88,9 @@ export interface KernelClient {
   toolchain: {
     status(params: { directory: string; fresh?: boolean }): Promise<ToolchainStatusView>
     set(params: { directory: string; id: string; path: string }): Promise<ToolchainStatusView>
+    families(): Promise<ToolchainFamiliesView>
+    familyStatus(params: { family: string; fresh?: boolean }): Promise<ToolchainStatusView>
+    familySet(params: { family: string; id: string; path: string }): Promise<ToolchainStatusView>
   }
   project: {
     list(): Promise<KernelResult<"project.list">>
@@ -146,6 +150,9 @@ export function createKernelClient(transport: KernelTransport): KernelClient {
     toolchain: {
       status: (params) => call("toolchain.status", params),
       set: (params) => call("toolchain.set", params),
+      families: () => call("toolchain.families", undefined),
+      familyStatus: (params) => call("toolchain.familyStatus", params),
+      familySet: (params) => call("toolchain.familySet", params),
     },
     project: {
       list: () => call("project.list", undefined),
