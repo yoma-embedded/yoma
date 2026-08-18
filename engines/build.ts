@@ -19,7 +19,8 @@
 // data 分两半,处理方式不同:
 //   - irpacks —— CubeMX 器件库经 stm32ck-import 解析出的构建产物,**不进 git**。
 //     本机有 CubeMX(或 STM32CK_CUBEMX_DB)时,build.ts 会自己导入;装进运行时
-//     布局 / --dist 产物。没有 CubeMX 就硬失败,缺料不能装成"这个族不支持"。
+//     布局 / --dist 产物。没有 CubeMX 时开发构建跳过 STM32 配置(网表引擎照装),
+//     --dist 仍然硬失败 —— 安装包不能默默少一族。
 //   - fw/(ST 官方 HAL 组件,**1.1GB**,压缩后仍有 ~174MB)—— **不进分发产物**。
 //     它只有 `stm32kernel generate` 用得到,而那条命令本来就收 --fw-dir,
 //     所以按族按需取(STM32G4 压缩后才 4MB)远比让每个人下 1.1GB 合理。
@@ -31,7 +32,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 // 经由工具同一套解析代码取路径,报告不会和运行时行为漂移。
-import { engineBin, engineDataDir, exe } from "@yoma/coding-agent";
+import { engineBin, exe } from "@yoma/coding-agent";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const checkOnly = process.argv.includes("--check");
@@ -134,8 +135,23 @@ function countIrpacks(dir: string): number {
 	return readdirSync(dir).filter((entry) => entry.endsWith(".irpack")).length;
 }
 
+function errorText(error: unknown): string {
+	const asText = (part: unknown): string => {
+		if (part == null) return "";
+		if (typeof part === "string") return part;
+		if (part instanceof Uint8Array) return new TextDecoder().decode(part);
+		if (typeof Buffer !== "undefined" && Buffer.isBuffer(part)) return part.toString("utf8");
+		return String(part);
+	};
+	if (error && typeof error === "object") {
+		const e = error as { stderr?: unknown; stdout?: unknown; message?: unknown };
+		return [e.stderr, e.stdout, e.message].map(asText).join("\n");
+	}
+	return String(error);
+}
+
 /** 缺 pack 就对着本机 CubeMX db 解析。已经够数则跳过(解析全库要几分钟)。 */
-async function ensureIrpacks(): Promise<number> {
+async function ensureIrpacks(required: boolean): Promise<number> {
 	mkdirSync(kernelData, { recursive: true });
 	const have = countIrpacks(kernelData);
 	if (have >= MIN_IRPACKS) {
@@ -144,7 +160,15 @@ async function ensureIrpacks(): Promise<number> {
 	}
 	console.log(`\n[import] CubeMX db → ${kernelData} (现有 ${have},需要 ≥${MIN_IRPACKS})`);
 	console.log("  装过 STM32CubeMX 会自动探测;否则设 STM32CK_CUBEMX_DB 或传 --cubemx-db");
-	await $`cargo run --release -p stm32ck-importer -- --all --out data`.cwd(kernelDir);
+	try {
+		await $`cargo run --release -p stm32ck-importer -- --all --out data`.cwd(kernelDir);
+	} catch (error) {
+		if (!required && /no CubeMX db found/i.test(errorText(error))) {
+			console.warn("  ↷ 跳过 irpack 导入:本机没有 CubeMX。STM32 配置不可用,网表/其它引擎不受影响。");
+			return countIrpacks(kernelData);
+		}
+		throw error;
+	}
 	const after = countIrpacks(kernelData);
 	if (after < MIN_IRPACKS) {
 		throw new Error(
@@ -161,7 +185,7 @@ if (dist) {
 
 	console.log("\n[1/4] stm32-config-kernel — cargo build --release + import irpacks");
 	await $`cargo build --release`.cwd(kernelDir);
-	await ensureIrpacks();
+	await ensureIrpacks(true);
 
 	console.log("\n[2/4] controller_map — uv sync");
 	await $`uv sync`.cwd(path.join(here, "controller_map"));
@@ -237,7 +261,7 @@ if (!checkOnly) {
 
 	console.log("\n[1/3] stm32-config-kernel — cargo build --release + import irpacks");
 	await $`cargo build --release`.cwd(kernelDir);
-	await ensureIrpacks();
+	await ensureIrpacks(false);
 
 	console.log("\n[2/3] controller_map — uv sync");
 	await $`uv sync`.cwd(path.join(here, "controller_map"));
@@ -265,17 +289,6 @@ const rows: [string, string, boolean][] = [
 	probe("stm32kernel", () => engineBin("stm32kernel", at)),
 	probe("controller_map", () => engineBin("controller_map", at)),
 	probe("board_ir", () => engineBin("board_ir", at)),
-	probe("stm32 data", () => engineDataDir("stm32", at)),
-	probe("irpacks", () => {
-		const dir = engineDataDir("stm32", at);
-		const n = countIrpacks(dir);
-		if (n < MIN_IRPACKS) {
-			throw new Error(
-				`${n} packs in ${dir} (need ≥${MIN_IRPACKS}) — install STM32CubeMX and re-run bun engines/build.ts`,
-			);
-		}
-		return `${n} families`;
-	}),
 ];
 
 console.log("\n─ doctor ─────────────────────────────────────────────");
@@ -285,8 +298,19 @@ for (const [name, loc, ok] of rows) {
 	console.log(`  ${ok ? "✓" : "✗"} ${name.padEnd(16)} ${loc}`);
 }
 
+const irpackCount = countIrpacks(path.join(here, "data", "stm32"));
+if (irpackCount >= MIN_IRPACKS) {
+	console.log(`  ✓ ${"irpacks".padEnd(16)} ${irpackCount} families`);
+} else {
+	console.log(`  ↷ ${"irpacks".padEnd(16)} ${irpackCount} packs — STM32 配置跳过(需要本机 CubeMX)`);
+}
+
 if (bad === 0) {
-	console.log("\nAll good — the stm32config / (upcoming) netlist / flash tools will resolve these binaries.");
+	if (irpackCount >= MIN_IRPACKS) {
+		console.log("\nAll good — the stm32config / netlist / flash tools will resolve these binaries.");
+	} else {
+		console.log("\nAll good — netlist engines ready. STM32 config skipped (no CubeMX / irpack).");
+	}
 } else {
 	console.log(`\n${bad} item(s) missing — run \`bun engines/build.ts\` to build and install.`);
 	process.exit(1);

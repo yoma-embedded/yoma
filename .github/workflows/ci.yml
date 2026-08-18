@@ -55,8 +55,8 @@ jobs:
           workspaces: |
             engines/stm32-config-kernel
       - uses: astral-sh/setup-uv@v5
-      # irpack 是 CubeMX 解析产物,不在 git 里。这台 runner 要能探测到 STM32CubeMX,
-      # 或事先设 STM32CK_CUBEMX_DB;否则 doctor 会把缺 pack 当成失败。
+      # irpack 是 CubeMX 解析产物,不进 git。没 CubeMX 的 runner 上 build.ts 跳过导入,
+      # smoke 跳过 STM32 配置闸门;网表引擎和内核其它工具照验。
       - name: 构建引擎
         run: bun engines/build.ts
       - name: 生产构建

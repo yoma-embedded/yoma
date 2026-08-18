@@ -91,7 +91,7 @@ console.log(`✓ 内核加载正常 (node ${report.node} / electron ${report.ele
 // ---------------------------------------------------------------------------
 
 const bin = join(enginesDir, "bin")
-const data = join(enginesDir, "data")
+const stm32Data = join(enginesDir, "data", "stm32")
 const REQUIRED_BINS = ["stm32kernel", "controller_map", "board_ir", "connections"].map(exe)
 
 if (!existsSync(bin)) {
@@ -100,7 +100,15 @@ if (!existsSync(bin)) {
 const present = readdirSync(bin)
 const missingBins = REQUIRED_BINS.filter((name) => !present.includes(name))
 if (missingBins.length) fail(`engines/bin 缺少:${missingBins.join(", ")}`)
-if (!existsSync(data)) fail(`${data} 不存在 —— stm32 的 irpack/固件数据没装`)
-
 console.log(`✓ engines 就位:${present.join(", ")}`)
+
+// irpack 是 CubeMX 解析产物,不进 git。GitHub runner / 没装 CubeMX 的机器上没有 pack
+// 是预期,STM32 配置不可用;网表(controller_map/board_ir)和内核工具闸门不受影响。
+const irpacks = existsSync(stm32Data) ? readdirSync(stm32Data).filter((name) => name.endsWith(".irpack")) : []
+if (irpacks.length === 0) {
+  console.log("↷ 跳过 STM32 配置闸门:没有 irpack(本机无 CubeMX 时属预期)")
+} else {
+  console.log(`✓ stm32 irpacks ${irpacks.length} 个族`)
+}
+
 console.log("\n冒烟通过。")
