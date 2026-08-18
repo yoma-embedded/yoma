@@ -2,7 +2,7 @@
 signal pins goes (raw direct net + pass-through-traced endpoints), as JSON.
 
 Reads a KiCad `kicadxml` netlist, a KiCad legacy `EESchema Netlist Version 1.1` `.net`,
-or an Altium/OrCAD PCB II `.NET` (format auto-sniffed).
+an Altium/OrCAD PCB II `.NET`, or an Altium Smart PDF (format auto-sniffed).
 Bypasses any schematic annotation. See docs/specs/2026-06-06-controller-map-design.md.
 """
 
@@ -115,7 +115,7 @@ class RunnerUp:
 class ControllerMap:
     tool: str
     source: str
-    format: str  # "kicad" | "eeschema" | "altium"
+    format: str  # "kicad" | "eeschema" | "altium" | "altium-smart-pdf"
     controller: ControllerInfo
     runner_up: RunnerUp | None
     low_confidence: bool
@@ -377,7 +377,14 @@ def _is_power_pin(nl: _Netlist, ref: _Ref, pin: _PinNum, net: _NetName | None) -
 
 def _load_netlist(path: Path) -> tuple[_Netlist, str]:
     with open(path, "rb") as f:
-        head = f.read(4096).decode("latin-1", errors="replace")
+        raw_head = f.read(4096)
+    if raw_head.startswith(b"%PDF-") or path.suffix.lower() == ".pdf":
+        from .smart_pdf import parse_altium_smart_pdf
+        try:
+            return parse_altium_smart_pdf(path), "altium-smart-pdf"
+        except ValueError as exc:
+            raise SystemExit(f"error: cannot read {path.name!r}: {exc}") from exc
+    head = raw_head.decode("latin-1", errors="replace")
     if "<export" in head or "<?xml" in head or "<netlist" in head:
         return parse_kicad_xml(path), "kicad"
     if looks_like_eeschema(head):
@@ -461,10 +468,10 @@ def main() -> None:
         prog="controller_map",
         description="Auto-detect a board's main controller and report where each signal "
         "pin goes (direct net + pass-through-traced endpoints) as JSON. Accepts a KiCad "
-        "kicadxml netlist or an Altium/OrCAD PCB II .NET. JSON to stdout (or --output); "
+        "kicadxml netlist, Altium/OrCAD PCB II .NET, or Altium Smart PDF. JSON to stdout (or --output); "
         "all diagnostics to stderr.",
     )
-    parser.add_argument("netlist_file", help="KiCad kicadxml netlist or Altium .NET file")
+    parser.add_argument("netlist_file", help="KiCad/Altium netlist or Altium Smart PDF")
     parser.add_argument("--output", help="write JSON here (stdout if omitted)")
     parser.add_argument("--main-controller", help="override auto-detection by exact component ref")
     parser.add_argument("--version", action="version", version=TOOL_NAME)

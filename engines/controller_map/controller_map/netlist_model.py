@@ -1,14 +1,14 @@
 """Format-agnostic internal netlist model.
 
-Both parsers (KiCad XML, Altium OrCAD .NET) produce a `_Netlist`. Everything here
+All parsers (KiCad XML, Altium OrCAD .NET, Altium Smart PDF) produce a `_Netlist`. Everything here
 is throwaway internal scaffolding (prefixed `_`); it is never serialized. Fields that
 a given format cannot provide are left empty/None, and the analysis layer degrades
 gracefully (see controller_map.py):
 
   - KiCad provides libpart pin `name`/`type` and node `pinfunction`.
-  - Altium OrCAD provides neither: `libparts` is empty, pin names/types are "",
-    `pinfunction` is None. Pin naming then falls back to the bare pin number and
-    power classification falls back to the net name only.
+  - Altium formats provide no pin names/types: `libparts` is empty and `pinfunction`
+    is None. Pin naming falls back to the bare number and power classification to the
+    net name. Smart PDF can still provide component library/value/footprint properties.
 """
 
 from __future__ import annotations
@@ -47,8 +47,8 @@ class _LibPart:
 class _Comp:
     ref: _Ref
     value: str  # KiCad <value> / Altium comment, e.g. "RP2040", "nRF52840-QIAA", "100nF"
-    lib: str  # "" for Altium
-    part: str  # "" for Altium
+    lib: str  # "" for Altium .NET; Smart PDF may provide the library name
+    part: str  # "" for Altium formats
     footprint: str  # may be ""
     sheetpath: str  # may be ""
     # All distinct non-empty values seen for this ref (Altium board-variant expansion

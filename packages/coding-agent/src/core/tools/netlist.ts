@@ -25,7 +25,7 @@ import { type ToolDefinition, wrapToolDefinition } from "./types.ts";
 const netlistSchema = Type.Object({
 	netlistPath: Type.String({
 		description:
-			"Path to the schematic netlist file (Altium/OrCAD PCB II .NET, KiCad kicadxml XML, or KiCad legacy EESchema .net)",
+			"Path to the schematic source (Altium Smart PDF, Altium/OrCAD PCB II .NET, KiCad kicadxml XML, or KiCad legacy EESchema .net)",
 	}),
 	part: Type.Optional(
 		Type.String({
@@ -57,9 +57,9 @@ export interface NetlistToolDetails {
 
 export type NetlistToolOptions = EnginePathOptions;
 
-const DESCRIPTION = `Parses a schematic netlist and maps out the hardware design: the main controller, every peripheral/component wired to it, and which MCU pin each signal lands on.
+const DESCRIPTION = `Parses a schematic connectivity source and maps out the hardware design: the main controller, every peripheral/component wired to it, and which MCU pin each signal lands on.
 
-- Input formats: Altium/OrCAD PCB II .NET netlists, KiCad kicadxml XML, and KiCad legacy "EESchema Netlist Version 1.1" .net. Connections are traced through series resistors/inductors/ferrite beads and closed solder bridges to the real endpoint; DNF parts are flagged.
+- Input formats: Altium Smart PDF, Altium/OrCAD PCB II .NET netlists, KiCad kicadxml XML, and KiCad legacy "EESchema Netlist Version 1.1" .net. Smart PDF support is deterministic: it reads Altium's embedded Components/Nets/Pins metadata, not pixels; ordinary or scanned PDFs are rejected explicitly. Connections are traced through series resistors/inductors/ferrite beads and closed solder bridges to the real endpoint; DNF parts are flagged.
 - Netlists usually do NOT carry the MCU part number, but the USER'S REQUEST often does (prompt text, silkscreen, BOM). Whenever the part is already known, pass \`part\` ON THE FIRST CALL — you get the full board IR directly: an stm32_map of peripheral suggestions (CAN/SPI/TIM/ADC/USB/... with per-signal evidence and confidence) plus a cfg_seed, a starter configuration document for the stm32config tool. Do not run the bare mode first "to check".
 - Without \`part\` you get the raw per-pin connection map (pin → net → traced endpoints), tightly truncated: its only job is to identify the board and controller so you can re-run with \`part\`.
 - If detection reports low confidence or picks the wrong component, re-run with \`mainController\` set to the correct reference (e.g. "U2").
@@ -84,9 +84,9 @@ export function createNetlistToolDefinition(
 		name: "netlist",
 		label: "netlist",
 		description: DESCRIPTION,
-		promptSnippet: "Parse schematic netlists into pin maps and board IR (peripheral suggestions + config seed)",
+		promptSnippet: "Parse schematic netlists or Altium Smart PDFs into pin maps and board IR",
 		promptGuidelines: [
-			"Hardware bring-up starts from the schematic: run netlist first (pass part when known), and treat low-confidence peripheral suggestions as hypotheses to verify.",
+			"Hardware bring-up starts from the schematic: run netlist first (pass part when known), including when the user gives a local Altium Smart PDF path; do not read or send the whole PDF to the model. Treat low-confidence peripheral suggestions as hypotheses to verify.",
 		],
 		parameters: netlistSchema,
 		execute: async (_toolCallId, params, signal) => {

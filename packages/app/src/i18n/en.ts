@@ -169,9 +169,9 @@ export const dict = {
   "prompt.toast.pasteUnsupported.title": "Unsupported attachment",
   "prompt.toast.pasteUnsupported.description":
     "Only images can be attached here. To reference a file, put it in the workspace and @-mention it.",
-  "prompt.toast.pdfUnsupported.title": "PDF attachments can't reach the model",
+  "prompt.toast.pdfUnsupported.title": "The browser cannot provide a local PDF path",
   "prompt.toast.pdfUnsupported.description":
-    "Ingest datasheets on the Manuals page so the agent can search them; export schematics as images and drop those instead.",
+    "Attach an Altium Smart PDF in the desktop app, or place it in the workspace and @-mention it. Continue to ingest datasheets on the Manuals page.",
   "prompt.toast.modelAgentRequired.title": "Connect a provider first",
   "prompt.toast.modelAgentRequired.description": "Add an API key (Settings → Connect provider) before sending a prompt.",
   "prompt.toast.sessionCreateFailed.title": "Failed to create session",

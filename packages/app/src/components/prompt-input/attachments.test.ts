@@ -27,9 +27,9 @@ describe("attachmentMime", () => {
 })
 
 // 内核只把 image/* 附件送进模型(session-manager 的 prompt 过滤)。add 的分流保证
-// composer 里不出现"UI 显示成功、模型什么都收不到"的谎话:PDF 拒收并给专门提示,
-// 文本文件有真实路径时转成 @path 提及(那才是真能到 agent 眼前的通道),没有路径
-// 只能明说。曾经的事故形态:PDF 原理图拖进去,agent 一无所知,两边都不吭声。
+// composer 里不出现"UI 显示成功、模型什么都收不到"的谎话:PDF/文本有真实路径时
+// 转成 @path(由工具读取),web 没有路径则明说。曾经的事故形态:PDF 原理图拖进去,
+// agent 一无所知,两边都不吭声。
 describe("createPromptAttachmentsCore.add 的能力分流", () => {
   function makeHarness(options: { getPathForFile?: (file: File) => string } = {}) {
     let parts: ContentPart[] = []
@@ -75,13 +75,42 @@ describe("createPromptAttachmentsCore.add 的能力分流", () => {
     expect(h.warned()).toBe(0)
   })
 
-  test("PDF 拒收并给专门提示,不产生附件件", async () => {
+  test("PDF 在 web 没有真实路径时拒收并给专门提示", async () => {
     const h = makeHarness()
     const file = new File(["%PDF-1.7"], "schematic.pdf", { type: "application/pdf" })
     await h.core.addAttachment(file)
     expect(h.parts()).toHaveLength(0)
     expect(h.insertedParts).toHaveLength(0)
     expect(h.warnedPdf()).toBe(1)
+    expect(h.warned()).toBe(0)
+  })
+
+  test("PDF 批量选择在 web 也给专门提示", async () => {
+    const h = makeHarness()
+    await h.core.addAttachments([new File(["%PDF-1.7"], "schematic.pdf", { type: "application/pdf" })])
+    expect(h.warnedPdf()).toBe(1)
+    expect(h.warned()).toBe(0)
+  })
+
+  test("PDF 与图片一起选择时也不静默忽略 web PDF", async () => {
+    const h = makeHarness()
+    await h.core.addAttachments([
+      new File(["%PDF-1.7"], "schematic.pdf", { type: "application/pdf" }),
+      new File([Uint8Array.of(1)], "board.png", { type: "image/png" }),
+    ])
+    expect(h.parts()).toHaveLength(1)
+    expect(h.warnedPdf()).toBe(1)
+  })
+
+  test("PDF 在 desktop 转成 @path 提及,供原理图工具读取", async () => {
+    const h = makeHarness({ getPathForFile: () => "C:\\proj\\motor.pdf" })
+    const file = new File(["%PDF-1.7"], "motor.pdf", { type: "application/pdf" })
+    await h.core.addAttachment(file)
+    expect(h.parts()).toHaveLength(0)
+    expect(h.insertedParts).toEqual([
+      { type: "file", path: "C:\\proj\\motor.pdf", content: "@C:\\proj\\motor.pdf", start: 0, end: 0 },
+    ])
+    expect(h.warnedPdf()).toBe(0)
     expect(h.warned()).toBe(0)
   })
 

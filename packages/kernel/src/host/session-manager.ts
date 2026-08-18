@@ -720,7 +720,8 @@ export class SessionManager {
 
     // harness.prompt 只收 images,别的附件送不进模型。曾经的事故形态:UI 把 PDF 显示
     // 成附件、这里静默丢掉,两边都不吭声,用户以为模型看过了。UI 侧已按能力分流
-    // (app 的 attachments:PDF 拒收、文本转 @ 提及),这里是防回归的哨兵 —— 只盯
+    // (app 的 attachments:有本机路径的 PDF/文本转 @ 提及,无路径的 PDF 拒收),
+    // 这里是防回归的哨兵 —— 只盯
     // data: URL 的内容型附件;file:// 的提及件路径已在正文里、agent 自己会去读,
     // 丢掉 part 是预期行为,不该报。
     const dropped = (input.files ?? []).filter((file) => !file.mime.startsWith("image/") && file.url.startsWith("data:"))

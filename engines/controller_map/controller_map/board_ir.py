@@ -361,11 +361,12 @@ def _resolve_part(
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="board_ir",
-        description="Serialize a netlist (KiCad kicadxml or Altium/OrCAD .NET) as Board IR "
-        "JSON; with an MCU pin table (--mcu-desc or --stm32kernel) also emit the "
+        description="Serialize a netlist or Altium Smart PDF as Board IR "
+        "(KiCad kicadxml, Altium/OrCAD .NET, or Smart PDF); with an MCU pin table "
+        "(--mcu-desc or --stm32kernel) also emit the "
         "position→pad join and, unless --no-map, the stm32_map suggestions + cfg seed.",
     )
-    parser.add_argument("netlist_file")
+    parser.add_argument("netlist_file", help="KiCad/Altium netlist or Altium Smart PDF")
     parser.add_argument("--mcu-desc", help="describe-mcu-shaped JSON file (offline pin table)")
     parser.add_argument("--stm32kernel", help="stm32kernel binary; runs `describe-mcu <part>`")
     parser.add_argument("--data-dir", help="--data-dir for the stm32kernel subprocess")

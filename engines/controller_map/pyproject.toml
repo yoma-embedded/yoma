@@ -5,9 +5,9 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "controller_map"
 version = "0.1.0"
-description = "Extract main-controller pin connections from a KiCad or Altium netlist"
+description = "Extract main-controller pin connections from a KiCad or Altium netlist/PDF"
 requires-python = ">3.13"
-dependencies = []
+dependencies = ["pypdf>=6.10,<7"]
 
 [tool.setuptools]
 packages = ["controller_map"]

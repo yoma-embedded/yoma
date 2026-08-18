@@ -34,7 +34,7 @@ type PromptAttachmentsCoreInput = {
   focusEditor?: () => void
   addPart?: (part: ContentPart) => boolean
   warn?: () => void
-  /** PDF 专用的提示(数据手册走手册库、原理图导出成图片)——与通用的 warn 分开,话术不同。 */
+  /** Web PDF 没有本机可读路径时的专用提示；与通用 warn 分开，话术不同。 */
   warnPdf?: () => void
   readClipboardImage?: () => Promise<File | null>
   getPathForFile?: (file: File) => string
@@ -59,9 +59,9 @@ export function createPromptAttachmentsCore(input: PromptAttachmentsCoreInput) {
     return { prompt, cursor: prompt.cursor() ?? getCursorPosition(editor) }
   }
 
-  const add = async (file: File, toast = true, target = capture()) => {
+  const add = async (file: File, toast = true, target = capture(), knownMime?: string) => {
     if (!target) return false
-    const mime = await attachmentMime(file)
+    const mime = knownMime ?? (await attachmentMime(file))
     if (!mime) {
       if (toast) input.warn?.()
       return false
@@ -70,16 +70,15 @@ export function createPromptAttachmentsCore(input: PromptAttachmentsCoreInput) {
     // 内核只把 image/* 附件送进模型(session-manager 的 prompt 过滤),别的类型编成
     // data-URL 附件就是"UI 显示成功、模型什么都收不到"的静默失败(实测踩过:PDF 原理
     // 图拖进去,agent 一无所知)。所以在这里分流,不让谎话进 composer:
-    //   - PDF 明说做不了,指去真正的通道(手册库入库 / 导出成图片);
-    //   - 文本文件有真实路径(desktop 的 getPathForFile)就转成 @path 提及 —— 那是
-    //     真能把文件送到 agent 眼前的机制(它自己去 read);没有路径(web 宿主的内存
-    //     File)只能明说,让用户把文件放进工作目录再 @。
-    if (mime === "application/pdf") {
+    //   - PDF/文本在 desktop 有真实路径时转成 @path,由原理图工具/read 按需读取；
+    //   - web 宿主只有内存 File,只能明确拒绝；
+    //   - 图片继续作为模型附件。
+    const filePath = input.getPathForFile?.(file)
+    if (mime === "application/pdf" && !filePath) {
       if (toast) input.warnPdf?.()
       return false
     }
     if (!mime.startsWith("image/")) {
-      const filePath = input.getPathForFile?.(file)
       if (filePath) {
         input.focusEditor?.()
         const inserted = input.addPart?.({ type: "file", path: filePath, content: "@" + filePath, start: 0, end: 0 })
@@ -97,7 +96,7 @@ export function createPromptAttachmentsCore(input: PromptAttachmentsCoreInput) {
       type: "image",
       id: uuid(),
       filename: file.name,
-      sourcePath: input.getPathForFile?.(file) || undefined,
+      sourcePath: filePath || undefined,
       mime,
       dataUrl: url,
     }
@@ -109,13 +108,17 @@ export function createPromptAttachmentsCore(input: PromptAttachmentsCoreInput) {
 
   const addAttachments = async (files: File[], toast = true, target = capture()) => {
     let found = false
+    let pathlessPdf = false
 
     for (const file of files) {
-      const ok = await add(file, false, target)
+      const mime = await attachmentMime(file)
+      const ok = await add(file, false, target, mime)
       if (ok) found = true
+      if (!ok && mime === "application/pdf" && !input.getPathForFile?.(file)) pathlessPdf = true
     }
 
-    if (!found && files.length > 0 && toast) input.warn?.()
+    if (toast && pathlessPdf) input.warnPdf?.()
+    else if (!found && files.length > 0 && toast) input.warn?.()
     return found
   }
 

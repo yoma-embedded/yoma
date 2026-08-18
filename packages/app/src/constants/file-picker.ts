@@ -2,10 +2,9 @@ export const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "im
 
 export const ACCEPTED_FILE_TYPES = [
   ...ACCEPTED_IMAGE_TYPES,
-  // 刻意没有 application/pdf:内核只把 image/* 附件送进模型,PDF 附件是静默丢弃
-  // (session-manager 的 prompt 过滤)。数据手册的通道是手册库(RAG 入库),不是
-  // 会话附件 —— 别让 picker 邀请一个注定失败的动作。拖拽进来的 PDF 由 attachments
-  // 的分流给出专门提示。
+  // Desktop 保留真实路径:原理图 PDF 可转成 @path 后交给 netlist 工具。Web 没有
+  // 可读路径,attachments 会明确拒绝；数据手册仍走手册库,不作为模型附件发送。
+  "application/pdf",
   "text/*",
   "application/json",
   "application/ld+json",

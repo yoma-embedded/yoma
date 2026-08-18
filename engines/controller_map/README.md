@@ -6,9 +6,11 @@ controller it reports both the **raw direct net** and the **pass-through-traced 
 (the meaningful sinks reached through series resistors / inductors / ferrites / coupling
 caps).
 
-It reads either:
+It reads:
 - a **KiCad** `kicadxml` netlist (`kicad-cli sch export netlist --format kicadxml ...`), or
-- an **Altium / OrCAD PCB II** `.NET` netlist.
+- an **Altium / OrCAD PCB II** `.NET` netlist, or
+- an **Altium Smart PDF** containing the exported `Components` / `Nets` / `Pins`
+  outline metadata.
 
 The input format is auto-detected from the file content.
 
@@ -34,6 +36,9 @@ uv run controller_map tests/fixtures/RP2040_kicad_netlist.xml --output out/rp204
 
 # Altium / OrCAD .NET (this board has two MCUs — see below)
 uv run controller_map tests/fixtures/pca10056.NET --main-controller U1 --output out/nrf52840.json
+
+# Altium Smart PDF (ordinary/scanned PDFs are rejected rather than guessed)
+uv run controller_map board.pdf --main-controller U1 --output out/board.json
 ```
 
 JSON goes to stdout (or `--output`); all diagnostics go to stderr, so it pipes cleanly into
@@ -107,6 +112,14 @@ which; `value` is `null` for a rail). Component values in `via` are preserved ve
 
 ## Known limitations
 
+- **PDF support is intentionally limited to Altium Smart PDF.** Ordinary vector PDFs and
+  scanned pages do not contain reliable pin/net semantics and are rejected explicitly.
+  Connectivity comes from the outline; Comment/Footprint properties follow the matching
+  per-page component-link order emitted by Altium, and are left empty with a warning if
+  the counts do not match.
+- Smart PDF nets are keyed by their exported outline title. Hierarchical designs that
+  reuse an undisambiguated local net title in independent sheet instances are not yet
+  supported.
 - **Altium `.NET` carries no pin names/types/library.** Pin names degrade to pin numbers
   (the net name usually carries the signal, e.g. `P0.13`), and power classification is by
   net name only (conservative — errs toward keeping signals).

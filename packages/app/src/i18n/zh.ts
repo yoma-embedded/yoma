@@ -161,8 +161,9 @@ export const dict = {
   "prompt.action.stop": "停止",
   "prompt.toast.pasteUnsupported.title": "不支持的附件",
   "prompt.toast.pasteUnsupported.description": "此处仅能附加图片;要引用文件,请把它放进工作目录后用 @ 提及。",
-  "prompt.toast.pdfUnsupported.title": "PDF 附件到不了模型",
-  "prompt.toast.pdfUnsupported.description": "数据手册请在「手册库」入库后由 agent 检索;原理图请导出为图片再拖入。",
+  "prompt.toast.pdfUnsupported.title": "浏览器无法提供 PDF 的本机路径",
+  "prompt.toast.pdfUnsupported.description":
+    "请在桌面端附加 Altium Smart PDF，或把文件放进工作目录后用 @ 提及；数据手册仍请在「手册库」入库。",
   "prompt.toast.modelAgentRequired.title": "请先连接提供商",
   "prompt.toast.modelAgentRequired.description": "发送前请先填入 API key（设置 → 连接提供商）。",
   "prompt.toast.sessionCreateFailed.title": "创建会话失败",
