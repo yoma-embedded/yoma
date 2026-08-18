@@ -1,4 +1,4 @@
-/** 首跑预检条:key / 引擎 / 探针。 */
+/** 首跑预检条:key / 引擎。(探针预检随 probe-rs 一起移除,2026-08。) */
 
 import { For, Show, createResource } from "solid-js"
 import type { PreflightReport } from "@yoma-desktop/kernel"
@@ -14,10 +14,8 @@ type IssueKey =
   | "preflight.engines.missingDir"
   | "preflight.engines.emptyShell"
   | "preflight.engines.missingBin"
-  | "preflight.probe.none"
-  | "preflight.probe.error"
 
-type Issue = { id: "auth" | "engines" | "probe"; key: IssueKey; connect?: boolean }
+type Issue = { id: "auth" | "engines"; key: IssueKey; connect?: boolean }
 
 function loadPreflight(): Promise<PreflightReport | undefined> {
   if (!kernelAvailable()) return Promise.resolve(undefined)
@@ -44,12 +42,6 @@ function issues(report: PreflightReport): Issue[] {
             : "preflight.engines.missingDir",
     })
   }
-  if (!report.probe.ok && report.probe.code !== "skipped") {
-    items.push({
-      id: "probe",
-      key: report.probe.code === "error" ? "preflight.probe.error" : "preflight.probe.none",
-    })
-  }
   return items
 }
 
@@ -71,8 +63,7 @@ export function PreflightBanner() {
     const value = report()
     if (!value) return {}
     if (id === "auth") return { detail: value.auth.detail ?? "", file: value.auth.file }
-    if (id === "engines") return { missing: value.engines.missing.join(", "), dir: value.engines.dir ?? "" }
-    return { detail: value.probe.detail ?? "", devices: value.probe.devices.join(", ") }
+    return { missing: value.engines.missing.join(", "), dir: value.engines.dir ?? "" }
   }
 
   const connect = () => {

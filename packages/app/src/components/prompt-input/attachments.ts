@@ -34,6 +34,8 @@ type PromptAttachmentsCoreInput = {
   focusEditor?: () => void
   addPart?: (part: ContentPart) => boolean
   warn?: () => void
+  /** PDF 专用的提示(数据手册走手册库、原理图导出成图片)——与通用的 warn 分开,话术不同。 */
+  warnPdf?: () => void
   readClipboardImage?: () => Promise<File | null>
   getPathForFile?: (file: File) => string
 }
@@ -61,6 +63,29 @@ export function createPromptAttachmentsCore(input: PromptAttachmentsCoreInput) {
     if (!target) return false
     const mime = await attachmentMime(file)
     if (!mime) {
+      if (toast) input.warn?.()
+      return false
+    }
+
+    // 内核只把 image/* 附件送进模型(session-manager 的 prompt 过滤),别的类型编成
+    // data-URL 附件就是"UI 显示成功、模型什么都收不到"的静默失败(实测踩过:PDF 原理
+    // 图拖进去,agent 一无所知)。所以在这里分流,不让谎话进 composer:
+    //   - PDF 明说做不了,指去真正的通道(手册库入库 / 导出成图片);
+    //   - 文本文件有真实路径(desktop 的 getPathForFile)就转成 @path 提及 —— 那是
+    //     真能把文件送到 agent 眼前的机制(它自己去 read);没有路径(web 宿主的内存
+    //     File)只能明说,让用户把文件放进工作目录再 @。
+    if (mime === "application/pdf") {
+      if (toast) input.warnPdf?.()
+      return false
+    }
+    if (!mime.startsWith("image/")) {
+      const filePath = input.getPathForFile?.(file)
+      if (filePath) {
+        input.focusEditor?.()
+        const inserted = input.addPart?.({ type: "file", path: filePath, content: "@" + filePath, start: 0, end: 0 })
+        if (!inserted && toast) input.warn?.()
+        return inserted ?? false
+      }
       if (toast) input.warn?.()
       return false
     }
@@ -173,6 +198,12 @@ export function createPromptAttachments(input: PromptAttachmentsInput) {
       showToast({
         title: language.t("prompt.toast.pasteUnsupported.title"),
         description: language.t("prompt.toast.pasteUnsupported.description"),
+      })
+    },
+    warnPdf: () => {
+      showToast({
+        title: language.t("prompt.toast.pdfUnsupported.title"),
+        description: language.t("prompt.toast.pdfUnsupported.description"),
       })
     },
   })

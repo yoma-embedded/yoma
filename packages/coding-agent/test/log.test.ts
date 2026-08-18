@@ -1,10 +1,10 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "bun:test";
 import { NodeExecutionEnv } from "@yoma/my-pi/node";
 import {
-	buildAttachArgs,
 	createLogToolDefinition,
 	foldLines,
 	LogCapture,
@@ -161,7 +161,7 @@ describe("splitChunk", () => {
 
 describe("splitArgv", () => {
 	it("splits on whitespace", () => {
-		expect(splitArgv("probe-rs attach --chip STM32F405RG")).toEqual(["probe-rs", "attach", "--chip", "STM32F405RG"]);
+		expect(splitArgv("openocd -f board/st_nucleo_g4.cfg")).toEqual(["openocd", "-f", "board/st_nucleo_g4.cfg"]);
 	});
 
 	it("keeps quoted arguments together", () => {
@@ -179,38 +179,6 @@ describe("splitArgv", () => {
 
 	it("throws on an unbalanced quote", () => {
 		expect(() => splitArgv(`sh -c "oops`)).toThrow(/unbalanced/);
-	});
-});
-
-describe("buildAttachArgs", () => {
-	it("builds the RTT attach argv with the ELF as a positional", () => {
-		expect(buildAttachArgs({ chip: "STM32F405RG", elfPath: "/w/fw.elf" })).toEqual([
-			"attach",
-			"/w/fw.elf",
-			"--chip",
-			"STM32F405RG",
-			"--non-interactive",
-			"--no-timestamps",
-		]);
-	});
-
-	it("appends probe selection and memory scanning", () => {
-		expect(buildAttachArgs({ chip: "C", elfPath: "/w/fw.elf", probe: "0483:374B", scanMemory: true })).toEqual([
-			"attach",
-			"/w/fw.elf",
-			"--chip",
-			"C",
-			"--non-interactive",
-			"--no-timestamps",
-			"--probe",
-			"0483:374B",
-			"--rtt-scan-memory",
-		]);
-	});
-
-	it("throws when chip or elfPath is missing", () => {
-		expect(() => buildAttachArgs({ elfPath: "/w/fw.elf" })).toThrow(/requires chip/);
-		expect(() => buildAttachArgs({ chip: "C" })).toThrow(/requires elfPath/);
 	});
 });
 
@@ -353,7 +321,7 @@ describe("LogCapture", () => {
 		const dir = createTempDir();
 		const source = writeSource(dir, "five.sh", `#!/bin/sh\nfor w in one two three four five; do echo "line $w"; done\n`);
 		const file = join(dir, "hw.log");
-		const capture = new LogCapture([source], "five", file, dir, { maxBufferLines: 3 });
+		const capture = new LogCapture({ kind: "child", argv: [source] }, "five", file, dir, { maxBufferLines: 3 });
 		openCaptures.push(capture);
 		await capture.start();
 		await waitFor(() => capture.totalLines >= 5 && !!capture.exited);
@@ -373,7 +341,7 @@ describe("LogCapture", () => {
 	it("reports a line that never got a newline before the source exited", async () => {
 		const dir = createTempDir();
 		const source = writeSource(dir, "partial.sh", `#!/bin/sh\nprintf "no trailing newline"\n`);
-		const capture = new LogCapture([source], "partial", join(dir, "hw.log"), dir);
+		const capture = new LogCapture({ kind: "child", argv: [source] }, "partial", join(dir, "hw.log"), dir);
 		openCaptures.push(capture);
 		await capture.start();
 		await waitFor(() => !!capture.exited && capture.totalLines >= 1);
@@ -389,7 +357,12 @@ describe("LogCapture", () => {
 			`#!/bin/sh\necho $$ > ${pidFile}\nwhile true; do echo tick; sleep 1; done\n`,
 		);
 		// `A && B` 会让 sh fork 出一个孙子进程 —— 真正握着设备的就是它。
-		const capture = new LogCapture(["/bin/sh", "-c", `echo up && ${grandchild}`], "shell", join(dir, "hw.log"), dir);
+		const capture = new LogCapture(
+			{ kind: "child", argv: ["/bin/sh", "-c", `echo up && ${grandchild}`] },
+			"shell",
+			join(dir, "hw.log"),
+			dir,
+		);
 		openCaptures.push(capture);
 		await capture.start();
 		await waitFor(() => existsSync(pidFile) && readFileSync(pidFile, "utf8").trim().length > 0);
@@ -411,7 +384,7 @@ describe("LogCapture", () => {
 	it("stops appending to the buffer once the capture is finished", async () => {
 		const dir = createTempDir();
 		const source = writeSource(dir, "chatty.sh", `#!/bin/sh\nwhile true; do echo noise; sleep 0.02; done\n`);
-		const capture = new LogCapture([source], "chatty", join(dir, "hw.log"), dir);
+		const capture = new LogCapture({ kind: "child", argv: [source] }, "chatty", join(dir, "hw.log"), dir);
 		openCaptures.push(capture);
 		await capture.start();
 		await waitFor(() => capture.totalLines >= 2);
@@ -430,7 +403,7 @@ describe("LogCapture", () => {
 			dir,
 			"pin-check.ts",
 			`import { LogCapture } from ${JSON.stringify(join(import.meta.dir, "..", "src", "index.ts"))};
-const capture = new LogCapture([${JSON.stringify(source)}], "forever", ${JSON.stringify(join(dir, "pin.log"))}, ${JSON.stringify(dir)});
+const capture = new LogCapture({ kind: "child", argv: [${JSON.stringify(source)}] }, "forever", ${JSON.stringify(join(dir, "pin.log"))}, ${JSON.stringify(dir)});
 await capture.start();
 // 故意不 stop:进程必须靠自己退出(退出钩子会把子进程收掉)。
 `,
@@ -442,9 +415,95 @@ await capture.start();
 	}, 15000);
 });
 
+// ─── TCP 源(gdb server 的 RTT/telnet 口) ────────────────────────────────────
+
+async function listenLocal(onSocket: (socket: net.Socket) => void): Promise<{ server: net.Server; port: number }> {
+	const server = net.createServer(onSocket);
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	const port = (server.address() as net.AddressInfo).port;
+	return { server, port };
+}
+
+describe("LogCapture tcp source", () => {
+	it("reads lines from a TCP server; the server closing is a disconnect (code null), not a crash", async () => {
+		const { server, port } = await listenLocal((socket) => {
+			socket.write("boot ok\r\nloop 1\n");
+			setTimeout(() => socket.end("bye\n"), 30);
+		});
+		try {
+			const dir = createTempDir();
+			const capture = new LogCapture({ kind: "tcp", host: "127.0.0.1", port }, "tcp", join(dir, "hw.log"), dir);
+			openCaptures.push(capture);
+			await capture.start();
+			await waitFor(() => !!capture.exited);
+			expect(capture.lines.map((entry) => entry.text)).toEqual(["boot ok", "loop 1", "bye"]);
+			expect(capture.exited?.code).toBeNull();
+			expect(capture.running).toBe(false);
+		} finally {
+			server.close();
+		}
+	});
+
+	it("start rejects when nothing listens on the port, instead of hanging silently", async () => {
+		const { server, port } = await listenLocal(() => {});
+		server.close();
+		await new Promise<void>((resolve) => server.once("close", () => resolve()));
+		const dir = createTempDir();
+		const capture = new LogCapture({ kind: "tcp", host: "127.0.0.1", port }, "tcp", join(dir, "hw.log"), dir);
+		await expect(capture.start()).rejects.toThrow(/failed to connect log source/);
+		expect(capture.running).toBe(false);
+	});
+
+	it("stop disconnects and the buffer stops growing", async () => {
+		const sockets = new Set<net.Socket>();
+		const { server, port } = await listenLocal((socket) => {
+			sockets.add(socket);
+			const timer = setInterval(() => socket.write("tick\n"), 10);
+			socket.on("close", () => clearInterval(timer));
+		});
+		try {
+			const dir = createTempDir();
+			const capture = new LogCapture({ kind: "tcp", host: "127.0.0.1", port }, "tcp", join(dir, "hw.log"), dir);
+			openCaptures.push(capture);
+			await capture.start();
+			await waitFor(() => capture.totalLines >= 2);
+			await capture.stop();
+			const settled = capture.totalLines;
+			await Bun.sleep(100);
+			expect(capture.totalLines).toBe(settled);
+		} finally {
+			for (const socket of sockets) socket.destroy();
+			server.close();
+		}
+	});
+});
+
 // ─── 工具的五个动作 ──────────────────────────────────────────────────────────
 
 describe("log tool", () => {
+	it("start tcp captures the stream and wait matches on it", async () => {
+		const { server, port } = await listenLocal((socket) => {
+			socket.write("boot done\n");
+			setTimeout(() => socket.write("assert failed: overtemp\n"), 30);
+		});
+		try {
+			const { tool } = makeTool();
+			const started = (await tool.execute("c1", { action: "start", tcp: `127.0.0.1:${port}` })) as any;
+			expect(textOf(started)).toContain(`Capturing tcp 127.0.0.1:${port}`);
+			const waited = (await tool.execute("c2", { action: "wait", pattern: "assert", timeoutMs: 5000 })) as any;
+			expect(textOf(waited)).toContain("matched /assert/");
+			const stopped = (await tool.execute("c3", { action: "stop" })) as any;
+			expect(textOf(stopped)).toContain("stopped tcp 127.0.0.1:");
+		} finally {
+			server.close();
+		}
+	});
+
+	it("start rejects an unparsable tcp value with the log tool's own wording", async () => {
+		const { tool } = makeTool();
+		await expect(tool.execute("c1", { action: "start", tcp: "not a port" })).rejects.toThrow(/could not parse tcp/);
+	});
+
 	it("start reports the log file and status/stop round-trip", async () => {
 		const { tool, cwd } = makeTool();
 		const dir = createTempDir();

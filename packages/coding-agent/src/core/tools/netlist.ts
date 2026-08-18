@@ -91,7 +91,7 @@ export function createNetlistToolDefinition(
 		parameters: netlistSchema,
 		execute: async (_toolCallId, params, signal) => {
 			// 两个分支跑的是两个不同的引擎,善后那五行却逐字一样;非零退出对这两个引擎
-			// 都是真失败(不像 stm32kernel 的 exit 1 和 probe-rs),所以退出码检查可以留在这。
+			// 都是真失败(不像 stm32kernel 的 exit 1 和 flash 的烧录器),所以退出码检查可以留在这。
 			const runOrThrow = async (bin: string, args: string[], label: string) => {
 				const result = assertEngineSettled(await runEngine(bin, args, { cwd: env.cwd, signal }), label);
 				if (result.exitCode !== 0) {

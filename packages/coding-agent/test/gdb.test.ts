@@ -183,10 +183,11 @@ describe("buildServerArgv", () => {
 		]);
 	});
 
-	it("jlink / probe-rs", () => {
-		expect(buildServerArgv({ server: "jlink", port: 2331, chip: "STM32G431CB" })).toContain("-nogui");
-		const probeRs = buildServerArgv({ server: "probe-rs", port: 1337, chip: "STM32G431CB", elfPath: "/tmp/a.elf" });
-		expect(probeRs).toEqual(["probe-rs", "gdb", "--chip", "STM32G431CB", "--gdb-connection-string", "127.0.0.1:1337", "/tmp/a.elf"]);
+	it("jlink 用 -device 接芯片名并静默起服", () => {
+		const argv = buildServerArgv({ server: "jlink", port: 2331, chip: "STM32G431CB" });
+		expect(argv).toContain("-nogui");
+		expect(argv).toContain("JLinkGDBServer");
+		expect(argv).toContain("STM32G431CB");
 	});
 
 	it("external 不起进程", () => {
@@ -202,11 +203,6 @@ describe("buildServerArgv", () => {
 });
 
 describe("服务器能力表", () => {
-	it("probe-rs 没有软断点也没有观察点(读它的 gdb stub 源码确认过)", () => {
-		expect(SERVER_CAPS["probe-rs"].watchpoints).toBe("none");
-		expect(SERVER_CAPS["probe-rs"].rttWithGdb).toBe(false);
-	});
-
 	it("QEMU 的观察点会挂死模拟器,所以标成不支持", () => {
 		expect(SERVER_CAPS.qemu.watchpoints).toBe("none");
 	});
@@ -217,9 +213,14 @@ describe("服务器能力表", () => {
 		expect(re.test("Info : Listening on port 4444 for telnet connections")).toBe(false);
 	});
 
-	it("probe-rs 与 qemu 没有就绪串,只能轮询端口", () => {
-		expect(SERVER_CAPS["probe-rs"].readyRe).toBeUndefined();
+	it("qemu 没有就绪串,只能轮询端口", () => {
 		expect(SERVER_CAPS.qemu.readyRe).toBeUndefined();
+	});
+
+	it("能持探针的 server 都带 RTT 指路 —— attach 报告靠它告诉模型日志从哪来", () => {
+		expect(SERVER_CAPS.jlink.rttHint).toContain("19021");
+		expect(SERVER_CAPS.openocd.rttHint).toContain("rtt server start");
+		expect(SERVER_CAPS.qemu.rttHint).toBeUndefined();
 	});
 });
 

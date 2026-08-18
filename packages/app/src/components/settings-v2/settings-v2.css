@@ -661,3 +661,110 @@
   line-height: 1;
   color: var(--v2-state-fg-danger);
 }
+
+/* ─── 工具链核账页 ──────────────────────────────────────────────────────────── */
+
+.settings-v2-toolchain-note {
+  font-size: 13px;
+  font-weight: 440;
+  line-height: 1.5;
+  color: var(--v2-text-text-muted);
+}
+
+.settings-v2-toolchain-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 12px;
+}
+
+.settings-v2-toolchain-error pre {
+  margin-top: 8px;
+  padding: 12px;
+  border-radius: 8px;
+  border: 0.5px solid var(--v2-border-border-base);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--v2-state-fg-danger);
+}
+
+.settings-v2-toolchain-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-block: 16px;
+  border-bottom: 0.5px solid var(--v2-border-border-base);
+}
+
+.settings-v2-toolchain-row:last-child {
+  border-bottom: none;
+}
+
+.settings-v2-toolchain-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-v2-toolchain-icon {
+  color: var(--v2-state-fg-warning);
+}
+
+.settings-v2-toolchain-icon[data-ok="true"] {
+  color: var(--v2-state-fg-success);
+}
+
+.settings-v2-toolchain-name {
+  font-size: 13px;
+  font-weight: 530;
+  color: var(--v2-text-text-base);
+}
+
+.settings-v2-toolchain-tag {
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 0.5px solid var(--v2-border-border-base);
+  font-size: 11px;
+  color: var(--v2-text-text-muted);
+}
+
+.settings-v2-toolchain-status {
+  font-size: 12px;
+  color: var(--v2-text-text-muted);
+}
+
+.settings-v2-toolchain-version,
+.settings-v2-toolchain-wanted {
+  font-size: 12px;
+  font-family: var(--font-family-mono, monospace);
+  color: var(--v2-text-text-muted);
+}
+
+.settings-v2-toolchain-path,
+.settings-v2-toolchain-candidates {
+  font-size: 12px;
+  font-family: var(--font-family-mono, monospace);
+  line-height: 1.5;
+  word-break: break-all;
+  color: var(--v2-text-text-muted);
+}
+
+.settings-v2-toolchain-hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--v2-text-text-base);
+}
+
+.settings-v2-toolchain-set {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-v2-toolchain-set > :first-child {
+  flex: 1;
+}

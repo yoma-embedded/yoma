@@ -24,7 +24,7 @@ export function setDefaultServerUrl(url: string | null): void {
 }
 
 /**
- * macOS 上从 Finder 启动的 app 拿不到用户 shell 的 PATH,于是 git / cargo / probe-rs
+ * macOS 上从 Finder 启动的 app 拿不到用户 shell 的 PATH,于是 git / cargo / openocd
  * 这些都找不到。内核的工具全是 spawn 外部可执行文件,所以这一条比以前更要紧。
  */
 export function preferAppEnv(userDataPath: string): void {

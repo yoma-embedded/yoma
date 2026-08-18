@@ -1,6 +1,7 @@
 /**
- * log 工具:把板子的运行日志接进会话 —— RTT(probe-rs attach)、UART 串口,或者任意
- * 往 stdout 吐日志的命令。六个动作(start/read/wait/status/stop/ports)合成一个工具。
+ * log 工具:把板子的运行日志接进会话 —— UART 串口、TCP 流(gdb server 的 RTT/telnet
+ * 口),或者任意往 stdout 吐日志的命令。六个动作(start/read/wait/status/stop/ports)
+ * 合成一个工具。
  *
  * 【为什么不是"再来一个 bash"】
  * 日志源是长驻、有状态、主动吐数据的,和一次性 spawn 的引擎工具(runEngine)正相反。
@@ -19,41 +20,32 @@
  *    没命中时**不推游标** —— 预览是预览,证据不能因为看了一眼就消失。
  *
  * 【三种源,同一个采集器】
- * RTT 是 `probe-rs attach`,串口是 serial.ts 给的 argv(POSIX 上是 cat,Windows 上是
- * PowerShell),command 是模型自己写的 argv。三者都只是"一个往 stdout 吐字节的子进程",
- * 所以缓冲、折叠、wait、killTree 只有一份。串口那条路怎么在三个系统上打开,
- * 全部关在 serial.ts 里 —— 这个文件不认识 termios,也不认识 COM 口。
+ * 串口是 serial.ts 给的 argv(POSIX 上是 cat,Windows 上是 PowerShell),TCP 是
+ * gdb server 吐 RTT/日志的端口(node:net,进程内,没有子进程),command 是模型自己写
+ * 的 argv。三者都只是"一个往缓冲吐字节的流",所以缓冲、折叠、wait 只有一份。
+ * 串口那条路怎么在三个系统上打开,全部关在 serial.ts 里 —— 这个文件不认识 termios,
+ * 也不认识 COM 口。2026-08 起没有内置 RTT 源:RTT 从 gdb server 自己的 TCP 口读
+ * (J-Link GDBServer 的 19021、OpenOCD 的 `rtt server start`),探针由 server 握着,
+ * 本工具不碰探针。
  *
- * 【进程纪律】(评审确认过的两个真坑)
+ * 【进程纪律】(评审确认过的两个真坑;只适用于子进程源)
  * - detached + kill(-pid):`sh -c "…"` 这类源里真正握着设备的是孙子进程,
  *   只杀 shell 会留下孤儿一直占着串口。与 harness NodeExecutionEnv 的 killProcessTree 同策。
  * - unref:采集中的子进程和它的管道绝不能拖住事件循环,否则 ACP 退出时进程不肯死。
  *
- * 【与 flash 的关系】探针同一时间只能被一个进程握住:烧录前先 log stop。
- * 串口不占探针,但它同样是独占设备 —— 一个口同一时间只能有一个程序读。
+ * 【独占设备】串口同一时间只能有一个程序读;TCP 源没有这个问题(server 多路复用)。
  *
  * 落盘用 node:fs 的 WriteStream 而不是 env.writeTextFile:后者是一次性读写,
  * 这里要的是行速率的追加。理由同 engines.ts 直接 spawn —— 这条路径本来就是本机的。
  */
 import { type ChildProcess, spawn } from "node:child_process";
 import { closeSync, createWriteStream, type WriteStream } from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import type { ExecutionEnv } from "@yoma/my-pi";
 import { type Static, Type } from "typebox";
-import {
-	claimProbe,
-	clamp,
-	describeProbeConflict,
-	type EnginePathOptions,
-	engineBin,
-	killOnHostExit,
-	killTree,
-	appendProbeOccupationHint,
-	releaseProbe,
-	stamp,
-	unrefStream as unref,
-} from "./engines.ts";
-import { resolveToCwd } from "./path-utils.ts";
+import { clamp, killOnHostExit, killTree, stamp, unrefStream as unref } from "./engines.ts";
+import { parseConnect } from "./gdb.ts";
 import {
 	DEFAULT_BAUD,
 	listSerialPorts,
@@ -116,7 +108,7 @@ export interface LogLine {
 	/** 相对采集启动的毫秒数。绝对时间对模型没用,相对时间才好推理。 */
 	t: number;
 	text: string;
-	/** 来自 stderr(probe-rs 的诊断走这条)。 */
+	/** 来自 stderr(子进程源的诊断走这条;TCP 源没有 stderr)。 */
 	err?: boolean;
 }
 
@@ -211,27 +203,6 @@ export function splitArgv(command: string): string[] {
 	if (quote) throw new Error(`unbalanced ${quote} in command: ${command}`);
 	if (started) argv.push(current);
 	return argv;
-}
-
-export interface AttachArgsInput {
-	chip?: string;
-	elfPath?: string;
-	probe?: string;
-	scanMemory?: boolean;
-}
-
-/**
- * probe-rs attach 的 argv。ELF 是位置参数且必需 —— RTT 控制块的符号从它里面找。
- * --non-interactive:没有 stdin,交互式选探针会直接挂住。
- * --no-timestamps:我们自己给每行盖相对时间戳,不要 defmt 再盖一遍。
- */
-export function buildAttachArgs(input: AttachArgsInput): string[] {
-	if (!input.chip) throw new Error('log start over a debug probe requires chip (e.g. "STM32F405RG")');
-	if (!input.elfPath) throw new Error("log start over a debug probe requires elfPath (the ELF you flashed)");
-	const args = ["attach", input.elfPath, "--chip", input.chip, "--non-interactive", "--no-timestamps"];
-	if (input.probe) args.push("--probe", input.probe);
-	if (input.scanMemory) args.push("--rtt-scan-memory");
-	return args;
 }
 
 export interface FoldedRow {
@@ -403,17 +374,25 @@ function charBudgetFor(maxLines: number): number {
 
 // ─── 采集器 ──────────────────────────────────────────────────────────────────
 
-/** 进程退出时兜底杀掉还活着的采集子进程 —— 否则 probe-rs 会一直握着探针。 */
+/** 进程退出时兜底杀掉还活着的采集子进程 —— 否则它会一直握着串口/管道。 */
 const liveCaptures = new Set<LogCapture>();
+
+export type LogSource =
+	| {
+			kind: "child";
+			argv: string[];
+			/**
+			 * 已经打开好的设备 fd,作为子进程的 **stdin** 传下去(串口就走这条路,见 serial.ts:
+			 * 读进程自己 open 那个 tty 会把它变成控制终端,然后 SIGTERM 杀不掉)。
+			 * **所有权从构造那一刻起就归 LogCapture**,调用方不要再自己 close。
+			 */
+			hold?: number;
+	  }
+	/** gdb server 的 RTT/telnet 口这类 TCP 流:进程内 net.Socket,没有子进程要杀。 */
+	| { kind: "tcp"; host: string; port: number };
 
 export interface LogCaptureOptions {
 	maxBufferLines?: number;
-	/**
-	 * 已经打开好的设备 fd,作为子进程的 **stdin** 传下去(串口就走这条路,见 serial.ts:
-	 * 读进程自己 open 那个 tty 会把它变成控制终端,然后 SIGTERM 杀不掉)。
-	 * **所有权从构造那一刻起就归 LogCapture**,调用方不要再自己 close。
-	 */
-	hold?: number;
 }
 
 export interface WaitOutcome {
@@ -429,12 +408,13 @@ export interface WaitOutcome {
 }
 
 export class LogCapture {
-	readonly argv: string[];
+	readonly source: LogSource;
 	readonly label: string;
 	readonly file: string;
 	readonly cwd: string;
 
 	private child?: ChildProcess;
+	private socket?: net.Socket;
 	private stream?: WriteStream;
 	private pendingOut = "";
 	private pendingErr = "";
@@ -452,14 +432,14 @@ export class LogCapture {
 	startedAt = 0;
 	exited?: { code: number | null; signal: string | null; at: number };
 
-	constructor(argv: string[], label: string, file: string, cwd: string, options?: LogCaptureOptions) {
-		if (argv.length === 0) throw new Error("log start needs a command to run");
-		this.argv = argv;
+	constructor(source: LogSource, label: string, file: string, cwd: string, options?: LogCaptureOptions) {
+		if (source.kind === "child" && source.argv.length === 0) throw new Error("log start needs a command to run");
+		this.source = source;
 		this.label = label;
 		this.file = file;
 		this.cwd = cwd;
 		this.maxBufferLines = options?.maxBufferLines ?? DEFAULT_BUFFER_LINES;
-		this.hold = options?.hold;
+		this.hold = source.kind === "child" ? source.hold : undefined;
 	}
 
 	/** 子进程已经把 fd 复制走了(fork 那一刻),父进程这一份立刻还回去。 */
@@ -470,14 +450,14 @@ export class LogCapture {
 	}
 
 	get running(): boolean {
-		return !!this.child && !this.exited;
+		return (!!this.child || !!this.socket) && !this.exited;
 	}
 
 	get pid(): number | undefined {
 		return this.child?.pid;
 	}
 
-	/** spawn 并等到 'spawn' 事件 —— 二进制不存在这类错误要在 start 就报出来。 */
+	/** 起源并等到它真的活了 —— 二进制不存在 / 端口不通这类错误要在 start 就报出来。 */
 	async start(): Promise<void> {
 		this.startedAt = Date.now();
 		this.stream = createWriteStream(this.file, { flags: "a" });
@@ -486,15 +466,22 @@ export class LogCapture {
 			this.push(`log file write failed: ${String(error)}`, true);
 			this.stream = undefined;
 		});
+		if (this.source.kind === "tcp") await this.startTcp(this.source);
+		else await this.startChild(this.source.argv);
+		liveCaptures.add(this);
+		// 让位:宿主自己处理了信号就不接管(见 killOnHostExit)。
+		killOnHostExit(liveCaptures, { yieldToHost: true });
+	}
 
+	private async startChild(argv: string[]): Promise<void> {
 		let child: ChildProcess;
 		try {
-			child = spawn(this.argv[0]!, this.argv.slice(1), {
+			child = spawn(argv[0]!, argv.slice(1), {
 				cwd: this.cwd,
 				stdio: [this.hold ?? "ignore", "pipe", "pipe"],
 				// 自成进程组,stop 才能连孙子进程一起收掉(见 killTree)。
 				detached: process.platform !== "win32",
-				// 桌面端是 GUI 进程:probe-rs / PowerShell 起来时不要闪一个控制台窗口。
+				// 桌面端是 GUI 进程:PowerShell 等源起来时不要闪一个控制台窗口。
 				windowsHide: true,
 			});
 		} finally {
@@ -509,7 +496,7 @@ export class LogCapture {
 				// 否则 running 会永远返回 true。
 				this.exited = { code: null, signal: null, at: Date.now() };
 				this.finish();
-				reject(new Error(`failed to start log source \`${this.argv.join(" ")}\`: ${String(error)}`));
+				reject(new Error(`failed to start log source \`${argv.join(" ")}\`: ${String(error)}`));
 			});
 		});
 
@@ -529,9 +516,43 @@ export class LogCapture {
 		child.unref();
 		unref(child.stdout);
 		unref(child.stderr);
-		liveCaptures.add(this);
-		// 让位:宿主自己处理了信号就不接管(见 killOnHostExit)。
-		killOnHostExit(liveCaptures, { yieldToHost: true });
+	}
+
+	private async startTcp(source: { host: string; port: number }): Promise<void> {
+		const socket = net.connect({ host: source.host, port: source.port });
+		this.socket = socket;
+		socket.setEncoding("utf8");
+
+		await new Promise<void>((resolve, reject) => {
+			const onConnect = () => {
+				socket.off("error", onError);
+				resolve();
+			};
+			const onError = (error: Error) => {
+				socket.off("connect", onConnect);
+				this.exited = { code: null, signal: null, at: Date.now() };
+				this.finish();
+				reject(
+					new Error(
+						`failed to connect log source ${source.host}:${source.port}: ${String(error)} — is the gdb server running and its RTT/telnet port open?`,
+					),
+				);
+			};
+			socket.once("connect", onConnect);
+			socket.once("error", onError);
+		});
+
+		socket.on("data", (chunk: string) => this.consume(chunk, false));
+		// 连接后的错误(对端重置等)等价于"源退出";'close' 必随其后,终态在那里落。
+		socket.on("error", () => {});
+		socket.once("close", () => {
+			this.exited ??= { code: null, signal: null, at: Date.now() };
+			this.flushPending();
+			this.notify();
+			this.finish();
+		});
+		// 与子进程同一条纪律:采集绝不能拖住事件循环。
+		socket.unref();
 	}
 
 	private consume(chunk: string, err: boolean): void {
@@ -722,6 +743,11 @@ export class LogCapture {
 	}
 
 	async stop(): Promise<void> {
+		// TCP 源:destroy 触发 'close',终态与 finish 都在那个处理器里落。
+		if (this.socket && !this.exited) {
+			this.socket.destroy();
+			await this.waitUntil(() => !!this.exited, EXIT_WAIT_MS);
+		}
 		const child = this.child;
 		if (child && !this.exited) {
 			killTree(child, "SIGTERM");
@@ -739,6 +765,11 @@ export class LogCapture {
 
 	/** 同步、绝不抛:只给进程退出/信号钩子用。 */
 	killNow(): void {
+		try {
+			this.socket?.destroy();
+		} catch {
+			// socket 可能已经关了。
+		}
 		if (!this.child) return;
 		killTree(this.child, "SIGKILL");
 	}
@@ -752,9 +783,11 @@ export class LogCapture {
 		// 也不能再往缓冲和文件里塞行 —— 否则 running=false 却还在长。
 		this.child?.stdout?.removeAllListeners("data");
 		this.child?.stderr?.removeAllListeners("data");
+		this.socket?.removeAllListeners("data");
 		this.flushPending();
 		this.child?.stdout?.destroy();
 		this.child?.stderr?.destroy();
+		this.socket?.destroy();
 		this.stream?.end();
 		this.stream = undefined;
 		liveCaptures.delete(this);
@@ -777,17 +810,11 @@ const logSchema = Type.Object({
 		],
 		{ description: "start | read | wait | status | stop | ports" },
 	),
-	chip: Type.Optional(
-		Type.String({ description: 'start over a debug probe: target chip name, e.g. "STM32F405RG" (RTT via probe-rs).' }),
-	),
-	elfPath: Type.Optional(
-		Type.String({ description: "start over a debug probe: the ELF running on the target (RTT symbols come from it)." }),
-	),
-	probe: Type.Optional(
-		Type.String({ description: 'Probe selector "VID:PID" or "VID:PID:Serial" when several are connected.' }),
-	),
-	scanMemory: Type.Optional(
-		Type.Boolean({ description: "Scan RAM for the RTT control block when the ELF has no symbol for it." }),
+	tcp: Type.Optional(
+		Type.String({
+			description:
+				'start from a TCP log/RTT stream: "host:port" — e.g. "localhost:19021" (J-Link GDBServer serves RTT there) or the port you opened with OpenOCD\'s "rtt server start". The gdb server holds the probe; this only reads the stream.',
+		}),
 	),
 	port: Type.Optional(
 		Type.String({
@@ -816,26 +843,24 @@ const logSchema = Type.Object({
 
 export type LogToolInput = Static<typeof logSchema>;
 
-export type LogToolOptions = EnginePathOptions;
-
-const DESCRIPTION = `Captures the running board's log output — a UART/USB serial port, RTT over a debug probe, or any command that prints to stdout — so you can see what the firmware actually did instead of guessing from the source.
+const DESCRIPTION = `Captures the running board's log output — a UART/USB serial port, a TCP stream (RTT from your gdb server), or any command that prints to stdout — so you can see what the firmware actually did instead of guessing from the source.
 
 Actions:
-- start (port, or chip + elfPath, or command): begin capturing. Exactly one source:
+- start (port, tcp, or command): begin capturing. Exactly one source:
   - UART / USB serial: port (plus baud, default ${DEFAULT_BAUD}; 8N1, no flow control). Same call on macOS, Linux and Windows — the port name is the only difference. Run ports first if you do not know it.
-  - Debug probe / RTT: chip and the elfPath you flashed.
+  - RTT / any TCP log stream: tcp "host:port". RTT comes from the gdb server that is already holding the probe: J-Link GDBServer serves it on telnet port 19021 automatically; with OpenOCD run \`monitor rtt setup <addr> <size> "SEGGER RTT"\`, \`monitor rtt start\`, \`monitor rtt server start <port> 0\` (gdb eval, write: true), then read that port here.
   - Anything else: command — an argv line (a decoder script, a vendor CLI, …); no shell unless you spawn one yourself.
 - ports: list the serial ports on this machine, with the OS's own description where it has one. Opens nothing, takes nothing — safe to call any time, including while a capture is running.
 - wait (pattern, [timeoutMs]): block until a new line matches the regex, the source exits, or the timeout expires. THIS IS THE MAIN ACTION — one call turns "did it boot / did it crash" into a definite answer and returns only the matched line plus a few lines of context. A wait that does not match leaves the cursor untouched, so nothing is lost: follow it with read.
 - read ([since], [pattern], [maxLines]): the tail of whatever arrived since the last read, then advances the cursor. With pattern it only shows matching lines and does not move the cursor (it is a query, not a consumption).
 - status: whether the source is still running, how many lines were captured, where the full log file is.
-- stop: end the capture, releasing the serial port or the probe. The log file stays.
+- stop: end the capture, releasing the serial port (a TCP capture just disconnects). The log file stays.
 
 Rules:
 - Every line is written to a log file; this tool only ever returns a bounded excerpt (tail, folded repeats, "N lines omitted"). To search history, grep the log file path it reports — do not ask this tool for a bigger excerpt.
 - Repeated lines are folded ("×137"); lines that differ only in numbers fold too, showing the first and the last of the run. Exact values are in the log file.
 - Prefer wait over read: read costs tokens and gives you a wall of text, wait costs one call and gives you a conclusion.
-- A debug probe can only be held by one process: stop the capture before flash download/erase/reset, then start it again. A serial port is exclusive too, but only macOS and Windows enforce it — on Linux a second reader just silently splits the byte stream with the first, and this tool's stty would also change the other reader's baud. A successful start is not proof that nothing else is on the port.
+- This tool never holds the debug probe: a tcp capture reads from the gdb server, which owns the probe — stopping that server (gdb stop) ends the stream (source shows "disconnected"). A serial port IS exclusive, but only macOS and Windows enforce it — on Linux a second reader just silently splits the byte stream with the first, and this tool's stty would also change the other reader's baud. A successful start is not proof that nothing else is on the port.
 - Serial gives you the bytes the firmware sends, nothing else: a wrong baud looks like garbage, and a firmware that speaks a binary protocol (framed telemetry, a vendor protocol) looks like garbage too. For those, run a decoder that opens the port itself as a command source. Note the log file holds the same sanitized text you see here, not the raw bytes — binary cannot be recovered from it afterwards.
 - RTT only produces output while the target is running and only if the firmware writes to it. Silence is not proof of a crash — check status and the flash/reset results too.
 - Never claim the firmware printed, booted, or crashed unless a log line here shows it.`;
@@ -864,6 +889,8 @@ async function withPortHints<T>(run: () => T): Promise<T> {
 function sourceState(capture: LogCapture): string {
 	if (capture.running) return "running";
 	if (!capture.exited) return "not started";
+	// TCP 没有退出码,"exited (code null)"只会让模型去猜进程语义。
+	if (capture.source.kind === "tcp") return "disconnected";
 	const { code, signal } = capture.exited;
 	return `exited (${signal ? `signal ${signal}` : `code ${code}`})`;
 }
@@ -878,20 +905,9 @@ function footer(capture: LogCapture, needsFile: boolean): string {
 	return `cursor: ${capture.cursor} | source: ${sourceState(capture)}${dropped}${file}`;
 }
 
-export function createLogToolDefinition(
-	env: ExecutionEnv,
-	options?: LogToolOptions,
-): ToolDefinition<typeof logSchema, LogToolDetails> {
+export function createLogToolDefinition(env: ExecutionEnv): ToolDefinition<typeof logSchema, LogToolDetails> {
 	// 一个工具实例 = 一个会话 = 一个日志源。闭包持有,不做全局注册表。
 	let capture: LogCapture | undefined;
-	/** 这次采集是不是握着探针(只有 RTT 那条路握)。 */
-	let heldProbe = false;
-
-	const dropProbe = () => {
-		if (!heldProbe) return;
-		heldProbe = false;
-		releaseProbe("log");
-	};
 
 	const requireCapture = (action: LogAction): LogCapture => {
 		if (!capture) throw new Error(`no log capture — run \`log start\` (${action} needs a running source)`);
@@ -913,7 +929,7 @@ export function createLogToolDefinition(
 		name: "log",
 		label: "log",
 		description: DESCRIPTION,
-		promptSnippet: "Capture and query the board's runtime log (RTT / serial)",
+		promptSnippet: "Capture and query the board's runtime log (serial / RTT over TCP)",
 		promptGuidelines: [
 			"Never claim firmware booted, printed, or crashed without a log line proving it; use log wait rather than dumping the log.",
 		],
@@ -928,19 +944,13 @@ export function createLogToolDefinition(
 							`already capturing ${capture.label} (${capture.totalLines} lines so far). Run \`log stop\` first.`,
 						);
 					}
-					// 走到这儿说明上一次采集已经死了(还活着的话上面就抛了)。它要是握着探针,
-					// 租约现在就得还 —— 否则下一个源接手之后,租约的 isLive 看的是**新**采集,
-					// 于是一个早就退了的 RTT 会永远"活着":flash 被拒,理由指着一个不存在的会话。
-					dropProbe();
-					let argv: string[];
+					let source: LogSource;
 					let label: string;
-					/** 串口和 command 都不碰探针,只有 RTT 那条路要租约。 */
-					let needsProbe = false;
 					/** 串口:留到最后一步再真开设备(见下面 prepareSerial 那一句)。 */
 					let serial: { device: string; baud: number } | undefined;
 					// 三个源互斥。给了两个就是拿不准,而默默挑一个的代价是"它以为在读串口,
-					// 其实在读 RTT",两边都长得像"板子没输出"。
-					const sources = [params.port && "port", params.chip && "chip (RTT)", params.command && "command"].filter(
+					// 其实在读 TCP",两边都长得像"板子没输出"。
+					const sources = [params.port && "port", params.tcp && "tcp", params.command && "command"].filter(
 						(name): name is string => typeof name === "string",
 					);
 					if (sources.length > 1) {
@@ -949,34 +959,24 @@ export function createLogToolDefinition(
 					if (params.port) {
 						const device = await withPortHints(() => normalizeSerialPort(params.port!));
 						serial = { device, baud: clamp(params.baud, DEFAULT_BAUD, MIN_BAUD, MAX_BAUD) };
-						argv = serialArgv(device, serial.baud);
+						source = { kind: "child", argv: serialArgv(device, serial.baud) };
 						label = serialLabel(device, serial.baud);
 					} else if (params.command) {
-						argv = splitArgv(params.command);
+						const argv = splitArgv(params.command);
 						if (argv.length === 0) throw new Error("log start: command is empty");
+						source = { kind: "child", argv };
 						label = argv.join(" ");
-					} else {
-						needsProbe = true;
-						const elfPath = params.elfPath ? await resolveToCwd(env, params.elfPath) : undefined;
-						if (elfPath) {
-							const exists = await env.exists(elfPath);
-							if (!exists.ok || !exists.value) throw new Error(`ELF file not found: ${elfPath}`);
+					} else if (params.tcp) {
+						let parsed: { host: string; port: number };
+						try {
+							parsed = parseConnect(params.tcp);
+						} catch {
+							throw new Error(`log start: could not parse tcp "${params.tcp}" — use "host:port", e.g. "localhost:19021"`);
 						}
-						argv = [
-							engineBin("probe-rs", options),
-							...buildAttachArgs({
-								chip: params.chip,
-								elfPath,
-								probe: params.probe,
-								scanMemory: params.scanMemory,
-							}),
-						];
-						label = `probe-rs RTT (${params.chip})`;
-					}
-
-					if (needsProbe) {
-						const holder = claimProbe("log", label, () => capture?.running === true);
-						if (holder) throw new Error(`log start: ${describeProbeConflict(holder)}`);
+						source = { kind: "tcp", host: parsed.host, port: parsed.port };
+						label = `tcp ${parsed.host}:${parsed.port}`;
+					} else {
+						throw new Error('log start: pass exactly one source — port (serial), tcp ("host:port"), or command');
 					}
 
 					const file = path.join(env.cwd, ".my-pi", "logs", logFileName());
@@ -984,16 +984,16 @@ export function createLogToolDefinition(
 					if (!dir.ok) throw new Error(`could not create the log directory: ${dir.error.message}`);
 
 					// 串口在这里才真打开:前面任何一步抛错都不该留下一个开着的设备。
-					// 拿到的 fd 立刻交给 LogCapture,从此由它负责关(见 LogCaptureOptions.hold)。
+					// 拿到的 fd 立刻交给 LogCapture,从此由它负责关(见 LogSource 的 hold)。
 					// const 别名:`serial` 是 let,闭包里收窄不掉,直接用要补两个 `!`。
 					const opening = serial;
 					const hold = opening ? await withPortHints(() => prepareSerial(opening.device, opening.baud)) : undefined;
-					const started = new LogCapture(argv, label, file, env.cwd, { hold });
+					if (hold !== undefined && source.kind === "child") source = { ...source, hold };
+					const started = new LogCapture(source, label, file, env.cwd);
 					try {
 						await started.start();
 					} catch (error) {
-						if (needsProbe) releaseProbe("log");
-						// 起不来也要把串口还回去 —— 和上面那行放探针是同一件事。
+						// 起不来也要把串口还回去(fd 的所有权已在 LogCapture 手里,stop 会收)。
 						await started.stop();
 						throw error;
 					}
@@ -1009,17 +1009,11 @@ export function createLogToolDefinition(
 								.join("; ")
 								.trim();
 							await started.stop();
-							throw new Error(
-								appendProbeOccupationHint(
-									`log start: could not open ${label}${said ? `: ${said}` : ""}${await portHint()}`,
-									said,
-								),
-							);
+							throw new Error(`log start: could not open ${label}${said ? `: ${said}` : ""}${await portHint()}`);
 						}
 					}
 
 					capture = started;
-					heldProbe = needsProbe;
 					const text = `Capturing ${label}${started.pid ? ` (pid ${started.pid})` : ""}.
 Full log: ${file}
 Next: \`log wait\` with a pattern (e.g. "boot|fault|error") — it blocks until something matches instead of dumping the log.`;
@@ -1122,7 +1116,6 @@ Next: \`log wait\` with a pattern (e.g. "boot|fault|error") — it blocks until 
 				case "stop": {
 					const active = requireCapture("stop");
 					await active.stop();
-					dropProbe();
 					const uptime = ((active.exited?.at ?? Date.now()) - active.startedAt) / 1000;
 					// 没能确认退出就别说"停了" —— 模型据此判断探针/串口是否已经放开。
 					const survived = active.exited
@@ -1157,6 +1150,6 @@ Next: \`log wait\` with a pattern (e.g. "boot|fault|error") — it blocks until 
 	};
 }
 
-export function createLogTool(env: ExecutionEnv, options?: LogToolOptions) {
-	return wrapToolDefinition(createLogToolDefinition(env, options));
+export function createLogTool(env: ExecutionEnv) {
+	return wrapToolDefinition(createLogToolDefinition(env));
 }

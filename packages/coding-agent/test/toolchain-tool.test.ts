@@ -54,12 +54,13 @@ function writeManifest(tools: ToolSpec[]): void {
 }
 
 /** PATH 默认空字符串,不让这台开发机真实装了什么悄悄影响判定——同 toolchain-resolve.test.ts 的纪律。 */
-function makeTool(envOverrides: NodeJS.ProcessEnv = {}) {
+function makeTool(envOverrides: NodeJS.ProcessEnv = {}, extra: Partial<ToolchainToolOptions> = {}) {
 	const env = new NodeExecutionEnv({ cwd: projectDir });
 	const options: ToolchainToolOptions = {
 		configDir,
 		platform: process.platform,
 		env: { PATH: "", PATHEXT: ".EXE;.CMD;.BAT;.COM", ...envOverrides },
+		...extra,
 	};
 	return createToolchainToolDefinition(env, options);
 }
@@ -103,6 +104,35 @@ describe("check", () => {
 
 		const ledger = await readLedger(configDir);
 		expect(ledger.entries).toEqual({});
+	});
+
+	// 工位端形态:没有项目检出(projectDir 下没有清单文件),清单原文经信箱注入,
+	// side 钉成 runner。不注入 manifestText 的那一版在这里会报"没有清单"——与系统
+	// 提示词里 runner 筛过的清单自相矛盾(session-manager 的装配处就是为此传 options)。
+	it("注入 manifestText + side:runner 时,磁盘上没有清单也能按 runner 侧作答", async () => {
+		const tool = makeTool(
+			{},
+			{
+				side: "runner",
+				manifestText: JSON.stringify({
+					schema: "yoma/toolchain@1",
+					tools: [
+						{ id: "cmake", bin: ["cmake"] }, // side 缺省 -> mother,runner 侧不该看到它
+						{ id: "jlink", bin: ["JLinkExe"], side: "runner" },
+					],
+				}),
+			},
+		);
+
+		const result = await tool.execute("c1", { action: "check" });
+		const text = textOf(result);
+
+		expect(text).toContain("side: runner");
+		expect(text).toContain("jlink: MISSING");
+		expect(text).not.toContain("cmake");
+		expect(text).not.toContain("No toolchain manifest found");
+		expect(result.details.side).toBe("runner");
+		expect(result.details.tools?.map((t) => t.id)).toEqual(["jlink"]);
 	});
 });
 

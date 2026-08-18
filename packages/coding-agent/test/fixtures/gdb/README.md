@@ -18,7 +18,7 @@
 | 文件 | CPU | flash 起始 | 用途 |
 | --- | --- | --- | --- |
 | `fixture.elf` | cortex-m3 | `0x00000000` | 默认。lm3s6965evb / mps2-* / netduinoplus2 / stm32vldiscovery 都从 0 启动 |
-| `fixture_f4.elf` | cortex-m4 | `0x08000000` | 真实 STM32F4 存储映射(Renode / probe-rs / 真板)。netduinoplus2 把片上 flash 同时别名到 `0x0` 和 `0x08000000`,所以它在 QEMU 上也照跑 |
+| `fixture_f4.elf` | cortex-m4 | `0x08000000` | 真实 STM32F4 存储映射(Renode / OpenOCD / 真板)。netduinoplus2 把片上 flash 同时别名到 `0x0` 和 `0x08000000`,所以它在 QEMU 上也照跑 |
 
 两者行为完全一致,下面的场景表对两个 ELF 都验证过。
 

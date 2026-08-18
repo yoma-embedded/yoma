@@ -2,7 +2,10 @@ export const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "im
 
 export const ACCEPTED_FILE_TYPES = [
   ...ACCEPTED_IMAGE_TYPES,
-  "application/pdf",
+  // 刻意没有 application/pdf:内核只把 image/* 附件送进模型,PDF 附件是静默丢弃
+  // (session-manager 的 prompt 过滤)。数据手册的通道是手册库(RAG 入库),不是
+  // 会话附件 —— 别让 picker 邀请一个注定失败的动作。拖拽进来的 PDF 由 attachments
+  // 的分流给出专门提示。
   "text/*",
   "application/json",
   "application/ld+json",

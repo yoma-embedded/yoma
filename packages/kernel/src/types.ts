@@ -299,6 +299,23 @@ export interface ToolchainToolDetails {
 }
 
 /**
+ * `toolchain.status` / `toolchain.set` RPC 的结果:一个项目的工具链核账快照。
+ * 设置页的"工具链"标签消费它。三种形态,靠 declared/error 区分:
+ *   - declared:false 且无 error —— 项目根本没声明清单(绝大多数项目),UI 给引导文案;
+ *   - declared:false 且有 error —— 清单文件在但内容坏了,这必须被看见(host 侧与
+ *     会话开启一样不抛,折叠成这份带 error 的结果 —— 设置页正是排查它的地方);
+ *   - declared:true —— tools 逐条给判定,ok 表示所有非 optional 的都解析成功。
+ */
+export interface ToolchainStatusView {
+  declared: boolean
+  manifestPath?: string
+  side: "mother" | "runner"
+  ok: boolean
+  tools: ToolchainResolvedTool[]
+  error?: string
+}
+
+/**
  * examples(例程库)工具的 details,从 coding-agent 的 ExamplesToolDetails 结构化
  * 复制(公共契约见 core/tools/examples.ts)。暂无专门卡片消费它(GenericTool 兜底,
  * 与 toolchain 同一先例),提前钉住形状,漂移由 details-check.ts 兜底。
@@ -362,12 +379,11 @@ export interface Stm32ConfigToolDetails {
   exitCode: number | null
 }
 
-export type FlashAction = "list" | "info" | "download" | "erase" | "reset"
-
 export interface FlashToolDetails {
-  action: FlashAction
-  chip?: string
+  command: string[]
   exitCode: number | null
+  /** elfPath 给了且 exit 0 时:已落进 flash-state.json 的镜像绝对路径。 */
+  recordedElf?: string
 }
 
 export type LogAction = "start" | "read" | "wait" | "status" | "stop" | "ports"

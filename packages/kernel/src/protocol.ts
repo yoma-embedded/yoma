@@ -22,6 +22,7 @@ import type {
   ProviderInfo,
   Session,
   SessionStatus,
+  ToolchainStatusView,
   VcsInfo,
 } from "./types.ts"
 
@@ -61,14 +62,9 @@ export interface PreflightEngines extends PreflightCheck {
   missing: string[]
 }
 
-export interface PreflightProbe extends PreflightCheck {
-  devices: string[]
-}
-
 export interface PreflightReport {
   auth: PreflightAuth
   engines: PreflightEngines
-  probe: PreflightProbe
 }
 
 export interface KernelMethods {
@@ -76,7 +72,7 @@ export interface KernelMethods {
     params: void
     result: { version: string; enginesDir: string | null; sessionsRoot: string; node: string }
   }
-  /** 首跑预检:key / 引擎 / 探针。失败带 code。 */
+  /** 首跑预检:key / 引擎。失败带 code。 */
   "app.preflight": { params: void; result: PreflightReport }
 
   "session.list": { params: { directory?: string }; result: Session[] }
@@ -112,6 +108,17 @@ export interface KernelMethods {
 
   "vcs.info": { params: { directory: string }; result: VcsInfo }
   "vcs.diff": { params: { directory: string }; result: FileDiff[] }
+
+  /**
+   * 工具链核账:项目声明的清单(<directory>/.my-pi/toolchain.json)对上这台机器实际
+   * 装了什么。fresh:true 是"不信账本重新探一遍并记住"(同 agent 工具的 resolve 动作)。
+   */
+  "toolchain.status": { params: { directory: string; fresh?: boolean }; result: ToolchainStatusView }
+  /**
+   * 用户在 UI 里手填的路径:验证(存在 + 真能跑出版本号)后记进本机账本,再回一份
+   * 最新核账结果 —— 与 agent 工具的 set 动作同一套验证实现,拒绝理由不会分叉。
+   */
+  "toolchain.set": { params: { directory: string; id: string; path: string }; result: ToolchainStatusView }
 
   "project.list": { params: void; result: Array<{ directory: string; lastOpened: number }> }
   "project.add": { params: { directory: string }; result: Array<{ directory: string; lastOpened: number }> }

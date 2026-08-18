@@ -36,9 +36,9 @@ export interface JobRepo {
 export interface JobBench {
   /** 板卡标识,给人看、也进工位端的提示词。 */
   board?: string
-  /** probe-rs 的芯片名,如 STM32G474RE。烧录与 gdb 都要,进工位端的提示词。 */
+  /** 目标芯片名,如 STM32G474RE。gdb(jlink 的 -device)与烧录命令都要,进工位端的提示词。 */
   chip?: string
-  /** 探针选择器 "VID:PID" 或 "VID:PID:Serial"。多探针工位必填。 */
+  /** 探针标识(序列号等),进工位端的提示词。多探针工位写清楚用哪个,agent 自己落进烧录/服务器命令。 */
   probe?: string
 }
 

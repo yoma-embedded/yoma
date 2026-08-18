@@ -374,7 +374,7 @@ describe("availableCommandsFor", () => {
 
 	it("adds one /skill: command per discovered skill, including hidden-from-prompt ones", () => {
 		const skills = [
-			{ name: "flash-triage", description: "Diagnose probe-rs flash failures", content: "…", filePath: "/s/SKILL.md" },
+			{ name: "flash-triage", description: "Diagnose OpenOCD flash failures", content: "…", filePath: "/s/SKILL.md" },
 			{
 				name: "quiet-helper",
 				description: "Only invoked explicitly",

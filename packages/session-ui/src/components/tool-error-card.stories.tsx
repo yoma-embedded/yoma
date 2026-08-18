@@ -15,7 +15,7 @@ Tool call failure summary styled like a tool trigger.
 const samples = [
   {
     tool: "flash",
-    error: "probe-rs download failed (exit 1): No debug probe found. Connect an ST-Link/J-Link/CMSIS-DAP probe and re-run `list`.",
+    error: "flash `openocd` failed (exit 1): Error: no device found. Connect an ST-Link/J-Link/CMSIS-DAP probe and check the OS actually sees it.",
   },
   {
     tool: "gdb",

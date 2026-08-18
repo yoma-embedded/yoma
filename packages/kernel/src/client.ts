@@ -24,6 +24,7 @@ import type {
   ProviderInfo,
   Session,
   SessionStatus,
+  ToolchainStatusView,
   VcsInfo,
 } from "./types.ts"
 
@@ -83,6 +84,10 @@ export interface KernelClient {
     info(directory: string): Promise<VcsInfo>
     diff(directory: string): Promise<FileDiff[]>
   }
+  toolchain: {
+    status(params: { directory: string; fresh?: boolean }): Promise<ToolchainStatusView>
+    set(params: { directory: string; id: string; path: string }): Promise<ToolchainStatusView>
+  }
   project: {
     list(): Promise<KernelResult<"project.list">>
     add(directory: string): Promise<KernelResult<"project.add">>
@@ -137,6 +142,10 @@ export function createKernelClient(transport: KernelTransport): KernelClient {
     vcs: {
       info: (directory) => call("vcs.info", { directory }),
       diff: (directory) => call("vcs.diff", { directory }),
+    },
+    toolchain: {
+      status: (params) => call("toolchain.status", params),
+      set: (params) => call("toolchain.set", params),
     },
     project: {
       list: () => call("project.list", undefined),

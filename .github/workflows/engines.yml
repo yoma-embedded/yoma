@@ -28,8 +28,9 @@ permissions:
 
 jobs:
   # 只为算出矩阵而存在的小任务(ubuntu,1 倍计费,几秒钟)。
-  # 存在的理由是钱:私有仓的 macOS runner 是 10 倍计费,而 probe-rs 冷编译要二十来分钟。
-  # 三平台全量首跑 ≈ 400+ 分钟额度(免费额度 2000/月),所以要能只跑一个平台。
+  # 存在的理由是钱:私有仓的 macOS runner 是 10 倍计费(probe-rs 在编译清单里的年代
+  # 一次冷编译就要二十来分钟,现在 stm32kernel + PyInstaller 也不便宜),
+  # 所以要能只跑一个平台。
   plan:
     runs-on: ubuntu-latest
     outputs:
@@ -73,7 +74,7 @@ jobs:
             exit 1
           fi
           # .gitmodules 里私有仓用的是 git@github.com: 形式,CI 里没有 SSH key,
-          # 所以把 SSH URL 改写成带 token 的 HTTPS。probe-rs 是公开仓,不受影响。
+          # 所以把 SSH URL 改写成带 token 的 HTTPS。
           git config --global url."https://x-access-token:${ENGINES_TOKEN}@github.com/".insteadOf "git@github.com:"
           if ! git submodule update --init --recursive; then
             # 令牌存在但拉不动,基本是这三种。GitHub 对"没权限"一律报"仓库不存在",
@@ -103,11 +104,9 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      # probe-rs 是个大工程,不缓存的话每次 CI 都要从头编十几分钟。
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
-            engines/probe-rs
             engines/stm32-config-kernel
 
       - uses: astral-sh/setup-uv@v5

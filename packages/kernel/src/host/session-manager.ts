@@ -81,9 +81,11 @@ export function createEmbeddedTools(env: NodeExecutionEnv, enginesDir?: string):
     createNetlistToolDefinition(env, engines),
     createDatasheetToolDefinition(env),
     createStm32ConfigToolDefinition(env, engines),
-    createFlashToolDefinition(env, engines),
-    createLogToolDefinition(env, engines),
-    createGdbToolDefinition(env, engines),
+    // flash/log/gdb 自 2026-08 起不吃 enginesDir:烧录命令模型自带,RTT 走 TCP,
+    // gdb server 从 PATH 起 —— 引擎目录只剩上面两个还要。
+    createFlashToolDefinition(env),
+    createLogToolDefinition(env),
+    createGdbToolDefinition(env),
   ]
 }
 
@@ -513,7 +515,16 @@ export class SessionManager {
     // ACP 适配器 acp/agent.ts:351-359 —— 系统提示词编码了嵌入式工具的用法,自己重写
     // 等于产品行为分叉。
     const toolDefinitions = [
-      ...createCodingToolDefinitions(env),
+      // toolchain 工具必须拿到和 resolveToolchainSafe 同一组答案(configDir / side /
+      // manifestText),否则系统提示词与 agent 自己跑 toolchain check 会自相矛盾 ——
+      // 工位端(没有项目检出,清单经信箱注入)那侧 check 会直接报"没有清单"。
+      ...createCodingToolDefinitions(env, {
+        toolchain: {
+          configDir: this.configDir,
+          side: this.options.toolchainSide,
+          manifestText: this.options.toolchainManifestText,
+        },
+      }),
       ...createEmbeddedTools(env, this.options.enginesDir),
     ]
     const harness = new AgentHarness({
@@ -730,6 +741,22 @@ export class SessionManager {
         data: file.url.replace(/^data:[^;]+;base64,/, ""),
         mimeType: file.mime,
       }))
+
+    // harness.prompt 只收 images,别的附件送不进模型。曾经的事故形态:UI 把 PDF 显示
+    // 成附件、这里静默丢掉,两边都不吭声,用户以为模型看过了。UI 侧已按能力分流
+    // (app 的 attachments:PDF 拒收、文本转 @ 提及),这里是防回归的哨兵 —— 只盯
+    // data: URL 的内容型附件;file:// 的提及件路径已在正文里、agent 自己会去读,
+    // 丢掉 part 是预期行为,不该报。
+    const dropped = (input.files ?? []).filter((file) => !file.mime.startsWith("image/") && file.url.startsWith("data:"))
+    if (dropped.length > 0) {
+      this.options.emit([
+        {
+          type: "kernel.error",
+          sessionID,
+          message: `附件 ${dropped.map((f) => f.filename ?? f.mime).join("、")} 不是图片,当前无法送达模型,已忽略`,
+        },
+      ])
+    }
 
     // 不 await:一轮可能跑几分钟,请求必须立刻返回,结果全部走事件流。
     harness

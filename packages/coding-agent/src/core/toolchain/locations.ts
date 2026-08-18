@@ -174,7 +174,20 @@ function winDriveVariants(suffix: string): string[] {
 	return ["C", "D", "E", "F", "G"].map((drive) => `${drive}:\\${suffix}`);
 }
 
-type LocationTable = Record<string, Partial<Record<PlatformKey, string[]>>>;
+export type LocationTable = Record<string, Partial<Record<PlatformKey, string[]>>>;
+
+/**
+ * 探测表的键回落:先按清单里的 tool.id 查,查不到再按 tool.from(provider 键)查。
+ * 真实清单常给工具起项目内短名(id "arm-gcc")而把厂商身份放在 from
+ * ("arm-gnu-toolchain"),而 WELL_KNOWN_LOCATIONS / REGISTRY_SEARCH_TERM 两张表的
+ * 键都是厂商风格的名字 —— 只按 id 查,well-known/registry 两档对这类清单**永远
+ * 不命中**,静默退化成只剩 PATH 一档(test/fixtures/toolchain/bk64.jsonc 的
+ * arm-gcc 就是这个形状,实测踩过)。id 命中时不再看 from:两个键同时在表里的
+ * 情况按"更具体的赢",不做并集 —— 并集会让同一个工具白探两组目录。
+ */
+export function tableLookup<T>(table: Record<string, T>, toolId: string, from?: string): T | undefined {
+	return table[toolId] ?? (from === undefined ? undefined : table[from]);
+}
 
 /**
  * 按 toolId 的已知安装位置表,数据不是分支 —— toolId 之间没有共享逻辑,写成
@@ -259,9 +272,17 @@ export const WELL_KNOWN_LOCATIONS: LocationTable = {
 	},
 };
 
-/** 平台已知安装位置,按 toolId 查表后逐条 pattern 展开、去重、只留存在的。 */
-export function wellKnownCandidates(toolId: string, platform: string): string[] {
-	const patterns = WELL_KNOWN_LOCATIONS[toolId]?.[platform as PlatformKey];
+/**
+ * 平台已知安装位置,按 toolId(回落 from,见 tableLookup)查表后逐条 pattern 展开、
+ * 去重、只留存在的。table 可注入是给测试的:回落逻辑要在临时目录上真展开一次才算
+ * 测到,而真表里全是系统路径,没法在 CI 上稳定命中。
+ */
+export function wellKnownCandidates(
+	toolId: string,
+	platform: string,
+	opts?: { from?: string; table?: LocationTable },
+): string[] {
+	const patterns = tableLookup(opts?.table ?? WELL_KNOWN_LOCATIONS, toolId, opts?.from)?.[platform as PlatformKey];
 	if (!patterns) return [];
 	const seen = new Set<string>();
 	const out: string[] = [];
@@ -277,7 +298,7 @@ export function wellKnownCandidates(toolId: string, platform: string): string[] 
 
 // ─── Windows 注册表 ────────────────────────────────────────────────────────────
 
-/** toolId → 在 Uninstall 键里搜的厂商/产品词。没有对应词的 toolId 直接判定查不到。 */
+/** toolId(或 tool.from,见 tableLookup)→ 在 Uninstall 键里搜的厂商/产品词。没有对应词的直接判定查不到。 */
 const REGISTRY_SEARCH_TERM: Record<string, string> = {
 	jlink: "SEGGER",
 	"arm-gnu-toolchain": "Arm GNU Toolchain",
@@ -322,9 +343,13 @@ export function parseInstallLocations(stdout: string): string[] {
  * 就是 win32,不给注入点的话这条分支永远不会被真正跑到一次(根 CLAUDE.md 点
  * 过名的"永远不会响的闸门")。
  */
-export function registryCandidates(toolId: string, platform: NodeJS.Platform = process.platform): string[] {
+export function registryCandidates(
+	toolId: string,
+	platform: NodeJS.Platform = process.platform,
+	opts?: { from?: string; terms?: Record<string, string> },
+): string[] {
 	if (platform !== "win32") return [];
-	const term = REGISTRY_SEARCH_TERM[toolId];
+	const term = tableLookup(opts?.terms ?? REGISTRY_SEARCH_TERM, toolId, opts?.from);
 	if (!term) return [];
 
 	const found = new Set<string>();

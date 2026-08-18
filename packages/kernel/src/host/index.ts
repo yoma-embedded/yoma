@@ -18,6 +18,7 @@ import { runPreflight, inspectEngines } from "./preflight.ts"
 import { myPiConfigDir } from "./auth.ts"
 import { ProjectStore, listFiles, readFile, searchFiles, vcsDiff, vcsInfo } from "./services.ts"
 import { StreamSink } from "./stream.ts"
+import { toolchainSet, toolchainStatus } from "./toolchain.ts"
 
 // 纯类型模块,无运行时产物。re-export 只为把工具 details 的漂移闸门拉进编译单元。
 export type * from "./details-check.ts"
@@ -28,7 +29,7 @@ export { StreamSink } from "./stream.ts"
 // 全局配置目录的真源(凭据/技能/上下文)。导出它是为了让 bench 的 paths.ts 副本
 // 有个可断言的对手 —— 那份副本必须是叶子模块,不能反过来 import 这里。
 export { myPiConfigDir } from "./auth.ts"
-export { inspectEngines, parseProbeList, runPreflight } from "./preflight.ts"
+export { inspectEngines, runPreflight } from "./preflight.ts"
 
 export interface KernelHostOptions {
   /** engines/bin + engines/data 的所在目录。生产环境是 process.resourcesPath/engines。 */
@@ -121,6 +122,24 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
 
     "vcs.info": ({ directory }) => vcsInfo(directory),
     "vcs.diff": ({ directory }) => vcsDiff(directory),
+
+    // side 与会话同源(桌面端不传即 mother):设置页核的账必须和系统提示词里那份
+    // 一致,两边一边 mother 一边 runner 的话,UI 打的勾对不上 agent 看到的 MISSING。
+    "toolchain.status": ({ directory, fresh }) =>
+      toolchainStatus({
+        directory,
+        fresh,
+        configDir: options.configDir ?? myPiConfigDir(),
+        side: options.toolchainSide ?? "mother",
+      }),
+    "toolchain.set": ({ directory, id, path: binPath }) =>
+      toolchainSet({
+        directory,
+        id,
+        path: binPath,
+        configDir: options.configDir ?? myPiConfigDir(),
+        side: options.toolchainSide ?? "mother",
+      }),
 
     "project.list": async () => projects.list(),
     "project.add": ({ directory }) => projects.add(directory),

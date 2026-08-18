@@ -182,7 +182,9 @@ function wellKnownHits(tool: ToolSpec, platform: string, env: NodeJS.ProcessEnv)
 	// 见 stm32cubemx 那条 why 字段自己写的"不走 PATH 探测"。
 	if (names.length === 0) return [];
 	const hits: Hit[] = [];
-	for (const dir of wellKnownCandidates(tool.id, platform)) {
+	// from 是键回落(见 locations.ts 的 tableLookup):清单常给工具起项目内短名
+	// (id "arm-gcc"),厂商身份在 from("arm-gnu-toolchain"),而表键是厂商名。
+	for (const dir of wellKnownCandidates(tool.id, platform, { from: tool.from })) {
 		const bin = resolveNamesInDirs(names, [dir], env);
 		if (bin) hits.push(bin);
 	}
@@ -193,7 +195,7 @@ function registryHits(tool: ToolSpec, platform: string, env: NodeJS.ProcessEnv):
 	const names = tool.bin ?? [];
 	if (names.length === 0) return [];
 	const hits: Hit[] = [];
-	for (const dir of registryCandidates(tool.id, platform as NodeJS.Platform)) {
+	for (const dir of registryCandidates(tool.id, platform as NodeJS.Platform, { from: tool.from })) {
 		// InstallLocation 有的厂商就是可执行文件所在目录(SEGGER 的 J-Link),有的是
 		// 装了一堆子目录的安装根、可执行文件在它的 bin\ 下 —— 两种都试,不猜是哪种。
 		const bin = resolveNamesInDirs(names, [dir, path.join(dir, "bin")], env);
