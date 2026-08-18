@@ -12,7 +12,7 @@
  * 本文件只有类型、守卫与(反)序列化,零 IO —— IO 全在 store.ts,抽取在各生态插件。
  */
 
-export const ECOSYSTEMS = ["esp-idf", "stm32cube"] as const;
+export const ECOSYSTEMS = ["esp-idf", "stm32cube", "generic"] as const;
 
 export type Ecosystem = (typeof ECOSYSTEMS)[number];
 
@@ -175,11 +175,33 @@ export function parseIndex(text: string): ExamplesIndex | undefined {
 
 export const SOURCES_SCHEMA_TAG = "yoma/examples-sources@1";
 
-/** 一份语料在这台机器上的落点。root 是本机绝对路径 —— 所以这份文件永远不进 git。 */
+/**
+ * 语料的远程形态(examples sync 写入):语料包与派生索引住在文件服务器
+ * (rag_yoma)的 OSS 上,本机按需落地到 cache/。sha256 来自服务器的清单,是下载
+ * 校验与缓存失效的唯一依据 —— 服务器对同一 id 不会改发不同字节(id 内嵌 commit),
+ * 所以 sha 对不上就是传输坏了或缓存坏了,没有第三种解释。
+ */
+export interface CorpusRemote {
+	/** 服务器基地址,如 http://47.122.120.208(无尾斜杠)。 */
+	server: string;
+	commit?: string;
+	archiveSha256: string;
+	archiveBytes: number;
+	indexSha256: string;
+	enrichSha256?: string;
+}
+
+/**
+ * 一份语料在这台机器上的落点。root(本机检出,CLI index 写)与 remote(服务器
+ * 形态,examples sync 写)二选一或并存:并存时 root 优先 —— 本机有的东西不走网络。
+ * 两者都是本机事实,所以这份文件永远不进 git。
+ */
 export interface CorpusSource {
 	id: string;
 	ecosystem: Ecosystem;
+	/** 本机检出形态的语料根;远程形态下为空串。 */
 	root: string;
+	remote?: CorpusRemote;
 }
 
 export interface ExamplesSources {
@@ -187,11 +209,23 @@ export interface ExamplesSources {
 	corpora: CorpusSource[];
 }
 
+export function isCorpusRemote(value: unknown): value is CorpusRemote {
+	if (!isPlainObject(value)) return false;
+	if (typeof value.server !== "string" || value.server.trim() === "") return false;
+	if (typeof value.archiveSha256 !== "string" || value.archiveSha256 === "") return false;
+	if (typeof value.archiveBytes !== "number" || !Number.isFinite(value.archiveBytes) || value.archiveBytes <= 0) return false;
+	if (typeof value.indexSha256 !== "string" || value.indexSha256 === "") return false;
+	if (value.enrichSha256 !== undefined && typeof value.enrichSha256 !== "string") return false;
+	return true;
+}
+
 export function isCorpusSource(value: unknown): value is CorpusSource {
 	if (!isPlainObject(value)) return false;
 	if (typeof value.id !== "string" || value.id.trim() === "") return false;
 	if (!isEcosystem(value.ecosystem)) return false;
-	if (typeof value.root !== "string" || value.root.trim() === "") return false;
+	if (typeof value.root !== "string") return false;
+	// root 与 remote 至少有一个:账本里两样都没有的条目读出来只会误导,当坏行丢掉。
+	if (value.root.trim() === "" && !isCorpusRemote(value.remote)) return false;
 	return true;
 }
 

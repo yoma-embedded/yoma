@@ -1,31 +1,54 @@
 /**
- * 例程库 CLI:索引与富化都是离线生成的(语料在哪台机器,这些命令就在哪台机器跑;
- * 将来搬服务器,跑的还是它们)。检索/查看只是索引的只读视图,方便不进会话先验质量。
+ * 例程库 CLI:索引与富化都是离线生成的(在服务器上跑的就是它们,见 rag_yoma 的
+ * codelib job)。检索/查看只是索引的只读视图,方便不进会话先验质量;sync 把服务器
+ * 上已发布的语料落到本机(索引 MB 级,--code 连语料树 GB 级)。
  *
- *   bun packages/coding-agent/src/core/examples/cli.ts index  --ecosystem esp-idf --root <目录> [--corpus <id>] [--config-dir <目录>]
+ *   bun packages/coding-agent/src/core/examples/cli.ts index  --ecosystem esp-idf|stm32cube --root <目录> [--corpus <id>] [--config-dir <目录>]
  *   bun packages/coding-agent/src/core/examples/cli.ts enrich [--corpus <id>]... [--model <provider/model>] [--concurrency <n>] [--limit <n>]
+ *   bun packages/coding-agent/src/core/examples/cli.ts sync   [--server <url>] [--config-dir <目录>]        # 远端清单 × 本地状态
+ *   bun packages/coding-agent/src/core/examples/cli.ts sync   <语料id>... [--server <url>] [--code] [--config-dir <目录>]
  *   bun packages/coding-agent/src/core/examples/cli.ts search [--ecosystem <e>] [--target <t>] [--board <b>] [--peripheral <p> ...] [--keyword <k> ...] [--buildable] [--limit <n>]
  *   bun packages/coding-agent/src/core/examples/cli.ts show   <条目 id>
  *   bun packages/coding-agent/src/core/examples/cli.ts preflight <底盘id> <供体id>...
  *   bun packages/coding-agent/src/core/examples/cli.ts list
  */
 
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 
 import { resolveModel } from "../../acp/models.ts";
 import { type EnrichCompletion, enrichCorpus } from "./enrich.ts";
+import { indexGeneric } from "./generic.ts";
 import { indexCorpus } from "./indexer.ts";
 import { checkMergeConflicts, type PreflightInput } from "./preflight.ts";
 import { renderEntryCard, renderNoIndexHelp, renderPreflightReport, renderSearchReport } from "./render.ts";
 import { type Ecosystem, type ExampleEntry, type ExamplesIndex, isEcosystem } from "./schema.ts";
 import { searchIndex, type SearchQuery } from "./search.ts";
-import { enrichmentMapForAll, enrichPathFor, findSource, readAllIndexes } from "./store.ts";
+import {
+	corpusCacheDir,
+	enrichmentMapForAll,
+	enrichPathFor,
+	findSource,
+	readAllIndexes,
+	readCorpusMarker,
+	readSources,
+} from "./store.ts";
+import {
+	type CodelibMeta,
+	fetchCodelibMeta,
+	listRemoteCorpora,
+	resolveSyncServer,
+	syncCorpus,
+	syncIndex,
+} from "./sync.ts";
 
 const USAGE = `用法:
   cli.ts index     --ecosystem esp-idf|stm32cube --root <语料目录> [--corpus <id>] [--config-dir <目录>]
   cli.ts enrich    [--corpus <id>]... [--model <provider/model>] [--concurrency <n>] [--limit <n>] [--config-dir <目录>]
+  cli.ts sync      [--server <url>] [--config-dir <目录>]
+  cli.ts sync      <语料id>... [--server <url>] [--code] [--config-dir <目录>]
   cli.ts search    [--ecosystem <e>] [--target <t>] [--board <b>] [--peripheral <p>]... [--keyword <k>]... [--buildable] [--limit <n>] [--config-dir <目录>]
   cli.ts show      <条目 id> [--config-dir <目录>]
   cli.ts preflight <底盘id> <供体id>... [--config-dir <目录>]
@@ -39,7 +62,7 @@ function fail(message: string): never {
 	process.exit(1);
 }
 
-function commandIndex(argv: string[]): void {
+async function commandIndex(argv: string[]): Promise<void> {
 	const { values } = parseArgs({
 		args: argv,
 		options: {
@@ -47,13 +70,53 @@ function commandIndex(argv: string[]): void {
 			root: { type: "string" },
 			corpus: { type: "string" },
 			"config-dir": { type: "string" },
+			"description-file": { type: "string" },
+			model: { type: "string" },
 		},
 	});
 	if (!values.ecosystem || !isEcosystem(values.ecosystem)) {
-		fail(`--ecosystem 必须是 esp-idf 或 stm32cube,收到:${values.ecosystem ?? "(空)"}`);
+		fail(`--ecosystem 必须是 esp-idf / stm32cube / generic,收到:${values.ecosystem ?? "(空)"}`);
 	}
 	if (!values.root) fail("--root 必填:语料检出目录");
 	const started = Date.now();
+
+	// generic = AI 索引(PLAN-codelib-console D2/D11):说明经文件传入,模型提议条目、
+	// 代码核验。与 rag_yoma/codelib 复制品同一份(generic.ts 同步维护)。
+	if (values.ecosystem === "generic") {
+		if (!values["description-file"]) fail("generic 生态必须带 --description-file:说明文本文件");
+		let description: string;
+		try {
+			description = readFileSync(values["description-file"], "utf8").trim();
+		} catch (e) {
+			fail(`读不到 --description-file:${values["description-file"]}(${e instanceof Error ? e.message : String(e)})`);
+		}
+		if (!description) fail("--description-file 是空的 —— 说明必填(AI 索引以它为参考)");
+		const usage = { cost: 0, calls: 0 };
+		const complete = await makeCompletion(values.model ?? DEFAULT_ENRICH_MODEL, values["config-dir"], usage);
+		const corpusId = values.corpus;
+		if (!corpusId) fail("generic 生态必须带 --corpus <id>(如 my-project@abc12345)");
+		const result = await indexGeneric({
+			root: values.root,
+			corpusId,
+			description,
+			configDir: values["config-dir"],
+			complete,
+			model: values.model ?? DEFAULT_ENRICH_MODEL,
+		});
+		const notes = [
+			`语料 ${result.index.header.corpus}`,
+			`AI 索引 ${result.index.entries.length} 条(模型提议被核验丢弃 ${result.dropped} 条),`
+				+ `用时 ${((Date.now() - started) / 1000).toFixed(1)}s,费用 ~$${usage.cost.toFixed(3)}`,
+			`落盘 ${result.file}`,
+		];
+		if (result.summaryTruncated.length > 0) {
+			notes.push(`树摘要被截断,丢掉了 ${result.summaryTruncated.length} 行(可加大后重跑):`);
+			notes.push(result.summaryTruncated.slice(-5).join("\n"));
+		}
+		console.log(notes.join("\n"));
+		return;
+	}
+
 	const { index, file } = indexCorpus({
 		root: values.root,
 		ecosystem: values.ecosystem as Ecosystem,
@@ -289,13 +352,85 @@ function commandList(argv: string[]): void {
 	}
 }
 
+function formatGB(bytes: number): string {
+	return `${(bytes / 1e9).toFixed(2)} GB`;
+}
+
+async function commandSync(argv: string[]): Promise<void> {
+	const { values, positionals } = parseArgs({
+		args: argv,
+		options: {
+			server: { type: "string" },
+			code: { type: "boolean" },
+			"config-dir": { type: "string" },
+		},
+		allowPositionals: true,
+	});
+	const server = resolveSyncServer(values.server);
+	if (!server) fail("--server 必填,或设 YOMA_DATASHEET_SERVER 环境变量(当前两者皆空)");
+	const configDir = values["config-dir"];
+
+	let remote: CodelibMeta[];
+	try {
+		remote = await listRemoteCorpora(server);
+	} catch (error) {
+		fail(`sync:${error instanceof Error ? error.message : String(error)}`);
+	}
+	if (positionals.length === 0) {
+		console.log(`服务器 ${server}:${remote.length === 0 ? "没有已发布的语料" : ""}`);
+		const local = new Map(readSources(configDir).corpora.map((s) => [s.id, s]));
+		for (const meta of remote) {
+			const source = local.get(meta.id);
+			let state: string;
+			if (source && source.root.trim() !== "") state = `本机检出(${source.root})`;
+			else if (source?.remote && readCorpusMarker(meta.id, configDir)?.archiveSha256 === source.remote.archiveSha256) {
+				state = `代码缓存就绪(${corpusCacheDir(meta.id, configDir)})`;
+			} else if (source) state = "索引就绪,代码未落地(--code 可落地)";
+			else state = "未同步";
+			console.log(
+				`${meta.id} | ${meta.ecosystem} | ${meta.entries ?? "?"} 条 | ${formatGB(meta.archiveBytes)} | ${state}${meta.description ? ` | ${meta.description}` : ""}`,
+			);
+		}
+		return;
+	}
+
+	for (const id of positionals) {
+		let meta = remote.find((m) => m.id === id);
+		if (!meta) meta = await fetchCodelibMeta(server, id); // 服务器上存在但不在缓存过的清单里(刚发布)
+		const index = await syncIndex(server, meta, configDir, {
+			onPhase: (phase) => console.log(phase),
+		});
+		console.log(`${id}: 索引就绪${index.downloaded.length > 0 ? `(下载了 ${index.downloaded.join("、")})` : "(本地已是最新)"}`);
+		if (values.code) {
+			let lastReport = 0;
+			const result = await syncCorpus(server, meta, configDir, {
+				onPhase: (phase) => console.log(phase),
+				onBytes: (file, bytes) => {
+					// 每 ~200MB 报一次进度,别刷屏。
+					if (file === "archive.tar.gz" && meta !== undefined && bytes - lastReport >= 200_000_000) {
+						lastReport = bytes;
+						const pct = meta.archiveBytes > 0 ? Math.min(100, Math.round((bytes / meta.archiveBytes) * 100)) : "?";
+						console.log(`  archive ${formatGB(bytes)}(${pct}%)`);
+					}
+				},
+			});
+			console.log(
+				`${id}: ${result.skipped ? "代码缓存已就绪,跳过" : `代码落地完成(${formatGB(result.bytes)})`} → ${corpusCacheDir(id, configDir)}`,
+			);
+		}
+	}
+}
+
 const [command, ...rest] = process.argv.slice(2);
 switch (command) {
 	case "index":
-		commandIndex(rest);
+		await commandIndex(rest);
 		break;
 	case "enrich":
 		await commandEnrich(rest);
+		break;
+	case "sync":
+		await commandSync(rest);
 		break;
 	case "search":
 		commandSearch(rest);

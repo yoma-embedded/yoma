@@ -393,9 +393,15 @@ function invalidateStaleArtifacts(oldEntries: ManifestEntry[], freshEntries: Man
     const { chip, rev } = old
     if (!chip || !rev || !NAME_RE.test(chip) || !NAME_RE.test(rev)) continue
     if (fresh.get(`${chip}/${rev}`) === fingerprint(old)) continue
+    // The source may be .pdf/.docx/.md/.txt (multiformat ingest) - the manifest
+    // inventory is the authority for what a manual's artifacts are, so drive the
+    // sweep off it instead of hardcoding extensions.
+    const fromInventory = (old.artifacts ?? [])
+      .map((a: { path?: string }) => (a.path ? path.join(root, a.path) : ""))
+      .filter(Boolean)
     const targets = [
+      ...fromInventory,
       path.join(root, "parsed", chip, `${rev}.md`),
-      path.join(root, "source", chip, `${rev}.pdf`),
       path.join(root, "figures", chip, `${rev}.figures.json`),
       path.join(root, "figures", chip, rev),
     ]
@@ -506,8 +512,10 @@ async function ingestLocal(req: IngestRequest): Promise<{ ok: boolean; error?: s
   const { pdfPath, chip, rev } = req
   const kind = KINDS.has(req.kind) ? req.kind : "datasheet"
   if (!NAME_RE.test(chip) || !NAME_RE.test(rev)) return { ok: false, error: `非法的 chip/rev: ${chip}/${rev}` }
-  if (!pdfPath?.toLowerCase().endsWith(".pdf") || !existsSync(pdfPath)) {
-    return { ok: false, error: `PDF 不存在: ${pdfPath}` }
+  // Multiformat ingest: accept .pdf/.docx/.md/.txt (rag_yoma SOURCE_EXTS).
+  const ext = (pdfPath ?? "").toLowerCase().split(".").pop() ?? ""
+  if (!["pdf", "docx", "md", "txt"].includes(ext) || !existsSync(pdfPath)) {
+    return { ok: false, error: `文档不存在或格式不支持(需要 .pdf/.docx/.md/.txt): ${pdfPath}` }
   }
   const repo = ragRepo()
   if (!repo || !existsSync(repo)) {

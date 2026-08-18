@@ -17,6 +17,9 @@ import type { Ecosystem, ExampleEntry } from "./schema.ts";
 const ECOSYSTEM_TARGET_PREFIXES: Record<Ecosystem, string> = {
 	"esp-idf": "esp",
 	stm32cube: "stm32",
+	// generic 条目由 AI 索引产出:targets 不确定就留空,按 schema 语义不排除;
+	// 填了的按字面前缀走(如 "stm32f4")。
+	generic: "",
 };
 
 export interface SearchQuery {

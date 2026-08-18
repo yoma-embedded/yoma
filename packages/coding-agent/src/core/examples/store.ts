@@ -12,7 +12,16 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { appendFileSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+	appendFileSync,
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -63,7 +72,7 @@ function readTextOrUndefined(file: string): string | undefined {
 }
 
 /** 临时名带 pid+随机数再 rename —— 并发写各自完整落地,谁后到听谁的,不出半个文件。 */
-function writeTextAtomic(file: string, text: string): void {
+export function writeTextAtomic(file: string, text: string): void {
 	const dir = path.dirname(file);
 	mkdirSync(dir, { recursive: true });
 	const tmp = path.join(dir, `.${path.basename(file)}.${process.pid}-${randomUUID()}.tmp`);
@@ -106,6 +115,100 @@ export function upsertSource(source: CorpusSource, configDir?: string): void {
 
 export function findSource(corpusId: string, configDir?: string): CorpusSource | undefined {
 	return readSources(configDir).corpora.find((item) => item.id === corpusId);
+}
+
+// ─── 远程语料的本机缓存(cache/ + downloads/)──────────────────────────────────
+//
+// 布局:<configDir>/examples/cache/<slug>/ 是解压后的语料树 —— 对远程语料它就是
+// root;downloads/ 放在途与已下 archive。标记文件 .corpus.json 落在缓存树根部,
+// 记下载完成那一刻的 archiveSha256:没有它(或对不上)的缓存树视为不完整,
+// 宁可重下也不把半个语料当整份。
+
+export function cacheDir(configDir?: string): string {
+	return path.join(examplesDir(configDir), "cache");
+}
+
+export function corpusCacheDir(corpusId: string, configDir?: string): string {
+	return path.join(cacheDir(configDir), corpusSlug(corpusId));
+}
+
+export function downloadsDir(configDir?: string): string {
+	return path.join(examplesDir(configDir), "downloads");
+}
+
+const CORPUS_MARKER_TAG = "yoma/corpus-cache@1";
+
+export interface CorpusMarker {
+	schema: typeof CORPUS_MARKER_TAG;
+	id: string;
+	commit?: string;
+	archiveSha256: string;
+	extractedAt: string;
+}
+
+function corpusMarkerPath(corpusId: string, configDir?: string): string {
+	return path.join(corpusCacheDir(corpusId, configDir), ".corpus.json");
+}
+
+export function readCorpusMarker(corpusId: string, configDir?: string): CorpusMarker | undefined {
+	const text = readTextOrUndefined(corpusMarkerPath(corpusId, configDir));
+	if (text === undefined) return undefined;
+	try {
+		const raw: unknown = JSON.parse(text);
+		if (typeof raw !== "object" || raw === null) return undefined;
+		const marker = raw as Record<string, unknown>;
+		if (marker.schema !== CORPUS_MARKER_TAG) return undefined;
+		if (typeof marker.id !== "string" || typeof marker.archiveSha256 !== "string") return undefined;
+		return {
+			schema: CORPUS_MARKER_TAG,
+			id: marker.id,
+			commit: typeof marker.commit === "string" ? marker.commit : undefined,
+			archiveSha256: marker.archiveSha256,
+			extractedAt: typeof marker.extractedAt === "string" ? marker.extractedAt : "",
+		};
+	} catch {
+		return undefined;
+	}
+}
+
+export function writeCorpusMarker(marker: CorpusMarker, configDir?: string): void {
+	writeTextAtomic(corpusMarkerPath(marker.id, configDir), `${JSON.stringify(marker, null, "\t")}\n`);
+}
+
+/**
+ * 一份语料在这台机器上的实际可用形态 —— findSource 的"三态"版:
+ *
+ *   1. 本机 root 存在 → root 指它(本机有的东西不走网络,与账本注释同一纪律);
+ *   2. 缓存树完整(标记的 sha 与账本 remote 的一致)→ root 指 cache/<slug>;
+ *   3. 都没有 → root 为 undefined:索引可查,但 seed/读代码前要先 sync --code。
+ *
+ * 标记 sha 对不上不算第 2 态:id 内嵌 commit,同一 id 的字节不该变,对不上说明
+ * 缓存坏了或账本和缓存来自不同的服务器状态 —— 都该重下,而不是将就着用。
+ */
+export interface ResolvedCorpus {
+	source: CorpusSource;
+	/** 实际可用的语料根;materialized=false 时 undefined。 */
+	root?: string;
+	/** root 指向的是远程缓存而不是本机检出。 */
+	fromCache: boolean;
+	remote?: CorpusSource["remote"];
+}
+
+export function resolveCorpus(corpusId: string, configDir?: string): ResolvedCorpus | undefined {
+	const source = findSource(corpusId, configDir);
+	if (!source) return undefined;
+	if (source.root.trim() !== "" && existsSync(source.root)) {
+		return { source, root: source.root, fromCache: false, remote: source.remote };
+	}
+	if (source.remote) {
+		const marker = readCorpusMarker(corpusId, configDir);
+		if (marker && marker.archiveSha256 === source.remote.archiveSha256) {
+			return { source, root: corpusCacheDir(corpusId, configDir), fromCache: true, remote: source.remote };
+		}
+		return { source, fromCache: false, remote: source.remote };
+	}
+	// 账本里有 root 但目录没了(移动/删除过):与"没记账"同样对待,让上层给出人话。
+	return { source, fromCache: false };
 }
 
 // ─── 索引文件 ──────────────────────────────────────────────────────────────────

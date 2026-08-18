@@ -18,6 +18,7 @@
  */
 
 import { homedir } from "node:os"
+import { existsSync } from "node:fs"
 import path from "node:path"
 
 import { AgentHarness, JsonlSessionRepo, type AgentMessage, type Session as PiSession } from "@yoma/my-pi"
@@ -31,6 +32,7 @@ import {
   createLogToolDefinition,
   createNetlistToolDefinition,
   createStm32ConfigToolDefinition,
+  findEnvKey,
   promptSectionFor,
   resolveToolchain,
   shellEnvFor,
@@ -83,6 +85,25 @@ export function createEmbeddedTools(env: NodeExecutionEnv, enginesDir?: string):
     createLogToolDefinition(env, engines),
     createGdbToolDefinition(env, engines),
   ]
+}
+
+/**
+ * 把 engines/bin 前置进 PATH —— agent 的 bash 工具靠它拿到 rg(例程语料 grep 的
+ * 依赖,Windows 没有内置 grep)。与 shellEnvFor 的工具链目录同一条纪律:前置不
+ * 替换、写回原来的键(Windows 上可能叫 "Path",另开一个 "PATH" 会得到两个键,
+ * 子进程认哪个是未定义行为)。enginesDir 未注入或 bin/ 不存在时原样返回 ——
+ * 打包产物必有 engines,这条静默跳过只该发生在测试里。
+ */
+function withEnginesOnPath(env: NodeJS.ProcessEnv, enginesDir?: string): NodeJS.ProcessEnv {
+  if (!enginesDir) return env
+  const bin = path.join(enginesDir, "bin")
+  if (!existsSync(bin)) return env
+  const pathKey = findEnvKey(env, "PATH") ?? "PATH"
+  const current = env[pathKey] ?? ""
+  if (current.split(path.delimiter).includes(bin)) return env
+  const out: NodeJS.ProcessEnv = { ...env }
+  out[pathKey] = [bin, current].filter(Boolean).join(path.delimiter)
+  return out
 }
 
 interface Entry {
@@ -452,7 +473,10 @@ export class SessionManager {
     entry.session = session
     entry.title = (await session.getSessionName()) ?? entry.title
 
-    const env = new NodeExecutionEnv({ cwd: entry.cwd, shellEnv: shellEnvFor(toolchain, process.env) })
+    // engines/bin 前置进 PATH:agent 的 bash 工具里要有 rg(在例程语料里 grep 全靠
+    // 它,Windows 没有内置 grep)。放 shellEnvFor 之后、env 构造之前,和工具链目录
+    // 同一条规则(前置不替换,去重,写回原键)。
+    const env = new NodeExecutionEnv({ cwd: entry.cwd, shellEnv: withEnginesOnPath(shellEnvFor(toolchain, process.env), this.options.enginesDir) })
 
     // 资源发现:项目的 AGENTS.md/CLAUDE.md(全局 + 祖先链)与技能(全局 + .agents/skills)。
     // 走 my-pi 自己的 resources.ts,不重写:"从哪些目录找"是内核那边定的产品决策,

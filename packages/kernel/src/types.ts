@@ -304,7 +304,7 @@ export interface ToolchainToolDetails {
  * 与 toolchain 同一先例),提前钉住形状,漂移由 details-check.ts 兜底。
  */
 export interface ExamplesToolDetails {
-  action: "search" | "info" | "seed" | "preflight"
+  action: "search" | "info" | "seed" | "preflight" | "sync"
   /** search 才有:命中数与命中 id。 */
   count?: number
   hitIds?: string[]
@@ -316,6 +316,9 @@ export interface ExamplesToolDetails {
   /** preflight 才有:参与条目(底盘在前)与重叠条数。 */
   ids?: string[]
   conflicts?: number
+  /** sync 才有:目标语料与(代码同步后的)字节数。 */
+  corpusId?: string
+  archiveBytes?: number
 }
 
 export interface NetlistToolDetails {
