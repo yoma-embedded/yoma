@@ -318,7 +318,8 @@ export async function attachArtifacts(
       .then((info) => info.size)
       .catch(() => undefined)
     if (bytes === undefined) {
-      return { ok: false, error: `要附的文件不存在:${entry.from ?? entry.source}(先构建出来再附)` }
+      const named = (entry.from ?? entry.source).replaceAll("\\", "/")
+      return { ok: false, error: `要附的文件不存在:${named}(先构建出来再附)` }
     }
     total += bytes
     if (total > maxBytes) {

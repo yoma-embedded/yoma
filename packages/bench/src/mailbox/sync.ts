@@ -257,7 +257,20 @@ async function pushWithRetry(
     // 远端分支还不存在(信箱首推的瞬时失败)时没有可叠的东西,原样直接重试。
     await git(context, "fetch", "-q", "origin")
     if (!(await git(context, "rev-parse", "--verify", "-q", `origin/${branch}`)).ok) continue
-    const rebase = await git(context, "pull", "-q", "--rebase", "origin", branch)
+    // rebase 会重写提交,必须带上 author —— CI runner 和干净克隆都没有
+    // user.name,漏掉时 pull --rebase 静默失败,表现成"第 2 轮工位端空转"。
+    const rebase = await git(
+      context,
+      "-c",
+      `user.name=${context.author.name}`,
+      "-c",
+      `user.email=${context.author.email}`,
+      "pull",
+      "-q",
+      "--rebase",
+      "origin",
+      branch,
+    )
     if (!rebase.ok) {
       await git(context, "rebase", "--abort")
       // 别急着定性成协议冲突:实战里第一次撞见的是网络在这一步断掉。原话如实上报。

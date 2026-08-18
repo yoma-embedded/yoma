@@ -287,14 +287,16 @@ describe("gdb 二进制选择", () => {
 		expect(preferredGdbNames(undefined)).toEqual(["gdb-multiarch", "gdb"]);
 	});
 
-	it("显式路径优先,而且报错绝不指向 engines/build.ts", () => {
+	it("显式路径优先;找不到 gdb 时指向工具链,不指向 engines/build.ts", () => {
 		expect(resolveGdbPath(0x28, "/opt/gdb").gdbPath).toBe("/opt/gdb");
 		try {
 			resolveGdbPath(0x1234);
 			// 本机上一定能找到 gdb,所以正常路径也可接受
 		} catch (error) {
-			expect((error as Error).message).not.toContain("engines/build.ts");
-			expect((error as Error).message).toContain("Arm GNU Toolchain");
+			const message = (error as Error).message;
+			expect(message).toContain("Do NOT run");
+			expect(message).toContain("not an engine");
+			expect(message).toContain("Arm GNU Toolchain");
 		}
 	});
 
@@ -330,8 +332,12 @@ describe("renderBanner", () => {
 });
 
 // ─── 第二层:假 gdb ──────────────────────────────────────────────────────────
+// 假 gdb 靠一份 POSIX shell 包装脚本维持进程组语义;Windows 没有 chmod/sh,
+// 这一层只在 Linux/mac CI 上跑(产物路径 GdbSession 本身在 win32 上走 .exe)。
 
-describe("GdbSession(假 gdb)", () => {
+const describeFakeGdb = process.platform === "win32" ? describe.skip : describe;
+
+describeFakeGdb("GdbSession(假 gdb)", () => {
 	it("启动握手全部通过,并且回读校验 mi-async", async () => {
 		const { session } = await fakeSession();
 		await session.hygiene();

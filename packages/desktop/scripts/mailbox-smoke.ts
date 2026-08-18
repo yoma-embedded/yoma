@@ -20,6 +20,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { resolveElectron } from "./electron-bin.ts"
 
 const here = dirname(fileURLToPath(import.meta.url))
 const desktop = join(here, "..")
@@ -32,21 +33,12 @@ function fail(message: string): never {
   process.exit(1)
 }
 
-/**
- * Electron 二进制的位置按平台不同。**找不到就失败,绝不静默回退到本机 bun/node** ——
- * 这个冒烟的全部意义就是"用产品运行时跑打包产物",退回去之后绿灯只代表 bun 能跑,
- * 而 Windows CI 恰恰是最需要它的地方(那里没有 .app 目录)。
- */
-function resolveElectron(): string {
-  const dist = join(desktop, "node_modules", "electron", "dist")
-  const candidates =
-    process.platform === "darwin"
-      ? [join(dist, "Electron.app", "Contents", "MacOS", "Electron")]
-      : process.platform === "win32"
-        ? [join(dist, "electron.exe")]
-        : [join(dist, "electron")]
-  for (const candidate of candidates) if (existsSync(candidate)) return candidate
-  fail(`找不到 Electron 二进制(找过 ${candidates.join("、")})—— 先 bun install;这个冒烟必须跑在产品运行时上`)
+function electronBin(): string {
+  try {
+    return resolveElectron(desktop)
+  } catch (error) {
+    fail((error as Error).message)
+  }
 }
 
 for (const bundle of [hostBundle, turnBundle]) {
@@ -137,7 +129,7 @@ writeFileSync(
 // 起守护(产品运行时:Electron + ELECTRON_RUN_AS_NODE),收 @@event 流
 // ---------------------------------------------------------------------------
 
-const execPath = resolveElectron()
+const execPath = electronBin()
 console.log(`守护运行时:Electron(RUN_AS_NODE)—— ${execPath}`)
 
 interface DoneEvent {

@@ -5,8 +5,7 @@
 // - "uses stdin command transport for legacy WSL bash paths":要 process.chdir + 改写 process.platform。
 //   vitest 每个文件独立进程,这么做没问题;bun 全仓共享一个模块图与进程,改全局会污染其他测试文件
 //   (session-uuid 那次就是栽在这上面)。isLegacyWslBashPath 的分支改为纯函数单测覆盖。
-import { realpath } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { describe, expect, it } from "bun:test";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import { getOrThrow } from "../../src/harness/types.ts";
@@ -41,8 +40,11 @@ describe("NodeExecutionEnv exec", () => {
 				env: { NODE_ENV_TEST: "ok" },
 			}),
 		);
-		// macOS 的 tmpdir 是 /var -> /private/var 的符号链接,所以拿 realpath 比。
-		expect(result).toEqual({ stdout: `${await realpath(root)}:ok`, stderr: "", exitCode: 0 });
+		expect(result.stderr).toBe("");
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout.endsWith(":ok")).toBe(true);
+		// Git Bash on Windows reports /tmp/... rather than the native realpath.
+		expect(result.stdout).toContain(basename(root));
 	});
 
 	it("pins PYTHONIOENCODING and PYTHONUTF8 so Chinese Windows scripts do not emit GBK", async () => {

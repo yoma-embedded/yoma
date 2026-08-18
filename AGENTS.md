@@ -85,6 +85,7 @@ Bun workspace,`packages/` 下 7 个包:
 | `bun package:mac` / `:win` / `:linux` | electron-builder 安装包 |
 | `bun typecheck` | turbo 跑全部 7 个包 —— **必须常绿 7/7** |
 | `bun lint` | oxlint |
+| `bun run test` | 全量单测(根 `package.json` 逐包列出)—— **根上唯一入口**;裸 `bun test` 会误扫 vitest/DOM/平台文件 |
 | `bun --cwd packages/desktop smoke` | 内核冒烟:对 **构建产物** 验证 12 个工具 + 4 个引擎二进制 |
 | `bun --cwd packages/desktop e2e:ipc` | 生产路径:真 utilityProcess + 真 MessagePort + 真协议帧(不开窗口) |
 | `bun --cwd packages/desktop e2e:renderer` | 最后一跳:真窗口 + 真 preload + **真 contextBridge**(含 mailbox 桥三条) |
@@ -93,7 +94,7 @@ Bun workspace,`packages/` 下 7 个包:
 | `bun packages/bench/src/cli.ts check <job.json>` | 校验任务书 + 本机内核装配 |
 | `bun packages/bench/src/cli.ts mailbox sim <job.json> --project <工程目录>` | 信箱闭环单机模拟(`init`/`runner`/`mother`/`status` 是生产形态的四个子命令;工程目录是本机事实,任务书里没有) |
 
-后三个是 CI 里唯一能挡住"yoma 一次重构悄悄搞死桌面端"的东西 —— 我们是把它整个 inline
+`smoke` / `e2e:ipc` / `e2e:renderer` 是 CI(Windows 岗)里挡住"yoma 一次重构悄悄搞死桌面端"的东西 —— 我们是把它整个 inline
 进 bundle 的,内核的改动可以在我们这边零编译错误地把 app 弄坏,直到用户点下去才发现。
 
 `e2e:renderer` 单独存在是因为 **contextBridge 是一道序列化边界**,而它的失效是运行时行为:
@@ -102,6 +103,7 @@ typecheck 全绿、单测全绿、`e2e:ipc` 全绿,照样可以在这一跳把�
 
 ### 测试
 
+- **根上唯一入口:** `bun run test`(不是裸 `bun test`)
 - `bun --cwd packages/app test src`(bunfig 自动 preload happydom)
 - `bun --cwd packages/kernel test` —— 投影器不变式、事件流、权限门、自动压缩、端到端 host
 - `bun --cwd packages/session-ui test src`、`bun --cwd packages/ui test src`

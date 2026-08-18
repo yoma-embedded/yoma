@@ -8,9 +8,15 @@ on:
 permissions:
   contents: read
 
+# 干净克隆后的闸门分两半,入口必须和本地同一条:
+#   check    —— Ubuntu: typecheck + `bun run test`(根上唯一全量单测入口,不是裸 bun test)
+#   desktop  —— Windows(主支持平台): 生产构建 + 引擎 + smoke + 关键 Electron E2E
+# 裸 `bun test` 会扫到 vitest / DOM / 平台专用文件,红一片是跑法不对。
+
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -21,4 +27,31 @@ jobs:
       - name: 类型检查
         run: bun typecheck
       - name: 单测
-        run: bun test
+        run: bun run test
+
+  desktop:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - name: 安装依赖
+        run: bun install --frozen-lockfile
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            engines/stm32-config-kernel
+      - uses: astral-sh/setup-uv@v5
+      - name: 构建引擎
+        run: bun engines/build.ts
+      - name: 生产构建
+        run: bun build:desktop
+      - name: 内核冒烟
+        run: bun --cwd packages/desktop smoke
+      - name: 内核 IPC 端到端
+        run: bun --cwd packages/desktop e2e:ipc
+      - name: renderer contextBridge 端到端
+        run: bun --cwd packages/desktop e2e:renderer

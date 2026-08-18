@@ -16,20 +16,31 @@ import { execFileSync } from "node:child_process"
 import { existsSync, readdirSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { resolveElectron } from "./electron-bin.ts"
 
 const here = dirname(fileURLToPath(import.meta.url))
 const desktop = join(here, "..")
 const repoRoot = join(desktop, "..", "..")
 
 const bundle = join(desktop, "out", "main", "kernel.js")
-const electron = join(desktop, "node_modules", "electron", "dist", "Electron.app", "Contents", "MacOS", "Electron")
 
 function fail(message: string): never {
   console.error(`✗ ${message}`)
   process.exit(1)
 }
 
+function exe(name: string): string {
+  return process.platform === "win32" ? `${name}.exe` : name
+}
+
 if (!existsSync(bundle)) fail(`没有构建产物 ${bundle} —— 先跑 bun --cwd packages/desktop run build`)
+
+let electron: string
+try {
+  electron = resolveElectron(desktop)
+} catch (error) {
+  fail((error as Error).message)
+}
 
 // ---------------------------------------------------------------------------
 // 1. 内核在真实 runtime 下加载得起来,而且 10 个工具都构造得出来
@@ -38,7 +49,7 @@ if (!existsSync(bundle)) fail(`没有构建产物 ${bundle} —— 先跑 bun --
 const enginesDir = join(repoRoot, "engines")
 let report: { node: string; electron: string | null; harness: string; tools: string[] }
 try {
-  const stdout = execFileSync(existsSync(electron) ? electron : process.execPath, [bundle], {
+  const stdout = execFileSync(electron, [bundle], {
     env: { ...process.env, YOMA_KERNEL_SELFCHECK: "1", YOMA_ENGINES_DIR: enginesDir, ELECTRON_RUN_AS_NODE: "1" },
     encoding: "utf8",
   })
@@ -81,8 +92,7 @@ console.log(`✓ 内核加载正常 (node ${report.node} / electron ${report.ele
 
 const bin = join(enginesDir, "bin")
 const data = join(enginesDir, "data")
-// TODO(win32):这里按裸名比对,不带 .exe 后缀 —— Windows 上本来就数不对(既有缺陷,本次不修)。
-const REQUIRED_BINS = ["stm32kernel", "controller_map", "board_ir", "connections"]
+const REQUIRED_BINS = ["stm32kernel", "controller_map", "board_ir", "connections"].map(exe)
 
 if (!existsSync(bin)) {
   fail(`${bin} 不存在 —— 跑 \`bun engines/build.ts\`(在仓库根)。\n` + `注意:yoma 的 enginesDir() 是向上查找 + existsSync,会"找到"一个没有 bin/ 的空壳然后报"去跑 build.ts",别被那条信息带偏。`)

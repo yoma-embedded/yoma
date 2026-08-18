@@ -1,49 +1,60 @@
 # Yoma
 
-面向**嵌入式调试**的 agent：内核（烧录 / 日志 / gdb / 网表 / 数据手册 / STM32 配置）和桌面端在同一棵树上。
+面向**嵌入式工程师**的agent——不止是代码编辑，而是可以根据硬件事实全流程闭环调试。
 
-它不是 [opencode](https://github.com/anomalyco/opencode) 的客户端，也不再需要旁边再克隆一个后端仓库。界面从 opencode 桌面端分叉而来，内核源自 [pi](https://github.com/earendil-works/pi) 的嵌入式方向。打开应用后，renderer 通过 MessagePort 跟本机内核进程说话，没有 HTTP 服务端。
+### 原生集成嵌入式特定工具
 
-## 它解决什么
+- **烧录工具**：支持不同硬件平台的烧录
+- **日志采集**：支持串口或 RTT 长时间采集日志并分析
+- **gdb 调试**：断点、单步、表达式、故障分析等功能
 
-板子在桌上时：烧录、看 log、gdb、查原理图和手册、改固件再烧。  
-两台机器时：研发机有代码和工具链，工位机只有板子；中间用一个 git 仓库当信箱。
+### 贴合硬件事实
 
-它**不是** Cursor / Claude 的替代品。写这个仓库本身、问概念、贴一段 log 去想，继续用那些工具。
+- **原理图 / 网表解析工具**：从 net格式或者pdf格式解析原理图，解析引脚映射与外设连接，理解硬件信息
+- **数据手册检索**：在手册库里按芯片搜寄存器/外设说明，作为代码的第一手证据，避免AI幻觉（需配 `YOMA_DATASHEET_SERVER`路径）
 
-**使用前：**这是一个能烧录、能 gdb、能在你机器上跑命令的 agent，没有权限确认。只在你信任的本机上用。信箱闭环还没在当前协议下用真板子跑过，标 experimental。细节见 `SECURITY.md`。
+### 永远从例程工程起步，不空白写驱动
+
+从厂商已验证例程检索、逐步加能力——先跑通绿点，再改一处、验一处。STM32 还可写配置文档，校验后自动生成可编译运行的驱动代码
+
+### 自主闭环验证
+
+代码改动 -> 工程编译通过 -> 烧录固件验证，有 **log 或 gdb** 的板级证据；寄存器级结论要有手册引用。
+
+### 支持远程调试（experimental）
+
+- **跨机多轮闭环**：开发端下发指令与固件，调试端上板复现并回传 log、采集数据与结论，多轮往返直到问题收敛
+- **git 信箱同步**：轮次指令、附件、代码补丁、板端证据经 git 仓库传递，全程可审计
+- **双端独立 agent**：两端各跑一个 agent，模型上下文留在本机，不过网
 
 ## 快速开始
 
 ```bash
-bun install          # 需要 Bun 1.3.14（见根 package.json 的 packageManager）
-bun dev:desktop      # 开发模式；改内核源码没有热更新，要重启这次命令
+git clone https://github.com/yoma-embedded/yoma-pi.git yoma-pi
+cd yoma-pi
+bun install
+bun engines/build.ts    # 网表解析 / STM32 工具
+bun dev:desktop         # 改内核要重启这条命令
 ```
 
-第一次会下载 Electron。启动后在设置里配 **DeepSeek 或 Kimi** 的 API key。
+启动后在设置里配 API key。无权限确认，能烧录、能 gdb、能跑命令——只在你信任的本机上用。
 
-凭据写在 `~/.yoma/auth.json`，条目必须带 `"type": "api_key"`，少了这个字段会被静默忽略（看起来像没配）。
+**STM32驱动配置工具获取HAL库源码** — 只需在第一次调用STM32驱动生成工具前跑一次，按照芯片族拉取：
 
-没有内置免费模型。没有板子也能开会话聊天；网表 / STM32 配置这类工具需要引擎（`bun engines/build.ts`，或安装包里已经打好的那份）。烧录与调试走你机器上已有的探针工具链——装好 **J-Link 软件或 OpenOCD**（含各自的驱动）即可，Yoma 不再内置探针栈。
+```powershell
+powershell -File engines/stm32-config-kernel/tools/fetch-fw.ps1 -Families STM32F1
+```
 
-## 常用命令
+有 CubeMX 且下过固件包时，脚本会先从 `%USERPROFILE%\STM32Cube\Repository`（如 `C:\Users\你\STM32Cube\Repository`）拷贝；否则从 ST 的 GitHub 拉。产物落在仓库内 `engines/data/stm32/fw/STM32F1/`（相对克隆目录）。
 
-| 命令 | 作用 |
-|---|---|
-| `bun dev:desktop` | 开发模式（界面有热更新，**内核没有**） |
-| `bun build:desktop` | 生产构建 → `packages/desktop/out/` |
-| `bun package:win` / `:mac` / `:linux` | 打安装包 |
-| `bun typecheck` | 全部包的类型检查 |
-| `bun test` | 单测 |
-| `bun --cwd packages/desktop smoke` | 对构建产物做内核冒烟 |
+**数据手册服务器配置** — Yoma 不内置服务器，要有一台跑着手册 RAG 服务的机器（团队自建或内网部署）。在本机写 `~/.yoma/.env`：
 
-## 现在还没有的（避免按界面去找）
+```
+YOMA_DATASHEET_SERVER=http://你的服务器:端口
+```
 
-- **应用内终端（PTY）**：菜单和设置里若还残留「终端」，那是旧界面，不能用。串口采集走的是日志工具，不是这个开关。
-- **数据手册**：需要自建 `YOMA_DATASHEET_SERVER`，没配就查不了，不是装完就能搜芯片手册。
-- **远程 OpenCode 服务器 / 免费 Zen 模型 / `opencode` CLI**：都不是这个产品。
+重启 `bun dev:desktop` 后，agent 的 `datasheet` 工具才能检索手册。
 
-更细的架构、信箱协议和会踩的坑见 `CLAUDE.md`。怎么跑测试见 `CONTRIBUTING.md`。例程库施工说明见 `docs/施工指南-例程库.md`。
 
 ## 许可
 
