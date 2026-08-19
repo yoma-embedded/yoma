@@ -10,7 +10,7 @@ permissions:
 
 # 干净克隆后的闸门分两半,入口必须和本地同一条:
 #   check    —— Ubuntu: typecheck + `bun run test`(根上唯一全量单测入口,不是裸 bun test)
-#   desktop  —— Windows(主支持平台): 生产构建 + 引擎 + smoke + 关键 Electron E2E
+#   desktop  —— Windows(主支持平台): 进程树清理回归 + 生产构建 + 引擎 + smoke + 关键 Electron E2E
 # 裸 `bun test` 会扫到 vitest / DOM / 平台专用文件,红一片是跑法不对。
 
 jobs:
@@ -39,6 +39,8 @@ jobs:
           bun-version: "1.3.14"
       - name: 安装依赖
         run: bun install --frozen-lockfile
+      - name: Windows 进程树清理回归
+        run: bun test packages/agent/test/harness/nodejs-env.test.ts
       - name: 下载 Electron 二进制
         shell: pwsh
         run: |

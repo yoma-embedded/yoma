@@ -182,7 +182,7 @@ export const SOURCES_SCHEMA_TAG = "yoma/examples-sources@1";
  * 所以 sha 对不上就是传输坏了或缓存坏了,没有第三种解释。
  */
 export interface CorpusRemote {
-	/** 服务器基地址,如 http://47.122.120.208(无尾斜杠)。 */
+	/** 服务器基地址,如 http://127.0.0.1:8080(无尾斜杠)。 */
 	server: string;
 	commit?: string;
 	archiveSha256: string;

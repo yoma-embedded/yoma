@@ -17,7 +17,7 @@
     "preview": "electron-vite preview",
     "package": "bun ./scripts/stage-engines.ts && electron-builder --config electron-builder.config.ts",
     "package:mac": "bun ./scripts/stage-engines.ts darwin && electron-builder --mac --config electron-builder.config.ts",
-    "package:win": "bun ./scripts/stage-engines.ts win32 && electron-builder --win --config electron-builder.config.ts",
+    "package:win": "bun ./scripts/stage-engines.ts win32 && electron-builder --win --config electron-builder.config.ts --publish never",
     "package:linux": "bun ./scripts/stage-engines.ts linux && electron-builder --linux --config electron-builder.config.ts",
     "smoke": "bun ./scripts/kernel-smoke.ts",
     "smoke:mailbox": "bun ./scripts/mailbox-smoke.ts",

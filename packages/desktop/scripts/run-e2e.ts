@@ -52,7 +52,9 @@ await esbuild.build({
 const electron = resolveElectron(desktop)
 const result = spawnSync(electron, [outfile], {
   cwd: desktop,
-  env: { ...process.env, YOMA_DESKTOP_DIR: desktop },
+  // Release CI 会把这个入口指向静默安装后的 resources/app.asar,从而让同一套
+  // renderer E2E 验证真正交给用户的 preload + kernel,而不只是仓内 out/。
+  env: { ...process.env, YOMA_DESKTOP_DIR: process.env.YOMA_DESKTOP_DIR ?? desktop },
   stdio: "inherit",
   windowsHide: true,
 })

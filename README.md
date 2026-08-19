@@ -27,7 +27,25 @@
 - **git 信箱同步**：轮次指令、附件、代码补丁、板端证据经 git 仓库传递，全程可审计
 - **双端独立 agent**：两端各跑一个 agent，模型上下文留在本机，不过网
 
-## 快速开始
+## 下载桌面版
+
+目前提供 **Windows x64** 安装包：
+
+- [直接下载最新版安装包](https://github.com/yoma-embedded/yoma-pi/releases/latest/download/yoma-win-x64.exe)
+- [查看所有版本与更新说明](https://github.com/yoma-embedded/yoma-pi/releases)
+
+当前安装包尚未做 Windows 代码签名，因此 SmartScreen 可能显示“Windows 已保护你的电脑”。
+请只从上面的官方 Release 下载，按需用 Release 内的 `SHA256SUMS.txt` 校验文件；确认无误后可选择
+“更多信息 → 仍要运行”。
+
+```powershell
+Get-FileHash .\yoma-win-x64.exe -Algorithm SHA256
+```
+
+安装启动后，在设置里配置模型服务的 API key。烧录、GDB 和日志采集还需要本机安装项目使用的
+OpenOCD、J-Link 或厂商工具链。
+
+## 从源码运行
 
 ```bash
 git clone https://github.com/yoma-embedded/yoma-pi.git yoma-pi
@@ -36,6 +54,8 @@ bun install
 bun engines/build.ts    # 网表解析 / STM32 工具。STM32 配置需要本机已装 CubeMX：build 会解析器件库生成 irpack(不入库)
 bun dev:desktop         # 改内核要重启这条命令
 ```
+
+维护者发布新版本见 [桌面版发布流程](docs/桌面版发布流程.md)。
 
 启动后在设置里配 API key。无权限确认，能烧录、能 gdb、能跑命令——只在你信任的本机上用。
 

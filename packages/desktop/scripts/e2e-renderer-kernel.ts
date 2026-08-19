@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url"
 
 const desktop = process.env.YOMA_DESKTOP_DIR ?? join(dirname(fileURLToPath(import.meta.url)), "..")
 const repoRoot = join(desktop, "..", "..")
+const enginesDir = process.env.YOMA_ENGINES_DIR ?? join(repoRoot, "engines")
 
 const results: string[] = []
 let failed = 0
@@ -45,7 +46,7 @@ app.whenReady().then(async () => {
   const child = utilityProcess.fork(join(desktop, "out", "main", "kernel.js"), [], {
     serviceName: "yoma-kernel-e2e-renderer",
     stdio: "pipe",
-    env: { ...process.env, YOMA_ENGINES_DIR: join(repoRoot, "engines") },
+    env: { ...process.env, YOMA_ENGINES_DIR: enginesDir },
   })
   child.stderr?.on("data", (chunk: Buffer) => console.error("[kernel]", chunk.toString().trimEnd()))
 
@@ -59,7 +60,7 @@ app.whenReady().then(async () => {
     })
   })
 
-  child.postMessage({ type: "start", sessionsRoot, stateDir, enginesDir: join(repoRoot, "engines"), version: "e2e-r" })
+  child.postMessage({ type: "start", sessionsRoot, stateDir, enginesDir, version: "e2e-r" })
 
   // webPreferences 必须和 windows.ts 里的真窗口逐字一致 —— sandbox / contextIsolation
   // 正是决定 Error 会不会被剥壳的开关,抄错一个这个测试就白做了。
