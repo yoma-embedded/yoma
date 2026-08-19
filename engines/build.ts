@@ -150,6 +150,99 @@ function errorText(error: unknown): string {
 	return String(error);
 }
 
+// ripgrep 不是本仓构建的,是 BurntSushi 的预编译产物 —— agent 在例程语料里 grep
+// 全靠它(Windows 没有内置 grep;rg 的速度与 .gitignore 语义都是选它的理由)。
+// 版本钉死;要升级就改这里再删掉 engines/bin 里的 rg 重跑。
+const RG_VERSION = "14.1.1";
+
+function rgArchive(): { name: string; binary: string } {
+	const map: Record<string, { name: string; binary: string }> = {
+		"win32-x64": { name: `ripgrep-${RG_VERSION}-x86_64-pc-windows-msvc.zip`, binary: "rg.exe" },
+		"darwin-arm64": { name: `ripgrep-${RG_VERSION}-aarch64-apple-darwin.tar.gz`, binary: "rg" },
+		"darwin-x64": { name: `ripgrep-${RG_VERSION}-x86_64-apple-darwin.tar.gz`, binary: "rg" },
+		"linux-x64": { name: `ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl.tar.gz`, binary: "rg" },
+		"linux-arm64": { name: `ripgrep-${RG_VERSION}-aarch64-unknown-linux-gnu.tar.gz`, binary: "rg" },
+	};
+	const hit = map[`${process.platform}-${process.arch}`];
+	if (!hit) throw new Error(`no ripgrep release for ${process.platform}-${process.arch}`);
+	return hit;
+}
+
+/**
+ * 确保 bin/ 里有一个 rg。三档来源,按优先级:
+ *   1. 已存在 → 跳过(要刷新就删掉它);
+ *   2. $YOMA_RIPGREP_ARCHIVE 指向的本地压缩包(离线机器/镜像下载);
+ *   3. 系统 PATH 上已有的 rg(开发机便利档,版本不受钉);
+ *   4. 从 GitHub Releases 下载钉死版本的预编译产物。
+ * 解压统一走系统 tar:Windows 10+ 的 System32 bsdtar 认 zip,unix 认 tar.gz。
+ */
+async function ensureRipgrep(binDir: string): Promise<void> {
+	const dest = path.join(binDir, exe("rg"));
+	if (existsSync(dest)) {
+		console.log(`  · rg 已存在,跳过(${path.relative(here, dest)})`);
+		return;
+	}
+	mkdirSync(binDir, { recursive: true });
+
+	const fromEnv = process.env.YOMA_RIPGREP_ARCHIVE;
+	if (fromEnv && existsSync(fromEnv)) {
+		await extractRipgrep(fromEnv, dest);
+		console.log(`  · rg 从 $YOMA_RIPGREP_ARCHIVE 解出(${fromEnv})`);
+		return;
+	}
+	const onPath = Bun.which("rg");
+	if (onPath) {
+		copyFileSync(onPath, dest);
+		console.log(`  · rg 从系统 PATH 复制(${onPath},版本不受钉)`);
+		return;
+	}
+	const { name } = rgArchive();
+	const url = `https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/${name}`;
+	console.log(`  · 下载 ${url}`);
+	const response = await fetch(url);
+	if (!response.ok) throw new Error(`download failed: ${response.status} ${url}`);
+	const tmpArchive = path.join(binDir, `.rg-download-${Date.now()}`);
+	writeFileSync(tmpArchive, Buffer.from(await response.arrayBuffer()));
+	try {
+		await extractRipgrep(tmpArchive, dest);
+		const version = await $`${dest} --version`.quiet();
+		if (!version.stdout.toString().includes(RG_VERSION)) {
+			throw new Error(`downloaded rg reports unexpected version: ${version.stdout.toString().split("\n")[0]}`);
+		}
+	} finally {
+		rmSync(tmpArchive, { force: true });
+	}
+}
+
+async function extractRipgrep(archive: string, dest: string): Promise<void> {
+	const work = `${archive}.x`;
+	mkdirSync(work, { recursive: true });
+	try {
+		// Windows 上必须显式用 System32 的 bsdtar:PATH 里排前面的往往是 Git Bash 的
+		// GNU tar,它不认 zip("This does not look like a tar archive",实测)。手册库
+		// 解压是同一条坑、同一个解法。
+		const tar =
+			process.platform === "win32"
+				? path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe")
+				: "tar";
+		await $`${tar} -xf ${archive} -C ${work}`.quiet();
+		// 压缩包里是 ripgrep-<ver>-<target>/rg(.exe) 一层目录,递归找二进制。
+		let found: string | undefined;
+		const walk = (dir: string) => {
+			for (const entry of readdirSync(dir)) {
+				const file = path.join(dir, entry);
+				if (statSync(file).isDirectory()) walk(file);
+				else if (entry === exe("rg")) found = file;
+			}
+		};
+		walk(work);
+		if (!found) throw new Error(`no ${exe("rg")} inside ${archive}`);
+		copyFileSync(found, dest);
+	} finally {
+		rmSync(work, { recursive: true, force: true });
+	}
+}
+
 /** 缺 pack 就对着本机 CubeMX db 解析。已经够数则跳过(解析全库要几分钟)。 */
 async function ensureIrpacks(required: boolean): Promise<number> {
 	mkdirSync(kernelData, { recursive: true });
@@ -207,6 +300,7 @@ if (dist) {
 		path.join(here, "stm32-config-kernel", "target", "release", exe("stm32kernel")),
 		path.join(distDir, "bin", exe("stm32kernel")),
 	);
+	await ensureRipgrep(path.join(distDir, "bin"));
 	// irpacks 是本机解析产物,打进包;fw/ 故意不带 —— 见文件头。
 	let irpacks = 0;
 	for (const entry of readdirSync(kernelData)) {
@@ -273,6 +367,7 @@ if (!checkOnly) {
 		install(path.join(venvBin, exe(entry)), path.join(here, "bin", exe(entry)), "file");
 	}
 	install(kernelData, path.join(here, "data", "stm32"), "dir");
+	await ensureRipgrep(path.join(here, "bin"));
 }
 
 // doctor:每一行是工具运行时会解析到的真实路径。
@@ -289,6 +384,7 @@ const rows: [string, string, boolean][] = [
 	probe("stm32kernel", () => engineBin("stm32kernel", at)),
 	probe("controller_map", () => engineBin("controller_map", at)),
 	probe("board_ir", () => engineBin("board_ir", at)),
+	probe("rg", () => engineBin("rg", at)),
 ];
 
 console.log("\n─ doctor ─────────────────────────────────────────────");

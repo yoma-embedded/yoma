@@ -133,7 +133,10 @@ function citationTags(h: SearchHit): string {
 
 export function formatCitation(h: SearchHit, i: number): string {
 	const tag = citationTags(h);
-	let out = `[#${i + 1}]${tag} ${h.manual_name} (${h.chip}) p.${h.page} | ${h.headings}  (score ${h.score.toFixed(2)})\n${h.text}`;
+	// `page` is 0 for page-less formats (md/docx/txt) - show p.X only when real.
+	// Same logic as rag_yoma/query.py format_citation (同解纪律).
+	const page = h.page > 0 ? ` p.${h.page}` : "";
+	let out = `[#${i + 1}]${tag} ${h.manual_name} (${h.chip})${page} | ${h.headings}  (score ${h.score.toFixed(2)})\n${h.text}`;
 	if (h.image_path) out += `\n   figure: ${h.image_path}`;
 	if (h.parsed_path) out += `\n   source: ${h.parsed_path}  (action "read_section" for the full section)`;
 	return out;

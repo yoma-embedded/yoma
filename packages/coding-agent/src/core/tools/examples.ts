@@ -20,11 +20,25 @@ import { renderEntryCard, renderNoIndexHelp, renderPreflightReport, renderSearch
 import { type Ecosystem, type ExampleEntry, type ExamplesIndex, isEcosystem } from "../examples/schema.ts";
 import { searchIndex, type SearchQuery } from "../examples/search.ts";
 import { seedExample } from "../examples/seed.ts";
-import { enrichmentMapForAll, findSource, readAllIndexes } from "../examples/store.ts";
+import {
+	corpusCacheDir,
+	enrichmentMapForAll,
+	readAllIndexes,
+	readCorpusMarker,
+	readSources,
+	resolveCorpus,
+} from "../examples/store.ts";
+import {
+	fetchCodelibMeta,
+	listRemoteCorpora,
+	resolveSyncServer,
+	syncCorpus,
+	syncIndex,
+} from "../examples/sync.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { type ToolDefinition, wrapToolDefinition } from "./types.ts";
 
-export const EXAMPLES_ACTIONS = ["search", "info", "seed", "preflight"] as const;
+export const EXAMPLES_ACTIONS = ["search", "info", "seed", "preflight", "sync"] as const;
 
 export type ExamplesAction = (typeof EXAMPLES_ACTIONS)[number];
 
@@ -32,10 +46,10 @@ const examplesSchema = Type.Object({
 	// 显式元组而非 .map():数组会丢掉元组结构,Static 推导塌成 never(同 toolchain)。
 	action: Type.Optional(
 		Type.Union(
-			[Type.Literal("search"), Type.Literal("info"), Type.Literal("seed"), Type.Literal("preflight")],
+			[Type.Literal("search"), Type.Literal("info"), Type.Literal("seed"), Type.Literal("preflight"), Type.Literal("sync")],
 			{
 				description:
-					"search (default): query the local index of verified vendor examples. info: full card for one entry id. seed: copy an example into the workspace as a starting point (requires id). preflight: merge conflict check across entries (requires ids, chassis first).",
+					"search (default): query the local index of verified vendor examples. info: full card for one entry id. seed: copy an example into the workspace as a starting point (requires id). preflight: merge conflict check across entries (requires ids, chassis first). sync: bring a remote corpus from the datasheet server onto this machine (index only, or the full code with code:true).",
 			},
 		),
 	),
@@ -74,6 +88,18 @@ const examplesSchema = Type.Object({
 				"preflight only: 2+ entry ids, the CHASSIS first, donors after. Reports overlapping pins, peripheral instances, link-time symbols, task priorities and partition tables from the enriched cards.",
 		}),
 	),
+	corpus: Type.Optional(
+		Type.String({
+			description:
+				'sync only: corpus id, e.g. "stm32cube-f4@89e6d446" (from a sync listing or the corpus field of search hits). Omit to list what the server has and its local state.',
+		}),
+	),
+	code: Type.Optional(
+		Type.Boolean({
+			description:
+				"sync only: also materialise the corpus code tree (hundreds of MB to GB, one-off; afterwards it is cached and greppable on this machine). Default: index + enrichment only (MB-scale). Tell the user the size before a code sync.",
+		}),
+	),
 });
 
 export type ExamplesToolInput = Static<typeof examplesSchema>;
@@ -91,11 +117,16 @@ export interface ExamplesToolDetails {
 	/** preflight 才有:参与的条目(底盘在前)与重叠条数。 */
 	ids?: string[];
 	conflicts?: number;
+	/** sync 才有:目标语料与(代码同步后的)字节数。 */
+	corpusId?: string;
+	archiveBytes?: number;
 }
 
 export interface ExamplesToolOptions {
 	/** 索引与语料账本所在,默认 ~/.yoma(store.ts 的 defaultConfigDir)。测试与工位端注入。 */
 	configDir?: string;
+	/** sync 用:语料服务器地址。缺省走 resolveSyncServer($YOMA_DATASHEET_SERVER)。测试注入。 */
+	syncServer?: string;
 }
 
 const DESCRIPTION = `Searches a local index of VERIFIED vendor example projects (esp-idf examples, STM32Cube firmware-pack Projects) and seeds one into the workspace as the starting point for new embedded work.
@@ -107,16 +138,118 @@ Actions:
 - info (id): the full card — summary, deps, Kconfig keys, acceptance material (vendor CI pytest where present), license, local corpus root, top-level files, and the enriched resource footprint (pins, peripheral instances, link-time symbols, tasks) when available.
 - seed (id, dest?): copies the example into the workspace (refuses non-empty targets), excludes build artifacts and machine-generated sdkconfig, and writes .yoma-seed.json recording corpus+commit+path — the project's provenance, commit it.
 - preflight (ids, chassis FIRST): before merging donor code into the chassis, reports the overlapping facts across their enriched footprints — same pin claimed twice, same peripheral instance, symbols both define (IRQ handlers, HAL_*_MspInit), colliding task priorities, competing partition tables. It lists overlaps, it does not verdict — a shared I2C bus overlap can be exactly right. Unenriched entries are named as blind spots, never silently passed.
+- sync (corpus?, code?): bring a corpus from the datasheet server onto THIS machine. Without corpus: list what the server publishes and each corpus's local state. With corpus: land the index + enrichment (MB-scale; search/info/preflight work right after). With code:true also land the full code tree (GB-scale, one-off, then cached) — the corpus root becomes a local directory you can rg-grep for donor code, driver usage and configuration patterns. Tell the user the size before a code sync.
+
+Reading the corpus directly: once a corpus is materialised (info shows its corpusRoot), treat that directory as a read-only reference library — rg across it beats info-per-example when hunting how a peripheral is actually driven (e.g. rg 'HAL_I2C_.*_DMA' <corpusRoot>). The seed copy is what you edit; the corpus is what you read.
 
 Workflow discipline (routine-driven): decompose the need into capability units and search each unit separately; pick the seed, build-flash-run it UNCHANGED first to establish a green baseline; then add ONE capability at a time, verifying each step; on failure return to the last green commit and re-plan instead of patching on rubble.
 
-If search reports no index exists, relay the CLI command it prints to the user — indexing runs offline on the machine that holds the corpus.`;
+If search reports no index exists, relay the CLI command it prints to the user — indexing runs offline on the machine that holds the corpus. If a corpus is known but not materialised, sync (or relay the CLI sync command) is how it lands.`;
 
 function requireId(params: ExamplesToolInput): string {
 	if (!params.id || params.id.trim() === "") {
 		throw new Error(`action "${params.action}" 需要 id —— 先 search,取结果第一列的条目 id`);
 	}
 	return params.id;
+}
+
+function formatGB(bytes: number): string {
+	return `${(bytes / 1e9).toFixed(2)} GB`;
+}
+
+function missingCorpusHelp(corpusId: string, archiveBytes: number | undefined): string {
+	const size = archiveBytes !== undefined && archiveBytes > 0 ? `约 ${formatGB(archiveBytes)}` : "GB 级";
+	return [
+		`语料 ${corpusId} 的代码树不在本机。落地它:examples 工具 sync(corpus:"${corpusId}", code:true)(${size},一次性,之后走缓存),`,
+		`或 CLI:bun packages/coding-agent/src/core/examples/cli.ts sync ${corpusId} --code。`,
+		"只读卡片/检索不需要落地;seed 与 rg 检索需要。",
+	].join("\n");
+}
+
+/** sync action:无 corpus = 远端清单 × 本地状态;有 corpus = 落地索引(+可选代码树)。 */
+async function runSyncAction(
+	params: ExamplesToolInput,
+	options: { configDir?: string; syncServer?: string },
+): Promise<{ content: [{ type: "text"; text: string }]; details: ExamplesToolDetails }> {
+	const server = resolveSyncServer(options.syncServer);
+	if (!server) {
+		return {
+			content: [
+				{
+					type: "text",
+					text: [
+						"未配置语料服务器 —— sync 需要服务器地址(与 datasheet 工具同一个):",
+						"设 YOMA_DATASHEET_SERVER 环境变量(桌面端默认已注入),或本机 CLI sync --server <url>。",
+					].join("\n"),
+				},
+			],
+			details: { action: "sync" },
+		};
+	}
+	const configDir = options.configDir;
+	const corpusId = params.corpus?.trim();
+
+	if (!corpusId) {
+		const remote = await listRemoteCorpora(server);
+		if (remote.length === 0) {
+			return {
+				content: [{ type: "text", text: `服务器 ${server} 上还没有已发布的语料。` }],
+				details: { action: "sync" },
+			};
+		}
+		const local = new Map(readSources(configDir).corpora.map((s) => [s.id, s]));
+		const lines = remote.map((meta) => {
+			const source = local.get(meta.id);
+			let state: string;
+			if (source && source.root.trim() !== "") state = "本机检出";
+			else if (source?.remote && readCorpusMarker(meta.id, configDir)?.archiveSha256 === source.remote.archiveSha256) {
+				state = "代码缓存就绪(可 rg)";
+			} else if (source) state = "索引就绪,代码未落地";
+			else state = "未同步";
+			// archive-only corpora (generic with AI indexing off) have no entries:
+			// they are a pure code tree - tell the agent to sync --code and rg.
+			const note =
+				meta.entries === 0
+					? "  [纯代码树:无索引条目,sync --code 落地后用 rg 搜索]"
+					: "";
+			return `- ${meta.id} | ${meta.ecosystem} | ${meta.entries ?? "?"} 条 | ${formatGB(meta.archiveBytes)} | ${state}${note}`;
+		});
+		return {
+			content: [
+				{
+					type: "text",
+					text: [
+						`服务器 ${server} 上的语料:`,
+						...lines,
+						"",
+						`同步:examples sync(corpus:"<id>")只落索引(MB 级);加 code:true 连代码树落地(${formatGB(Math.max(...remote.map((m) => m.archiveBytes)))} 级、一次性),之后在本机 rg。`,
+					].join("\n"),
+				},
+			],
+			details: { action: "sync" },
+		};
+	}
+
+	const meta = await fetchCodelibMeta(server, corpusId);
+	const index = await syncIndex(server, meta, configDir);
+	const lines = [
+		`${corpusId}: 索引+富化就绪${index.downloaded.length > 0 ? `(下载了 ${index.downloaded.join("、")})` : "(本地已是最新)"}—— search/info/preflight 现在可用。`,
+	];
+	let archiveBytes: number | undefined;
+	if (params.code) {
+		const result = await syncCorpus(server, meta, configDir);
+		archiveBytes = meta.archiveBytes;
+		const cache = corpusCacheDir(corpusId, configDir);
+		lines.push(
+			result.skipped
+				? `代码缓存已就绪:${cache}`
+				: `代码落地完成(${formatGB(result.bytes)}):${cache}`,
+			`现在可以把它当只读参考库 rg(如 rg 'HAL_I2C_.*_DMA' ${cache});seed 拷进工程的那份才是要改的。`,
+		);
+	} else {
+		lines.push(`代码树未落地:要读代码或 seed,再跑一次加 code:true(${formatGB(meta.archiveBytes)},一次性,之后走缓存)。`);
+	}
+	return { content: [{ type: "text", text: lines.join("\n") }], details: { action: "sync", corpusId, archiveBytes } };
 }
 
 function findEntry(
@@ -167,11 +300,17 @@ export function createExamplesToolDefinition(
 			"New embedded functionality starts from a verified example, not a blank file: decompose the need into capability units, run one examples search per unit (chip is a hard constraint — never use a result whose targets exclude your chip), seed the best fit, and build-flash-run it unchanged before touching anything.",
 			"After the seed is green, add ONE capability per step and verify each step on the ladder (build → flash → runtime evidence); when a step fails, go back to the last green commit and re-plan — do not keep patching on top of a broken state.",
 			"Before merging donor example code into the chassis, run examples preflight (chassis id first, donor ids after): it reports pin / peripheral-instance / link-symbol / task-priority overlaps from the enriched cards before you hit a build or runtime error. It reports facts, not verdicts — judge shared-bus overlaps yourself.",
+			"When you need donor code or a usage pattern beyond one example, rg the corpus root shown by info instead of seeding candidates one by one: the corpus is a read-only reference library on this machine. If the corpus is not materialised yet, sync it first — index-only for search, code:true (GB-scale — say the size to the user) for reading.",
 		],
 		parameters: examplesSchema,
 		executionMode: "sequential",
 		execute: async (_toolCallId, params) => {
 			const action: ExamplesAction = params.action ?? "search";
+
+			if (action === "sync") {
+				return runSyncAction(params, { configDir, syncServer: options?.syncServer });
+			}
+
 			const indexes = readAllIndexes(configDir);
 
 			if (action === "search") {
@@ -235,36 +374,41 @@ export function createExamplesToolDefinition(
 			const found = findEntry(indexes, id);
 			if (!found) throw new Error(`找不到条目:${id} —— 先 search 拿到确切 id(索引可能重建过,旧 id 会失效)`);
 			const { entry, index } = found;
-			const source = findSource(entry.corpus, configDir);
+			// 三态解析:本机检出 > 完整缓存 > 未落地(远程语料 sync --code 之前的状态)。
+			const resolved = resolveCorpus(entry.corpus, configDir);
 
 			if (action === "info") {
 				const card = renderEntryCard(entry, {
 					commit: index.header.commit,
-					corpusRoot: source?.root,
-					enrichment: enrichmentMapForAll([index], configDir).get(entry.id),
+					corpusRoot: resolved?.root,
+					enrichment: enrichmentMapForAll([index], configDir).get(id),
 				});
-				const listing = source
-					? listDirNames(path.join(source.root, ...entry.path.split("/")))
-					: { dirs: [], files: [] };
-				const files =
-					listing.dirs.length + listing.files.length > 0
-						? `\n\n顶层内容:${[...listing.dirs.map((name) => `${name}/`), ...listing.files].join("  ")}`
-						: "\n\n(本机语料根缺失或例程目录不在 —— seed 前先重跑 CLI index)";
+				let files: string;
+				if (resolved?.root) {
+					const listing = listDirNames(path.join(resolved.root, ...entry.path.split("/")));
+					const top = [...listing.dirs.map((name) => `${name}/`), ...listing.files];
+					files = top.length > 0 ? `\n\n顶层内容:${top.join("  ")}` : "\n\n(例程目录为空或不在)";
+				} else if (resolved?.remote) {
+					files = `\n\n${missingCorpusHelp(entry.corpus, resolved.remote.archiveBytes)}`;
+				} else {
+					files = "\n\n(本机语料根缺失 —— 在放语料的机器上重跑 CLI index,或 examples sync 落地)";
+				}
 				return { content: [{ type: "text", text: card + files }], details: { action, id, corpus: entry.corpus } };
 			}
 
 			// action === "seed"
-			if (!source) {
+			if (!resolved?.root) {
+				if (resolved?.remote) throw new Error(missingCorpusHelp(entry.corpus, resolved.remote.archiveBytes));
 				throw new Error(`语料 ${entry.corpus} 的本机根没有记账(sources.json)—— 在放语料的机器上重跑 CLI index`);
 			}
 			const dest = await resolveToCwd(env, params.dest ?? entry.name);
-			const result = seedExample(entry, source.root, dest, index.header.commit);
+			const result = seedExample(entry, resolved.root, dest, index.header.commit);
 			const text = [
 				`已种子:${entry.id}`,
 				`→ ${result.dest}`,
 				`出处已写入 ${path.join(result.dest, ".yoma-seed.json")}(随工程提交)`,
 				"",
-				nextStepsFor(entry, source.root, result.dest),
+				nextStepsFor(entry, resolved.root, result.dest),
 			].join("\n");
 			return { content: [{ type: "text", text }], details: { action, id, corpus: entry.corpus, seededTo: result.dest } };
 		},

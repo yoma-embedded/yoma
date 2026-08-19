@@ -132,6 +132,13 @@ describe("datasheet citations + clamps", () => {
 		expect(formatCitation(hit({}), 1)).toStartWith("[#2] RM0008");
 	});
 
+	it("page 0 (page-less formats: md/docx/txt) is not shown as p.0", () => {
+		// 与 rag_yoma/query.py format_citation 同解(page>0 才显示)。
+		expect(formatCitation(hit({ page: 100 }), 0)).toContain("p.100");
+		const withoutPage = formatCitation(hit({ page: 0 }), 0);
+		expect(withoutPage).not.toContain("p.0");
+	});
+
 	it("clamps topK and maxChars", () => {
 		expect(clampTopK(undefined)).toBe(6);
 		expect(clampTopK(0)).toBe(1);
