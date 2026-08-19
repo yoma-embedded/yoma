@@ -29,7 +29,7 @@ on:
         options: [prod, beta, dev]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   package:
