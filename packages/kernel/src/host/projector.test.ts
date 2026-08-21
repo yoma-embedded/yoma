@@ -314,6 +314,28 @@ describe("自定义角色", () => {
     expect((parts[1] as { text: string }).text).toContain("时钟树")
   })
 
+  test("compactionSummary 自带的 usage 记到合成消息的 cost/tokens 上", () => {
+    const p = projection()
+    p.applyMessage(user("你好"))
+    const events = p.applyMessage({
+      role: "compactionSummary",
+      summary: "摘要",
+      tokensBefore: 90_000,
+      timestamp: T0 + 4,
+      usage: {
+        input: 1000,
+        output: 200,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 1200,
+        cost: { input: 0.001, output: 0.002, cacheRead: 0, cacheWrite: 0, total: 0.003 },
+      },
+    } as AgentMessage)
+    const info = events.find((e) => e.type === "message.updated")!.message as { cost: number; tokens: { input: number; output: number } }
+    expect(info.cost).toBe(0.003)
+    expect(info.tokens).toMatchObject({ input: 1000, output: 200 })
+  })
+
   test("display:false 的 custom 消息不渲染", () => {
     const p = projection()
     expect(

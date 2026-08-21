@@ -256,6 +256,34 @@ describe("轮级自动重试", () => {
     await host.dispose()
   }, 30_000)
 
+  test("上下文溢出:压缩后重试一次,中间不漏 idle", async () => {
+    const { host, events, workspace } = makeHost([
+      fauxAssistantMessage([fauxText("第一轮")]),
+      fauxRetryableError("prompt is too long: 210000 tokens > 200000 maximum"),
+      fauxAssistantMessage([fauxText("## Goal\n摘要")]),
+      fauxAssistantMessage([fauxText("恢复了")]),
+    ])
+    const session = (await host.handle("session.create", { directory: workspace })) as Session
+
+    // 第一轮塞够内容,压缩才有东西可切。
+    await host.handle("session.prompt", { sessionID: session.id, input: { text: "x".repeat(120_000) } })
+    await waitFor(() => statusesOf(events).at(-1) === "idle", 20_000)
+    events.length = 0
+
+    await host.handle("session.prompt", { sessionID: session.id, input: { text: "继续" } })
+    await waitFor(
+      () =>
+        events.some(
+          (e) => e.type === "message.part.updated" && e.part.type === "text" && e.part.text.includes("恢复了"),
+        ),
+      20_000,
+    )
+    await waitFor(() => statusesOf(events).at(-1) === "idle", 20_000)
+
+    expect(statusesOf(events)).toEqual(["busy", "compacting", "busy", "idle"])
+    await host.dispose()
+  }, 30_000)
+
   test("不可重试的失败(认证错)不重试,直接落 idle", async () => {
     const { host, events, workspace } = makeHost([fauxRetryableError("401 invalid api key")])
     const session = (await host.handle("session.create", { directory: workspace })) as Session

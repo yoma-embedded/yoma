@@ -42,15 +42,6 @@ function resolvePaths(configFile: string): Record<string, string> {
   return out
 }
 
-/**
- * pi-ai 的路径必须指向 **运行时的 .js**,不能指向 .d.ts:bun 会照着 tsconfig paths
- * 真去加载那个文件,声明文件执行不了(实测 "Cannot find module './api/lazy.ts'")。
- * 指向 .js 之后 TypeScript 仍然能从同目录的 .d.ts 拿到类型,两边都满意。
- */
-function normalize(file: string): string {
-  return file
-}
-
 describe("yoma 别名映射", () => {
   const shared = resolvePaths(path.join(repoRoot, "tsconfig.yoma.json"))
   const inlined = resolvePaths(path.join(kernelDir, "tsconfig.json"))
@@ -64,10 +55,7 @@ describe("yoma 别名映射", () => {
   test("tsconfig 里的路径在磁盘上真的存在", () => {
     // 别的断言只比较字符串,三份可以一致地全指向一个不存在的地方 —— 软链断了、
     // 或者指到一个不是 yoma 的目录,typecheck 会安静地把模块解析成 any。
-    for (const [key, target] of Object.entries(shared)) {
-      if (key.includes("*")) continue
-      expect([key, existsSync(target)]).toEqual([key, true])
-    }
+    for (const [key, target] of Object.entries(shared)) expect([key, existsSync(target)]).toEqual([key, true])
   })
 
   test("tsconfig.yoma.json 与 kernel/tsconfig.json 的内联副本一致", () => {
@@ -87,20 +75,10 @@ describe("yoma 别名映射", () => {
   })
 
   test("打包别名表与 tsconfig 覆盖同一组说明符", () => {
-    // 通配的 providers/* 在 KERNEL_ALIASES 里是逐个列举的,所以只比较非通配项。
-    const tsKeys = Object.keys(shared)
-      .filter((key) => !key.includes("*"))
-      .sort()
-    const aliasKeys = Object.keys(KERNEL_ALIASES)
-      .filter((key) => !key.startsWith("@earendil-works/pi-ai/providers/"))
-      .sort()
-    expect(aliasKeys).toEqual(tsKeys)
+    expect(Object.keys(KERNEL_ALIASES).sort()).toEqual(Object.keys(shared).sort())
   })
 
   test("打包别名与 tsconfig 指向同一个文件", () => {
-    for (const [key, target] of Object.entries(shared)) {
-      if (key.includes("*")) continue
-      expect(normalize(KERNEL_ALIASES[key]!)).toBe(normalize(target))
-    }
+    for (const [key, target] of Object.entries(shared)) expect(KERNEL_ALIASES[key]).toBe(target)
   })
 })

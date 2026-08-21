@@ -28,12 +28,6 @@
       ],
       "@yoma/coding-agent/resources": [
         "../../packages/coding-agent/src/core/resources.ts"
-      ],
-      "@earendil-works/pi-ai": [
-        "../../packages/ai/dist/index.js"
-      ],
-      "@earendil-works/pi-ai/providers/*": [
-        "../../packages/ai/dist/providers/*.js"
       ]
     },
     "allowImportingTsExtensions": true

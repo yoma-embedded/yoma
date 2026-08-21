@@ -124,6 +124,30 @@ describe("runEngine", () => {
 		expect(result.stdout.trim()).toBe("a b $HOME ; rm -rf /");
 	});
 
+	it("pins PYTHONIOENCODING / PYTHONUTF8 for the engine process", async () => {
+		// 用 process.execPath 起子进程,Windows 上也能跑。
+		const prevIo = process.env.PYTHONIOENCODING;
+		const prevUtf = process.env.PYTHONUTF8;
+		delete process.env.PYTHONIOENCODING;
+		delete process.env.PYTHONUTF8;
+		try {
+			const script = "console.log(process.env.PYTHONIOENCODING + ':' + process.env.PYTHONUTF8)";
+			const result = await runEngine(process.execPath, ["-e", script]);
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout.trim()).toBe("utf-8:1");
+
+			// 调用方显式设过的不覆盖。
+			process.env.PYTHONIOENCODING = "gbk";
+			const overridden = await runEngine(process.execPath, ["-e", script]);
+			expect(overridden.stdout.trim()).toBe("gbk:1");
+		} finally {
+			if (prevIo === undefined) delete process.env.PYTHONIOENCODING;
+			else process.env.PYTHONIOENCODING = prevIo;
+			if (prevUtf === undefined) delete process.env.PYTHONUTF8;
+			else process.env.PYTHONUTF8 = prevUtf;
+		}
+	});
+
 	it("kills the process on timeout", async () => {
 		const start = Date.now();
 		const result = await runEngine("/bin/sh", ["-c", "sleep 30"], { timeoutMs: 200 });

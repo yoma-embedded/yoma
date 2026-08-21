@@ -8,6 +8,7 @@
  * 失败语义:发现过程绝不抛错 —— 读不到的文件直接跳过,技能问题以 diagnostics
  * 返回。资源是锦上添花,不能因为一个坏文件让 session/new 失败。
  */
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { type FileSystem, loadSkills, type Skill, type SkillDiagnostic } from "@yoma/agent";
 
@@ -72,21 +73,26 @@ export async function loadContextFiles(
 }
 
 /**
- * 技能目录(按此顺序加载,重名时后者覆盖前者,即项目技能压过全局技能):
- *   1. <globalDir>/skills            —— 全局技能(~/.yoma/skills)
- *   2. <cwd>/.agents/skills          —— Agent Skills 标准位置,与 pi / Claude Code 共享
+ * 技能目录(按此顺序加载,重名时后者覆盖前者):
+ *   1. ~/.agents/skills              —— Agent Skills 的全局标准位置,与 pi / Claude Code 共享
+ *   2. <globalDir>/skills            —— yoma 全局技能(~/.yoma/skills)
+ *   3. <cwd>/.agents/skills          —— 项目技能
  *
  * 简化:不像 pi 那样沿祖先目录一路找 .agents/skills —— Zed 会话的 cwd 就是项目根,
  * 真遇到 monorepo 子目录再加。
  */
-export function skillDirsOf(options: { cwd: string; globalDir: string }): string[] {
-	return [join(options.globalDir, "skills"), join(options.cwd, ".agents", "skills")];
+export function skillDirsOf(options: { cwd: string; globalDir: string; homeDir?: string }): string[] {
+	return [
+		join(options.homeDir ?? homedir(), ".agents", "skills"),
+		join(options.globalDir, "skills"),
+		join(options.cwd, ".agents", "skills"),
+	];
 }
 
 /** 发现技能并按名字去重(后加载的覆盖先加载的)。诊断原样透出,由调用方决定怎么展示。 */
 export async function discoverSkills(
 	fs: FileSystem,
-	options: { cwd: string; globalDir: string },
+	options: { cwd: string; globalDir: string; homeDir?: string },
 ): Promise<{ skills: Skill[]; diagnostics: SkillDiagnostic[] }> {
 	const { skills, diagnostics } = await loadSkills(fs, skillDirsOf(options));
 	const byName = new Map<string, Skill>();

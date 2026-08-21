@@ -16,6 +16,7 @@ import type { Session } from "../session/session.ts";
 import type { BranchSummaryResult, FileOperations, Result, SessionTreeEntry } from "../types.ts";
 import { BranchSummaryError, err, ok, SessionError } from "../types.ts";
 import { estimateTokens, SUMMARIZATION_SYSTEM_PROMPT } from "./compaction.ts";
+import { completeSummary } from "./summarize.ts";
 import {
 	computeFileLists,
 	createFileOps,
@@ -237,10 +238,11 @@ export async function generateBranchSummary(
 			timestamp: Date.now(),
 		},
 	];
-	const response = await models.completeSimple(
+	const response = await completeSummary(
+		models,
 		model,
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
-		{ signal, maxTokens: 2048 },
+		{ maxTokens: 2048, signal },
 	);
 	if (response.stopReason === "aborted") {
 		return err(new BranchSummaryError("aborted", response.errorMessage || "Branch summary aborted"));
@@ -266,5 +268,6 @@ export async function generateBranchSummary(
 		summary: summary || "No summary generated",
 		readFiles,
 		modifiedFiles,
+		usage: response.usage,
 	});
 }

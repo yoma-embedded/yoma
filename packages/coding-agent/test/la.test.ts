@@ -376,7 +376,7 @@ describe.skipIf(!HAS_DEMO)("DslFile(demo 夹具)", () => {
 		const bp = dsl.bitplane(1);
 		const scl = extractEdges(bp, dsl.header.totalSamples);
 		for (const n of [0, 45478, 45479, 45480, 60000, 119910, 131071]) {
-			expect(levelAt(scl, n)).toBe((bp[n >> 3]! >> (n & 7)) & 1);
+			expect(levelAt(scl, n)).toBe(((bp[n >> 3]! >> (n & 7)) & 1) as 0 | 1);
 		}
 	});
 

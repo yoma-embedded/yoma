@@ -21,7 +21,7 @@
  * 绝不能按到达顺序 —— 并行工具时 tool_execution_end 按完成序发,而 transcript 是源序。
  */
 
-import type { AssistantMessageEvent, ImageContent, TextContent, ThinkingContent, ToolCall } from "@earendil-works/pi-ai"
+import type { AssistantMessageEvent, ImageContent, TextContent, ThinkingContent, ToolCall, Usage } from "@earendil-works/pi-ai"
 import type {
   AgentMessage,
   BashExecutionMessage,
@@ -66,7 +66,17 @@ function base62(value: number, width: number): string {
   return out.slice(-width)
 }
 
-const ZERO_TOKENS = (): Tokens => ({ input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } })
+function costAndTokens(usage: Usage | undefined): { cost: number; tokens: Tokens } {
+  return {
+    cost: usage?.cost?.total ?? 0,
+    tokens: {
+      input: usage?.input ?? 0,
+      output: usage?.output ?? 0,
+      reasoning: usage?.reasoning ?? 0,
+      cache: { read: usage?.cacheRead ?? 0, write: usage?.cacheWrite ?? 0 },
+    },
+  }
+}
 
 /** yoma 的 content block 里,哪些下标算"可见 part"。工具调用也占一个下标。 */
 type AssistantBlock = TextContent | ThinkingContent | ToolCall
@@ -276,8 +286,8 @@ export class SessionProjection {
       time: { created: timestamp, completed: timestamp },
       providerID: this.providerID,
       modelID: this.modelID,
-      cost: 0,
-      tokens: ZERO_TOKENS(),
+      // 压缩/分支摘要请求自己花的钱记在这条合成消息上,账本才不漏。
+      ...costAndTokens("usage" in message ? message.usage : undefined),
       synthetic: true,
     }
 
@@ -391,13 +401,7 @@ export class SessionProjection {
       },
       providerID: message.provider ?? this.providerID,
       modelID: message.model ?? this.modelID,
-      cost: usage?.cost?.total ?? 0,
-      tokens: {
-        input: usage?.input ?? 0,
-        output: usage?.output ?? 0,
-        reasoning: usage?.reasoning ?? 0,
-        cache: { read: usage?.cacheRead ?? 0, write: usage?.cacheWrite ?? 0 },
-      },
+      ...costAndTokens(usage),
       ...(errorOf(message) ? { error: errorOf(message)! } : {}),
     }
   }

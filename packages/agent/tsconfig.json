@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "//": "只为 `bun run typecheck`(turbo 逐包跑)存在:编译选项全部继承根 tsconfig.json(内核那半边的设置),这里只把 include 收窄到本包的 src + test。",
+  "extends": "../../tsconfig.json",
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

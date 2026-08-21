@@ -14,8 +14,8 @@
  * 换不掉注册表;而 ModelsImpl.requireProvider 对未注册的 provider 会抛 Unknown provider。
  * 所以跨 provider 的 setModel() 只有在 provider 提前注册好的前提下才不会在发请求时才炸。
  *
- * 模型元数据(reasoning / thinkingLevelMap / compat)抄自上游 pi 的生成目录
- * (@earendil-works/pi-ai/dist/providers/data/*.json),不要凭空编 —— thinkingLevelMap
+ * 模型元数据(reasoning / thinkingLevelMap / compat)抄自 pi-ai 的生成目录
+ * (node_modules/@earendil-works/pi-ai/dist/providers/data/*.json),不要凭空编 —— thinkingLevelMap
  * 写错的直接后果是 thinking 档位在 Zed 里能选但发不出去。
  */
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -24,6 +24,7 @@ import {
 	createModels,
 	createProvider,
 	type Credential,
+	type CredentialInfo,
 	type CredentialStore,
 	envApiKeyAuth,
 	type Model,
@@ -64,6 +65,8 @@ const DEEPSEEK_COMPAT: OpenAICompletionsCompat = {
 	supportsStore: false,
 	supportsDeveloperRole: false,
 	requiresReasoningContentOnAssistantMessages: true,
+	// DeepSeek 静默忽略 max_completion_tokens(实测),不钉的话压缩/摘要请求没有输出上限。
+	maxTokensField: "max_tokens",
 	thinkingFormat: "deepseek",
 };
 
@@ -247,6 +250,10 @@ export class FileCredentialStore implements CredentialStore {
 		const { data, healed } = this.load();
 		if (healed) this.save(data);
 		return data[providerId];
+	}
+
+	async list(): Promise<readonly CredentialInfo[]> {
+		return Object.entries(this.load().data).map(([providerId, c]) => ({ providerId, type: c.type }));
 	}
 
 	modify(

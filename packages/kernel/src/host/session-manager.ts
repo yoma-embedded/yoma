@@ -62,7 +62,7 @@ import { Identifier } from "../ids.ts"
 import { pickThinkingLevel } from "../thinking.ts"
 import { sessionNotFound } from "../types.ts"
 import { SessionProjection } from "./projector.ts"
-import { shouldAutoCompact } from "./compaction.ts"
+import { overflowAction, shouldAutoCompact } from "./compaction.ts"
 import { retryDelayMs, retrySleep, shouldAutoRetry } from "./retry.ts"
 import { CONFIGURABLE_PROVIDERS, migrateLegacyPiAuth, yomaConfigDir, removeAuthKey, writeAuthKey } from "./auth.ts"
 
@@ -134,6 +134,10 @@ interface Entry {
   retryPending?: boolean
   /** 本次 prompt 已经重试过几次。prompt() 开始时清零。 */
   retryAttempt?: number
+  /** 本轮最后一条 assistant 消息,溢出判定用。 */
+  lastAssistant?: AssistantMessage
+  /** 本次 prompt 已经做过一次"压缩后重试"。prompt() 开始时清零。 */
+  overflowRecovered?: boolean
 }
 
 export interface SessionManagerOptions {
@@ -634,7 +638,10 @@ export class SessionManager {
         if (message.role === "assistant") {
           // 在这里判"要不要重试",因为 agent_end 到达时已经来不及压住 idle 了
           // (事件是同步派发的,而 prompt() 的 promise 要等到之后才 resolve)。
-          entry.retryPending = shouldAutoRetry(message, entry.harness?.getModel().contextWindow, entry.retryAttempt ?? 0)
+          entry.lastAssistant = message
+          entry.retryPending =
+            shouldAutoRetry(message, entry.harness?.getModel().contextWindow, entry.retryAttempt ?? 0) ||
+            this.overflowActionFor(entry) === "compact_and_retry"
           return projection.finalizeAssistant(message)
         }
         if (message.role === "user") return []
@@ -655,7 +662,8 @@ export class SessionManager {
         void this.maybeAutoCompact(entry)
         return this.setStatus(entry, { type: "idle" })
       case "session_compact":
-        return this.setStatus(entry, { type: "idle" })
+        // 溢出恢复:压完紧接着重试,不能在这里漏一个 idle。
+        return entry.retryPending ? [] : this.setStatus(entry, { type: "idle" })
       case "save_point":
         entry.updatedAt = Date.now()
         return [{ type: "session.updated", session: toView(entry) }]
@@ -672,43 +680,69 @@ export class SessionManager {
    */
   private async maybeAutoCompact(entry: Entry): Promise<void> {
     if (!entry.harness || !entry.session || entry.compacting) return
-    // 只有真的压过才需要把状态收回 idle。以前的写法在 finally 里无条件发 idle,
-    // 而一轮结束会连着来 turn_end / settled / agent_end 三个事件 —— 于是每轮多发三条
-    // 完全相同的 idle。UI 端幂等看不出来,但它把"状态序列"这条最有用的诊断信号冲掉了
-    // (查重试为什么不生效时,满屏 idle 让人以为是抑制没起作用)。
-    let compactionStarted = false
+    // 一轮结束连着来 turn_end / settled / agent_end 三个事件,判定期间就占住,不然三路并发压缩。
+    entry.compacting = true
     try {
-      const model = entry.harness.getModel()
-      const context = await entry.session.buildContext()
-      const compactions = await entry.session.getStorage().findEntries("compaction")
-      const last = compactions[compactions.length - 1]
-      const decision = shouldAutoCompact(
-        context.messages as AgentMessage[],
-        model.contextWindow,
-        last ? new Date(last.timestamp).getTime() : undefined,
-      )
-      if (!decision.compact) return
-
-      entry.compacting = true
-      compactionStarted = true
-      entry.status = { type: "compacting" }
-      this.options.emit([{ type: "session.status", sessionID: entry.id, status: entry.status }])
-      await entry.harness.compact()
-    } catch (error) {
-      this.options.emit([
-        {
-          type: "kernel.error",
-          sessionID: entry.id,
-          message: `自动压缩失败:${(error as Error)?.message ?? String(error)}`,
-        },
-      ])
-    } finally {
-      if (compactionStarted) {
-        entry.compacting = false
-        entry.status = { type: "idle" }
-        this.options.emit([{ type: "session.status", sessionID: entry.id, status: { type: "idle" } }])
+      // 回答完成却已超窗:直接压,不看阈值。
+      if (this.overflowActionFor(entry) !== "compact") {
+        const model = entry.harness.getModel()
+        const context = await entry.session.buildContext()
+        const compactions = await entry.session.getStorage().findEntries("compaction")
+        const last = compactions[compactions.length - 1]
+        const decision = shouldAutoCompact(
+          context.messages as AgentMessage[],
+          model.contextWindow,
+          last ? new Date(last.timestamp).getTime() : undefined,
+        )
+        if (!decision.compact) return
       }
+      await this.runCompaction(entry, { type: "idle" })
+    } catch (error) {
+      this.emitCompactionError(entry, error)
+    } finally {
+      entry.compacting = false
     }
+  }
+
+  /** 溢出恢复用:压一次,压完仍是 busy(紧接着要重试,中间漏一个 idle bench 会当真)。 */
+  private async compactNow(entry: Entry): Promise<boolean> {
+    if (!entry.harness || entry.compacting) return false
+    entry.compacting = true
+    try {
+      await this.runCompaction(entry, { type: "busy" })
+      return true
+    } catch (error) {
+      this.emitCompactionError(entry, error)
+      return false
+    } finally {
+      entry.compacting = false
+    }
+  }
+
+  /** 状态 compacting → after 包着 harness.compact();失败照样归位,由调用方报错。 */
+  private async runCompaction(entry: Entry, after: SessionStatus): Promise<void> {
+    this.options.emit(this.setStatus(entry, { type: "compacting" }))
+    try {
+      await entry.harness!.compact()
+      entry.lastAssistant = undefined
+    } finally {
+      this.options.emit(this.setStatus(entry, after))
+    }
+  }
+
+  private overflowActionFor(entry: Entry) {
+    const model = entry.harness?.getModel()
+    return overflowAction(
+      entry.lastAssistant,
+      model && { provider: model.provider, id: model.id, contextWindow: model.contextWindow },
+      entry.overflowRecovered === true,
+    )
+  }
+
+  private emitCompactionError(entry: Entry, error: unknown): void {
+    this.options.emit([
+      { type: "kernel.error", sessionID: entry.id, message: `自动压缩失败:${(error as Error)?.message ?? String(error)}` },
+    ])
   }
 
   private setStatus(entry: Entry, status: SessionStatus): KernelEvent[] {
@@ -736,6 +770,8 @@ export class SessionManager {
     entry.aborter = new AbortController()
     entry.retryAttempt = 0
     entry.retryPending = false
+    entry.overflowRecovered = false
+    entry.lastAssistant = undefined
 
     const images = (input.files ?? [])
       .filter((file) => file.mime.startsWith("image/"))
@@ -794,9 +830,15 @@ export class SessionManager {
     let message = lastMessage
     try {
       while (entry.retryPending && !signal?.aborted) {
-        const attempt = (entry.retryAttempt ?? 0) + 1
-        entry.retryAttempt = attempt
-        await retrySleep(retryDelayMs(attempt), signal)
+        if (this.overflowActionFor(entry) === "compact_and_retry") {
+          // 溢出:先压缩再重试,不退避,只试一次。
+          entry.overflowRecovered = true
+          if (!(await this.compactNow(entry))) return
+        } else {
+          const attempt = (entry.retryAttempt ?? 0) + 1
+          entry.retryAttempt = attempt
+          await retrySleep(retryDelayMs(attempt), signal)
+        }
         if (signal?.aborted) return
         try {
           message = await entry.harness!.retryLastTurn()

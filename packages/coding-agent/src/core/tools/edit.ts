@@ -61,7 +61,11 @@ export interface EditToolDetails {
 	firstChangedLine?: number;
 }
 
-/** 兼容模型的两种常见畸形入参:edits 传成 JSON 字符串,以及旧的单条 oldText/newText 形式。 */
+function isSingleEdit(v: unknown): v is Edit {
+	return !!v && typeof v === "object" && !Array.isArray(v) && typeof (v as Edit).oldText === "string" && typeof (v as Edit).newText === "string";
+}
+
+/** 兼容模型的常见畸形入参:edits 传成 JSON 字符串(数组或单条),以及旧的顶层 oldText/newText 形式。 */
 function prepareEditArguments(input: unknown): EditToolInput {
 	if (!input || typeof input !== "object") {
 		return input as EditToolInput;
@@ -69,11 +73,12 @@ function prepareEditArguments(input: unknown): EditToolInput {
 
 	const args = input as Record<string, unknown>;
 
-	// 有的模型会把 edits 发成 JSON 字符串而不是数组。
+	// 有的模型会把 edits 发成 JSON 字符串,里面可能是数组也可能是单条。
 	if (typeof args.edits === "string") {
 		try {
 			const parsed = JSON.parse(args.edits);
 			if (Array.isArray(parsed)) args.edits = parsed;
+			else if (isSingleEdit(parsed)) args.edits = [parsed];
 		} catch {}
 	}
 

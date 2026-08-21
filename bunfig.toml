@@ -1,8 +1,7 @@
 # 注意:这里**没有** [test] root。
 #
-# 合库之前 yoma 根上有 `[test] root = "packages/agent"`,用来让裸 `bun test` 避开
-# vendored 的 packages/ai(它的测试是 vitest 写的,用 bun 跑会红一片 —— 是跑法不对
-# 不是代码坏了)。合库之后那条会把桌面端 6 个包的测试一起劫走,所以删掉。
+# 合库之前 yoma 根上有 `[test] root = "packages/agent"`;合库之后那条会把桌面端
+# 6 个包的测试一起劫走,所以删掉。
 #
 # 全量测试用 `bun run test`(根 package.json 里逐包显式列出),
 # 单包用 `bun --cwd packages/<name> test`。裸 `bun test` 在根上不是入口。

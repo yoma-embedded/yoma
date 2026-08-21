@@ -14,6 +14,7 @@
  */
 
 import { DEFAULT_COMPACTION_SETTINGS, estimateContextTokens, shouldCompact, type AgentMessage } from "@yoma/agent"
+import { isContextOverflow, type AssistantMessage } from "@earendil-works/pi-ai"
 
 export type CompactionReason = "no_usage" | "just_compacted" | "no_context_window" | "under_threshold" | "over_threshold"
 
@@ -56,4 +57,25 @@ export function shouldAutoCompact(
   return shouldCompact(estimate.tokens, contextWindow, DEFAULT_COMPACTION_SETTINGS)
     ? { compact: true, tokens: estimate.tokens, reason: "over_threshold" }
     : { compact: false, tokens: estimate.tokens, reason: "under_threshold" }
+}
+
+export type OverflowAction = "none" | "compact" | "compact_and_retry"
+
+/**
+ * 上下文溢出的两种自动处理(参照 pi 的 AgentSession):
+ * - 回答已完成却超窗(stop):压缩,不重试;
+ * - 请求因溢出失败(error):压缩后重试一次 —— 只一次,第二次再溢出就交给人。
+ * 换过模型的旧消息不算:小窗口模型的溢出不该触发大窗口模型的压缩。
+ */
+export function overflowAction(
+  message: AssistantMessage | undefined,
+  model: { provider: string; id: string; contextWindow: number } | undefined,
+  alreadyRecovered: boolean,
+): OverflowAction {
+  if (!message || !model) return "none"
+  if (message.provider !== model.provider || message.model !== model.id) return "none"
+  if (!isContextOverflow(message, model.contextWindow)) return "none"
+  if (message.stopReason === "stop") return "compact"
+  if (message.stopReason === "error" && !alreadyRecovered) return "compact_and_retry"
+  return "none"
 }

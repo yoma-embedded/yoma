@@ -527,6 +527,27 @@ describe("harness compaction", () => {
 		expect(abortedResult).toMatchObject({ ok: false, error: { code: "aborted", message: "stopped" } });
 	});
 
+	it("summary requests skip cache writes, pin one fresh sessionId and retry transient errors", async () => {
+		const messages: AgentMessage[] = [createUserMessage("Summarize this.")];
+		const seen: Array<Record<string, unknown>> = [];
+		const { faux, model } = createFauxModel(false);
+		faux.setResponses([
+			(_context, options) => {
+				seen.push(options as Record<string, unknown>);
+				return fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded" });
+			},
+			(_context, options) => {
+				seen.push(options as Record<string, unknown>);
+				return fauxAssistantMessage("## Goal\nrecovered");
+			},
+		]);
+		expect(getOrThrow(await generateSummary(messages, models, model, 2000))).toContain("recovered");
+		expect(seen).toHaveLength(2);
+		expect(seen[0]).toMatchObject({ cacheRetention: "none" });
+		expect(typeof seen[0]!.sessionId).toBe("string");
+		expect(seen[1]!.sessionId).toBe(seen[0]!.sessionId);
+	});
+
 	it("clamps compaction summary maxTokens to the model output cap", async () => {
 		const messages: AgentMessage[] = [createUserMessage("Summarize this.")];
 		const seenOptions: Array<Record<string, unknown> | undefined> = [];
@@ -554,6 +575,27 @@ describe("harness compaction", () => {
 		getOrThrow(await compact(preparation, models, model));
 
 		expect(seenOptions.map((options) => options?.maxTokens)).toEqual([128000, 128000]);
+	});
+
+	it("reports the summary requests' own usage, summed across a split turn", async () => {
+		const messages: AgentMessage[] = [createUserMessage("Summarize this.")];
+		const { faux, model } = createFauxModel(false);
+		faux.setResponses([fauxAssistantMessage("## Goal\nhistory"), fauxAssistantMessage("## Goal\nprefix")]);
+		const preparation: CompactionPreparation = {
+			firstKeptEntryId: "entry-keep",
+			messagesToSummarize: messages,
+			turnPrefixMessages: messages,
+			isSplitTurn: true,
+			tokensBefore: 600000,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: DEFAULT_COMPACTION_SETTINGS,
+		};
+
+		const result = getOrThrow(await compact(preparation, models, model));
+		expect(result.usage?.output).toBeGreaterThan(0);
+		expect(result.usage?.totalTokens).toBe(
+			result.usage!.input + result.usage!.output + result.usage!.cacheRead + result.usage!.cacheWrite,
+		);
 	});
 
 	it("returns compaction error results without throwing", async () => {

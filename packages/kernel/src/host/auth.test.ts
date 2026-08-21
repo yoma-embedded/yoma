@@ -79,7 +79,8 @@ describe("auth.json 写入端(configDir 注入,不碰真实 HOME)", () => {
     await writeAuthKey("deepseek", "sk-test-1", base)
     const file = authFilePath(base)
     expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ deepseek: { type: "api_key", key: "sk-test-1" } })
-    expect(statSync(file).mode & 0o777).toBe(0o600)
+    // NTFS 没有 POSIX 权限位。
+    if (process.platform !== "win32") expect(statSync(file).mode & 0o777).toBe(0o600)
     cleanup()
   })
 
@@ -131,7 +132,7 @@ describe("老位置迁移(~/.pi/agent/auth.json → <configDir>/auth.json)", () 
       deepseek: { type: "api_key", key: "sk-old" },
       "moonshotai-cn": { type: "api_key", key: "kimi-old" },
     })
-    expect(statSync(authFilePath(base)).mode & 0o777).toBe(0o600)
+    if (process.platform !== "win32") expect(statSync(authFilePath(base)).mode & 0o777).toBe(0o600)
     cleanup()
   })
 

@@ -3,7 +3,7 @@
  *
  * ## 为什么还需要这个文件(合库之后)
  *
- * 内核(packages/{ai,agent,coding-agent})现在和桌面端在同一棵树上,裸说明符
+ * 内核(packages/{agent,coding-agent})现在和桌面端在同一棵树上,裸说明符
  * `@yoma/agent` 已经能靠 bun workspace 解析。但**打包期仍然要显式别名**:
  * electron-vite 默认会把 node_modules 里的东西外部化,而内核必须被 **inline 进
  * `out/main/kernel.js`** —— 它只有 raw TypeScript(`exports` 指向 `src/*.ts`,
@@ -77,7 +77,6 @@ export const KERNEL_DIR = resolveKernelDir()
 
 const agent = path.join(KERNEL_DIR, "packages/agent/src")
 const codingAgent = path.join(KERNEL_DIR, "packages/coding-agent/src")
-const ai = path.join(KERNEL_DIR, "packages/ai/dist")
 
 /**
  * 打包器用的精确别名表(键是完整说明符,不做前缀匹配)。
@@ -86,6 +85,9 @@ const ai = path.join(KERNEL_DIR, "packages/ai/dist")
  * `buildSystemPrompt`、`resolveModel`、`discoverSkills` 都不在里面,但系统提示词编码了
  * 嵌入式工具的使用指导、资源发现编码了"技能与 AGENTS.md 从哪些目录找"这条产品决定,
  * 重写等于产品行为分叉。走别名既拿到真实现,又保住 typecheck 可见性。
+ *
+ * `@earendil-works/pi-ai` 不在表里:它是 npm 真包(dist + exports),交给 node 解析;
+ * 不在 desktop 的 dependencies 里,所以 electron-vite 不会外部化它,照样 inline。
  */
 export const KERNEL_ALIASES: Record<string, string> = {
   "@yoma/agent": path.join(agent, "index.ts"),
@@ -94,10 +96,6 @@ export const KERNEL_ALIASES: Record<string, string> = {
   "@yoma/coding-agent/system-prompt": path.join(codingAgent, "core/system-prompt.ts"),
   "@yoma/coding-agent/models": path.join(codingAgent, "acp/models.ts"),
   "@yoma/coding-agent/resources": path.join(codingAgent, "core/resources.ts"),
-  "@earendil-works/pi-ai": path.join(ai, "index.js"),
-  "@earendil-works/pi-ai/providers/anthropic": path.join(ai, "providers/anthropic.js"),
-  "@earendil-works/pi-ai/providers/openai": path.join(ai, "providers/openai.js"),
-  "@earendil-works/pi-ai/providers/faux": path.join(ai, "providers/faux.js"),
 }
 
 /** vite/rollup 的 `resolve.alias` 形态。 */

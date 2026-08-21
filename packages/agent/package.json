@@ -2,16 +2,23 @@
 	"name": "@yoma/agent",
 	"version": "0.1.0",
 	"description": "Yoma agent core",
+	"license": "MIT",
+	"author": "Yoma contributors",
+	"//upstream": "派生自 pi packages/agent(Mario Zechner,MIT),快照 f8f75544b;上游后来重写了 AgentHarness,本包自主维护。",
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",
 		"./node": "./src/node.ts",
 		"./package.json": "./package.json"
 	},
+	"scripts": {
+		"typecheck": "tsgo --noEmit -p tsconfig.json",
+		"test": "bun test"
+	},
 	"dependencies": {
-		"@earendil-works/pi-ai": "workspace:*",
+		"@earendil-works/pi-ai": "catalog:",
 		"ignore": "7.0.5",
-		"typebox": "1.1.38",
+		"typebox": "catalog:",
 		"yaml": "2.9.0"
 	}
 }

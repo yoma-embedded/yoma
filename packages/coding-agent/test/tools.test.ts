@@ -209,6 +209,15 @@ describe("edit tool", () => {
 		expect(getOrThrow(await env.readTextFile("a.ts"))).toBe("x = 9\n");
 	});
 
+	it("accepts a single edit object sent as a JSON string", async () => {
+		const env = makeEnv();
+		getOrThrow(await env.writeFile("a.ts", "x = 1\n"));
+		const edit = createEditTool(env);
+		const prepared = edit.prepareArguments!({ path: "a.ts", edits: JSON.stringify({ oldText: "x = 1", newText: "x = 9" }) });
+		await edit.execute("c1", prepared);
+		expect(getOrThrow(await env.readTextFile("a.ts"))).toBe("x = 9\n");
+	});
+
 	it("reports a structured diff for the UI", async () => {
 		const env = makeEnv();
 		getOrThrow(await env.writeFile("a.ts", "one\ntwo\n"));

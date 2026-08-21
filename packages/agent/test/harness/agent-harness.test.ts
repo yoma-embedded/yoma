@@ -761,3 +761,30 @@ describe("AgentHarness retryLastTurn", () => {
 		await harness.prompt("again");
 	});
 });
+
+describe("AgentHarness compact", () => {
+	it("abort() cancels an in-flight summary request and the harness returns to idle", async () => {
+		const faux = newFaux();
+		faux.setResponses([
+			fauxAssistantMessage("ok"),
+			fauxAssistantMessage("ok"),
+			// 摘要请求挂起,直到 signal 触发 —— 没有 abort 通路的话 abort() 会等到天荒地老。
+			(_context, options) =>
+				new Promise((resolve) => {
+					options?.signal?.addEventListener("abort", () =>
+						resolve(fauxAssistantMessage("", { stopReason: "aborted", errorMessage: "aborted" })),
+					);
+				}),
+			fauxAssistantMessage("still fine"),
+		]);
+		const harness = new AgentHarness(harnessOptions({ model: faux.getModel() }));
+		await harness.prompt("x".repeat(120_000));
+		await harness.prompt("y".repeat(120_000));
+
+		const compacting = harness.compact();
+		await new Promise((r) => setTimeout(r, 20));
+		await harness.abort();
+		await expect(compacting).rejects.toThrow(/abort/i);
+		await harness.prompt("again");
+	});
+});

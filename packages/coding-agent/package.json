@@ -2,6 +2,9 @@
 	"name": "@yoma/coding-agent",
 	"version": "0.1.0",
 	"description": "Yoma coding agent: tools and the ACP adapter",
+	"license": "MIT",
+	"author": "Yoma contributors",
+	"//upstream": "编码四件套 / system-prompt / resources 派生自 pi packages/coding-agent(Mario Zechner,MIT),快照 f8f75544b;其余为 Yoma 自有。范围见 UPSTREAM.md。",
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",
@@ -10,11 +13,15 @@
 	"bin": {
 		"yoma-acp": "./src/acp.ts"
 	},
+	"scripts": {
+		"typecheck": "tsgo --noEmit -p tsconfig.json",
+		"test": "bun test"
+	},
 	"dependencies": {
 		"@agentclientprotocol/sdk": "^1.3.0",
-		"@earendil-works/pi-ai": "workspace:*",
+		"@earendil-works/pi-ai": "catalog:",
 		"@yoma/agent": "workspace:*",
 		"diff": "8.0.4",
-		"typebox": "1.1.38"
+		"typebox": "catalog:"
 	}
 }

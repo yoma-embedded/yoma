@@ -5,7 +5,7 @@
 //   遍 2 buildContextEntries → sessionEntryToContextMessages:应用最后一个 compaction
 //        条目做投影(firstKeptEntryId 之前的条目消失,换成摘要),再把条目映射成消息。
 // 记住:压缩改的是投影,不是历史。
-import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
+import type { ImageContent, TextContent, Usage } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "../../types.ts";
 import { createBranchSummaryMessage, createCompactionSummaryMessage, createCustomMessage } from "../messages.ts";
 import type {
@@ -119,10 +119,10 @@ export function sessionEntryToContextMessages(
 		];
 	}
 	if (entry.type === "compaction") {
-		return [createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp)];
+		return [createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp, entry.usage)];
 	}
 	if (entry.type === "branch_summary" && entry.summary) {
-		return [createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp)];
+		return [createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp, entry.usage)];
 	}
 	if (entry.type === "custom") {
 		// custom 条目默认不进模型上下文,除非应用注册了对应 customType 的 projector。
@@ -259,6 +259,7 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 		tokensBefore: number,
 		details?: T,
 		fromHook?: boolean,
+		usage?: Usage,
 	): Promise<string> {
 		return this.appendTypedEntry({
 			type: "compaction",
@@ -270,6 +271,7 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 			tokensBefore,
 			details,
 			fromHook,
+			usage,
 		} satisfies CompactionEntry<T>);
 	}
 
@@ -330,7 +332,7 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 	/** 移动 leaf(分支/回退);可选生成分支摘要条目,摘要挂在"新 leaf"下。 */
 	async moveTo(
 		entryId: string | null,
-		summary?: { summary: string; details?: unknown; fromHook?: boolean },
+		summary?: { summary: string; details?: unknown; fromHook?: boolean; usage?: Usage },
 	): Promise<string | undefined> {
 		if (entryId !== null && !(await this.storage.getEntry(entryId))) {
 			throw new SessionError("not_found", `Entry ${entryId} not found`);
@@ -346,6 +348,7 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 			summary: summary.summary,
 			details: summary.details,
 			fromHook: summary.fromHook,
+			usage: summary.usage,
 		} satisfies BranchSummaryEntry);
 	}
 }

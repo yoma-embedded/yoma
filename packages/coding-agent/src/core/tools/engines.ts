@@ -457,6 +457,12 @@ export function runEngine(bin: string, args: string[], options: EngineRunOptions
 		const child = spawn(bin, args, {
 			cwd: options.cwd,
 			stdio: ["ignore", "pipe", "pipe"],
+			// Python 引擎在中文 Windows 上按 cp936 写 stdout,而下面按 UTF-8 解;与 getShellEnv 同一条规矩。
+			env: {
+				...process.env,
+				PYTHONIOENCODING: process.env.PYTHONIOENCODING || "utf-8",
+				PYTHONUTF8: process.env.PYTHONUTF8 || "1",
+			},
 			// 自成进程组,这样 killTree 才够得着孙进程。
 			detached: process.platform !== "win32",
 			// 桌面端是 GUI 进程:引擎起来时不要在用户面前闪一个控制台窗口。

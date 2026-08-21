@@ -9,7 +9,7 @@
 // 心智模型:harness 没有自己的循环,它只是 runAgentLoop 的一个高级调用者。
 // 它管四类状态 —— harness 配置(随时可改)/ turn 快照(冻结)/ session(落盘即历史)/
 // 挂起写入(忙时排队)—— 并保证它们永不互相污染。
-import type { AssistantMessage, ImageContent, Model, Models, UserMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, ImageContent, Model, Models, Usage, UserMessage } from "@earendil-works/pi-ai";
 import { runAgentLoop, runAgentLoopContinue } from "../agent-loop.ts";
 import type {
 	AgentContext,
@@ -180,6 +180,8 @@ export class AgentHarness<
 	readonly models: Models;
 	private phase: AgentHarnessPhase = "idle";
 	private runAbortController?: AbortController;
+	/** compact / navigateTree 的摘要请求,abort() 一并取消。 */
+	private sideAbortController?: AbortController;
 	private runPromise?: Promise<void>;
 	private pendingSessionWrites: PendingSessionWrite[] = [];
 	private model: Model<any>;
@@ -801,9 +803,11 @@ export class AgentHarness<
 
 	async compact(
 		customInstructions?: string,
-	): Promise<{ summary: string; firstKeptEntryId: string; tokensBefore: number; details?: unknown }> {
+	): Promise<{ summary: string; firstKeptEntryId: string; tokensBefore: number; details?: unknown; usage?: Usage }> {
 		if (this.phase !== "idle") throw new AgentHarnessError("busy", "compact() requires idle harness");
 		this.phase = "compaction";
+		const abort = new AbortController();
+		this.sideAbortController = abort;
 		try {
 			const model = this.model;
 			if (!model) throw new AgentHarnessError("invalid_state", "No model set for compaction");
@@ -818,13 +822,13 @@ export class AgentHarness<
 				preparation,
 				branchEntries,
 				customInstructions,
-				signal: new AbortController().signal,
+				signal: abort.signal,
 			});
 			if (hookResult?.cancel) throw new AgentHarnessError("compaction", "Compaction cancelled");
 			const provided = hookResult?.compaction;
 			const compactResult = provided
 				? { ok: true as const, value: provided }
-				: await compact(preparation, this.models, model, customInstructions, undefined, this.thinkingLevel);
+				: await compact(preparation, this.models, model, customInstructions, abort.signal, this.thinkingLevel);
 			if (!compactResult.ok) throw compactResult.error;
 			const result = compactResult.value;
 			// 到这一步才落盘:摘要生成途中失败的话,树分毫未动。
@@ -834,6 +838,7 @@ export class AgentHarness<
 				result.tokensBefore,
 				result.details,
 				provided !== undefined,
+				result.usage,
 			);
 			const entry = await this.session.getEntry(entryId);
 			if (entry?.type === "compaction") {
@@ -843,6 +848,7 @@ export class AgentHarness<
 		} catch (error) {
 			throw normalizeHarnessError(error, "compaction");
 		} finally {
+			this.sideAbortController = undefined;
 			this.phase = "idle";
 		}
 	}
@@ -853,6 +859,8 @@ export class AgentHarness<
 	): Promise<NavigateTreeResult> {
 		if (this.phase !== "idle") throw new AgentHarnessError("busy", "navigateTree() requires idle harness");
 		this.phase = "branch_summary";
+		const abort = new AbortController();
+		this.sideAbortController = abort;
 		try {
 			const oldLeafId = await this.session.getLeafId();
 			if (oldLeafId === targetId) return { cancelled: false };
@@ -875,13 +883,14 @@ export class AgentHarness<
 			let summaryEntry: NavigateTreeResult["summaryEntry"];
 			let summaryText: string | undefined = hookResult?.summary?.summary;
 			let summaryDetails: unknown = hookResult?.summary?.details;
+			let summaryUsage: Usage | undefined;
 			if (!summaryText && options?.summarize && entries.length > 0) {
 				const model = this.model;
 				if (!model) throw new AgentHarnessError("invalid_state", "No model set for branch summary");
 				const branchSummary = await generateBranchSummary(entries, {
 					models: this.models,
 					model,
-					signal: new AbortController().signal,
+					signal: abort.signal,
 					customInstructions: hookResult?.customInstructions ?? options?.customInstructions,
 					replaceInstructions: hookResult?.replaceInstructions ?? options?.replaceInstructions,
 				});
@@ -890,6 +899,7 @@ export class AgentHarness<
 					throw new AgentHarnessError("branch_summary", branchSummary.error.message, branchSummary.error);
 				}
 				summaryText = branchSummary.value.summary;
+				summaryUsage = branchSummary.value.usage;
 				summaryDetails = {
 					readFiles: branchSummary.value.readFiles,
 					modifiedFiles: branchSummary.value.modifiedFiles,
@@ -924,7 +934,7 @@ export class AgentHarness<
 			const summaryId = await this.session.moveTo(
 				newLeafId,
 				summaryText
-					? { summary: summaryText, details: summaryDetails, fromHook: hookResult?.summary !== undefined }
+					? { summary: summaryText, details: summaryDetails, fromHook: hookResult?.summary !== undefined, usage: summaryUsage }
 					: undefined,
 			);
 			if (summaryId) {
@@ -942,6 +952,7 @@ export class AgentHarness<
 		} catch (error) {
 			throw normalizeHarnessError(error, "branch_summary");
 		} finally {
+			this.sideAbortController = undefined;
 			this.phase = "idle";
 		}
 	}
@@ -1097,6 +1108,7 @@ export class AgentHarness<
 		this.steerQueue = [];
 		this.followUpQueue = [];
 		this.runAbortController?.abort();
+		this.sideAbortController?.abort();
 		const errors: Error[] = [];
 		try {
 			await this.emitQueueUpdate();

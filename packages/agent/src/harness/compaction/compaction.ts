@@ -16,6 +16,7 @@ import {
 	createCustomMessage,
 } from "../messages.ts";
 import { buildSessionContext } from "../session/session.ts";
+import { completeSummary } from "./summarize.ts";
 import type {
 	CompactionEntry,
 	CompactionPreparation,
@@ -115,6 +116,33 @@ export interface CompactionResult<T = unknown> {
 	tokensBefore: number;
 	/** Optional implementation-specific details stored with the compaction entry. */
 	details?: T;
+	/** 摘要请求自己花掉的 token(切轮时是两次请求之和)。 */
+	usage?: Usage;
+}
+
+export function combineUsage(a: Usage | undefined, b: Usage | undefined): Usage | undefined {
+	if (!a || !b) return a ?? b;
+	const add = (x?: number, y?: number) => (x ?? 0) + (y ?? 0);
+	return {
+		input: add(a.input, b.input),
+		output: add(a.output, b.output),
+		cacheRead: add(a.cacheRead, b.cacheRead),
+		cacheWrite: add(a.cacheWrite, b.cacheWrite),
+		reasoning: a.reasoning === undefined && b.reasoning === undefined ? undefined : add(a.reasoning, b.reasoning),
+		totalTokens: add(a.totalTokens, b.totalTokens),
+		cost: {
+			input: add(a.cost.input, b.cost.input),
+			output: add(a.cost.output, b.cost.output),
+			cacheRead: add(a.cost.cacheRead, b.cost.cacheRead),
+			cacheWrite: add(a.cost.cacheWrite, b.cost.cacheWrite),
+			total: add(a.cost.total, b.cost.total),
+		},
+	};
+}
+
+export interface SummaryWithUsage {
+	summary: string;
+	usage?: Usage;
 }
 
 /** Default compaction settings used by the harness. */
@@ -489,6 +517,29 @@ export async function generateSummary(
 	previousSummary?: string,
 	thinkingLevel?: ThinkingLevel,
 ): Promise<Result<string, CompactionError>> {
+	const result = await generateSummaryWithUsage(
+		currentMessages,
+		models,
+		model,
+		reserveTokens,
+		signal,
+		customInstructions,
+		previousSummary,
+		thinkingLevel,
+	);
+	return result.ok ? ok(result.value.summary) : result;
+}
+
+export async function generateSummaryWithUsage(
+	currentMessages: AgentMessage[],
+	models: Models,
+	model: Model<any>,
+	reserveTokens: number,
+	signal?: AbortSignal,
+	customInstructions?: string,
+	previousSummary?: string,
+	thinkingLevel?: ThinkingLevel,
+): Promise<Result<SummaryWithUsage, CompactionError>> {
 	const maxTokens = Math.min(
 		Math.floor(0.8 * reserveTokens),
 		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
@@ -514,15 +565,11 @@ export async function generateSummary(
 		},
 	];
 
-	const completionOptions =
-		model.reasoning && thinkingLevel && thinkingLevel !== "off"
-			? { maxTokens, signal, reasoning: thinkingLevel }
-			: { maxTokens, signal };
-
-	const response = await models.completeSimple(
+	const response = await completeSummary(
+		models,
 		model,
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
-		completionOptions,
+		{ maxTokens, signal, thinkingLevel },
 	);
 	if (response.stopReason === "aborted") {
 		return err(new CompactionError("aborted", response.errorMessage || "Summarization aborted"));
@@ -541,7 +588,7 @@ export async function generateSummary(
 		.map((c) => c.text)
 		.join("\n");
 
-	return ok(textContent);
+	return ok({ summary: textContent, usage: response.usage });
 }
 
 /** Prepare session entries for compaction, or return undefined when compaction is not applicable. */
@@ -655,12 +702,13 @@ export async function compact(
 	}
 
 	let summary: string;
+	let usage: Usage | undefined;
 
 	// 切点落在轮中间时要 **两次** 模型调用:历史摘要 + 该轮前缀摘要。
 	if (isSplitTurn && turnPrefixMessages.length > 0) {
 		const historyResult =
 			messagesToSummarize.length > 0
-				? await generateSummary(
+				? await generateSummaryWithUsage(
 						messagesToSummarize,
 						models,
 						model,
@@ -670,7 +718,7 @@ export async function compact(
 						previousSummary,
 						thinkingLevel,
 					)
-				: ok<string, CompactionError>("No prior history.");
+				: ok<SummaryWithUsage, CompactionError>({ summary: "No prior history." });
 		if (!historyResult.ok) return err(historyResult.error);
 		const turnPrefixResult = await generateTurnPrefixSummary(
 			turnPrefixMessages,
@@ -681,9 +729,10 @@ export async function compact(
 			thinkingLevel,
 		);
 		if (!turnPrefixResult.ok) return err(turnPrefixResult.error);
-		summary = `${historyResult.value}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.value}`;
+		summary = `${historyResult.value.summary}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.value.summary}`;
+		usage = combineUsage(historyResult.value.usage, turnPrefixResult.value.usage);
 	} else {
-		const summaryResult = await generateSummary(
+		const summaryResult = await generateSummaryWithUsage(
 			messagesToSummarize,
 			models,
 			model,
@@ -694,7 +743,8 @@ export async function compact(
 			thinkingLevel,
 		);
 		if (!summaryResult.ok) return err(summaryResult.error);
-		summary = summaryResult.value;
+		summary = summaryResult.value.summary;
+		usage = summaryResult.value.usage;
 	}
 
 	const { readFiles, modifiedFiles } = computeFileLists(fileOps);
@@ -705,6 +755,7 @@ export async function compact(
 		firstKeptEntryId,
 		tokensBefore,
 		details: { readFiles, modifiedFiles } as CompactionDetails,
+		usage,
 	});
 }
 
@@ -715,7 +766,7 @@ async function generateTurnPrefixSummary(
 	reserveTokens: number,
 	signal?: AbortSignal,
 	thinkingLevel?: ThinkingLevel,
-): Promise<Result<string, CompactionError>> {
+): Promise<Result<SummaryWithUsage, CompactionError>> {
 	const maxTokens = Math.min(
 		Math.floor(0.5 * reserveTokens),
 		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
@@ -731,12 +782,11 @@ async function generateTurnPrefixSummary(
 		},
 	];
 
-	const response = await models.completeSimple(
+	const response = await completeSummary(
+		models,
 		model,
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
-		model.reasoning && thinkingLevel && thinkingLevel !== "off"
-			? { maxTokens, signal, reasoning: thinkingLevel }
-			: { maxTokens, signal },
+		{ maxTokens, signal, thinkingLevel },
 	);
 	if (response.stopReason === "aborted") {
 		return err(new CompactionError("aborted", response.errorMessage || "Turn prefix summarization aborted"));
@@ -750,10 +800,11 @@ async function generateTurnPrefixSummary(
 		);
 	}
 
-	return ok(
-		response.content
+	return ok({
+		summary: response.content
 			.filter((c): c is { type: "text"; text: string } => c.type === "text")
 			.map((c) => c.text)
 			.join("\n"),
-	);
+		usage: response.usage,
+	});
 }

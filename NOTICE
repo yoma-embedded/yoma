@@ -6,8 +6,17 @@ This repository includes third-party software:
 - Desktop UI (`packages/app`, `packages/desktop`, `packages/ui`,
   `packages/session-ui`, `packages/util`): forked from
   [opencode](https://github.com/anomalyco/opencode) (MIT).
-- `packages/ai`: vendored from [pi](https://github.com/earendil-works/pi)
-  by Mario Zechner (MIT).
+- Agent kernel, from [pi](https://github.com/earendil-works/pi) by
+  Mario Zechner (MIT), snapshot `f8f75544b` (2026-07-13):
+  - `@earendil-works/pi-ai` is consumed as an npm dependency.
+  - `packages/agent`: derived from pi `packages/agent` (the v1
+    `AgentHarness` line), substantially modified and maintained here.
+  - `packages/coding-agent`: the built-in tools (`read`/`bash`/`edit`/
+    `write`, `edit-diff`, `path-utils`, `file-mutation-queue`),
+    `core/system-prompt.ts` and `core/resources.ts` derive from pi
+    `packages/coding-agent`; the embedded-debugging tools, toolchain,
+    examples index and the ACP adapter are Yoma's own
+    (see `packages/coding-agent/UPSTREAM.md`).
 - `engines/stm32-config-kernel`: STM32 configuration / codegen kernel.
   `data/*.irpack` is a **build artifact**: parse the local STM32CubeMX
   device database with `stm32ck-import` (`bun engines/build.ts` does this).

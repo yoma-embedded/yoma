@@ -14,8 +14,6 @@
     "package:linux": "bun --cwd packages/desktop package:linux",
     "typecheck": "bun turbo typecheck",
     "lint": "oxlint",
-    "//test:ai": "packages/ai 是整包复用的上游代码,测试用 vitest 写的(vi.hoisted / describe.sequential 都是 vitest 专有)。别用 `bun test packages/ai` —— 那会红一片,是跑法不对而不是代码坏了。",
-    "test:ai": "bun run --cwd packages/ai test",
     "example:01": "bun example/01-minimal-agent.ts",
     "example:02": "bun example/02-parallel-tools.ts",
     "test": "bun test packages/agent && bun test --cwd packages/coding-agent && bun --cwd packages/kernel test && bun --cwd packages/bench test && bun --cwd packages/app test src && bun --cwd packages/session-ui test src && bun --cwd packages/ui test src"
@@ -72,6 +70,8 @@
       "typescript": "5.8.2",
       "@typescript/native-preview": "7.0.0-dev.20251207.1",
       "zod": "4.1.8",
+      "typebox": "1.3.7",
+      "@earendil-works/pi-ai": "0.84.2",
       "remeda": "2.26.0",
       "sst": "4.13.1",
       "shiki": "4.2.0",
@@ -91,7 +91,7 @@
   "dependencies": {
     "@yoma/agent": "workspace:*",
     "@yoma/coding-agent": "workspace:*",
-    "@earendil-works/pi-ai": "workspace:*"
+    "@earendil-works/pi-ai": "catalog:"
   },
   "devDependencies": {
     "@types/bun": "catalog:",

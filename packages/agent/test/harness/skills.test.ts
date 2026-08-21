@@ -86,6 +86,20 @@ Use this skill.
 		expect(skills[0]?.content).toBe("Root content");
 	});
 
+	it("ignores root markdown files without skill frontmatter instead of reporting them", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		await env.createDir("skills/real", { recursive: true });
+		await env.writeFile("skills/README.md", "# 这是说明,不是技能");
+		await env.writeFile("skills/notes.md", "---\ntitle: no description\n---\nbody");
+		await env.writeFile("skills/real/SKILL.md", "---\ndescription: Real\n---\nreal");
+
+		const { skills, diagnostics } = await loadSkills(env, "skills");
+
+		expect(skills.map((skill) => skill.name)).toEqual(["real"]);
+		expect(diagnostics).toEqual([]);
+	});
+
 	it("keeps loading invalid-named skills but reports lenient diagnostics", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });

@@ -7,10 +7,17 @@
 
 Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
 
-- **内核**(`packages/{ai,agent,coding-agent}`)—— agent 循环、会话树、压缩、技能,
-  以及嵌入式工具组(烧录 / 日志 / gdb / 网表 / 数据手册 / STM32 配置)。
+- **内核**(`packages/{agent,coding-agent}` + npm 的 `@earendil-works/pi-ai`)—— agent 循环、
+  会话树、压缩、技能,以及嵌入式工具组(烧录 / 日志 / gdb / 网表 / 数据手册 / STM32 配置)。
 - **桌面端**(`packages/{desktop,app,kernel,ui,session-ui,util,bench}`)——
   Electron 外壳 + SolidJS UI,fork 自 opencode 的前端;`bench` 是无人值守调试台。
+
+**内核与上游 pi 的关系**(2026-08-21 核实;coding-agent 的细节在 `packages/coding-agent/UPSTREAM.md`):
+两包分叉自上游 **2026-07-13 的快照 `f8f75544b`**(不是 `v0.80.6`)。
+`pi-ai` 是 npm 依赖(版本钉在 catalog;从前 vendored 的 `packages/ai` 零自改,已删);`agent`
+建在上游的 v1 `AgentHarness` 上 —— **上游自己的 CLI 从没用过它**(生产路径是 `Agent` +
+coding-agent 的 `AgentSession`),2026-08-04 上游把它掏空成 v2 空壳、8-11 又定了 v3 规格,
+所以 `agent` 是 yoma 自有代码,只定向摘果、不整体 rebase;`coding-agent` 是产品,永久 fork。
 
 **2026-08 之前这是两个仓库**(`yoma` 和 `yoma-desktop`,兄弟目录 + alias 接缝)。
 合并的决定性理由是**它们从来不独立发布**:打包时 esbuild 把内核源码整个 inline 进
@@ -46,12 +53,14 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
 | `packages/bench/tsconfig.json` 里同样的内联副本 | bench 直接跑源码,同理 |
 | `packages/kernel/kernel-alias.ts` 的 `KERNEL_ALIASES` | 打包期(electron-vite / esbuild),根目录从第一份反推 |
 
-两个细节:paths 的值必须是**相对路径**(`./packages/...`),写成 `packages/...` 会
-`TS5090`;pi-ai 的 path 必须指向 **`dist/index.js` 而不是 `.d.ts`**,bun 会照着它真去加载。
+细节:paths 的值必须是**相对路径**(`./packages/...`),写成 `packages/...` 会 `TS5090`。
+`@earendil-works/pi-ai` **不在**表里:它是 npm 真包,交给 node 解析;它不在 desktop 的
+`dependencies` 里,electron-vite 不会外部化它,照样 inline(kernel.js 里 grep 不到它的 import)。
 
 ## 仓库结构
 
-Bun workspace,`packages/` 下 7 个包:
+Bun workspace,`packages/` 下 9 个包 —— 内核两包(`agent` / `coding-agent`,见上)
+加桌面端这 7 个:
 
 | 包 | 名字 | 职责 |
 |---|---|---|
@@ -87,9 +96,9 @@ Bun workspace,`packages/` 下 7 个包:
 | `bun dev:desktop` | 开发模式(renderer 有 HMR;**内核进程没有**) |
 | `bun build:desktop` | 生产构建 → `packages/desktop/out/` |
 | `bun package:mac` / `:win` / `:linux` | electron-builder 安装包 |
-| `bun typecheck` | turbo 跑全部 7 个包 —— **必须常绿 7/7** |
+| `bun typecheck` | turbo 跑全部 9 个包 —— **必须常绿 9/9**(2026-08-21 起内核两包也有 `typecheck`:从前只有被 kernel 的 paths 拉到的内核源码受检,test 目录没人查) |
 | `bun lint` | oxlint |
-| `bun run test` | 全量单测(根 `package.json` 逐包列出)—— **根上唯一入口**;裸 `bun test` 会误扫 vitest/DOM/平台文件 |
+| `bun run test` | 全量单测(根 `package.json` 逐包列出)—— **根上唯一入口**;裸 `bun test` 会误扫 DOM/平台文件 |
 | `bun --cwd packages/desktop smoke` | 内核冒烟:对 **构建产物** 验证 12 个工具 + 4 个引擎二进制 |
 | `bun --cwd packages/desktop e2e:ipc` | 生产路径:真 utilityProcess + 真 MessagePort + 真协议帧(不开窗口) |
 | `bun --cwd packages/desktop e2e:renderer` | 最后一跳:真窗口 + 真 preload + **真 contextBridge**(含 mailbox 桥三条) |
@@ -150,18 +159,25 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
 2. **id 自己铸,而且确定。** 内核的 `generateEntryId()` 是 `uuidv7().slice(-8)` ——
    取的是 **随机尾部**,不可排序;而前端每个集合都用 `Binary.search` 按 id 字符串序维护。
    投影器从(消息序号, 时间戳)确定性铸 id,并对时钟回拨做严格递增钳制。
+   (上游后来改成了完整 uuidv7 + 可注入 `idGenerator`,可排序;但投影器从不消费 harness
+   的 entry id,这条不受影响。要干掉时钟回拨钳制的话,正路是给存储层的 Entry 加 `seq`。)
 3. **发射顺序**:父 `message.updated` 早于它的任何 part;`part.updated` 早于该 part 的 delta。
    reducer 会静默丢弃孤儿 part 和未知 part 的 delta。
 
 ### 内核事件只能用 `subscribe()`
 
-`yoma/packages/agent/src/harness/agent-harness.ts:230-248` 的 `emitOwn` 和 `emitAny`
-**字节相同**,都只遍历订阅者桶。所以这十个 `on()` 类型 **永远不会触发**:
+`packages/agent/src/harness/agent-harness.ts:230-248` 的 `emitOwn` 和 `emitAny`
+**字节相同**,都只遍历订阅者桶。所以这 **11 个** `on()` 类型 **永远不会触发**:
 `save_point` / `settled` / `abort` / `session_compact` / `model_update` / `tools_update` /
-`queue_update` / `after_provider_response` / `session_tree` / `thinking_level_update`。
+`resources_update` / `queue_update` / `after_provider_response` / `session_tree` / `thinking_level_update`。
 
 只有走 `emitHook` 的是活的:`tool_call` / `tool_result` / `context` / `before_agent_start` /
 `session_before_compact` / `session_before_tree` / `before_provider_request` / `before_provider_payload`。
+
+**这是上游遗传的,而且不会被上游修好**:v1 从 0.80.6 到被掏空的 16 个提交里这两段逐字未变
+(上游没人消费 harness,所以没人发现);v2/v3 是另一套事件模型。要修就自己修,而且要照上游
+v3 规格(`pi/packages/agent/docs/harness.md` §5.5/§5.6)的形状 —— hooks 可拦截、events 按类型
+分发且被动 —— 把 `emitHook` 与 `emitOwn` 收敛成一条,否则同一 handler 会被调两次。
 
 ### harness 的三个行为
 
@@ -171,6 +187,12 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
    要区分"取消"和"完成"只能自己拿 AbortController。
 
 ### 我们补的、内核只给了机制的四件事
+
+> "内核只给了机制"说的是 `packages/agent` 的 harness。上游**有**策略层,住在 coding-agent 的
+> `AgentSession`(`pi/packages/coding-agent/src/core/agent-session.ts`,0.80.6 就在,3400+ 行),
+> 是 yoma 删掉整层之后在 `kernel/src/host` 里重建了只服务桌面端的最小子集。要找参照
+> (比如"响应完成但已溢出 → 压缩而不是重试"这类溢出策略、压缩可中断的 abort controller)
+> 去那份看,不要以为上游没有。
 
 > **没有权限系统。**2026-08-10 起整套权限保护(内核权限门、bench 三档策略与角色边界、
 > 桌面弹窗 UI、探针互斥锁)全部删除 —— 这是产品决定,不是遗漏。agent 想调什么工具就
@@ -527,11 +549,13 @@ TS 侧的纪律:
   `xTickCount@0x200002a8: 24920 -> 25665 (?=745) | ????????` —— 退出码不受影响,
   所以裁决是对的,坏掉的恰恰是这套系统的产品:证据,而且一声不吭。
   凡是要读中文输出的子进程,环境里钉死编码(`PYTHONIOENCODING=utf-8` + `PYTHONUTF8=1`)。
-  **注意:2026-08-10 删掉判据层之后,我们这边已经没有强制它的落点了** —— 工位端 agent
-  现在是自己经 bash/yoma 跑脚本的,那条路上没有我们注入的环境。这个坑还在,只是防线
-  没了;真撞上就在任务书里让脚本自己 `sys.stdout.reconfigure(encoding="utf-8")`。
+  **落点在 `packages/agent/src/harness/env/nodejs.ts` 的 `getShellEnv`**,覆盖所有 agent 经
+  bash 工具起的子进程 —— 工位端的诊断脚本走的正是这条路,所以 2026-08-10 删掉判据层之后
+  防线还在(这里从前写的"没有落点了"是错的,2026-08-21 核实纠正)。当时真正的洞是
+  `inheritEnv:false` 的分支在钉子之前就 return 了,已修并有测试。agent 自己另起的非 bash
+  子进程(比如 `runEngine` 起的引擎)不走这条路,各自要自己钉。
   **它的测试不能写成"跑个打中文的脚本看花不花"** —— 开发机 locale 本来就是 UTF-8,
-  那是一个永远不会响的闸门(实测确认)。
+  那是一个永远不会响的闸门(实测确认);要断言的是环境变量本身有没有到子进程。
 - **bun 的 `spawnSync`/`spawn` 省略 `env` 时不认运行时改过的 `process.env.PATH`**,
   它按进程启动那一刻的环境解析 argv[0](与 `os.homedir()` 同一类)。想让子进程看到
   当前环境就得显式传 `env`。实测:改了 PATH 之后不传 env,解析到的仍是旧 PATH 上那个

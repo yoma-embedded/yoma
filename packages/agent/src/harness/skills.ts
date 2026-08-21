@@ -232,6 +232,8 @@ async function loadSkillFromFile(
 	parentDirName: string,
 ): Promise<{ skill: Skill | null; diagnostics: SkillDiagnostic[] }> {
 	const diagnostics: SkillDiagnostic[] = [];
+	// 只有 SKILL.md 是"声明的技能";根目录散装的 .md 没有 description frontmatter 就当普通文件,不报错。
+	const isDeclaredSkill = /(^|[\\/])SKILL\.md$/.test(filePath);
 	const rawContent = await fs.readTextFile(filePath);
 	if (!rawContent.ok) {
 		diagnostics.push({ type: "warning", code: "read_failed", message: rawContent.error.message, path: filePath });
@@ -240,12 +242,15 @@ async function loadSkillFromFile(
 
 	const parsed = parseFrontmatter<SkillFrontmatter>(rawContent.value);
 	if (!parsed.ok) {
-		diagnostics.push({ type: "warning", code: "parse_failed", message: parsed.error.message, path: filePath });
+		if (isDeclaredSkill) {
+			diagnostics.push({ type: "warning", code: "parse_failed", message: parsed.error.message, path: filePath });
+		}
 		return { skill: null, diagnostics };
 	}
 
 	const { frontmatter, body } = parsed.value;
 	const description = typeof frontmatter.description === "string" ? frontmatter.description : undefined;
+	if (!isDeclaredSkill && !description?.trim()) return { skill: null, diagnostics };
 
 	for (const error of validateDescription(description)) {
 		diagnostics.push({ type: "warning", code: "invalid_metadata", message: error, path: filePath });

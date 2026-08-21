@@ -4,6 +4,7 @@ import { mkdirSync, rmSync, statSync, writeFileSync, readFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import type { Model } from "@earendil-works/pi-ai";
 import { FileCredentialStore, resolveModel } from "../src/acp/models.ts";
 
 const tempDirs: string[] = [];
@@ -102,6 +103,21 @@ describe("resolveModel", () => {
 		expect(model.id).toBe("deepseek-v4-pro");
 		// 没凭证的家不注册,Zed 的模型下拉里也就不会出现选了必炸的项。
 		expect(models.getModel("moonshotai-cn", "kimi-k2.5")).toBeUndefined();
+	});
+
+	it("sends max_tokens (not max_completion_tokens) to DeepSeek", async () => {
+		// DeepSeek 静默忽略 max_completion_tokens,压缩/摘要的输出上限靠这个字段。
+		const dir = createTempDir();
+		writeAuth(dir, { deepseek: { type: "api_key", key: "sk-d" }, "moonshotai-cn": { type: "api_key", key: "k" } });
+
+		const { models } = await resolveModel(dir);
+		const compatOf = (provider: string, id: string) =>
+			(models.getModel(provider, id) as Model<"openai-completions"> | undefined)?.compat;
+
+		for (const id of ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-chat"]) {
+			expect(compatOf("deepseek", id)?.maxTokensField).toBe("max_tokens");
+		}
+		expect(compatOf("moonshotai-cn", "kimi-k2.5")?.maxTokensField).toBe("max_tokens");
 	});
 
 	it("falls back to standard env vars when auth.json is absent", async () => {

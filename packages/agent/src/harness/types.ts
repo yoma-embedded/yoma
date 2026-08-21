@@ -1,7 +1,7 @@
 // harness 类型总仓,随里程碑逐步补入:M5 会话树 + FileSystem(已全)、
 // M7 harness 骨架(错误/能力/选项,施工中)。
 // 参考 pi-minimal harness/types.ts(838 行)。SessionRepo 家族(M5 Step 5)已随会话恢复补入。
-import type { ImageContent, Model, Models, SimpleStreamOptions, TextContent, Transport } from "@earendil-works/pi-ai";
+import type { ImageContent, Model, Models, SimpleStreamOptions, TextContent, Transport, Usage } from "@earendil-works/pi-ai";
 import type { AgentEvent, AgentMessage, AgentTool, QueueMode, ThinkingLevel } from "../types.ts";
 import type { Session } from "./session/session.ts";
 
@@ -206,6 +206,8 @@ export interface CompactionEntry<T = unknown> extends SessionTreeEntryBase {
 	tokensBefore: number;
 	details?: T;
 	fromHook?: boolean;
+	/** 摘要请求自己花掉的 token;缺省 = 摘要由 hook 提供或旧会话文件。 */
+	usage?: Usage;
 }
 
 export interface BranchSummaryEntry<T = unknown> extends SessionTreeEntryBase {
@@ -214,6 +216,7 @@ export interface BranchSummaryEntry<T = unknown> extends SessionTreeEntryBase {
 	summary: string;
 	details?: T;
 	fromHook?: boolean;
+	usage?: Usage;
 }
 
 export interface CustomEntry<T = unknown> extends SessionTreeEntryBase {
@@ -585,6 +588,7 @@ export interface CompactResult {
 	firstKeptEntryId: string;
 	tokensBefore: number;
 	details?: unknown;
+	usage?: Usage;
 }
 
 export interface NavigateTreeResult {
@@ -632,6 +636,7 @@ export interface BranchSummaryResult {
 	summary: string;
 	readFiles: string[];
 	modifiedFiles: string[];
+	usage?: Usage;
 }
 
 // ---------------------------------------------------------------------------

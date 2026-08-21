@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { AgentMessage } from "@yoma/agent"
-import { shouldAutoCompact } from "./compaction.ts"
+import { overflowAction, shouldAutoCompact } from "./compaction.ts"
+import type { AssistantMessage } from "@earendil-works/pi-ai"
 
 const T0 = 1_800_000_000_000
 
@@ -59,5 +60,48 @@ describe("自动压缩的两个 guard", () => {
     const messages = [user("a", T0), assistant(999_999, T0 + 1)]
     expect(shouldAutoCompact(messages, undefined).compact).toBe(false)
     expect(shouldAutoCompact(messages, 0).compact).toBe(false)
+  })
+})
+
+describe("溢出处理", () => {
+  const model = { provider: "p", id: "m", contextWindow: 1000 }
+  const usage = (input: number) => ({
+    input,
+    output: 1,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: input + 1,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  })
+  const msg = (over: Partial<AssistantMessage>): AssistantMessage =>
+    ({
+      role: "assistant",
+      content: [],
+      api: "x",
+      provider: "p",
+      model: "m",
+      stopReason: "stop",
+      timestamp: 1,
+      usage: usage(10),
+      ...over,
+    }) as AssistantMessage
+
+  test("溢出错误:压缩后重试一次,第二次不再", () => {
+    const error = msg({ stopReason: "error", errorMessage: "prompt is too long: 2000 tokens > 1000 maximum" })
+    expect(overflowAction(error, model, false)).toBe("compact_and_retry")
+    expect(overflowAction(error, model, true)).toBe("none")
+  })
+
+  test("回答完成但 usage 超窗:只压缩", () => {
+    expect(overflowAction(msg({ usage: usage(5000) }), model, false)).toBe("compact")
+    expect(overflowAction(msg({ usage: usage(5000) }), model, true)).toBe("compact")
+  })
+
+  test("换过模型的旧消息、普通错误、没有消息:都不算", () => {
+    const error = msg({ stopReason: "error", errorMessage: "prompt is too long" })
+    expect(overflowAction(error, { ...model, id: "bigger" }, false)).toBe("none")
+    expect(overflowAction(msg({ stopReason: "error", errorMessage: "503" }), model, false)).toBe("none")
+    expect(overflowAction(undefined, model, false)).toBe("none")
+    expect(overflowAction(msg({}), model, false)).toBe("none")
   })
 })

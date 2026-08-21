@@ -1,0 +1,21 @@
+# 索引里所有文本文件都是 LF;工作树也钉成 LF,不再随本机 core.autocrlf 变。
+# 理由:内核三包要和上游 pi 做 3-way 比对/合并(见 packages/*/UPSTREAM.md),
+# 任何直接读工作树文件的 diff / git merge-file 脚本在 CRLF 检出上会把每一行判成改动
+# (2026-08-21 实测:整文件冲突)。git 内部的 merge 不受影响,受影响的是脚本与人。
+* text=auto eol=lf
+
+# 二进制:别让 text=auto 猜。
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.icns binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.irpack binary

@@ -1,7 +1,7 @@
 // 自定义消息角色:进 transcript,不进 LLM。
 // 通过 declare module 声明合并把 4 个角色注册进 CustomAgentMessages(src/types.ts:305),
 // AgentMessage 全局变宽;convertToLlm 在 LLM 边界把它们投影成 user 消息或过滤掉。
-import type { ImageContent, Message, TextContent } from "@earendil-works/pi-ai";
+import type { ImageContent, Message, TextContent, Usage } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "../types.ts";
 
 export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
@@ -45,6 +45,7 @@ export interface BranchSummaryMessage {
 	summary: string;
 	fromId: string;
 	timestamp: number;
+	usage?: Usage;
 }
 
 export interface CompactionSummaryMessage {
@@ -52,6 +53,7 @@ export interface CompactionSummaryMessage {
 	summary: string;
 	tokensBefore: number;
 	timestamp: number;
+	usage?: Usage;
 }
 
 declare module "../types.ts" {
@@ -81,12 +83,18 @@ export function bashExecutionToText(msg: BashExecutionMessage): string {
 	return text;
 }
 
-export function createBranchSummaryMessage(summary: string, fromId: string, timestamp: string): BranchSummaryMessage {
+export function createBranchSummaryMessage(
+	summary: string,
+	fromId: string,
+	timestamp: string,
+	usage?: Usage,
+): BranchSummaryMessage {
 	return {
 		role: "branchSummary",
 		summary,
 		fromId,
 		timestamp: new Date(timestamp).getTime(),
+		...(usage && { usage }),
 	};
 }
 
@@ -94,12 +102,14 @@ export function createCompactionSummaryMessage(
 	summary: string,
 	tokensBefore: number,
 	timestamp: string,
+	usage?: Usage,
 ): CompactionSummaryMessage {
 	return {
 		role: "compactionSummary",
 		summary,
 		tokensBefore,
 		timestamp: new Date(timestamp).getTime(),
+		...(usage && { usage }),
 	};
 }
 

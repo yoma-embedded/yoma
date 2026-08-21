@@ -89,6 +89,22 @@ describe("NodeExecutionEnv exec", () => {
 		}
 	});
 
+	it("still pins the Python UTF-8 encoding when not inheriting the environment", async () => {
+		// 从前 inheritEnv:false 在钉子之前就 return 了。
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		const result = getOrThrow(
+			await env.exec('printf \'%s:%s\' "${PYTHONIOENCODING-}" "${PYTHONUTF8-}"', { inheritEnv: false }),
+		);
+		expect(result.stdout).toBe("utf-8:1");
+
+		// 调用方显式传入的值仍然优先。
+		const overridden = getOrThrow(
+			await env.exec('printf \'%s\' "${PYTHONIOENCODING-}"', { inheritEnv: false, env: { PYTHONIOENCODING: "gbk" } }),
+		);
+		expect(overridden.stdout).toBe("gbk");
+	});
+
 	it("streams stdout and stderr chunks", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });

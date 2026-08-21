@@ -90,9 +90,13 @@ describe("loadContextFiles", () => {
 });
 
 describe("discoverSkills", () => {
-	it("looks in the global skills dir and the project .agents/skills", () => {
-		const dirs = skillDirsOf({ cwd: "/proj", globalDir: "/home/u/.yoma" });
-		expect(dirs).toEqual([join("/home/u/.yoma", "skills"), join("/proj", ".agents", "skills")]);
+	it("looks in ~/.agents/skills, the global skills dir and the project .agents/skills", () => {
+		const dirs = skillDirsOf({ cwd: "/proj", globalDir: "/home/u/.yoma", homeDir: "/home/u" });
+		expect(dirs).toEqual([
+			join("/home/u", ".agents", "skills"),
+			join("/home/u/.yoma", "skills"),
+			join("/proj", ".agents", "skills"),
+		]);
 	});
 
 	it("merges both locations and lets project skills override global ones by name", async () => {
@@ -114,7 +118,8 @@ describe("discoverSkills", () => {
 		);
 
 		const env = new NodeExecutionEnv({ cwd });
-		const { skills, diagnostics } = await discoverSkills(env, { cwd, globalDir });
+		// homeDir 指向临时目录,不读开发机真实的 ~/.agents/skills。
+		const { skills, diagnostics } = await discoverSkills(env, { cwd, globalDir, homeDir: root });
 
 		expect(diagnostics).toEqual([]);
 		const byName = Object.fromEntries(skills.map((s) => [s.name, s]));

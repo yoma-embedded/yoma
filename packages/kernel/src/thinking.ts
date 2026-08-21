@@ -7,7 +7,7 @@
  */
 
 /**
- * 与 pi-ai 的 `EXTENDED_THINKING_LEVELS` 同序(`packages/ai/dist/models.js:206`)。
+ * 与 pi-ai 的 `EXTENDED_THINKING_LEVELS`(`models.ts`)同序。
  * 抄一份是因为它没被导出;漂移由 `thinking.test.ts` 对着真档位表钉住。
  */
 const THINKING_ORDER = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const
