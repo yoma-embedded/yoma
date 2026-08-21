@@ -61,12 +61,16 @@ target_link_libraries(sigrok4dsl PUBLIC dsl_common PkgConfig::GLIB PkgConfig::LI
 target_compile_options(sigrok4dsl PRIVATE -Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable -Wno-sign-compare)
 
 # ---- libsigrokdecode4DSL(解码,内嵌 CPython)-----------------------------------------
+# config.h / version.h 是 autotools 产物,DSView 不入库;重新 vendor 会把它冲掉。
+# CMake 在构建目录生成。不定义 DECODERS_DIR —— 引擎经 srd_init(path) 传入解码器目录。
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/config.h.in ${CMAKE_CURRENT_BINARY_DIR}/config.h @ONLY)
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/version.h.in ${CMAKE_CURRENT_BINARY_DIR}/version.h @ONLY)
 set(SRD_SRC ${VENDOR}/libsigrokdecode4DSL)
 add_library(sigrokdecode4dsl STATIC
   ${SRD_SRC}/type_decoder.c ${SRD_SRC}/srd.c ${SRD_SRC}/module_sigrokdecode.c ${SRD_SRC}/decoder.c
   ${SRD_SRC}/error.c ${SRD_SRC}/exception.c ${SRD_SRC}/instance.c ${SRD_SRC}/log.c
   ${SRD_SRC}/session.c ${SRD_SRC}/util.c ${SRD_SRC}/version.c)
-target_include_directories(sigrokdecode4dsl PUBLIC ${SRD_SRC})
+target_include_directories(sigrokdecode4dsl PUBLIC ${CMAKE_CURRENT_BINARY_DIR} ${SRD_SRC})
 target_link_libraries(sigrokdecode4dsl PUBLIC dsl_common PkgConfig::GLIB PkgConfig::PYTHON)
 target_compile_options(sigrokdecode4dsl PRIVATE -Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable -Wno-sign-compare)
 

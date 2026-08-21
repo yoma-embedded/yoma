@@ -147,7 +147,7 @@ int main(int argc, char **argv) {
 		else if (!strcmp(argv[i], "--srlog") && i + 1 < argc) { g_setenv("YOMA_LA_SRLOG", argv[++i], TRUE); }
 		else if (!strcmp(argv[i], "--version") || !strcmp(argv[i], "-V")) {
 			printf("{\"yoma-la\":\"%s\",\"dsview\":\"%s\",\"dsview_commit\":\"%s\",\"libsigrokdecode\":\"%s\"}\n",
-			       YOMA_LA_VERSION, DSVIEW_DESCRIBE, DSVIEW_COMMIT, SRD_PACKAGE_VERSION_STRING);
+			       YOMA_LA_VERSION, DSVIEW_DESCRIBE, DSVIEW_COMMIT, srd_package_version_string_get());
 			return 0;
 		} else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) { usage(stdout); return 0; }
 		else rest[n++] = argv[i];

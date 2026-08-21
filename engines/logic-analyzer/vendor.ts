@@ -11,6 +11,8 @@
 // 整体吸收进本仓);而且我们要对上游打补丁(Python 3.13+ 移除了 PyEval_InitThreads 等),
 // 补丁住在本仓里比住在 fork 仓里更容易被 typecheck/CI 看见。补丁文件在 patches/,
 // 本脚本拷完源码后逐个应用;重新 vendored 一个新提交时,冲突会在这一步直接暴露。
+// libsigrokdecode4DSL 的 config.h / version.h 不 vendor:那是 autotools 产物、上游 gitignore,
+// 由 CMakeLists.txt 从 *.in 生成。
 //
 // 版本记在 vendor/UPSTREAM.json;引擎 --version 会把它印出来,这样"用户的 DSView 比我们
 // 内置的固件新"这种 HDL 版本不匹配才有得查。
