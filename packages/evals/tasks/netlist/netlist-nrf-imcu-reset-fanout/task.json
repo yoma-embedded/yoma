@@ -1,0 +1,20 @@
+{
+  "id": "netlist-nrf-imcu-reset-fanout",
+  "title": "Altium 开发板:IMCU_RESET 一共接到哪些地方",
+  "tags": ["netlist", "L1", "altium", "easy"],
+  "requires": ["engines"],
+  "env": { "kind": "none" },
+  "setup": {
+    "files": [{ "from": "engines/controller_map/tests/fixtures/pca10056.NET", "to": "board.NET" }]
+  },
+  "prompt": "这是我们板子的网表,在工作目录里叫 board.NET。板上那颗带调试口的 MCU,它的复位网络叫 IMCU_RESET。我怀疑复位被别的东西拉住了,所以要把这条线从 MCU 引脚出去之后连到的地方全部列清楚 —— 排针、测试点、经上拉电阻上到的电源轨都算,漏一个都不行。MCU 自己那一脚不用列。\n\n答案格式:引脚终点写成 位号.引脚号(例如 U9.14),电源轨写成 RAIL:轨名(例如 RAIL:+5V);把全部终点放进一个 JSON 数组,顺序无所谓。最后一条消息用 ```json 围栏给出 {\"answer\": [\"…\", \"…\"]},围栏里只填这些标识,不要附说明。",
+  "reference": {
+    "answer": ["J4.10", "TP50.1", "RAIL:VDD_IMCU"],
+    "note": "check_connections.py:84 `IMCU_RESET destinations: J4.10 connector, TP50.1 testpoint, VDD_IMCU rail`。直跑核实:controller_map.exe pca10056.NET(自动主控 U2)的 pin AC31 / net IMCU_RESET,traced 三条:J4.10(直连)、TP50.1(直连)、经 R8 100k 到 rail VDD_IMCU。"
+  },
+  "graders": [
+    { "type": "answer", "equals": ["J4.10", "TP50.1", "RAIL:VDD_IMCU"] },
+    { "type": "grounded", "needles": ["IMCU_RESET", "J4", "TP50", "VDD_IMCU"] },
+    { "type": "tool-forbidden", "tools": ["flash", "gdb", "log"] }
+  ]
+}

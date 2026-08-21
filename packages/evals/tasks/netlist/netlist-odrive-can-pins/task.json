@@ -1,0 +1,27 @@
+{
+  "id": "netlist-odrive-can-pins",
+  "title": "Altium 驱动板:CAN 收发落在 STM32 哪两个脚",
+  "tags": ["netlist", "L1", "altium", "stm32", "hard"],
+  "requires": ["engines"],
+  "env": { "kind": "none" },
+  "setup": {
+    "files": [{ "from": "engines/controller_map/tests/fixtures/odrive_two_ax.NET", "to": "board.NET" }]
+  },
+  "prompt": "board.NET 是一块双轴电机驱动板的网表,主控是 STM32F405RGT6。我要给它加 CAN 通信,写初始化之前先确认板子把 CAN 的收、发两根线接在了 MCU 的哪两个脚上。\n\n答案格式:引脚名按 STM32 的 pad 写法(例如 PF11),两个放进一个 JSON 数组,顺序无所谓。最后一条消息用 ```json 围栏给出 {\"answer\": [\"…\", \"…\"]},围栏里只填这些标识,不要附说明。",
+  "reference": {
+    "answer": ["PB8", "PB9"],
+    "note": "check_stm32_map.py:48 `\"CAN1\": {\"RX\": \"PB8\", \"TX\": \"PB9\"}`(与 stm32-config-kernel 的 odrive parity 配置一致)。直跑核实:board_ir.exe odrive_two_ax.NET --stm32kernel … --part STM32F405RGT6 写出的 stm32_map 里 CAN1 confidence=high、pins {RX: PB8, TX: PB9},证据是 PB8/CAN_R_1、PB9/CAN_D_1 接 U1 SN65HVD232D。裸的逐 pin 图里 pin 61/62 落在 10,000 字符截断之外,要带 part 跑 board IR(stm32_map 18,957 字符,未超 24,000 的内联上限,整份都在工具输出里)。"
+  },
+  "graders": [
+    { "type": "answer", "equals": ["PB8", "PB9"] },
+    { "type": "grounded", "needles": ["CAN1", "PB8", "PB9"] },
+    { "type": "tool-forbidden", "tools": ["flash", "gdb", "log"] }
+  ],
+  "faux": {
+    "good": [
+      [{ "tool": "netlist", "input": { "netlistPath": "board.NET", "part": "STM32F405RGT6" } }],
+      [{ "text": "```json\n{\"answer\": [\"PB8\", \"PB9\"]}\n```" }]
+    ],
+    "bad": [[{ "text": "```json\n{\"answer\": [\"PA11\", \"PA12\"]}\n```" }]]
+  }
+}

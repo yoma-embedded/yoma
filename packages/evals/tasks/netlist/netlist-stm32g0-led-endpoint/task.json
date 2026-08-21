@@ -1,0 +1,20 @@
+{
+  "id": "netlist-stm32g0-led-endpoint",
+  "title": "EESchema 小板:LED_CTRL 经限流电阻落到哪儿",
+  "tags": ["netlist", "L1", "eeschema", "easy"],
+  "requires": ["engines"],
+  "env": { "kind": "none" },
+  "setup": {
+    "files": [{ "from": "engines/controller_map/tests/fixtures/stm32_eeschema_legacy.net", "to": "board.net" }]
+  },
+  "prompt": "这是一块很小的板子的网表,在工作目录里叫 board.net。MCU 有一路叫 LED_CTRL 的输出,中间串了个限流电阻。我要确认这一路最终点亮的是哪个器件的哪个脚 —— 中间那个电阻不算终点。\n\n答案格式:引脚终点写成 位号.引脚号,例如 U9.14。最后一条消息用 ```json 围栏给出 {\"answer\": \"…\"},围栏里只填这个标识,不要附说明。",
+  "reference": {
+    "answer": "D2.1",
+    "note": "check.py:102 `LED_CTRL (pin 4) traces through R1 ($noname footprint) to D2.1`。直跑核实:controller_map.exe stm32_eeschema_legacy.net 输出 2324 字符不截断,pin 4 / net /LED_CTRL 的 traced 唯一一条 via R1(1k, resistor)→ endpoint D2.1。注意板上另有一颗 D1 直连 pin 5(Net-(D1-A)),答 D1.1 是错的。"
+  },
+  "graders": [
+    { "type": "answer", "equals": "D2.1" },
+    { "type": "grounded", "needles": ["/LED_CTRL", "D2", "R1"] },
+    { "type": "tool-forbidden", "tools": ["flash", "gdb", "log"] }
+  ]
+}

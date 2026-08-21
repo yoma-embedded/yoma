@@ -1,5 +1,5 @@
 /**
- * yoma 的路径映射存在四份,这是被工具链逼出来的,不是懒:
+ * yoma 的路径映射存在五份,这是被工具链逼出来的,不是懒:
  *
  *   1. `packages/kernel/kernel-alias.ts` 的 KERNEL_ALIASES —— 打包期(electron-vite / esbuild)用;
  *   2. `tsconfig.yoma.json` 的 paths —— typecheck 期(tsgo)用,被 desktop/app 继承;
@@ -8,8 +8,10 @@
  *      "Cannot find module '@yoma/agent'"。
  *   4. `packages/bench/tsconfig.json` 的内联副本 —— 同理:bench 直接跑源码(不打包),
  *      `bun test` 和 CLI 都靠它解析 yoma。
+ *   5. `packages/evals/tsconfig.json` 的内联副本 —— 同理:evals 也直接跑源码
+ *      (它 import bench 的 runner 起 turn-entry 子进程,那条路上全是 yoma 源码)。
  *
- * 三份不一致的后果是分裂的:构建能过但类型是错的,或者类型对但运行时找不到模块 ——
+ * 五份不一致的后果是分裂的:构建能过但类型是错的,或者类型对但运行时找不到模块 ——
  * 都不会在改动的当下报错。所以用这个测试把它们钉死。
  */
 import { describe, expect, test } from "bun:test"
@@ -55,6 +57,7 @@ describe("yoma 别名映射", () => {
   const shared = resolvePaths(path.join(repoRoot, "tsconfig.yoma.json"))
   const inlined = resolvePaths(path.join(kernelDir, "tsconfig.json"))
   const benchInlined = resolvePaths(path.join(repoRoot, "packages", "bench", "tsconfig.json"))
+  const evalsInlined = resolvePaths(path.join(repoRoot, "packages", "evals", "tsconfig.json"))
 
   test("KERNEL_DIR 指向本仓根", () => {
     // 认标志文件,不认目录名 —— 换成 worktree 之后目录可能叫任何名字。
@@ -83,6 +86,16 @@ describe("yoma 别名映射", () => {
     expect(Object.keys(benchInlined).sort()).toEqual(Object.keys(shared).sort())
     for (const key of Object.keys(shared)) {
       expect(benchInlined[key]).toBe(shared[key]!)
+    }
+  })
+
+  test("evals 的内联副本与共享 tsconfig 一致", () => {
+    // 第三个直接跑 yoma 源码的包。它经 bench 的 runTurnInChildProcess 起 turn-entry
+    // 子进程,子进程从 evals 的 cwd 出发解析 —— 漏钉这一份,评测跑的和 typecheck 验的
+    // 就不是同一份代码,而分数看起来完全正常。
+    expect(Object.keys(evalsInlined).sort()).toEqual(Object.keys(shared).sort())
+    for (const key of Object.keys(shared)) {
+      expect(evalsInlined[key]).toBe(shared[key]!)
     }
   })
 

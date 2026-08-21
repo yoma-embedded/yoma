@@ -1,0 +1,27 @@
+{
+  "id": "netlist-rp2040-qspi-ss-dnf",
+  "title": "KiCad 小板:片选上那个不贴的上拉是哪个位号",
+  "tags": ["netlist", "L1", "kicad", "hard"],
+  "requires": ["engines"],
+  "env": { "kind": "none" },
+  "setup": {
+    "files": [{ "from": "engines/controller_map/tests/fixtures/RP2040_kicad_netlist.xml", "to": "board.xml" }]
+  },
+  "prompt": "board.xml 是这块板的网表。片外 Flash 的片选(QSPI_SS)那条网上,原理图里画了一个上拉到 +3V3 的电阻,但我记得这一版量产是不贴的(DNF)。现在片选一直是低的,我要先排除是不是这个上拉真的贴上了。帮我确认那个标成不贴的电阻是哪个位号。\n\n答案格式:元件用位号,例如 U9。最后一条消息用 ```json 围栏给出 {\"answer\": \"…\"},围栏里只填这个标识,不要附说明。",
+  "reference": {
+    "answer": "R2",
+    "note": "check.py:56-57 `QSPI_SS pull-up via R2 is flagged DNF and terminates on +3V3`。直跑核实:controller_map.exe RP2040_kicad_netlist.xml 的 pin 56 / net /QSPI_SS 有三条 traced —— U2.1(直连)、经 R1(1k)到 J2.1、经 R2(value \"DNF\", dnf=true)到 rail +3V3;整份网表里 value 为 DNF 的元件只有 R2 一个(XML 第 711-712 行)。答案落在原始逐 pin 图 10,000 字符截断之外(pin 56 远在窗口尾部,窗口只到 pin 20),要么改指 mainController、要么自己去读 XML。"
+  },
+  "graders": [
+    { "type": "answer", "equals": "R2" },
+    { "type": "grounded", "needles": ["QSPI_SS", "DNF"] },
+    { "type": "tool-forbidden", "tools": ["flash", "gdb", "log"] }
+  ],
+  "faux": {
+    "good": [
+      [{ "tool": "netlist", "input": { "netlistPath": "board.xml", "mainController": "U2" } }],
+      [{ "text": "```json\n{\"answer\": \"R2\"}\n```" }]
+    ],
+    "bad": [[{ "text": "```json\n{\"answer\": \"R1\"}\n```" }]]
+  }
+}

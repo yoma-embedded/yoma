@@ -18,7 +18,7 @@
     "test:ai": "bun run --cwd packages/ai test",
     "example:01": "bun example/01-minimal-agent.ts",
     "example:02": "bun example/02-parallel-tools.ts",
-    "test": "bun test packages/agent && bun test --cwd packages/coding-agent && bun --cwd packages/kernel test && bun --cwd packages/bench test && bun --cwd packages/app test src && bun --cwd packages/session-ui test src && bun --cwd packages/ui test src"
+    "test": "bun test packages/agent && bun test --cwd packages/coding-agent && bun --cwd packages/kernel test && bun --cwd packages/bench test && bun --cwd packages/app test src && bun --cwd packages/session-ui test src && bun --cwd packages/ui test src && bun --cwd packages/evals test"
   },
   "workspaces": {
     "packages": [

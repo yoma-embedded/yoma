@@ -1,0 +1,27 @@
+{
+  "id": "netlist-sumobot-servo-timer",
+  "title": "EESchema 小车板:两个舵机该用哪个定时器",
+  "tags": ["netlist", "L1", "eeschema", "stm32", "hard"],
+  "requires": ["engines"],
+  "env": { "kind": "none" },
+  "setup": {
+    "files": [{ "from": "engines/controller_map/tests/fixtures/sumobot_eeschema.net", "to": "board.net" }]
+  },
+  "prompt": "board.net 是这台小车主板的网表,主控是 STM32F103C8T6。板上有两个舵机接口,我要用硬件 PWM 同时驱动它们。这两路正好落在同一个定时器的两个通道上,帮我确认是哪个定时器实例 —— 我要照它去配时基。\n\n答案格式:只填定时器实例名,例如 TIM7。最后一条消息用 ```json 围栏给出 {\"answer\": \"…\"},围栏里只填这个标识,不要附说明。",
+  "reference": {
+    "answer": "TIM3",
+    "note": "check_actuators.py:46-47 `servo headers share TIM3 CH3/CH4 (plain CH preferred over TIM1_CHxN)`。直跑核实:board_ir.exe sumobot_eeschema.net --stm32kernel … --part STM32F103C8T6 的 stm32_map 里 TIM3 pins {CH3: PB0, CH4: PB1},证据 reasons 分别是 endpoint:servo(S1 Servo) / endpoint:servo(S2 Servo),alternatives 是 TIM1_CH2N / TIM1_CH3N(输的那一档);两个 DRV8871 走的是 TIM2(PA2/PA3)与 TIM4(PB8/PB9),不是这一题的答案。注意:这一份 board_ir 会在 stderr 报三条 \"wrong part or package?\" 警告(蓝药丸模块按 pad 名而不是封装位号编号),但 TIM 建议本身是对的。"
+  },
+  "graders": [
+    { "type": "answer", "equals": "TIM3" },
+    { "type": "grounded", "needles": ["TIM3", "/S101"] },
+    { "type": "tool-forbidden", "tools": ["flash", "gdb", "log"] }
+  ],
+  "faux": {
+    "good": [
+      [{ "tool": "netlist", "input": { "netlistPath": "board.net", "part": "STM32F103C8T6" } }],
+      [{ "text": "```json\n{\"answer\": \"TIM3\"}\n```" }]
+    ],
+    "bad": [[{ "text": "```json\n{\"answer\": \"TIM2\"}\n```" }]]
+  }
+}

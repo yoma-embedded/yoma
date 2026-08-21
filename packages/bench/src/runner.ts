@@ -43,6 +43,20 @@ export interface TurnInput {
   toolchainManifestText?: string
   /** 假模型脚本(本机演练/打包冒烟)。有它则子进程不联网、不要 key,其余全真。 */
   faux?: FauxScript
+  /**
+   * idle 之后再等多久才认定一轮结束(躲开自动压缩的第二段)。**只有测试会调小它** ——
+   * 生产用 turn.ts 的默认值,调小的代价是把重试退避窗口误判成"跑完了"。
+   */
+  settleMs?: number
+  /**
+   * 轮次内部的硬上限。**不是预算** —— 它防的是"事件流因为某种原因永不静默",
+   * 那会让子进程带着一个永远不 resolve 的 await 挂着。花多少钱不归它管:
+   * 调试台没有轮数/token/墙钟上限(什么时候停归模型),而 evals 一 trial 一轮,
+   * 每题的 `timeoutMs` 是从这里下去的。
+   *
+   * turn-entry.ts 是 `...input` 整个展开进 runTurn 的,所以这里加类型就是全部接线。
+   */
+  hardTimeoutMs?: number
 }
 
 /**

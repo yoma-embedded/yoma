@@ -1,0 +1,29 @@
+{
+  "name": "@yoma-desktop/evals",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "agent 评测:task × trial → graders → results;复用 bench 的执行核心,评的就是用户用的那个 agent",
+  "bin": {
+    "yoma-evals": "./src/cli.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit",
+    "test": "bun test src",
+    "evals": "bun ./src/cli.ts"
+  },
+  "dependencies": {
+    "@yoma-desktop/bench": "workspace:*",
+    "@yoma-desktop/kernel": "workspace:*"
+  },
+  "devDependencies": {
+    "@tsconfig/bun": "catalog:",
+    "@types/bun": "catalog:",
+    "@typescript/native-preview": "catalog:",
+    "typescript": "catalog:"
+  }
+}

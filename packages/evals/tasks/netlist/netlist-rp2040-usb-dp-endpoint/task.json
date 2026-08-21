@@ -1,0 +1,27 @@
+{
+  "id": "netlist-rp2040-usb-dp-endpoint",
+  "title": "KiCad 小板:USB D+ 经串阻落到 USB 座哪个脚",
+  "tags": ["netlist", "L1", "kicad", "hard"],
+  "requires": ["engines"],
+  "env": { "kind": "none" },
+  "setup": {
+    "files": [{ "from": "engines/controller_map/tests/fixtures/RP2040_kicad_netlist.xml", "to": "board.xml" }]
+  },
+  "prompt": "板子插上电脑枚举不出来,我怀疑 USB 差分对接反了。网表在工作目录的 board.xml 里。USB 的 D+ 从主控出来会经过一个 27Ω 的串阻,帮我确认它最终落在 USB 座的哪个脚上。\n\n答案格式:引脚终点写成 位号.引脚号,例如 U9.14。最后一条消息用 ```json 围栏给出 {\"answer\": \"…\"},围栏里只填这个标识,不要附说明。",
+  "reference": {
+    "answer": "J1.3",
+    "note": "check.py:50-53 `USB_DP (pin 47) traces through R3 to J1.3` + `USB_DP via is R3 27R`。直跑核实:controller_map.exe 的 pin 47(pin_name USB_DP,net Net-(U3-USB_DP))traced 唯一一条 via R3(27, resistor)→ J1.3;反向跑 --main-controller J1 也一致(J1 pin 3 \"D+\" 经 R3 到 U3.47,J1 pin 2 \"D-\" 经 R4 到 U3.46)。答案落在 10,000 字符截断之外(窗口只到 pin 20)。"
+  },
+  "graders": [
+    { "type": "answer", "equals": "J1.3" },
+    { "type": "grounded", "needles": ["USB_DP", "R3"] },
+    { "type": "tool-forbidden", "tools": ["flash", "gdb", "log"] }
+  ],
+  "faux": {
+    "good": [
+      [{ "tool": "netlist", "input": { "netlistPath": "board.xml", "mainController": "J1" } }],
+      [{ "text": "```json\n{\"answer\": \"J1.3\"}\n```" }]
+    ],
+    "bad": [[{ "text": "```json\n{\"answer\": \"J1.2\"}\n```" }]]
+  }
+}

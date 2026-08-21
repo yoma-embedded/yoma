@@ -1,0 +1,20 @@
+{
+  "id": "netlist-nrf-target-mcu-ref",
+  "title": "Altium 开发板:两颗 Nordic 芯片,目标芯片是哪个位号",
+  "tags": ["netlist", "L1", "altium", "easy"],
+  "requires": ["engines"],
+  "env": { "kind": "none" },
+  "setup": {
+    "files": [{ "from": "engines/controller_map/tests/fixtures/pca10056.NET", "to": "board.NET" }]
+  },
+  "prompt": "board.NET 是这块开发板的网表。板上有两颗 Nordic 的芯片:一颗是板载调试器(interface MCU),另一颗 nRF52840 才是我要烧固件的目标芯片,两颗脚数还挺接近。帮我确认 nRF52840 这一颗的位号是什么 —— 别把调试器那颗当成它。\n\n答案格式:元件用位号,例如 U9。最后一条消息用 ```json 围栏给出 {\"answer\": \"…\"},围栏里只填这个标识,不要附说明。",
+  "reference": {
+    "answer": "U1",
+    "note": "check.py:68 `runner-up is U1 / nRF52840`,check.py:72 `override gives U1 / nRF52840`。直跑核实:controller_map.exe pca10056.NET 自动挑的是 U2 nRF5340-QKAA(98 脚,low_confidence=true),U1 nRF52840-QIAA(74 脚)是 runner_up —— 照抄自动结论就会答错。"
+  },
+  "graders": [
+    { "type": "answer", "equals": "U1" },
+    { "type": "grounded", "needles": ["nRF52840", "U1"] },
+    { "type": "tool-forbidden", "tools": ["flash", "gdb", "log"] }
+  ]
+}

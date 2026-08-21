@@ -1,0 +1,20 @@
+{
+  "id": "netlist-sumobot-motor-in1",
+  "title": "EESchema 小车板:PA2 接到哪颗电机驱动的哪个脚",
+  "tags": ["netlist", "L1", "eeschema", "easy"],
+  "requires": ["engines"],
+  "env": { "kind": "none" },
+  "setup": {
+    "files": [{ "from": "engines/controller_map/tests/fixtures/sumobot_eeschema.net", "to": "board.net" }]
+  },
+  "prompt": "board.net 是这台小车主板的网表。主控的 PA2 我准备拿来发电机 PWM,但板上有两颗一模一样的电机驱动芯片,我怕接反了。帮我确认 PA2 到底接到哪颗驱动芯片的哪个脚。\n\n答案格式:引脚终点写成 位号.引脚号,例如 U9.14。最后一条消息用 ```json 围栏给出 {\"answer\": \"…\"},围栏里只填这个标识,不要附说明。",
+  "reference": {
+    "answer": "U1.3",
+    "note": "check_board_ir.py:148-149 `PA2 joined to /M101 by pad name`;check_actuators.py:42-43 `U1 DRV8871 IN pins -> TIM2 CH3/CH4`。直跑核实:controller_map.exe sumobot_eeschema.net 里 PA2 / net /M101 直连 U1.3(DRV8871DDAR),另一颗驱动是 U2(PB8→U2.2、PB9→U2.3),PA3→U1.2。"
+  },
+  "graders": [
+    { "type": "answer", "equals": "U1.3" },
+    { "type": "grounded", "needles": ["/M101", "DRV8871"] },
+    { "type": "tool-forbidden", "tools": ["flash", "gdb", "log"] }
+  ]
+}

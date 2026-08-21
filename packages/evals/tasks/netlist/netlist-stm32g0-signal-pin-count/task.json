@@ -1,0 +1,20 @@
+{
+  "id": "netlist-stm32g0-signal-pin-count",
+  "title": "EESchema 小板:MCU 除电源外用了几个脚",
+  "tags": ["netlist", "L1", "eeschema", "easy"],
+  "requires": ["engines"],
+  "env": { "kind": "none" },
+  "setup": {
+    "files": [{ "from": "engines/controller_map/tests/fixtures/stm32_eeschema_legacy.net", "to": "board.net" }]
+  },
+  "prompt": "board.net 是这块小板子的网表。这一版原理图上 MCU 大部分脚都空着,我要估一下还剩多少 IO 能用。把电源和地那几个脚(+3V3、GND 这类,含挂在层次化电源网上的)排除之后,MCU 在网表里一共还列了几个脚?注意:那些名字是自动生成的 unconnected-… 网络上的脚也要算进去。\n\n答案格式:一个数字。最后一条消息用 ```json 围栏给出 {\"answer\": 12} 这种形式(数字换成你算出来的),围栏里不要附说明。",
+  "reference": {
+    "answer": 4,
+    "note": "check.py:99-100 `{p.pin for p in ee.signal_pins} == {\"4\",\"5\",\"6\",\"7\"}`(power pins filtered incl. hierarchical /Power/D+3V3)。直跑核实:U1 在网表里共 7 脚,1=+3V3、2=/Power/D+3V3、3=GND 被当电源滤掉,余 4/5/6/7 共 4 个;pin 6 挂 unconnected-(U1-PB0-Pad6) 仍计入。"
+  },
+  "graders": [
+    { "type": "answer", "equals": 4 },
+    { "type": "grounded", "needles": ["STM32G031", "unconnected-"] },
+    { "type": "tool-forbidden", "tools": ["flash", "gdb", "log"] }
+  ]
+}

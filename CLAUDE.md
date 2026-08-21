@@ -37,13 +37,14 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
 - `coding-agent` 的 `exports` 里**没有** `/system-prompt`、`/models`、`/resources`
   这三个深引用,它们只靠别名可达。改成 workspace 解析之前必须先补 exports。
 
-映射仍存在 **四份**(被工具链逼的,`packages/kernel/src/kernel-alias.test.ts` 钉住):
+映射仍存在 **五份**(被工具链逼的,`packages/kernel/src/kernel-alias.test.ts` 钉住):
 
 | 位置 | 谁用 |
 |---|---|
 | `tsconfig.yoma.json` 的 `paths` | typecheck(tsgo),被 kernel/desktop 继承 —— **位置的真源** |
 | `packages/kernel/tsconfig.json` 里 **内联** 的同一份 | `bun test` —— bun 不跟随数组形式的 `extends` |
 | `packages/bench/tsconfig.json` 里同样的内联副本 | bench 直接跑源码,同理 |
+| `packages/evals/tsconfig.json` 里同样的内联副本 | evals 也直接跑源码(经 bench 起 turn-entry) |
 | `packages/kernel/kernel-alias.ts` 的 `KERNEL_ALIASES` | 打包期(electron-vite / esbuild),根目录从第一份反推 |
 
 两个细节:paths 的值必须是**相对路径**(`./packages/...`),写成 `packages/...` 会
@@ -51,7 +52,7 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
 
 ## 仓库结构
 
-Bun workspace,`packages/` 下 7 个包:
+Bun workspace,`packages/` 下 8 个包:
 
 | 包 | 名字 | 职责 |
 |---|---|---|
@@ -62,9 +63,11 @@ Bun workspace,`packages/` 下 7 个包:
 | `session-ui` | `@yoma-desktop/session-ui` | transcript 渲染:消息、工具卡片、流式 markdown、Pierre diff |
 | `util` | `@yoma-desktop/util` | 纯函数小工具 |
 | `bench` | `@yoma-desktop/bench` | **无人值守调试台**:job 交给内核跑到底,判据自验,产出分支与报告 |
+| `evals` | `@yoma-desktop/evals` | agent 评测:task × trial → graders → results;复用 bench 的 turn-entry |
 
 分层单向:`ui`(叶) → `session-ui` → `app` → `desktop`;`kernel` 被 `app`、`desktop`
-和 `bench` 消费(`bench` 是 host 的**第二个宿主**,不经 Electron)。
+和 `bench` 消费(`bench` 是 host 的**第二个宿主**,不经 Electron)。`evals` 消费
+`bench`(执行核心)与 `kernel`(类型与档位表),是这条链上最靠外的一层,不进安装包。
 
 `packages/kernel` 的两个入口边界必须守住:
 

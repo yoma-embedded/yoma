@@ -1,0 +1,20 @@
+{
+  "id": "netlist-rp2040-xin-crystal",
+  "title": "KiCad 小板:XIN 上挂的是哪颗晶振",
+  "tags": ["netlist", "L1", "kicad", "easy"],
+  "requires": ["engines"],
+  "env": { "kind": "none" },
+  "setup": {
+    "files": [{ "from": "engines/controller_map/tests/fixtures/RP2040_kicad_netlist.xml", "to": "board.xml" }]
+  },
+  "prompt": "这块板起振有点问题,我要先把时钟这一路的连接核清楚。网表在工作目录的 board.xml 里。主控的 XIN 脚上除了对地的负载电容以外,信号真正落在哪个器件的哪个脚上?\n\n答案格式:引脚终点写成 位号.引脚号,例如 U9.14。最后一条消息用 ```json 围栏给出 {\"answer\": \"…\"},围栏里只填这个标识,不要附说明。",
+  "reference": {
+    "answer": "Y1.1",
+    "note": "check.py:59 `XIN (pin 20) traces only to crystal Y1.1 (stub load cap C2 excluded from traced)`。直跑核实:pin 20 的 direct_nodes 是 C2.1(15p)与 Y1.1(ABM8-272-T3),但 traced 只有 Y1.1 —— 负载电容是 stub,不进 traced。"
+  },
+  "graders": [
+    { "type": "answer", "equals": "Y1.1" },
+    { "type": "grounded", "needles": ["/XIN", "Y1"] },
+    { "type": "tool-forbidden", "tools": ["flash", "gdb", "log"] }
+  ]
+}

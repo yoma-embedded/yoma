@@ -1,0 +1,27 @@
+{
+  "id": "netlist-nrf52840-p031-fanout",
+  "title": "Altium 开发板:P0.31 引到了哪些排针和测试点",
+  "tags": ["netlist", "L1", "altium", "hard"],
+  "requires": ["engines"],
+  "env": { "kind": "none" },
+  "setup": {
+    "files": [{ "from": "engines/controller_map/tests/fixtures/pca10056.NET", "to": "board.NET" }]
+  },
+  "prompt": "board.NET 是这块开发板的网表。我打算用 nRF52840 的 P0.31 做一路模拟采样,接外部传感器之前得先知道这个脚在板上还被引到了哪些地方(排针、插座、测试点都算),免得挂了别的负载影响精度。请把终点全部列出来,漏一个都不行。提醒一句:板上还有一颗板载调试器芯片,脚数比目标芯片还多,别把它的脚当成 nRF52840 的。\n\n答案格式:引脚终点写成 位号.引脚号(例如 U9.14),全部放进一个 JSON 数组,顺序无所谓。最后一条消息用 ```json 围栏给出 {\"answer\": [\"…\", \"…\"]},围栏里只填这些标识,不要附说明。",
+  "reference": {
+    "answer": ["P2.6", "P8.6", "P14.12", "TP47.1"],
+    "note": "此条无现成 check 断言,是从 check.py:72-74(override 才拿得到 U1 / nRF52840 的 64 个信号脚)推出的同类事实,已直跑核实:controller_map.exe pca10056.NET --main-controller U1 的 pin A8 / net P0.31/AIN7,direct_nodes 与 traced 都是 P2.6、P8.6、P14.12、TP47.1 四个,无 via。自动探测选的是 U2(nRF5340),它的图里 P0.31 一次都不出现(grep 计数 0),所以必须覆盖主控才答得出。"
+  },
+  "graders": [
+    { "type": "answer", "equals": ["P2.6", "P8.6", "P14.12", "TP47.1"] },
+    { "type": "grounded", "needles": ["P0.31", "nRF52840"] },
+    { "type": "tool-forbidden", "tools": ["flash", "gdb", "log"] }
+  ],
+  "faux": {
+    "good": [
+      [{ "tool": "netlist", "input": { "netlistPath": "board.NET", "mainController": "U1" } }],
+      [{ "text": "```json\n{\"answer\": [\"P2.6\", \"P8.6\", \"P14.12\", \"TP47.1\"]}\n```" }]
+    ],
+    "bad": [[{ "text": "```json\n{\"answer\": [\"P2.6\", \"P8.6\"]}\n```" }]]
+  }
+}

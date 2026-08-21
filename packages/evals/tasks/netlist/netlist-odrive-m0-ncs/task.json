@@ -1,0 +1,20 @@
+{
+  "id": "netlist-odrive-m0-ncs",
+  "title": "Altium 驱动板:M0_nCS 片选去了哪颗芯片",
+  "tags": ["netlist", "L1", "altium", "easy"],
+  "requires": ["engines"],
+  "env": { "kind": "none" },
+  "setup": {
+    "files": [{ "from": "engines/controller_map/tests/fixtures/odrive_two_ax.NET", "to": "board.NET" }]
+  },
+  "prompt": "board.NET 是一块双轴电机驱动板的网表。SPI 上有一路片选叫 M0_nCS,我要确认它接到哪颗芯片的哪个脚上。板上两轴各有一颗一样的栅极驱动,别拿成另一轴那颗了。\n\n答案格式:引脚终点写成 位号.引脚号,例如 U9.14。最后一条消息用 ```json 围栏给出 {\"answer\": \"…\"},围栏里只填这个标识,不要附说明。",
+  "reference": {
+    "answer": "U4.8",
+    "note": "直跑核实(此条 check 脚本未直接断言,但与 check_stm32_map.py:78-79 的 `PC13 M0_nCS output initHigh` 同一条网):controller_map.exe odrive_two_ax.NET 的 signal_pins 第一项 pin 2 / net M0_nCS_1 直连并 traced 到 U4.8;M1 那一轴是 M1_nCS_1 → U5.8。两条都在截断前的窗口内。"
+  },
+  "graders": [
+    { "type": "answer", "equals": "U4.8" },
+    { "type": "grounded", "needles": ["M0_nCS", "U4"] },
+    { "type": "tool-forbidden", "tools": ["flash", "gdb", "log"] }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "id": "netlist-rp2040-gpio0-header",
+  "title": "KiCad 小板:GPIO0 引到排针的哪个脚",
+  "tags": ["netlist", "L1", "kicad", "easy"],
+  "requires": ["engines"],
+  "env": { "kind": "none" },
+  "setup": {
+    "files": [{ "from": "engines/controller_map/tests/fixtures/RP2040_kicad_netlist.xml", "to": "board.xml" }]
+  },
+  "prompt": "板子上 GPIO0 那一路我怀疑插错排针了。网表在工作目录的 board.xml 里。帮我确认 GPIO0 最终接到哪个连接器的哪个脚上。\n\n答案格式:引脚终点写成 位号.引脚号,例如 U9.14。最后一条消息用 ```json 围栏给出 {\"answer\": \"…\"},围栏里只填这个标识,不要附说明。",
+  "reference": {
+    "answer": "J3.4",
+    "note": "check.py:49 `GPIO0 (pin 2) traces directly to J3.4`。直跑核实:controller_map.exe 的 stdout 里 signal_pins 第一项 pin \"2\"、pin_name \"GPIO0\"、net \"/GPIO0\",traced 只有一条 endpoint {ref: J3, pin: 4}(无 via)。"
+  },
+  "graders": [
+    { "type": "answer", "equals": "J3.4" },
+    { "type": "grounded", "needles": ["/GPIO0", "J3"] },
+    { "type": "tool-forbidden", "tools": ["flash", "gdb", "log"] }
+  ]
+}

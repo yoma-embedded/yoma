@@ -1,0 +1,20 @@
+{
+  "id": "netlist-rp2040-main-controller",
+  "title": "KiCad 小板:哪一颗是主控",
+  "tags": ["netlist", "L1", "kicad", "easy"],
+  "requires": ["engines"],
+  "env": { "kind": "none" },
+  "setup": {
+    "files": [{ "from": "engines/controller_map/tests/fixtures/RP2040_kicad_netlist.xml", "to": "board.xml" }]
+  },
+  "prompt": "这是我们一块小板子的网表,在工作目录里叫 board.xml。板上芯片有好几颗,我一时分不清哪一颗是主控 MCU、哪些只是外挂的存储和电源。帮我确认主控是哪个位号。\n\n答案格式:元件用位号,例如 U9。最后一条消息用 ```json 围栏给出 {\"answer\": \"…\"},围栏里只填这个标识,不要附说明。",
+  "reference": {
+    "answer": "U3",
+    "note": "check.py:45 `controller is U3 / RP2040`。直跑核实:controller_map.exe RP2040_kicad_netlist.xml → stderr `Detected main controller (auto): U3 RP2040 (MCU_RaspberryPi_RP2040, 57 pins).`,stdout controller.ref == \"U3\"、low_confidence == false。"
+  },
+  "graders": [
+    { "type": "answer", "equals": "U3" },
+    { "type": "grounded", "needles": ["U3", "RP2040"] },
+    { "type": "tool-forbidden", "tools": ["flash", "gdb", "log"] }
+  ]
+}

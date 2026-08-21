@@ -194,6 +194,23 @@
         "@parcel/watcher-win32-x64": "2.5.1",
       },
     },
+    "packages/evals": {
+      "name": "@yoma-desktop/evals",
+      "version": "0.0.0",
+      "bin": {
+        "yoma-evals": "./src/cli.ts",
+      },
+      "dependencies": {
+        "@yoma-desktop/bench": "workspace:*",
+        "@yoma-desktop/kernel": "workspace:*",
+      },
+      "devDependencies": {
+        "@tsconfig/bun": "catalog:",
+        "@types/bun": "catalog:",
+        "@typescript/native-preview": "catalog:",
+        "typescript": "catalog:",
+      },
+    },
     "packages/kernel": {
       "name": "@yoma-desktop/kernel",
       "version": "0.0.0",
@@ -1048,6 +1065,8 @@
     "@yoma-desktop/bench": ["@yoma-desktop/bench@workspace:packages/bench"],
 
     "@yoma-desktop/desktop": ["@yoma-desktop/desktop@workspace:packages/desktop"],
+
+    "@yoma-desktop/evals": ["@yoma-desktop/evals@workspace:packages/evals"],
 
     "@yoma-desktop/kernel": ["@yoma-desktop/kernel@workspace:packages/kernel"],
 
