@@ -66,6 +66,10 @@ Bun workspace,`packages/` 下 7 个包:
 分层单向:`ui`(叶) → `session-ui` → `app` → `desktop`;`kernel` 被 `app`、`desktop`
 和 `bench` 消费(`bench` 是 host 的**第二个宿主**,不经 Electron)。
 
+`engines/` 是仓内真目录(2026-08-17 吸收),`bun engines/build.ts` 把各引擎装进 `engines/bin` +
+`engines/data`。其中 `engines/logic-analyzer/` 是 **GPLv3**(vendored 自 DSView,见下文
+"逻辑分析仪"),目录自带 LICENSE;Yoma 主体只经命令行与它对话,保持 MIT。
+
 `packages/kernel` 的两个入口边界必须守住:
 
 - `.`(`src/index.ts`)—— **浏览器安全**,不 import yoma、不 import `node:*`。
@@ -93,6 +97,8 @@ Bun workspace,`packages/` 下 7 个包:
 | `bun --cwd packages/desktop e2e:mailbox` | main 托管端到端:真 kernel.js 的 `mailbox.setActive` 往返 + 假守护喂 `@@event` + 停止杀树 + 锁冲突人话 |
 | `bun packages/bench/src/cli.ts check <job.json>` | 校验任务书 + 本机内核装配 |
 | `bun packages/bench/src/cli.ts mailbox sim <job.json> --project <工程目录>` | 信箱闭环单机模拟(`init`/`runner`/`mother`/`status` 是生产形态的四个子命令;工程目录是本机事实,任务书里没有) |
+| `bun engines/logic-analyzer/build.ts [--dist --out DIR]` | 只构建/安装逻辑分析仪引擎 yoma-la(`engines/build.ts` 会顺带做;Windows 要 MSYS2 ucrt64) |
+| `engines/logic-analyzer/run.sh decode --in X.dsl --pd "i2c0=1:i2c:scl=1:sda=0"` | 开发期直接跑 build/ 里的引擎(把 ucrt64 的 DLL 放进 PATH) |
 
 `smoke` / `e2e:ipc` / `e2e:renderer` 是 CI(Windows 岗)里挡住"yoma 一次重构悄悄搞死桌面端"的东西 —— 我们是把它整个 inline
 进 bundle 的,内核的改动可以在我们这边零编译错误地把 app 弄坏,直到用户点下去才发现。
@@ -392,6 +398,70 @@ text part,不过滤的话提示词会原样出现在终报的"根因分析"里)�
 - 浏览器侧类型是 kernel 的 `mailbox-view.ts`(结构化复制,View 后缀),漂移由
   bench 的 `mailbox/view-check.ts` 约束式断言兜住 —— 与工具 details 同一套纪律。
 
+### 逻辑分析仪(`la` 工具 / `engines/logic-analyzer`)
+
+2026-08-21 起。DreamSourceLab DSLogic 的采集与协议解码**原生集成**,用户不装 DSView。
+
+**形态**:一个 C 引擎 `engines/bin/yoma-la`(子命令 `devices` / `capture` → `.dsl` / `decode` → NDJSON
+注解流 / `decoders` 元数据),vendored 自 DSView 的 `libsigrok4DSL`(采集)+ `libsigrokdecode4DSL`
+(内嵌 CPython 跑 150 个 `pd.py` 解码器)+ `res/`(固件与 FPGA 位流,MIT)+ 一个 `.dsl` 样例。
+`engines/logic-analyzer/vendor.ts --from <DSView 检出>` 重新 vendored,提交钉在 `vendor/UPSTREAM.json`,
+`patches/*.patch` 自动应用。引擎只做"碰硬件"和"跑解码器";**一切语义在 TS**:
+`packages/coding-agent/src/core/la/`(`.dsl` 读取与边沿列表、注解解析、事务模型、expect 差分、
+`store.ts` 的采集缓存与落盘布局 —— 工具与 kernel 的 `la.view`/`la.captures` 共用这一份)+
+`tools/la.ts`(13 个动作)。浏览器侧的列位图编解码与格式化在 kernel 的 `la-codec.ts`,画法与
+主题读取在 session-ui 的 `la-preview.ts`,卡片与面板共用,不许有第二份读法。
+
+**在 DSView 的树里它们不是库**(全树唯一 `add_executable`),公共 API 是自家的 `ds_*` 单例门面,
+不是 sigrok 的 `sr_*`。上游 sigrok-cli 不认新版硬件(PID 0x0030 的 Plus 用 Pango FPGA +
+`DSLogicPlus-pgl12.bin`,上游只认 0x0001/0003/0020/0021),DSView GUI 没有任何命令行入口 —— 这两条
+决定了"自建引擎"是唯一解。
+
+上游的怪癖,全部在 `src/srdx.h` / `decode.c` / `capture.c` 吸收,改解码路径前先读:
+
+- 解码器按**目录名** import(`1-i2c`),自报 id 是 `1:i2c`;DSView 自己的 I²C/SPI/UART 叫
+  `1:i2c` / `1:spi` / `1:uart`(`0:*` 是精简变体,没有 OUTPUT_PYTHON、不能堆叠),UART 是**单根
+  `rxtx`**,与上游的 rx/tx 不同 —— 模型按上游记忆写参数必错,`la decoders` 先查。
+- `srd_decoder.annotations` 是倒序的(`g_slist_prepend` 后没反转,DSView 从不按类号读它),3 元组存
+  `[type, id, desc]`。I²C 的 row 只有 `bits / addr-data / warnings`,ACK/NACK/START/STOP 是 class,
+  `warnings` 类从不被 put,"Write"/"Read" 方向注解也标成 class 0 —— 异常(NACK@地址、缺 STOP)
+  在 `model.ts` 自己推。
+- 解码器按 **PD 通道序号**直接索引 `inbuf`(`dec_channelmap` 只供前端组装),所以**一个协议栈一个
+  srd 会话**;`.dsl` 的每通道位面不用转置就能喂 `srd_session_send`(fork 签名就是每通道一个缓冲)。
+- 字节写成 `'@41'`、I²C 写成 `'Data write: {$}'`,数值在 `str_number_hex`;引擎输出还原成 `h`/`n`。
+- **`LA_CROSS_DATA`**:硬件、文件回放、demo 三条路都发"64 位字按通道轮转"的布局,唯一规范是
+  `DSView/pv/data/logicsnapshot.cpp` 的 `append_cross_payload`。写错不报错、像噪声。闸门:
+  `yoma-la capture --device file:<.dsl>`(session_driver 按同样规则交织后回放)采回来的 `.dsl`
+  必须与输入**逐块字节相同**;`--device demo` 是无硬件的全链路演练。
+- **libusb ≥ 1.0.24 的 Windows 后端没有 pollfds**,上游 `dev_acquisition_start` 直接解引用 NULL
+  段错误(DSView 官方包自带老 libusb 所以没撞过)。`patches/0001` 改成 fd=-1 哑源 + `receive_data`
+  在 libusb 里阻塞一个 poll 超时 + `remove_sources` 认哑源。
+- 内嵌 CPython 靠 PYTHONHOME 找标准库:分发时 `data/la/python/` 是裁过的(去 test/idle/tk,15 MB);
+  开发期 `data/la/python.home` 是指向 MSYS2 ucrt64 前缀的**文本指针**,**不用 junction** ——
+  `stage-engines.ts` 的 `cpSync({dereference:true})` 会把整个 ucrt64 卷进暂存目录。
+  `bin/` 里的 MinGW DLL 是伴随文件,`stage-engines` 不按 ".exe 后缀的 PE" 规则挑错。
+- `PyEval_InitThreads` / `Py_SetPythonHome` 在 3.14 只是弃用未移除,暂不需要补丁。
+- 只能 MinGW(源码 `#include <unistd.h>`);CI 的 Windows 岗经 `msys2/setup-msys2` 装 ucrt64,
+  经 `YOMA_LA_MSYS2` 告诉 `build.ts` 位置。没有工具链的机器**跳过并在 manifest 写明**
+  `la.bundled=false`,不静默。
+
+TS 侧的纪律:
+
+- **不占 `probe.lock`**。DSLogic 是独立 USB 设备(VID 2A0E),与 J-Link/ST-Link 不互斥,"gdb 握着
+  ST-Link 同时抓总线"是核心用例。设备自身的互斥(DSView 开着、另一个 la 进程)由引擎打不开
+  设备的人话兜住。一次采集一个子进程;`arm` 的子进程挂 `killOnHostExit`。
+- **details 只放摘要 + 1024 列 × 2bit 预览**(让旧会话重放时卡片仍能画波形),原始样本永远在
+  `<工程>/.yoma/la/<id>/`(`capture.dsl` + `decode.ndjson`),`YOMA_IGNORE` 已含 `la/`。
+- 事务聚合**在全量注解上做、再按窗口过滤**:在窗口切过的注解上聚合会把被切掉的 STOP 误报成
+  missing STOP(实测)。位级行默认折叠、`events` 默认 200 行、`decode` 超 32M 采样要求给窗口 ——
+  防线在生成端不在截断端。
+- 开发机实机:DSLogic Plus PID 0x0030,Windows 原生 WinUSB(`winusb.inf`,非 Zadig),FX2 固件固化在板上
+  (驱动按 "USB-based DSL Instrument v2" 产品串判定已有固件),运行期只需 FPGA 位流;HDL 版本 14
+  与引擎期望一致。4ch @ 25 MHz 1M 采样 201 ms 实测通过。
+- 黄金文件:`engines/logic-analyzer/vendor/demo/logic/protocol.demo`(改了后缀的 `.dsl`,16 通道
+  25 MHz,I²C SDA=D0/SCL=D1、UART D5、SPI D12–15)。I²C 解出 **300 条注解 / 6 个事务**,UART 47 字节
+  "DSLogic series USB-based LA from DreamSourceLab",SPI 5 次传输 288 字。smoke 与 `build.ts` 自检都钉这个数。
+
 ## 约定与规矩
 
 - **绝不重启 app 或内核进程**(`packages/app/AGENTS.md`)。优先级:稳定 > 简单 > 性能。
@@ -527,3 +597,7 @@ text part,不过滤的话提示词会原样出现在终报的"根因分析"里)�
 - 每轮的 diff 汇总留空了。要做的话应该从 `edit`/`write` 工具的 `details.patch` 合成,
   而不是找回 opencode 的文件快照(内核没有快照)。
 - i18n 仍有 19 个 locale;非中英的那些和内核无关,可以另行瘦身。
+- **逻辑分析仪还缺的**:面板(dock"调试"档第一台仪器,`la-waveform.tsx`,走 `la.view` RPC)与卡片
+  缩略图都只在 storybook / 单测里验过,**没有在真窗口里肉眼看过**;高级/串行触发、DSO 通道、
+  Linux/macOS 的引擎构建未做;真信号(非悬空探头)的实机验证待接线后做;卡片上还没有"在面板中
+  打开"的按钮(session-ui 的 Data 上下文要加一个回调,app 侧接到 dock store)。

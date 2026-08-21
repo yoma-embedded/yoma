@@ -1,0 +1,83 @@
+--- a/libsigrok4DSL/hardware/DSL/dslogic.c
++++ b/libsigrok4DSL/hardware/DSL/dslogic.c
+@@ -1317,9 +1317,17 @@
+     int i;
+     sr_info("%s: remove fds from polling", __func__);
+     /* Remove fds from polling. */
+-    for (i = 0; devc->usbfd[i] != -1; i++)
+-        sr_source_remove(devc->usbfd[i]);
++    if (devc->usbfd == NULL)
++        return;
++    if (devc->usbfd[0] == -1) {
++        /* yoma-la: timeout-driven dummy source (no libusb pollfds on this platform). */
++        sr_source_remove(-1);
++    } else {
++        for (i = 0; devc->usbfd[i] != -1; i++)
++            sr_source_remove(devc->usbfd[i]);
++    }
+     g_free(devc->usbfd);
++    devc->usbfd = NULL;
+ }
+ 
+ static void report_overflow(struct DSL_context *devc)
+@@ -1352,6 +1360,14 @@
+     usb = sdi->conn;
+ 
+     tv.tv_sec = tv.tv_usec = 0;
++    if (devc->usbfd != NULL && devc->usbfd[0] == -1) {
++        /* yoma-la: no pollfds -> the session loop freewheels over a dummy source; pace it by
++         * blocking inside libusb for at most one poll timeout (returns early on any event). */
++        unsigned int ms = dsl_get_timeout(sdi);
++        if (ms == 0) ms = 1;
++        tv.tv_sec = ms / 1000;
++        tv.tv_usec = (ms % 1000) * 1000;
++    }
+     libusb_handle_events_timeout_completed(drvc->sr_ctx->libusb_ctx, &tv, &completed);
+ 
+     if (devc->trf_completed)
+@@ -1487,20 +1503,33 @@
+ 
+     /* setup callback function for data transfer */
+     lupfd = libusb_get_pollfds(drvc->sr_ctx->libusb_ctx);
+-    for (i = 0; lupfd[i]; i++);
+-
+-    if (!(devc->usbfd = g_try_malloc0(sizeof(struct libusb_pollfd) * (i + 1)))){
+-        sr_err("%s,ERROR:failed to alloc memory.", __func__);
+-    	return SR_ERR;
+-    }
++    if (lupfd == NULL) {
++        /* yoma-la: libusb >= 1.0.24 on Windows has no pollfds. Register one timeout-only dummy
++         * source (fd -1); receive_data() then waits inside libusb for up to one poll timeout. */
++        if (!(devc->usbfd = g_try_malloc0(sizeof(int) * 2))){
++            sr_err("%s,ERROR:failed to alloc memory.", __func__);
++            return SR_ERR;
++        }
++        devc->usbfd[0] = -1;
++        devc->usbfd[1] = -1;
++        sr_source_add(-1, 0, dsl_get_timeout(sdi), receive_data, sdi);
++    } else {
++        for (i = 0; lupfd[i]; i++);
++
++        if (!(devc->usbfd = g_try_malloc0(sizeof(int) * (i + 1)))){
++            sr_err("%s,ERROR:failed to alloc memory.", __func__);
++            g_free(lupfd);
++            return SR_ERR;
++        }
+ 
+-    for (i = 0; lupfd[i]; i++) {
+-        sr_source_add(lupfd[i]->fd, lupfd[i]->events,
+-                  dsl_get_timeout(sdi), receive_data, sdi);
+-        devc->usbfd[i] = lupfd[i]->fd;
++        for (i = 0; lupfd[i]; i++) {
++            sr_source_add(lupfd[i]->fd, lupfd[i]->events,
++                      dsl_get_timeout(sdi), receive_data, sdi);
++            devc->usbfd[i] = lupfd[i]->fd;
++        }
++        devc->usbfd[i] = -1;
++        g_free(lupfd);
+     }
+-    devc->usbfd[i] = -1;
+-    g_free(lupfd);
+ 
+     wr_cmd.header.dest = DSL_CTL_START;
+     wr_cmd.header.size = 0;

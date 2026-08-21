@@ -261,6 +261,9 @@ for (const sub of ["bin", "data"] as const) {
       if (TARGET === "win32") foreign.push(`${name}(解释器脚本)`)
       else nonPortable.push(`${name} → ${shebang}`)
     } else if (format === expected.format) {
+      // yoma-la 带着一串动态库(glib / libusb / python3xx …)住在 bin/ 里,它们是伴随文件,
+      // 不是引擎:既不算 native 也不按可执行名规则挑错。
+      if (/\.(dll|so(\.\d+)*|dylib)$/i.test(name)) continue
       nativeCount += 1
       // 内核在 win32 上按 `${name}.exe` 拼可执行名,不带后缀的 PE 等于不存在。
       if (TARGET === "win32" && !name.toLowerCase().endsWith(".exe")) foreign.push(`${name}(PE 但缺 .exe 后缀)`)

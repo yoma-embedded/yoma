@@ -39,6 +39,7 @@ import { useFileComponent } from "@yoma-desktop/ui/context/file"
 import { useDialog } from "@yoma-desktop/ui/context/dialog"
 import { useI18n } from "@yoma-desktop/ui/context/i18n"
 import { BasicTool, GenericTool } from "./basic-tool"
+import { LaTool } from "./la-tool"
 import { Accordion } from "@yoma-desktop/ui/accordion"
 import { StickyAccordionHeader } from "@yoma-desktop/ui/sticky-accordion-header"
 import { Collapsible } from "@yoma-desktop/ui/collapsible"
@@ -418,6 +419,14 @@ export function getToolInfo(tool: string, input: any = {}, _metadata?: ToolDetai
         icon: "debug",
         title: i18n.t("ui.tool.gdb"),
         subtitle: input.connection,
+      }
+    // 副标题这里只兜底:la 的卡片是 LaTool,它自带 trigger(动作 + 采集 id,还带上了
+    // details 里的真相而不是入参)。这里再算一遍就是两份会分叉的话术。
+    case "la":
+      return {
+        icon: "sliders",
+        title: i18n.t("ui.tool.la"),
+        subtitle: input.capture ?? "",
       }
     default:
       return {
@@ -2011,6 +2020,13 @@ ToolRegistry.register({
       </BasicTool>
     )
   },
+})
+
+// 卡片本体在 ./la-tool:它要画 canvas(预览解码 + 主题色 + ResizeObserver),
+// 与这里其他"KV 加一段文本"的卡片不是一个量级。
+ToolRegistry.register({
+  name: "la",
+  render: LaTool,
 })
 
 const DATASHEET_ACTION_KEYS = {

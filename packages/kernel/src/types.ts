@@ -216,6 +216,7 @@ export const TOOL_NAMES = [
   "datasheet",
   "log",
   "gdb",
+  "la",
 ] as const
 
 /**
@@ -444,6 +445,95 @@ export interface GdbToolDetails {
   firstChangedLine?: number
 }
 
+export type LaAction =
+  | "devices"
+  | "capture"
+  | "arm"
+  | "collect"
+  | "stop"
+  | "import"
+  | "list"
+  | "decoders"
+  | "summary"
+  | "decode"
+  | "events"
+  | "timing"
+  | "expect"
+
+/**
+ * 逻辑分析仪工具。只放摘要与句柄:原始样本永远在 <工程>/.yoma/la/<id>/ 的文件里(details
+ * 进会话 JSONL、开会话整批重传、不可回收)。preview 是 1024 列 × 每通道 2bit 的缩略图,
+ * 让旧会话重放时卡片仍能画出波形,即便 .yoma/la/ 已被清理。
+ */
+export interface LaToolDetails {
+  action: LaAction
+  captureId?: string
+  dir?: string
+  file?: string
+  samplerate?: number
+  samples?: number
+  durationMs?: number
+  triggerPos?: number
+  channels?: { index: number; name: string; edges?: number }[]
+  /** bit0 该列出现过高电平、bit1 出现过低电平;4 列一字节;每通道一个 base64 */
+  preview?: { columns: number; from: number; to: number; rows: Record<string, string> }
+  decoders?: { key: string; id: string; annotations: number }[]
+  window?: { from: number; to: number }
+  armed?: boolean
+  timedOut?: boolean
+  truncated?: boolean
+  issues?: number
+  device?: { model?: string; pid?: string; hdl?: number }
+}
+
+/** la.captures 的每一条:<工程>/.yoma/la/<id>/capture.json 的内容 + 解码状态。 */
+export interface LaCaptureInfo {
+  id: string
+  /** 采集目录绝对路径,la.view 用它 */
+  dir: string
+  samplerate: number
+  samples: number
+  durationMs: number
+  channels: { index: number; name: string }[]
+  triggerPos?: number
+  source: "capture" | "import" | "demo"
+  createdAt: number
+  /** 最近一次解码的实例名;空 = 没解码过 */
+  decoded: string[]
+}
+
+/** la.view 的入参:一次采集目录(来自 la.captures)+ 采样窗口 + 视口列数。 */
+export interface LaViewParams {
+  dir: string
+  from?: number
+  to?: number
+  /** 视口像素列数(≤ 4096) */
+  columns: number
+}
+
+export interface LaViewLaneItem {
+  s: number
+  e: number
+  /** 类 id(如 address-write)与可读文本(`{$}` 已替换) */
+  cls: string
+  text: string
+  /** 短文本(密集时用) */
+  short: string
+}
+
+export interface LaViewResult {
+  samplerate: number
+  totalSamples: number
+  triggerPos?: number
+  from: number
+  to: number
+  columns: number
+  /** 每通道一条:2bit/列(bit0 有高、bit1 有低),4 列一字节,base64 */
+  channels: { index: number; name: string; edges: number; bits: string }[]
+  /** 每个解码器实例 × 每个注解行一条泳道,位级行不回(面板放大到位级再单独要) */
+  lanes: { key: string; decoderId: string; row: string; items: LaViewLaneItem[]; total: number; truncated: boolean }[]
+}
+
 /**
  * 按工具名判别的 details。渲染器拿到 ToolPart 之后先 narrow 工具名,再读 metadata,
  * 全程有编译期类型 —— 这是 opencode 那边 `metadata: {[k:string]: unknown}` 给不了的。
@@ -462,6 +552,7 @@ export interface ToolDetailsMap {
   datasheet: DatasheetToolDetails
   log: LogToolDetails
   gdb: GdbToolDetails
+  la: LaToolDetails
 }
 
 export type ToolDetails = ToolDetailsMap[ToolName] | Record<string, unknown>

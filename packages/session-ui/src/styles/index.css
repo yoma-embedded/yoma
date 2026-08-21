@@ -2,6 +2,7 @@
 
 @import "../components/basic-tool.css" layer(components);
 @import "../components/file.css" layer(components);
+@import "../components/la-tool.css" layer(components);
 @import "../components/markdown.css" layer(components);
 @import "../components/message-part.css" layer(components);
 @import "../components/message-nav.css" layer(components);

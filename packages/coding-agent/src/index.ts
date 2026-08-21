@@ -6,3 +6,5 @@ export * from "./core/examples/index.ts";
 export * from "./core/tools/engines.ts";
 export * from "./core/tools/index.ts";
 export * from "./core/toolchain/index.ts";
+// 逻辑分析仪的纯模块(.dsl / 边沿 / 注解 / 事务模型),给 kernel host 的 la.view 用;命名空间导出不污染包根。
+export * as la from "./core/la/index.ts";

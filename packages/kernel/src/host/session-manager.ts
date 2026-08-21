@@ -29,6 +29,7 @@ import {
   createDatasheetToolDefinition,
   createFlashToolDefinition,
   createGdbToolDefinition,
+  createLaToolDefinition,
   createLogToolDefinition,
   createNetlistToolDefinition,
   createStm32ConfigToolDefinition,
@@ -86,6 +87,8 @@ export function createEmbeddedTools(env: NodeExecutionEnv, enginesDir?: string):
     createFlashToolDefinition(env),
     createLogToolDefinition(env),
     createGdbToolDefinition(env),
+    // la 吃 enginesDir:yoma-la 在 engines/bin,数据(固件/解码器)在 engines/data/la。
+    createLaToolDefinition(env, engines),
   ]
 }
 

@@ -1,0 +1,9 @@
+# vendored 上游源码与补丁必须逐字节保持原样(LF),否则重新 vendored 时 git apply 对不上
+vendor/** -text
+patches/** -text
+*.ts text eol=lf
+*.c text eol=lf
+*.h text eol=lf
+*.sh text eol=lf
+CMakeLists.txt text eol=lf
+*.md text eol=lf

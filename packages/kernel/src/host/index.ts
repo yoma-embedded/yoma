@@ -16,6 +16,7 @@ import type { KernelEvent, KernelHandlers, KernelMethod, KernelParams, KernelRes
 import { createEmbeddedTools, SessionManager, type SessionManagerOptions } from "./session-manager.ts"
 import { runPreflight, inspectEngines } from "./preflight.ts"
 import { yomaConfigDir } from "./auth.ts"
+import { laCaptures, laView } from "./la-view.ts"
 import { ProjectStore, listFiles, readFile, searchFiles, vcsDiff, vcsInfo } from "./services.ts"
 import { StreamSink } from "./stream.ts"
 import { toolchainFamilies, toolchainFamilySet, toolchainFamilyStatus, toolchainSet, toolchainStatus } from "./toolchain.ts"
@@ -118,6 +119,8 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
 
     "file.list": ({ directory, path: relative }) => listFiles(directory, relative),
     "file.read": ({ path: file }) => readFile(file),
+    "la.view": (params) => laView(params),
+    "la.captures": ({ directory }) => laCaptures(directory),
     "file.search": ({ directory, query, limit }) => searchFiles(directory, query, limit),
 
     "vcs.info": ({ directory }) => vcsInfo(directory),

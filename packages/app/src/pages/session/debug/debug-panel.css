@@ -162,3 +162,112 @@
   color: var(--d-faint);
   font-size: 22px;
 }
+
+/* ---- 逻辑分析仪波形(真仪器,la-waveform.tsx) ---- */
+[data-component="la-body"] select[data-slot="pick"] {
+  flex: 1;
+  min-width: 0;
+  background: var(--d-panel-2);
+  color: var(--d-ink);
+  border: 1px solid var(--d-line);
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 12px;
+}
+[data-component="la-body"] .ydbg-win-meta button {
+  background: transparent;
+  color: var(--d-muted);
+  border: 1px solid var(--d-line);
+  border-radius: 6px;
+  padding: 2px 7px;
+  cursor: pointer;
+}
+[data-component="la-waveform"] {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+[data-component="la-waveform"] [data-slot="bar"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--d-muted);
+}
+[data-component="la-waveform"] [data-slot="range"] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-component="la-waveform"] [data-slot="actions"] {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+[data-component="la-waveform"] [data-slot="actions"] button {
+  background: var(--d-panel-2);
+  color: var(--d-ink);
+  border: 1px solid var(--d-line);
+  border-radius: 6px;
+  padding: 1px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+[data-component="la-waveform"] [data-slot="actions"] button:hover {
+  border-color: var(--d-accent);
+}
+[data-component="la-waveform"] [data-slot="error"] {
+  color: var(--d-fail);
+  background: var(--d-fail-bg);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+[data-component="la-waveform"] [data-slot="plot"] {
+  position: relative;
+  min-height: 40px;
+  border: 1px solid var(--d-line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--d-panel);
+}
+[data-component="la-waveform"] [data-slot="labels"] {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  border-right: 1px solid var(--d-line);
+  background: var(--d-panel-2);
+  font-family: var(--d-mono);
+  font-size: 11px;
+  color: var(--d-ink);
+}
+[data-component="la-waveform"] [data-slot="label"] {
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-component="la-waveform"] [data-slot="label"][data-kind="lane"] {
+  color: var(--d-muted);
+  font-size: 10px;
+}
+[data-component="la-waveform"] [data-slot="canvas"] {
+  position: absolute;
+  top: 0;
+  display: block;
+  cursor: crosshair;
+  touch-action: none;
+}
+[data-component="la-waveform"] [data-slot="readout"] {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--d-muted);
+}

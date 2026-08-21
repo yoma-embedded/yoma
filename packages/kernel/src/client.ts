@@ -81,6 +81,11 @@ export interface KernelClient {
     read(path: string): Promise<KernelResult<"file.read">>
     search(directory: string, query: string, limit?: number): Promise<string[]>
   }
+  la: {
+    /** 逻辑分析仪波形视口(Node 侧降采样,只传视口大小)。 */
+    view(params: KernelParams<"la.view">): Promise<KernelResult<"la.view">>
+    captures(directory: string): Promise<KernelResult<"la.captures">>
+  }
   vcs: {
     info(directory: string): Promise<VcsInfo>
     diff(directory: string): Promise<FileDiff[]>
@@ -142,6 +147,10 @@ export function createKernelClient(transport: KernelTransport): KernelClient {
       list: (directory, path) => call("file.list", { directory, path }),
       read: (path) => call("file.read", { path }),
       search: (directory, query, limit) => call("file.search", { directory, query, limit }),
+    },
+    la: {
+      view: (params) => call("la.view", params),
+      captures: (directory) => call("la.captures", { directory }),
     },
     vcs: {
       info: (directory) => call("vcs.info", { directory }),

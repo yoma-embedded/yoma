@@ -9,6 +9,7 @@ import {
   type StatusDisplay,
   type OfflineDisplay,
 } from "./debug-data"
+import { LaBody } from "./la-waveform"
 import "./debug-panel.css"
 
 const TRANSPORT_LABEL: Record<Transport, string> = {
@@ -158,6 +159,9 @@ function InstrumentWindow(props: { ins: Instrument }) {
       </header>
       <div class="ydbg-win-b">
         <Switch>
+          <Match when={props.ins.display.kind === "la"}>
+            <LaBody />
+          </Match>
           <Match when={props.ins.display.kind === "waveform"}>
             <WaveformBody d={props.ins.display as WaveformDisplay} />
           </Match>

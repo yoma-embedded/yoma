@@ -17,6 +17,7 @@ import { existsSync, readdirSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { resolveElectron } from "./electron-bin.ts"
+import { selfCheckLa } from "../../../engines/logic-analyzer/build.ts"
 
 const here = dirname(fileURLToPath(import.meta.url))
 const desktop = join(here, "..")
@@ -73,6 +74,7 @@ const EXPECTED = [
   "flash",
   "log",
   "gdb",
+  "la",
 ]
 
 const missing = EXPECTED.filter((tool) => !report.tools.includes(tool))
@@ -101,6 +103,18 @@ const present = readdirSync(bin)
 const missingBins = REQUIRED_BINS.filter((name) => !present.includes(name))
 if (missingBins.length) fail(`engines/bin 缺少:${missingBins.join(", ")}`)
 console.log(`✓ engines 就位:${present.join(", ")}`)
+
+// yoma-la(逻辑分析仪)是可选引擎:Windows 上要 MSYS2 工具链才编得出,GitHub runner 没有。
+// 像 irpack 一样缺了只跳过 —— 但有的话必须真能跑:自检与 engines/build.ts 装完那次是同一个函数。
+if (present.includes(exe("yoma-la"))) {
+  try {
+    console.log(`✓ yoma-la ${await selfCheckLa(enginesDir)}(内嵌 Python + 解码器就位)`)
+  } catch (error) {
+    fail(`yoma-la 在但跑不起来(DLL / Python 标准库缺?):${(error as Error).message.split("\n")[0]}`)
+  }
+} else {
+  console.log("↷ 跳过逻辑分析仪闸门:engines/bin 里没有 yoma-la(构建机无 MSYS2 时属预期)")
+}
 
 // irpack 是 CubeMX 解析产物,不进 git。GitHub runner / 没装 CubeMX 的机器上没有 pack
 // 是预期,STM32 配置不可用;网表(controller_map/board_ir)和内核工具闸门不受影响。

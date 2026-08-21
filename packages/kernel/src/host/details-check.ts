@@ -25,6 +25,7 @@ import type {
   ExamplesToolDetails as PiExamples,
   FlashToolDetails as PiFlash,
   GdbToolDetails as PiGdb,
+  LaToolDetails as PiLa,
   LogToolDetails as PiLog,
   NetlistToolDetails as PiNetlist,
   ReadToolDetails as PiRead,
@@ -60,3 +61,4 @@ export type Check_flash = Expect<Assignable<PiFlash, ToolDetailsMap["flash"]>>
 export type Check_datasheet = Expect<Assignable<PiDatasheet, ToolDetailsMap["datasheet"]>>
 export type Check_log = Expect<Assignable<PiLog, ToolDetailsMap["log"]>>
 export type Check_gdb = Expect<Assignable<PiGdb, ToolDetailsMap["gdb"]>>
+export type Check_la = Expect<Assignable<PiLa, ToolDetailsMap["la"]>>

@@ -44,7 +44,12 @@ export interface OfflineDisplay {
   kind: "offline"
   hint?: string
 }
+/** 真仪器:逻辑分析仪(DSLogic)。数据来自内核 la.view,渲染在 la-waveform.tsx。 */
+export interface LaDisplay {
+  kind: "la"
+}
 export type InstrumentDisplay =
+  | LaDisplay
   | WaveformDisplay
   | TimeseriesDisplay
   | ScalarDisplay
@@ -64,21 +69,17 @@ export interface Instrument {
 /** 右栏顶部三个模式：changes(审查) / debug(仪器调试) / file(文件) */
 export type DockMode = "changes" | "debug" | "file"
 
-// ---------------------------------------------------------------- mock content
+// ---------------------------------------------------------------- instruments
+// 第一台是真的(逻辑分析仪,见 la-waveform.tsx);其余仍是占位的模拟数据。
 
 const INSTRUMENTS: Instrument[] = [
   {
-    id: "saleae",
-    name: "Saleae Logic Pro 8",
-    detail: "25 MS/s · PB8/PB9",
+    id: "dslogic",
+    name: "逻辑分析仪",
+    detail: "DSLogic · la 工具",
     transport: "usb",
-    status: "capturing",
-    display: {
-      kind: "waveform",
-      meta: "I2C1 · 0x76 · 400 kHz",
-      flag: "NACK",
-      caption: "SDA 第 9 个时钟未被从机拉低（NACK），tSU;DAT ≈ 42 ns 低于 100 ns 下限",
-    },
+    status: "online",
+    display: { kind: "la" },
   },
   {
     id: "ppk2",

@@ -4,7 +4,8 @@
 //   bun engines/build.ts           # build + install + doctor
 //   bun engines/build.ts --check   # doctor only
 //   bun engines/build.ts --dist    # 产出可分发的自包含产物到 engines/dist/
-// Needs cargo (stm32-config-kernel) and uv (controller_map).
+// Needs cargo (stm32-config-kernel) and uv (controller_map). logic-analyzer (yoma-la, C/CMake,
+// Windows 上要 MSYS2 ucrt64)没有工具链时跳过 —— 像没有 CubeMX 时跳过 irpack 一样,但 manifest 里会写明。
 //
 // 运行时只认一种布局:bin/ 放可执行文件,data/<name>/ 放数据 —— 开发期由这里
 // 用符号链接填充(重新 cargo build 后无需重装),分发时 --dist 往同样的布局里放真文件。
@@ -33,6 +34,7 @@ import { fileURLToPath } from "node:url";
 
 // 经由工具同一套解析代码取路径,报告不会和运行时行为漂移。
 import { engineBin, exe } from "@yoma/coding-agent";
+import { buildLa, findLaToolchain, installLa, selfCheckLa } from "./logic-analyzer/build.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const checkOnly = process.argv.includes("--check");
@@ -276,18 +278,18 @@ if (dist) {
 	await need("cargo", "install Rust via https://rustup.rs");
 	await need("uv", "install uv via https://docs.astral.sh/uv/getting-started/installation/");
 
-	console.log("\n[1/4] stm32-config-kernel — cargo build --release + import irpacks");
+	console.log("\n[1/5] stm32-config-kernel — cargo build --release + import irpacks");
 	await $`cargo build --release`.cwd(kernelDir);
 	await ensureIrpacks(true);
 
-	console.log("\n[2/4] controller_map — uv sync");
+	console.log("\n[2/5] controller_map — uv sync");
 	await $`uv sync`.cwd(path.join(here, "controller_map"));
 
 	rmSync(distDir, { recursive: true, force: true });
 	mkdirSync(path.join(distDir, "bin"), { recursive: true });
 	mkdirSync(path.join(distDir, "data", "stm32"), { recursive: true });
 
-	console.log("\n[3/4] freeze — PyInstaller(把解释器打进可执行文件,摆脱 venv 绝对路径)");
+	console.log("\n[3/5] freeze — PyInstaller(把解释器打进可执行文件,摆脱 venv 绝对路径)");
 	const work = path.join(distDir, ".freeze");
 	for (const [name, module] of PY_ENTRIES) {
 		console.log(`  · ${name}`);
@@ -295,7 +297,7 @@ if (dist) {
 	}
 	rmSync(work, { recursive: true, force: true });
 
-	console.log("\n[4/4] collect — 真文件,不是软链");
+	console.log("\n[4/5] collect — 真文件,不是软链");
 	copyFileSync(
 		path.join(here, "stm32-config-kernel", "target", "release", exe("stm32kernel")),
 		path.join(distDir, "bin", exe("stm32kernel")),
@@ -307,6 +309,26 @@ if (dist) {
 		if (!entry.endsWith(".irpack")) continue;
 		copyFileSync(path.join(kernelData, entry), path.join(distDir, "data", "stm32", entry));
 		irpacks++;
+	}
+
+	console.log("\n[5/5] logic-analyzer — yoma-la(cmake)+ DLL + res/decoders/python");
+	let la: { bundled: boolean; dlls?: number; python?: boolean; why?: string } = { bundled: false };
+	{
+		const { tc, why } = findLaToolchain();
+		if (!tc) {
+			// Windows 是逻辑分析仪的主战场,CI 的 Windows 岗装了 MSYS2;这里缺工具链多半是 pacman 包名或
+			// setup-msys2 变了 —— 和 irpack 同一条规矩:安装包不能默默少一个引擎。别的平台暂时只警告。
+			if (process.platform === "win32" && !process.env.YOMA_LA_SKIP) {
+				throw new Error(`yoma-la 构建不了:${why}。装 MSYS2 ucrt64(见 engines/logic-analyzer/CMakeLists.txt),或 YOMA_LA_SKIP=1 明确放弃逻辑分析仪。`);
+			}
+			console.warn(`  ↷ 跳过 yoma-la:${why}。逻辑分析仪工具在这份产物里不可用。`);
+			la = { bundled: false, why };
+		} else {
+			const built = await buildLa(tc);
+			const info = await installLa(tc, built, distDir, { dist: true });
+			console.log(`  · ${info.dlls} 个 DLL,python ${info.pythonBundled ? "已打包" : "未打包"};${await selfCheckLa(distDir)}`);
+			la = { bundled: true, dlls: info.dlls, python: info.pythonBundled };
+		}
 	}
 
 	const { problems, notes } = auditDist(distDir);
@@ -323,6 +345,8 @@ if (dist) {
 		irpacks,
 		// fw 不在产物里:1.1GB(压缩后仍 ~174MB),而且只有 generate 用得到。
 		firmware: "not-bundled",
+		// 逻辑分析仪引擎:没工具链的构建机会缺它,这里必须写明,别让"少一个引擎"静默。
+		la,
 		bin: Object.fromEntries(
 			readdirSync(path.join(distDir, "bin")).map((entry) => [
 				entry,
@@ -353,14 +377,14 @@ if (!checkOnly) {
 	await need("cargo", "install Rust via https://rustup.rs");
 	await need("uv", "install uv via https://docs.astral.sh/uv/getting-started/installation/");
 
-	console.log("\n[1/3] stm32-config-kernel — cargo build --release + import irpacks");
+	console.log("\n[1/4] stm32-config-kernel — cargo build --release + import irpacks");
 	await $`cargo build --release`.cwd(kernelDir);
 	await ensureIrpacks(false);
 
-	console.log("\n[2/3] controller_map — uv sync");
+	console.log("\n[2/4] controller_map — uv sync");
 	await $`uv sync`.cwd(path.join(here, "controller_map"));
 
-	console.log("\n[3/3] install — engines/bin + engines/data");
+	console.log("\n[3/4] install — engines/bin + engines/data");
 	const venvBin = path.join(here, "controller_map", ".venv", process.platform === "win32" ? "Scripts" : "bin");
 	install(path.join(kernelDir, "target", "release", exe("stm32kernel")), path.join(here, "bin", exe("stm32kernel")), "file");
 	for (const entry of ["controller_map", "board_ir", "connections"]) {
@@ -368,30 +392,43 @@ if (!checkOnly) {
 	}
 	install(kernelData, path.join(here, "data", "stm32"), "dir");
 	await ensureRipgrep(path.join(here, "bin"));
+
+	console.log("\n[4/4] logic-analyzer — yoma-la");
+	const { tc, why } = findLaToolchain();
+	if (!tc) {
+		console.warn(`  ↷ 跳过 yoma-la:${why}。la 工具不可用,其它引擎不受影响。`);
+	} else {
+		const built = await buildLa(tc);
+		const info = await installLa(tc, built, here, { dist: false });
+		console.log(`  · ${info.dlls} 个 DLL 拷到 bin/;${await selfCheckLa(here)}`);
+	}
 }
 
-// doctor:每一行是工具运行时会解析到的真实路径。
-function probe(label: string, fn: () => string): [string, string, boolean] {
+// doctor:每一行是工具运行时会解析到的真实路径(经由 engineBin,报告才不会和运行时漂移)。
+// optional 的引擎缺席不算坏(本机没工具链是常态),但在的话也必须是 engineBin 能解析到的那份。
+function probe(label: string, fn: () => string, opts: { optional?: boolean } = {}): [string, string, boolean | "skip"] {
 	try {
 		return [label, fn(), true];
 	} catch (error) {
-		return [label, (error instanceof Error ? error.message : String(error)).split("\n")[0]!, false];
+		const why = (error instanceof Error ? error.message : String(error)).split("\n")[0]!;
+		return [label, opts.optional ? `未构建 — 跳过(${why})` : why, opts.optional ? "skip" : false];
 	}
 }
 
 const at = { enginesDir: here };
-const rows: [string, string, boolean][] = [
+const rows = [
 	probe("stm32kernel", () => engineBin("stm32kernel", at)),
 	probe("controller_map", () => engineBin("controller_map", at)),
 	probe("board_ir", () => engineBin("board_ir", at)),
 	probe("rg", () => engineBin("rg", at)),
+	probe("yoma-la", () => engineBin("yoma-la", at), { optional: true }),
 ];
 
 console.log("\n─ doctor ─────────────────────────────────────────────");
 let bad = 0;
 for (const [name, loc, ok] of rows) {
-	if (!ok) bad++;
-	console.log(`  ${ok ? "✓" : "✗"} ${name.padEnd(16)} ${loc}`);
+	if (ok === false) bad++;
+	console.log(`  ${ok === true ? "✓" : ok === "skip" ? "↷" : "✗"} ${name.padEnd(16)} ${loc}`);
 }
 
 const irpackCount = countIrpacks(path.join(here, "data", "stm32"));

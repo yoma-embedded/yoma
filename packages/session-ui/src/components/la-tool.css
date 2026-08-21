@@ -1,0 +1,61 @@
+[data-component="la-tool"] {
+  width: 100%;
+  min-width: 0;
+}
+
+/* 通道名走 DOM 层:字跟着系统字体与缩放走,画进位图会糊,也选不中。 */
+[data-component="la-waveform"] {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 2px 12px 12px;
+
+  [data-slot="la-waveform-labels"] {
+    flex: 0 0 auto;
+    width: 72px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  [data-slot="la-waveform-label"] {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-small);
+    line-height: 1;
+    color: var(--v2-text-text-muted);
+  }
+
+  [data-slot="la-waveform-surface"] {
+    flex: 1 1 auto;
+    min-width: 0;
+    /* 高度是行内量(泳道数 × 泳道高),边框走外圈 —— 否则 canvas 会比容器高一像素。 */
+    box-sizing: content-box;
+    border: 0.5px solid var(--v2-border-border-base);
+    border-radius: 4px;
+    background: var(--v2-background-bg-base);
+    overflow: hidden;
+  }
+
+  [data-slot="la-waveform-canvas"] {
+    display: block;
+  }
+}
+
+[data-slot="tool-kv-row"][data-scope="la-decoder"] {
+  [data-slot="tool-kv-label"] {
+    padding-left: 10px;
+    font-family: var(--font-family-mono);
+  }
+
+  [data-slot="tool-kv-value"] {
+    font-family: var(--font-family-mono);
+  }
+}

@@ -17,6 +17,9 @@
 import type {
   FileDiff,
   FileEntry,
+  LaCaptureInfo,
+  LaViewParams,
+  LaViewResult,
   Message,
   Part,
   ProviderInfo,
@@ -130,6 +133,14 @@ export interface KernelMethods {
   "toolchain.familyStatus": { params: { family: string; fresh?: boolean }; result: ToolchainStatusView }
   /** 机器级手填:按预设的 pathKind 决定验证档(exe 验版本 / dir 只验存在),落进机器账本。 */
   "toolchain.familySet": { params: { family: string; id: string; path: string }; result: ToolchainStatusView }
+
+  /**
+   * 逻辑分析仪波形视口:Node 侧按列聚合 + 注解泳道,跨进程只传视口大小(几十 KB)。
+   * 不走 file.read(2 MB utf8),不把原始样本塞 details(会进 JSONL 且每次开会话整批重传)。
+   */
+  "la.view": { params: LaViewParams; result: LaViewResult }
+  /** 工程里的采集列表(最新在前)。布局只有 host 知道,渲染器不拼 .yoma/la 路径。 */
+  "la.captures": { params: { directory: string }; result: LaCaptureInfo[] }
 
   "project.list": { params: void; result: Array<{ directory: string; lastOpened: number }> }
   "project.add": { params: { directory: string }; result: Array<{ directory: string; lastOpened: number }> }

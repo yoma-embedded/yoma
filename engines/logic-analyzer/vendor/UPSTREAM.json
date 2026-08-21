@@ -1,0 +1,13 @@
+{
+	"repo": "git@github.com:DreamSourceLab/DSView.git",
+	"commit": "2e9e2c8e726df4ef5687d39b83d4f797cc44b574",
+	"describe": "v1.3.2-53-g2e9e2c8e",
+	"subtrees": [
+		"libsigrok4DSL -> libsigrok4DSL",
+		"libsigrokdecode4DSL -> libsigrokdecode4DSL",
+		"common -> common",
+		"DSView/res -> res",
+		"DSView/demo -> demo"
+	],
+	"vendoredAt": "2026-08-21"
+}

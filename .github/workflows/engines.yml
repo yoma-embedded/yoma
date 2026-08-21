@@ -4,7 +4,8 @@
 #   打 tag `engines-v*`          → 同时挂到 Release 上,桌面端按版本号取。
 #
 # 产出的是**自包含**产物:三个 Python 程序经 PyInstaller 冻结(开发期它们是 venv 的
-# console script,第一行写死构建机路径,拷到别人电脑必坏);两个 Rust 二进制直接拷。
+# console script,第一行写死构建机路径,拷到别人电脑必坏);两个 Rust 二进制直接拷;
+# yoma-la(C,GPL)带着 MinGW DLL、固件、150 个解码器和裁过的 Python 标准库(仅 Windows)。
 # `bun engines/build.ts --dist` 末尾会自检这一点,不通过就红。
 #
 # fw/(ST 官方 HAL,1.1GB)**不在产物里** —— 只有 stm32kernel generate 用得到,
@@ -84,7 +85,28 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
 
+      # yoma-la(逻辑分析仪引擎)是 C 工程,Windows 上只能 MinGW:源码 #include <unistd.h>,
+      # DSView 官方包也是 MinGW 构建。没有这一步 build.ts 会跳过它并在 manifest 里写明
+      # la.bundled=false —— 不会红,但用户装到的包里就没有逻辑分析仪。ucrt64 与本机开发一致。
+      - uses: msys2/setup-msys2@v2
+        if: runner.os == 'Windows'
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-glib2
+            mingw-w64-ucrt-x86_64-libusb
+            mingw-w64-ucrt-x86_64-zlib
+            mingw-w64-ucrt-x86_64-python
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+
       - name: 构建可分发产物
+        # setup-msys2 装在 ${runner.temp}\msys64;build.ts 按 YOMA_LA_MSYS2 找 ucrt64(默认 C:\msys64)。
+        env:
+          YOMA_LA_MSYS2: ${{ runner.os == 'Windows' && format('{0}\msys64', runner.temp) || '' }}
         run: bun engines/build.ts --dist --out dist
 
       - name: 打包
