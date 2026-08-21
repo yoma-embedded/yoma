@@ -1,0 +1,633 @@
+<title>Yoma 内核结构图</title>
+<style>
+	/* ── 调色板:dataviz 参考实例的前三个分类槽,已用 validate_palette.js 双模式全通过 ──
+	   三个包 = 三个分类槽;档位 A/B 用同色的实/淡两级 + 描边区分,不新增颜色。 */
+	:root {
+		color-scheme: light;
+		--surface-1: #fcfcfb;
+		--plane: #f9f9f7;
+		--ink-1: #0b0b0b;
+		--ink-2: #52514e;
+		--ink-muted: #898781;
+		--grid: #e1e0d9;
+		--axis: #c3c2b7;
+		--hairline: rgba(11, 11, 11, 0.10);
+		--pkg-agent: #2a78d6;
+		--pkg-ai: #eb6834;
+		--pkg-coding: #1baf7a;
+		--shadow: 0 1px 2px rgba(11, 11, 11, .05), 0 8px 24px rgba(11, 11, 11, .06);
+	}
+	@media (prefers-color-scheme: dark) {
+		:root:where(:not([data-theme="light"])) {
+			color-scheme: dark;
+			--surface-1: #1a1a19;
+			--plane: #0d0d0d;
+			--ink-1: #ffffff;
+			--ink-2: #c3c2b7;
+			--ink-muted: #898781;
+			--grid: #2c2c2a;
+			--axis: #383835;
+			--hairline: rgba(255, 255, 255, 0.10);
+			--pkg-agent: #3987e5;
+			--pkg-ai: #d95926;
+			--pkg-coding: #199e70;
+			--shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .35);
+		}
+	}
+	:root[data-theme="dark"] {
+		color-scheme: dark;
+		--surface-1: #1a1a19;
+		--plane: #0d0d0d;
+		--ink-1: #ffffff;
+		--ink-2: #c3c2b7;
+		--ink-muted: #898781;
+		--grid: #2c2c2a;
+		--axis: #383835;
+		--hairline: rgba(255, 255, 255, 0.10);
+		--pkg-agent: #3987e5;
+		--pkg-ai: #d95926;
+		--pkg-coding: #199e70;
+		--shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .35);
+	}
+
+	* { box-sizing: border-box; }
+	body {
+		margin: 0;
+		background: var(--plane);
+		color: var(--ink-1);
+		font: 15px/1.65 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+		-webkit-font-smoothing: antialiased;
+	}
+	.wrap { max-width: 1240px; margin: 0 auto; padding: 32px 20px 96px; }
+
+	/* ── 页眉 ─────────────────────────────────────────────── */
+	header.top { display: flex; align-items: flex-start; gap: 20px; flex-wrap: wrap; margin-bottom: 8px; }
+	h1 { font-size: 26px; font-weight: 650; letter-spacing: -.01em; margin: 0 0 6px; }
+	.sub { color: var(--ink-2); margin: 0; max-width: 68ch; }
+	.sub code { background: var(--grid); padding: 1px 5px; border-radius: 4px; font-size: .88em; }
+	.theme-btn {
+		margin-left: auto; flex: none; background: var(--surface-1); color: var(--ink-2);
+		border: 1px solid var(--hairline); border-radius: 8px; padding: 7px 13px;
+		font: inherit; font-size: 13px; cursor: pointer;
+	}
+	.theme-btn:hover { color: var(--ink-1); }
+
+	/* ── 统计条 ───────────────────────────────────────────── */
+	.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 24px 0 8px; }
+	.stat { background: var(--surface-1); border: 1px solid var(--hairline); border-radius: 10px; padding: 14px 16px; }
+	.stat .v { font-size: 26px; font-weight: 620; line-height: 1.15; letter-spacing: -.02em; }
+	.stat .k { color: var(--ink-muted); font-size: 12.5px; margin-top: 3px; }
+
+	section { margin-top: 44px; }
+	h2 { font-size: 19px; font-weight: 620; margin: 0 0 4px; letter-spacing: -.01em; }
+	h2 .n { color: var(--ink-muted); font-weight: 450; font-size: 14px; margin-left: 8px; }
+	.lede { color: var(--ink-2); margin: 0 0 18px; max-width: 76ch; font-size: 14.5px; }
+	.card { background: var(--surface-1); border: 1px solid var(--hairline); border-radius: 12px; padding: 18px; box-shadow: var(--shadow); }
+
+	/* ── 图例 ─────────────────────────────────────────────── */
+	.legend { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; font-size: 13px; color: var(--ink-2); }
+	.legend .item { display: inline-flex; align-items: center; gap: 7px; }
+	.swatch { width: 13px; height: 13px; border-radius: 3px; flex: none; }
+	.legend .sep { width: 1px; height: 16px; background: var(--axis); }
+
+	/* ── Treemap ──────────────────────────────────────────── */
+	#treemap { width: 100%; height: auto; display: block; }
+	#treemap text { pointer-events: none; }
+	.tm-file { cursor: pointer; transition: opacity .12s; }
+	.tm-file:hover { opacity: .82 !important; }
+	.dimmed { opacity: .13 !important; }
+
+	/* ── tooltip ──────────────────────────────────────────── */
+	#tip {
+		position: fixed; z-index: 50; pointer-events: none; opacity: 0; transition: opacity .1s;
+		background: var(--surface-1); color: var(--ink-1); border: 1px solid var(--hairline);
+		border-radius: 9px; padding: 9px 12px; font-size: 13px; max-width: 340px; box-shadow: var(--shadow);
+	}
+	#tip .p { color: var(--ink-muted); font-size: 11.5px; }
+	#tip .r { color: var(--ink-2); margin-top: 5px; font-size: 12.5px; line-height: 1.5; }
+
+	/* ── 详情面板 ─────────────────────────────────────────── */
+	.detail-grid { display: grid; grid-template-columns: 1fr 320px; gap: 18px; align-items: start; }
+	@media (max-width: 900px) { .detail-grid { grid-template-columns: 1fr; } }
+	/* 依赖列表可以很长(ai/types.ts 有 33 条),面板超过一屏就自己滚,
+	   否则 position:sticky 会失效、面板底部永远够不着。 */
+	#detail { position: sticky; top: 18px; max-height: calc(100vh - 40px); overflow-y: auto; }
+	#detail .empty { color: var(--ink-muted); font-size: 13.5px; }
+	#detail h3 { font-size: 14px; margin: 0 0 2px; word-break: break-all; font-family: ui-monospace, "SF Mono", Consolas, monospace; }
+	#detail .meta { color: var(--ink-muted); font-size: 12px; margin-bottom: 10px; }
+	#detail .role { font-size: 13px; color: var(--ink-2); margin-bottom: 12px; line-height: 1.6; }
+	#detail h4 { font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-muted); margin: 12px 0 5px; font-weight: 600; }
+	.dep { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 3px 0; font: inherit; font-size: 12px; color: var(--ink-2); cursor: pointer; font-family: ui-monospace, Consolas, monospace; }
+	.dep:hover { color: var(--ink-1); text-decoration: underline; }
+	.pill { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 20px; border: 1px solid var(--hairline); color: var(--ink-2); }
+	a.doclink { color: var(--pkg-agent); font-size: 13px; text-decoration: none; }
+	a.doclink:hover { text-decoration: underline; }
+
+	/* ── 条形图 ───────────────────────────────────────────── */
+	.bars { display: grid; gap: 7px; }
+	.bar-row { display: grid; grid-template-columns: 260px 1fr 42px; gap: 10px; align-items: center; font-size: 12.5px; }
+	@media (max-width: 700px) { .bar-row { grid-template-columns: 150px 1fr 34px; } }
+	.bar-row .nm { font-family: ui-monospace, Consolas, monospace; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+	.bar-row .nm:hover { color: var(--ink-1); }
+	.bar-track { height: 15px; background: var(--grid); border-radius: 4px; overflow: hidden; }
+	.bar-fill { height: 100%; border-radius: 4px; }
+	.bar-row .vv { text-align: right; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+	/* ── 生命周期 ─────────────────────────────────────────── */
+	.flow { display: grid; gap: 10px; }
+	.stage { display: grid; grid-template-columns: 34px 1fr; gap: 14px; align-items: start; }
+	.stage-n {
+		width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center;
+		font-size: 13px; font-weight: 620; color: var(--surface-1); flex: none;
+	}
+	.stage-body { padding-bottom: 6px; }
+	.stage-t { font-weight: 600; font-size: 14.5px; margin-bottom: 2px; }
+	.stage-d { color: var(--ink-2); font-size: 13px; margin-bottom: 7px; line-height: 1.6; }
+	.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+	.chip {
+		font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; padding: 2px 8px;
+		border-radius: 5px; border: 1px solid var(--hairline); background: var(--plane);
+		color: var(--ink-2); cursor: pointer;
+	}
+	.chip:hover { color: var(--ink-1); border-color: var(--axis); }
+
+	/* ── 表格 ─────────────────────────────────────────────── */
+	.controls { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+	.controls input, .controls select {
+		background: var(--surface-1); color: var(--ink-1); border: 1px solid var(--hairline);
+		border-radius: 8px; padding: 7px 11px; font: inherit; font-size: 13px;
+	}
+	.controls input { flex: 1; min-width: 180px; }
+	.tbl-scroll { overflow-x: auto; }
+	table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+	th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+	th { color: var(--ink-muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; cursor: pointer; white-space: nowrap; position: sticky; top: 0; background: var(--surface-1); }
+	th:hover { color: var(--ink-1); }
+	td.num { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+	td.mono { font-family: ui-monospace, Consolas, monospace; }
+	tbody tr { cursor: pointer; }
+	tbody tr:hover { background: var(--plane); }
+	td .rolecell { color: var(--ink-2); max-width: 420px; }
+	.foot { margin-top: 40px; padding-top: 18px; border-top: 1px solid var(--grid); color: var(--ink-muted); font-size: 12.5px; line-height: 1.75; }
+	.foot code { background: var(--grid); padding: 1px 5px; border-radius: 4px; }
+</style>
+
+<div class="wrap">
+	<header class="top">
+		<div>
+			<h1>Yoma 内核结构图</h1>
+			<p class="sub">
+				<code>packages/{agent, ai, coding-agent}</code> 三个包的真实结构。
+				文件、行数、依赖边全部由脚本解析源码得到,不是手写的 —— 每一条 import 边都对应源码里一条真实的
+				<code>from "…"</code>。配套讲解见 <a class="doclink" href="./00-内核全景.md">全景篇</a> 与
+				<a class="doclink" href="./README.md">索引</a>。
+			</p>
+		</div>
+		<button class="theme-btn" id="themeBtn" type="button">切换深浅色</button>
+	</header>
+
+	<div class="stats" id="stats"></div>
+
+	<!-- ── 1. 三包关系 ─────────────────────────────────────── -->
+	<section>
+		<h2>三个包怎么摞起来的</h2>
+		<p class="lede">
+			单向分层:<strong>ai</strong> 是最底下的契约层(不依赖另外两个),<strong>agent</strong> 在它上面跑循环,
+			<strong>coding-agent</strong> 在最上面提供工具与宿主适配。箭头上的数字是<strong>真实的跨包 import 边数</strong>。
+		</p>
+		<div class="card"><svg id="layers" viewBox="0 0 900 300" style="width:100%;height:auto;display:block"></svg></div>
+	</section>
+
+	<!-- ── 2. Treemap ─────────────────────────────────────── -->
+	<section>
+		<h2>文件全景<span class="n" id="tmCount"></span></h2>
+		<p class="lede">
+			每一块是一个文件,<strong>面积 = 代码行数</strong>,颜色 = 所属包,深浅 = 档位(A 主链 / B 外围)。
+			点任意一块:其它块变暗,只留下<strong>它依赖的</strong>(虚线框)与<strong>依赖它的</strong>(点线框),右侧给出详情。
+		</p>
+		<div class="detail-grid">
+			<div class="card">
+				<div class="legend" id="legend"></div>
+				<svg id="treemap" viewBox="0 0 1000 660"></svg>
+			</div>
+			<div class="card" id="detail"><div class="empty">点左侧任意一块看它的依赖关系。</div></div>
+		</div>
+	</section>
+
+	<!-- ── 3. 被依赖排行 ──────────────────────────────────── -->
+	<section>
+		<h2>谁是承重墙<span class="n">被 import 次数前 15</span></h2>
+		<p class="lede">
+			被依赖得越多,改动的爆炸半径越大。排在最前面的几乎全是<strong>类型契约文件</strong> ——
+			这正是「先读 types.ts」这条学习路径的依据。
+		</p>
+		<div class="card"><div class="bars" id="bars"></div></div>
+	</section>
+
+	<!-- ── 4. 生命周期 ────────────────────────────────────── -->
+	<section>
+		<h2>一次 prompt 走过的路<span class="n">点文件名可在上面的全景图里定位</span></h2>
+		<p class="lede">
+			把上面那张静态结构图按<strong>执行顺序</strong>再串一遍。详细的 48 步编号时间线在
+			<a class="doclink" href="./00-内核全景.md">全景篇 §4</a>。
+		</p>
+		<div class="card"><div class="flow" id="flow"></div></div>
+	</section>
+
+	<!-- ── 5. 表格 ────────────────────────────────────────── -->
+	<section>
+		<h2>文件清单<span class="n">点表头排序 · 点行定位</span></h2>
+		<p class="lede">上面那张 treemap 的表格视图 —— 同一份数据,可搜索、可排序、可复制。</p>
+		<div class="card">
+			<div class="controls">
+				<input id="q" type="search" placeholder="搜路径或职责…" />
+				<select id="fpkg"><option value="">全部包</option><option value="agent">agent</option><option value="ai">ai</option><option value="coding-agent">coding-agent</option></select>
+				<select id="ftier"><option value="">全部档位</option><option value="A">A 主链</option><option value="B">B 外围</option></select>
+			</div>
+			<div class="tbl-scroll"><table>
+				<thead><tr>
+					<th data-k="rel">文件</th><th data-k="pkg">包</th><th data-k="lines" class="num">行数</th>
+					<th data-k="tier">档</th><th data-k="nIn" class="num">被依赖</th><th data-k="nOut" class="num">依赖</th>
+					<th data-k="role">职责</th><th data-k="doc">文档</th>
+				</tr></thead>
+				<tbody id="tbody"></tbody>
+			</table></div>
+		</div>
+	</section>
+
+	<p class="foot" id="foot"></p>
+</div>
+
+<div id="tip"></div>
+
+<script>
+const DATA = {"files":[{"path":"packages/agent/src/agent-loop.ts","pkg":"agent","rel":"agent-loop.ts","lines":1265,"imports":["packages/ai/src/index.ts","packages/agent/src/types.ts"],"importedBy":["packages/agent/src/agent.ts","packages/agent/src/harness/agent-harness.ts","packages/agent/src/index.ts"],"external":[],"role":"agent 循环本体:四个入口 + runLoop 双层 while + 流式消费 + 串行/并行/length-失败三条工具执行路径","tier":"A","doc":"agent/agent-loop.md","readmeLines":744,"docExists":true},{"path":"packages/agent/src/agent.ts","pkg":"agent","rel":"agent.ts","lines":669,"imports":["packages/ai/src/index.ts","packages/agent/src/agent-loop.ts","packages/agent/src/types.ts"],"importedBy":["packages/agent/src/index.ts"],"external":[],"role":"Agent 类:裸 loop 的有状态包装(队列/订阅/单飞行守卫)。本仓无生产调用方,是参考实现与单测对象","tier":"B","doc":"agent/agent.md","readmeLines":520,"docExists":true},{"path":"packages/agent/src/harness/agent-harness.ts","pkg":"agent","rel":"harness/agent-harness.ts","lines":1757,"imports":["packages/ai/src/index.ts","packages/agent/src/agent-loop.ts","packages/agent/src/types.ts","packages/agent/src/harness/compaction/branch-summarization.ts","packages/agent/src/harness/compaction/compaction.ts","packages/agent/src/harness/messages.ts","packages/agent/src/harness/prompt-templates.ts","packages/agent/src/harness/session/session.ts","packages/agent/src/harness/skills.ts","packages/agent/src/harness/types.ts"],"importedBy":["packages/agent/src/index.ts"],"external":[],"role":"AgentHarness 全部实现:相位机、turn 快照、挂起写入队列、事件三路分发、四条 prompt 入口、compact/navigateTree 两条侧枝","tier":"A","doc":"agent/harness_agent-harness.md","readmeLines":1155,"docExists":true},{"path":"packages/agent/src/harness/compaction/branch-summarization.ts","pkg":"agent","rel":"harness/compaction/branch-summarization.ts","lines":363,"imports":["packages/ai/src/index.ts","packages/agent/src/types.ts","packages/agent/src/harness/messages.ts","packages/agent/src/harness/session/session.ts","packages/agent/src/harness/types.ts","packages/agent/src/harness/compaction/compaction.ts","packages/agent/src/harness/compaction/utils.ts"],"importedBy":["packages/agent/src/harness/agent-harness.ts","packages/agent/src/index.ts"],"external":[],"role":"分支摘要:求 LCA 收集被抛下的分支,预算内从最新往回填","tier":"B","doc":"agent/harness_compaction_branch-summarization.md","readmeLines":270,"docExists":true},{"path":"packages/agent/src/harness/compaction/compaction.ts","pkg":"agent","rel":"harness/compaction/compaction.ts","lines":1066,"imports":["packages/ai/src/index.ts","packages/agent/src/types.ts","packages/agent/src/harness/messages.ts","packages/agent/src/harness/session/session.ts","packages/agent/src/harness/types.ts","packages/agent/src/harness/compaction/utils.ts"],"importedBy":["packages/agent/src/harness/agent-harness.ts","packages/agent/src/harness/compaction/branch-summarization.ts","packages/agent/src/index.ts"],"external":[],"role":"压缩全部算法:token 估算三件套、阈值判断、切点搜索、摘要提示词与两次模型调用","tier":"A","doc":"agent/harness_compaction_compaction.md","readmeLines":759,"docExists":true},{"path":"packages/agent/src/harness/compaction/utils.ts","pkg":"agent","rel":"harness/compaction/utils.ts","lines":302,"imports":["packages/ai/src/index.ts","packages/agent/src/types.ts","packages/agent/src/harness/types.ts"],"importedBy":["packages/agent/src/harness/compaction/branch-summarization.ts","packages/agent/src/harness/compaction/compaction.ts"],"external":[],"role":"压缩与分支摘要共用的纯函数:文件操作抽取、对话序列化","tier":"A","doc":"agent/harness_compaction_utils.md","readmeLines":140,"docExists":true},{"path":"packages/agent/src/harness/env/nodejs.ts","pkg":"agent","rel":"harness/env/nodejs.ts","lines":1154,"imports":["packages/agent/src/harness/types.ts"],"importedBy":["packages/agent/src/node.ts"],"external":["node:child_process","node:crypto","node:fs","node:fs/promises","node:os","node:path","node:readline","node:url"],"role":"ExecutionEnv(FileSystem + Shell)在 Node/Bun 上的唯一实现:路径、文件、bash 发现、spawn、杀进程树、超时与中断","tier":"A","doc":"agent/harness_env_nodejs.md","readmeLines":699,"docExists":true},{"path":"packages/agent/src/harness/messages.ts","pkg":"agent","rel":"harness/messages.ts","lines":364,"imports":["packages/ai/src/index.ts","packages/agent/src/types.ts"],"importedBy":["packages/agent/src/harness/agent-harness.ts","packages/agent/src/harness/compaction/branch-summarization.ts","packages/agent/src/harness/compaction/compaction.ts","packages/agent/src/harness/session/session.ts","packages/agent/src/index.ts"],"external":[],"role":"四个自定义消息角色的注册处(声明合并)+ convertToLlm —— 唯一的 LLM 边界","tier":"A","doc":"agent/harness_messages.md","readmeLines":168,"docExists":true},{"path":"packages/agent/src/harness/prompt-templates.ts","pkg":"agent","rel":"harness/prompt-templates.ts","lines":105,"imports":["packages/agent/src/harness/types.ts"],"importedBy":["packages/agent/src/harness/agent-harness.ts","packages/agent/src/index.ts"],"external":[],"role":"提示词模板的参数解析与 shell 风格占位符替换(磁盘加载器从未实现,当前不可达)","tier":"B","doc":"agent/harness_prompt-templates.md","readmeLines":52,"docExists":true},{"path":"packages/agent/src/harness/session/jsonl-repo.ts","pkg":"agent","rel":"harness/session/jsonl-repo.ts","lines":402,"imports":["packages/agent/src/harness/types.ts","packages/agent/src/harness/session/jsonl-storage.ts","packages/agent/src/harness/session/repo-utils.ts","packages/agent/src/harness/session/session.ts"],"importedBy":["packages/agent/src/index.ts"],"external":[],"role":"JSONL 会话仓库:create / open / list(只读 header)/ delete / fork,含 cwd 编码与目录布局","tier":"A","doc":"agent/harness_session_jsonl-repo.md","readmeLines":183,"docExists":true},{"path":"packages/agent/src/harness/session/jsonl-storage.ts","pkg":"agent","rel":"harness/session/jsonl-storage.ts","lines":577,"imports":["packages/agent/src/harness/types.ts","packages/agent/src/harness/session/repo-utils.ts","packages/agent/src/harness/session/uuid.ts"],"importedBy":["packages/agent/src/harness/session/jsonl-repo.ts","packages/agent/src/index.ts"],"external":[],"role":"SessionStorage 的落盘实现:一行 header + 一行一条目的 JSONL 追加日志,open 时逐行重放恢复 leaf","tier":"A","doc":"agent/harness_session_jsonl-storage.md","readmeLines":319,"docExists":true},{"path":"packages/agent/src/harness/session/memory-repo.ts","pkg":"agent","rel":"harness/session/memory-repo.ts","lines":110,"imports":["packages/agent/src/harness/types.ts","packages/agent/src/harness/session/memory-storage.ts","packages/agent/src/harness/session/repo-utils.ts","packages/agent/src/harness/session/session.ts"],"importedBy":["packages/agent/src/index.ts"],"external":[],"role":"内存会话仓库,与 jsonl-repo 语义一一对应","tier":"B","doc":"agent/harness_session_memory-repo.md","readmeLines":54,"docExists":true},{"path":"packages/agent/src/harness/session/memory-storage.ts","pkg":"agent","rel":"harness/session/memory-storage.ts","lines":263,"imports":["packages/agent/src/harness/types.ts","packages/agent/src/harness/session/uuid.ts"],"importedBy":["packages/agent/src/harness/session/memory-repo.ts","packages/agent/src/index.ts"],"external":[],"role":"SessionStorage 的内存实现,树的全部逻辑第一次成形(最适合先读)","tier":"B","doc":"agent/harness_session_memory-storage.md","readmeLines":138,"docExists":true},{"path":"packages/agent/src/harness/session/repo-utils.ts","pkg":"agent","rel":"harness/session/repo-utils.ts","lines":163,"imports":["packages/agent/src/harness/types.ts","packages/agent/src/harness/session/session.ts","packages/agent/src/harness/session/uuid.ts"],"importedBy":["packages/agent/src/harness/session/jsonl-repo.ts","packages/agent/src/harness/session/jsonl-storage.ts","packages/agent/src/harness/session/memory-repo.ts","packages/agent/src/index.ts"],"external":[],"role":"两套 repo 共用的四个小工具 + fork 的 before/at 取材规则 + Result→throw 适配边界","tier":"A","doc":"agent/harness_session_repo-utils.md","readmeLines":53,"docExists":true},{"path":"packages/agent/src/harness/session/session.ts","pkg":"agent","rel":"harness/session/session.ts","lines":638,"imports":["packages/ai/src/index.ts","packages/agent/src/types.ts","packages/agent/src/harness/messages.ts","packages/agent/src/harness/types.ts"],"importedBy":["packages/agent/src/harness/agent-harness.ts","packages/agent/src/harness/compaction/branch-summarization.ts","packages/agent/src/harness/compaction/compaction.ts","packages/agent/src/harness/session/jsonl-repo.ts","packages/agent/src/harness/session/memory-repo.ts","packages/agent/src/harness/session/repo-utils.ts","packages/agent/src/harness/types.ts","packages/agent/src/index.ts"],"external":[],"role":"会话树门面与上下文投影器:投影四函数 + Session 类的 10 个 append* 与 moveTo","tier":"A","doc":"agent/harness_session_session.md","readmeLines":351,"docExists":true},{"path":"packages/agent/src/harness/session/uuid.ts","pkg":"agent","rel":"harness/session/uuid.ts","lines":172,"imports":[],"importedBy":["packages/agent/src/harness/session/jsonl-storage.ts","packages/agent/src/harness/session/memory-storage.ts","packages/agent/src/harness/session/repo-utils.ts","packages/agent/src/index.ts"],"external":[],"role":"手写 UUIDv7 生成器(时间戳 + 单调 sequence + 随机尾);条目 id 只取随机尾 8 字符","tier":"A","doc":"agent/harness_session_uuid.md","readmeLines":58,"docExists":true},{"path":"packages/agent/src/harness/skills.ts","pkg":"agent","rel":"harness/skills.ts","lines":680,"imports":["packages/agent/src/harness/types.ts"],"importedBy":["packages/agent/src/harness/agent-harness.ts","packages/agent/src/index.ts"],"external":["ignore","yaml"],"role":"技能发现(递归目录、SKILL.md frontmatter、ignore 规则、符号链接)与调用格式化","tier":"A","doc":"agent/harness_skills.md","readmeLines":365,"docExists":true},{"path":"packages/agent/src/harness/system-prompt.ts","pkg":"agent","rel":"harness/system-prompt.ts","lines":134,"imports":["packages/agent/src/harness/types.ts"],"importedBy":["packages/agent/src/index.ts"],"external":[],"role":"把 Skill[] 格式化成系统提示词里的 <available_skills> 区块","tier":"A","doc":"agent/harness_system-prompt.md","readmeLines":38,"docExists":true},{"path":"packages/agent/src/harness/types.ts","pkg":"agent","rel":"harness/types.ts","lines":1319,"imports":["packages/ai/src/index.ts","packages/agent/src/types.ts","packages/agent/src/harness/session/session.ts"],"importedBy":["packages/agent/src/harness/agent-harness.ts","packages/agent/src/harness/compaction/branch-summarization.ts","packages/agent/src/harness/compaction/compaction.ts","packages/agent/src/harness/compaction/utils.ts","packages/agent/src/harness/env/nodejs.ts","packages/agent/src/harness/prompt-templates.ts","packages/agent/src/harness/session/jsonl-repo.ts","packages/agent/src/harness/session/jsonl-storage.ts","packages/agent/src/harness/session/memory-repo.ts","packages/agent/src/harness/session/memory-storage.ts","packages/agent/src/harness/session/repo-utils.ts","packages/agent/src/harness/session/session.ts","packages/agent/src/harness/skills.ts","packages/agent/src/harness/system-prompt.ts","packages/agent/src/harness/utils/shell-output.ts","packages/agent/src/index.ts"],"external":[],"role":"harness 层契约总仓:Result 约定、ExecutionEnv、11 种会话树条目、Storage/Repo 家族、19 种事件与返回值契约","tier":"A","doc":"agent/harness_types.md","readmeLines":870,"docExists":true},{"path":"packages/agent/src/harness/utils/shell-output.ts","pkg":"agent","rel":"harness/utils/shell-output.ts","lines":484,"imports":["packages/agent/src/harness/types.ts","packages/agent/src/harness/utils/truncate.ts"],"importedBy":["packages/agent/src/index.ts"],"external":[],"role":"shell 输出捕获:流式回报进度、有界尾巴、超限旁落临时文件并回传路径","tier":"A","doc":"agent/harness_utils_shell-output.md","readmeLines":219,"docExists":true},{"path":"packages/agent/src/harness/utils/truncate.ts","pkg":"agent","rel":"harness/utils/truncate.ts","lines":578,"imports":[],"importedBy":["packages/agent/src/harness/utils/shell-output.ts","packages/agent/src/index.ts"],"external":[],"role":"工具输出的共享截断:2000 行 / 50KB 双上限,truncateHead 留头、truncateTail 留尾","tier":"A","doc":"agent/harness_utils_truncate.md","readmeLines":353,"docExists":true},{"path":"packages/agent/src/index.ts","pkg":"agent","rel":"index.ts","lines":130,"imports":["packages/agent/src/agent.ts","packages/agent/src/agent-loop.ts","packages/agent/src/types.ts","packages/agent/src/harness/agent-harness.ts","packages/agent/src/harness/compaction/branch-summarization.ts","packages/agent/src/harness/compaction/compaction.ts","packages/agent/src/harness/messages.ts","packages/agent/src/harness/prompt-templates.ts","packages/agent/src/harness/session/jsonl-repo.ts","packages/agent/src/harness/session/jsonl-storage.ts","packages/agent/src/harness/session/memory-repo.ts","packages/agent/src/harness/session/memory-storage.ts","packages/agent/src/harness/session/repo-utils.ts","packages/agent/src/harness/session/session.ts","packages/agent/src/harness/session/uuid.ts","packages/agent/src/harness/skills.ts","packages/agent/src/harness/system-prompt.ts","packages/agent/src/harness/types.ts","packages/agent/src/harness/utils/shell-output.ts","packages/agent/src/harness/utils/truncate.ts"],"importedBy":["packages/agent/src/node.ts","packages/coding-agent/src/acp/session.ts","packages/coding-agent/src/core/resources.ts","packages/coding-agent/src/core/system-prompt.ts","packages/coding-agent/src/core/tools/bash.ts","packages/coding-agent/src/core/tools/datasheet.ts","packages/coding-agent/src/core/tools/edit.ts","packages/coding-agent/src/core/tools/examples.ts","packages/coding-agent/src/core/tools/file-mutation-queue.ts","packages/coding-agent/src/core/tools/flash.ts","packages/coding-agent/src/core/tools/gdb.ts","packages/coding-agent/src/core/tools/index.ts","packages/coding-agent/src/core/tools/log.ts","packages/coding-agent/src/core/tools/netlist.ts","packages/coding-agent/src/core/tools/path-utils.ts","packages/coding-agent/src/core/tools/read.ts","packages/coding-agent/src/core/tools/stm32config.ts","packages/coding-agent/src/core/tools/toolchain.ts","packages/coding-agent/src/core/tools/types.ts","packages/coding-agent/src/core/tools/write.ts"],"external":["./proxy.ts"],"role":"包主入口 barrel(浏览器安全);两个 compaction 模块用具名白名单导出","tier":"B","doc":"agent/index.md","readmeLines":49,"docExists":true},{"path":"packages/agent/src/node.ts","pkg":"agent","rel":"node.ts","lines":25,"imports":["packages/agent/src/harness/env/nodejs.ts","packages/agent/src/index.ts"],"importedBy":["packages/coding-agent/src/acp/agent.ts","packages/coding-agent/src/acp.ts"],"external":[],"role":"Node 专用入口,转发 index.ts 并额外导出 NodeExecutionEnv","tier":"B","doc":"agent/node.md","readmeLines":4,"docExists":true},{"path":"packages/agent/src/types.ts","pkg":"agent","rel":"types.ts","lines":850,"imports":["packages/ai/src/index.ts"],"importedBy":["packages/agent/src/agent-loop.ts","packages/agent/src/agent.ts","packages/agent/src/harness/agent-harness.ts","packages/agent/src/harness/compaction/branch-summarization.ts","packages/agent/src/harness/compaction/compaction.ts","packages/agent/src/harness/compaction/utils.ts","packages/agent/src/harness/messages.ts","packages/agent/src/harness/session/session.ts","packages/agent/src/harness/types.ts","packages/agent/src/index.ts"],"external":["typebox"],"role":"整块内核的契约文件:AgentContext / AgentMessage / AgentTool / AgentEvent / AgentLoopConfig / StreamFn 的全部形状,零逻辑但每个字段注释就是行为规范","tier":"A","doc":"agent/types.md","readmeLines":430,"docExists":true},{"path":"packages/ai/src/api/anthropic-messages.lazy.ts","pkg":"ai","rel":"api/anthropic-messages.lazy.ts","lines":4,"imports":["packages/ai/src/types.ts","packages/ai/src/api/lazy.ts","packages/ai/src/api/anthropic-messages.ts"],"importedBy":["packages/ai/src/providers/anthropic.ts"],"external":[],"role":"anthropic-messages.ts 的懒加载工厂","tier":"B","doc":"ai/api_anthropic-messages.lazy.md","readmeLines":4,"docExists":false},{"path":"packages/ai/src/api/anthropic-messages.ts","pkg":"ai","rel":"api/anthropic-messages.ts","lines":1311,"imports":["packages/ai/src/models.ts","packages/ai/src/types.ts","packages/ai/src/utils/deferred-tools.ts","packages/ai/src/utils/event-stream.ts","packages/ai/src/utils/headers.ts","packages/ai/src/utils/json-parse.ts","packages/ai/src/utils/provider-env.ts","packages/ai/src/utils/sanitize-unicode.ts","packages/ai/src/api/github-copilot-headers.ts","packages/ai/src/api/simple-options.ts","packages/ai/src/api/transform-messages.ts"],"importedBy":["packages/ai/src/api/anthropic-messages.lazy.ts","packages/ai/src/index.ts","packages/ai/src/types.ts"],"external":["@anthropic-ai/sdk","@anthropic-ai/sdk/resources/messages.js"],"role":"Anthropic Messages 协议实现:手写 SSE 解码、块索引管理、thinking 签名回放、四个 cache_control 断点、OAuth 隐身模式","tier":"A","doc":"ai/api_anthropic-messages.md","readmeLines":1311,"docExists":false},{"path":"packages/ai/src/api/github-copilot-headers.ts","pkg":"ai","rel":"api/github-copilot-headers.ts","lines":37,"imports":["packages/ai/src/types.ts"],"importedBy":["packages/ai/src/api/anthropic-messages.ts","packages/ai/src/api/openai-completions.ts","packages/ai/src/api/openai-responses.ts"],"external":[],"role":"GitHub Copilot 专用的动态请求头(X-Initiator / Openai-Intent / Vision-Request)","tier":"B","doc":"ai/api_github-copilot-headers.md","readmeLines":37,"docExists":false},{"path":"packages/ai/src/api/lazy.ts","pkg":"ai","rel":"api/lazy.ts","lines":70,"imports":["packages/ai/src/types.ts","packages/ai/src/utils/event-stream.ts"],"importedBy":["packages/ai/src/api/anthropic-messages.lazy.ts","packages/ai/src/api/openai-completions.lazy.ts","packages/ai/src/api/openai-responses.lazy.ts","packages/ai/src/index.ts","packages/ai/src/models.ts"],"external":[],"role":"lazyStream(同步返回流、背后异步准备,失败编码成 error 事件)与 lazyApi(把动态 import 包成 ProviderStreams)","tier":"A","doc":"ai/api_lazy.md","readmeLines":70,"docExists":false},{"path":"packages/ai/src/api/openai-completions.lazy.ts","pkg":"ai","rel":"api/openai-completions.lazy.ts","lines":4,"imports":["packages/ai/src/types.ts","packages/ai/src/api/lazy.ts","packages/ai/src/api/openai-completions.ts"],"importedBy":["packages/coding-agent/src/acp/models.ts"],"external":[],"role":"把 openai-completions.ts 包成懒加载 ProviderStreams 工厂","tier":"B","doc":"ai/api_openai-completions.lazy.md","readmeLines":4,"docExists":false},{"path":"packages/ai/src/api/openai-completions.ts","pkg":"ai","rel":"api/openai-completions.ts","lines":1302,"imports":["packages/ai/src/models.ts","packages/ai/src/types.ts","packages/ai/src/utils/error-body.ts","packages/ai/src/utils/event-stream.ts","packages/ai/src/utils/headers.ts","packages/ai/src/utils/json-parse.ts","packages/ai/src/utils/provider-env.ts","packages/ai/src/utils/sanitize-unicode.ts","packages/ai/src/api/github-copilot-headers.ts","packages/ai/src/api/openai-prompt-cache.ts","packages/ai/src/api/simple-options.ts","packages/ai/src/api/transform-messages.ts"],"importedBy":["packages/ai/src/api/openai-completions.lazy.ts","packages/ai/src/index.ts","packages/ai/src/types.ts"],"external":["openai","openai/resources/chat/completions.js"],"role":"OpenAI Chat Completions 协议实现,也是本产品真正跑的那条路;含 8 种 thinking 参数格式与一整套兼容性矩阵","tier":"A","doc":"ai/api_openai-completions.md","readmeLines":1302,"docExists":false},{"path":"packages/ai/src/api/openai-prompt-cache.ts","pkg":"ai","rel":"api/openai-prompt-cache.ts","lines":8,"imports":[],"importedBy":["packages/ai/src/api/openai-completions.ts","packages/ai/src/api/openai-responses.ts"],"external":[],"role":"把 prompt_cache_key 按 Unicode 码点截断到 64 个字符","tier":"B","doc":"ai/api_openai-prompt-cache.md","readmeLines":8,"docExists":false},{"path":"packages/ai/src/api/openai-responses-shared.ts","pkg":"ai","rel":"api/openai-responses-shared.ts","lines":592,"imports":["packages/ai/src/models.ts","packages/ai/src/types.ts","packages/ai/src/utils/event-stream.ts","packages/ai/src/utils/hash.ts","packages/ai/src/utils/json-parse.ts","packages/ai/src/utils/sanitize-unicode.ts","packages/ai/src/api/transform-messages.ts"],"importedBy":["packages/ai/src/api/openai-responses.ts"],"external":["openai","openai/resources/responses/responses.js"],"role":"OpenAI Responses 协议的三大件:消息转换、工具转换、按 output_index 认领槽位的流处理","tier":"B","doc":"ai/api_openai-responses-shared.md","readmeLines":592,"docExists":false},{"path":"packages/ai/src/api/openai-responses.lazy.ts","pkg":"ai","rel":"api/openai-responses.lazy.ts","lines":4,"imports":["packages/ai/src/types.ts","packages/ai/src/api/lazy.ts","packages/ai/src/api/openai-responses.ts"],"importedBy":["packages/ai/src/providers/openai.ts"],"external":[],"role":"openai-responses.ts 的懒加载工厂","tier":"B","doc":"ai/api_openai-responses.lazy.md","readmeLines":4,"docExists":false},{"path":"packages/ai/src/api/openai-responses.ts","pkg":"ai","rel":"api/openai-responses.ts","lines":317,"imports":["packages/ai/src/models.ts","packages/ai/src/types.ts","packages/ai/src/utils/deferred-tools.ts","packages/ai/src/utils/error-body.ts","packages/ai/src/utils/event-stream.ts","packages/ai/src/utils/headers.ts","packages/ai/src/utils/provider-env.ts","packages/ai/src/api/github-copilot-headers.ts","packages/ai/src/api/openai-prompt-cache.ts","packages/ai/src/api/openai-responses-shared.ts","packages/ai/src/api/simple-options.ts"],"importedBy":["packages/ai/src/api/openai-responses.lazy.ts","packages/ai/src/index.ts","packages/ai/src/types.ts"],"external":["openai","openai/resources/responses/responses.js"],"role":"OpenAI Responses API 的入口薄壳:客户端、buildParams、service_tier 计价,流处理委托给 shared","tier":"B","doc":"ai/api_openai-responses.md","readmeLines":317,"docExists":false},{"path":"packages/ai/src/api/simple-options.ts","pkg":"ai","rel":"api/simple-options.ts","lines":77,"imports":["packages/ai/src/types.ts","packages/ai/src/utils/estimate.ts"],"importedBy":["packages/ai/src/api/anthropic-messages.ts","packages/ai/src/api/openai-completions.ts","packages/ai/src/api/openai-responses.ts"],"external":[],"role":"streamSimple 的公共参数计算:按上下文窗口夹 maxTokens、钳思考档位、算 thinking 预算","tier":"A","doc":"ai/api_simple-options.md","readmeLines":77,"docExists":false},{"path":"packages/ai/src/api/transform-messages.ts","pkg":"ai","rel":"api/transform-messages.ts","lines":223,"imports":["packages/ai/src/types.ts"],"importedBy":["packages/ai/src/api/anthropic-messages.ts","packages/ai/src/api/openai-completions.ts","packages/ai/src/api/openai-responses-shared.ts"],"external":[],"role":"三套协议共用的前置归一化:图片降级、跨模型 thinking 转文本、工具 id 规范化、丢弃失败轮、补孤儿工具结果","tier":"A","doc":"ai/api_transform-messages.md","readmeLines":223,"docExists":false},{"path":"packages/ai/src/auth/context.ts","pkg":"ai","rel":"auth/context.ts","lines":45,"imports":["packages/ai/src/auth/types.ts"],"importedBy":["packages/ai/src/images-models.ts","packages/ai/src/index.ts","packages/ai/src/models.ts"],"external":[],"role":"AuthContext 的默认实现:env() 读 process.env、fileExists() 判文件(浏览器下均降级)","tier":"A","doc":"ai/auth_context.md","readmeLines":45,"docExists":false},{"path":"packages/ai/src/auth/credential-store.ts","pkg":"ai","rel":"auth/credential-store.ts","lines":47,"imports":["packages/ai/src/auth/types.ts"],"importedBy":["packages/ai/src/images-models.ts","packages/ai/src/index.ts","packages/ai/src/models.ts"],"external":[],"role":"CredentialStore 的内存参考实现(生产走 coding-agent 的 FileCredentialStore)","tier":"B","doc":"ai/auth_credential-store.md","readmeLines":47,"docExists":false},{"path":"packages/ai/src/auth/helpers.ts","pkg":"ai","rel":"auth/helpers.ts","lines":46,"imports":["packages/ai/src/auth/types.ts"],"importedBy":["packages/ai/src/index.ts","packages/ai/src/providers/anthropic.ts","packages/ai/src/providers/openai.ts"],"external":[],"role":"两个构造器:envApiKeyAuth(存储优先、否则按序试环境变量)与 lazyOAuth(首次调用才动态 import)","tier":"A","doc":"ai/auth_helpers.md","readmeLines":46,"docExists":false},{"path":"packages/ai/src/auth/resolve.ts","pkg":"ai","rel":"auth/resolve.ts","lines":141,"imports":["packages/ai/src/types.ts","packages/ai/src/auth/types.ts"],"importedBy":["packages/ai/src/images-models.ts","packages/ai/src/models.ts"],"external":[],"role":"resolveProviderAuth 主函数:override > 存储凭据 > 环境变量;OAuth 分支实现双重检查锁刷新","tier":"A","doc":"ai/auth_resolve.md","readmeLines":141,"docExists":false},{"path":"packages/ai/src/auth/types.ts","pkg":"ai","rel":"auth/types.ts","lines":182,"imports":["packages/ai/src/types.ts","packages/ai/src/utils/oauth/types.ts"],"importedBy":["packages/ai/src/auth/context.ts","packages/ai/src/auth/credential-store.ts","packages/ai/src/auth/helpers.ts","packages/ai/src/auth/resolve.ts","packages/ai/src/images-models.ts","packages/ai/src/index.ts","packages/ai/src/models.ts","packages/ai/src/utils/oauth/anthropic.ts","packages/ai/src/utils/oauth/load.ts"],"external":[],"role":"认证契约:Credential 判别联合、CredentialStore 读写接口、AuthContext/AuthResult、ApiKeyAuth/OAuthAuth/ProviderAuth","tier":"A","doc":"ai/auth_types.md","readmeLines":182,"docExists":false},{"path":"packages/ai/src/images-models.ts","pkg":"ai","rel":"images-models.ts","lines":267,"imports":["packages/ai/src/auth/context.ts","packages/ai/src/auth/credential-store.ts","packages/ai/src/auth/resolve.ts","packages/ai/src/auth/types.ts","packages/ai/src/models.ts","packages/ai/src/types.ts"],"importedBy":["packages/ai/src/index.ts"],"external":[],"role":"文生图侧的注册表,与 models.ts 逐行对称;generateImages 是一次性 Promise 且自己 try/catch","tier":"B","doc":"ai/images-models.md","readmeLines":267,"docExists":false},{"path":"packages/ai/src/index.ts","pkg":"ai","rel":"index.ts","lines":41,"imports":["packages/ai/src/api/anthropic-messages.ts","packages/ai/src/api/lazy.ts","packages/ai/src/api/openai-completions.ts","packages/ai/src/api/openai-responses.ts","packages/ai/src/auth/context.ts","packages/ai/src/auth/credential-store.ts","packages/ai/src/auth/helpers.ts","packages/ai/src/auth/types.ts","packages/ai/src/images-models.ts","packages/ai/src/models.ts","packages/ai/src/providers/faux.ts","packages/ai/src/session-resources.ts","packages/ai/src/types.ts","packages/ai/src/utils/diagnostics.ts","packages/ai/src/utils/event-stream.ts","packages/ai/src/utils/json-parse.ts","packages/ai/src/utils/oauth/types.ts","packages/ai/src/utils/overflow.ts","packages/ai/src/utils/retry.ts","packages/ai/src/utils/typebox-helpers.ts","packages/ai/src/utils/validation.ts"],"importedBy":["packages/agent/src/agent-loop.ts","packages/agent/src/agent.ts","packages/agent/src/harness/agent-harness.ts","packages/agent/src/harness/compaction/branch-summarization.ts","packages/agent/src/harness/compaction/compaction.ts","packages/agent/src/harness/compaction/utils.ts","packages/agent/src/harness/messages.ts","packages/agent/src/harness/session/session.ts","packages/agent/src/harness/types.ts","packages/agent/src/types.ts","packages/coding-agent/src/acp/agent.ts","packages/coding-agent/src/acp/models.ts"],"external":["typebox"],"role":"包的门面 barrel,同时用注释钉住 pi-minimal 的裁剪范围(provider 与 api 改走深引用)","tier":"A","doc":"ai/index.md","readmeLines":41,"docExists":false},{"path":"packages/ai/src/models.ts","pkg":"ai","rel":"models.ts","lines":452,"imports":["packages/ai/src/api/lazy.ts","packages/ai/src/auth/context.ts","packages/ai/src/auth/credential-store.ts","packages/ai/src/auth/resolve.ts","packages/ai/src/auth/types.ts","packages/ai/src/types.ts"],"importedBy":["packages/ai/src/api/anthropic-messages.ts","packages/ai/src/api/openai-completions.ts","packages/ai/src/api/openai-responses-shared.ts","packages/ai/src/api/openai-responses.ts","packages/ai/src/images-models.ts","packages/ai/src/index.ts","packages/ai/src/providers/anthropic.ts","packages/ai/src/providers/faux.ts","packages/ai/src/providers/openai.ts"],"external":[],"role":"模型注册表:Provider/Models/MutableModels 接口 + ModelsImpl + 两个工厂,以及计费、思考档位、鉴权合并与 provider 派发","tier":"A","doc":"ai/models.md","readmeLines":452,"docExists":false},{"path":"packages/ai/src/providers/anthropic.models.ts","pkg":"ai","rel":"providers/anthropic.models.ts","lines":257,"imports":["packages/ai/src/types.ts"],"importedBy":["packages/ai/src/providers/anthropic.ts"],"external":[],"role":"Anthropic 模型目录,脚本自动生成的纯数据表","tier":"B","doc":"ai/providers_anthropic.models.md","readmeLines":257,"docExists":false},{"path":"packages/ai/src/providers/anthropic.ts","pkg":"ai","rel":"providers/anthropic.ts","lines":20,"imports":["packages/ai/src/api/anthropic-messages.lazy.ts","packages/ai/src/auth/helpers.ts","packages/ai/src/models.ts","packages/ai/src/utils/oauth/load.ts","packages/ai/src/providers/anthropic.models.ts"],"importedBy":[],"external":[],"role":"Anthropic provider 定义(id/baseUrl/auth/models/api 五元组)","tier":"A","doc":"ai/providers_anthropic.md","readmeLines":20,"docExists":false},{"path":"packages/ai/src/providers/faux.ts","pkg":"ai","rel":"providers/faux.ts","lines":538,"imports":["packages/ai/src/models.ts","packages/ai/src/types.ts","packages/ai/src/utils/event-stream.ts"],"importedBy":["packages/ai/src/index.ts"],"external":[],"role":"假模型 provider:不发网络请求,把预先摆好的消息按速率切块模拟成流式事件(零 key 演练的基础)","tier":"B","doc":"ai/providers_faux.md","readmeLines":538,"docExists":false},{"path":"packages/ai/src/providers/openai.models.ts","pkg":"ai","rel":"providers/openai.models.ts","lines":813,"imports":["packages/ai/src/types.ts"],"importedBy":["packages/ai/src/providers/openai.ts"],"external":[],"role":"OpenAI 模型目录,脚本自动生成的纯数据表","tier":"B","doc":"ai/providers_openai.models.md","readmeLines":813,"docExists":false},{"path":"packages/ai/src/providers/openai.ts","pkg":"ai","rel":"providers/openai.ts","lines":15,"imports":["packages/ai/src/api/openai-responses.lazy.ts","packages/ai/src/auth/helpers.ts","packages/ai/src/models.ts","packages/ai/src/providers/openai.models.ts"],"importedBy":[],"external":[],"role":"OpenAI provider 定义,结构与 anthropic 对称但只有 apiKey 一种认证","tier":"A","doc":"ai/providers_openai.md","readmeLines":15,"docExists":false},{"path":"packages/ai/src/session-resources.ts","pkg":"ai","rel":"session-resources.ts","lines":24,"imports":[],"importedBy":["packages/ai/src/index.ts"],"external":[],"role":"全局清理钩子注册表(本仓零调用,上游留的口子)","tier":"B","doc":"ai/session-resources.md","readmeLines":24,"docExists":false},{"path":"packages/ai/src/types.ts","pkg":"ai","rel":"types.ts","lines":722,"imports":["packages/ai/src/api/anthropic-messages.ts","packages/ai/src/api/openai-completions.ts","packages/ai/src/api/openai-responses.ts","packages/ai/src/utils/diagnostics.ts","packages/ai/src/utils/event-stream.ts"],"importedBy":["packages/ai/src/api/anthropic-messages.lazy.ts","packages/ai/src/api/anthropic-messages.ts","packages/ai/src/api/github-copilot-headers.ts","packages/ai/src/api/lazy.ts","packages/ai/src/api/openai-completions.lazy.ts","packages/ai/src/api/openai-completions.ts","packages/ai/src/api/openai-responses-shared.ts","packages/ai/src/api/openai-responses.lazy.ts","packages/ai/src/api/openai-responses.ts","packages/ai/src/api/simple-options.ts","packages/ai/src/api/transform-messages.ts","packages/ai/src/auth/resolve.ts","packages/ai/src/auth/types.ts","packages/ai/src/images-models.ts","packages/ai/src/index.ts","packages/ai/src/models.ts","packages/ai/src/providers/anthropic.models.ts","packages/ai/src/providers/faux.ts","packages/ai/src/providers/openai.models.ts","packages/ai/src/utils/deferred-tools.ts","packages/ai/src/utils/estimate.ts","packages/ai/src/utils/event-stream.ts","packages/ai/src/utils/headers.ts","packages/ai/src/utils/oauth/types.ts","packages/ai/src/utils/overflow.ts","packages/ai/src/utils/provider-env.ts","packages/ai/src/utils/retry.ts","packages/ai/src/utils/validation.ts"],"external":["typebox"],"role":"纯类型文件,零运行时:消息与 content part、Context/Tool、StreamOptions 与各家兼容位、AssistantMessageEvent、Usage/StopReason、Model/ModelCost","tier":"A","doc":"ai/types.md","readmeLines":722,"docExists":false},{"path":"packages/ai/src/utils/deferred-tools.ts","pkg":"ai","rel":"utils/deferred-tools.ts","lines":39,"imports":["packages/ai/src/types.ts"],"importedBy":["packages/ai/src/api/anthropic-messages.ts","packages/ai/src/api/openai-responses.ts"],"external":[],"role":"按“是否在对话历史里新出现且未被调用过”把工具表拆成 immediate / deferred 两组","tier":"A","doc":"ai/utils_deferred-tools.md","readmeLines":39,"docExists":false},{"path":"packages/ai/src/utils/diagnostics.ts","pkg":"ai","rel":"utils/diagnostics.ts","lines":45,"imports":[],"importedBy":["packages/ai/src/index.ts","packages/ai/src/types.ts"],"external":[],"role":"把任意抛出值规整成 DiagnosticErrorInfo 并追加到消息的 diagnostics 数组","tier":"B","doc":"ai/utils_diagnostics.md","readmeLines":45,"docExists":false},{"path":"packages/ai/src/utils/error-body.ts","pkg":"ai","rel":"utils/error-body.ts","lines":127,"imports":[],"importedBy":["packages/ai/src/api/openai-completions.ts","packages/ai/src/api/openai-responses.ts"],"external":[],"role":"从各家 SDK 错误对象的不同字段里探测出统一的 {status, body, message},再拼成展示字符串","tier":"B","doc":"ai/utils_error-body.md","readmeLines":127,"docExists":false},{"path":"packages/ai/src/utils/estimate.ts","pkg":"ai","rel":"utils/estimate.ts","lines":143,"imports":["packages/ai/src/types.ts"],"importedBy":["packages/ai/src/api/simple-options.ts"],"external":[],"role":"上下文 token 估算:优先用最近一次真实 usage + 之后消息的字符估算,退化时整体估算","tier":"A","doc":"ai/utils_estimate.md","readmeLines":143,"docExists":false},{"path":"packages/ai/src/utils/event-stream.ts","pkg":"ai","rel":"utils/event-stream.ts","lines":88,"imports":["packages/ai/src/types.ts"],"importedBy":["packages/ai/src/api/anthropic-messages.ts","packages/ai/src/api/lazy.ts","packages/ai/src/api/openai-completions.ts","packages/ai/src/api/openai-responses-shared.ts","packages/ai/src/api/openai-responses.ts","packages/ai/src/index.ts","packages/ai/src/providers/faux.ts","packages/ai/src/types.ts"],"external":[],"role":"通用 EventStream(推拉合一异步队列)与 AssistantMessageEventStream 特化 —— 所有流式响应的基础","tier":"A","doc":"ai/utils_event-stream.md","readmeLines":88,"docExists":false},{"path":"packages/ai/src/utils/hash.ts","pkg":"ai","rel":"utils/hash.ts","lines":13,"imports":[],"importedBy":["packages/ai/src/api/openai-responses-shared.ts"],"external":[],"role":"确定性 32 位双种子哈希,把长字符串压成短 base36 串","tier":"B","doc":"ai/utils_hash.md","readmeLines":13,"docExists":false},{"path":"packages/ai/src/utils/headers.ts","pkg":"ai","rel":"utils/headers.ts","lines":18,"imports":["packages/ai/src/types.ts"],"importedBy":["packages/ai/src/api/anthropic-messages.ts","packages/ai/src/api/openai-completions.ts","packages/ai/src/api/openai-responses.ts"],"external":[],"role":"Headers ↔ Record 的两个转换小工具(ProviderHeaders 的 null 表示删除某个头)","tier":"B","doc":"ai/utils_headers.md","readmeLines":18,"docExists":false},{"path":"packages/ai/src/utils/json-parse.ts","pkg":"ai","rel":"utils/json-parse.ts","lines":124,"imports":[],"importedBy":["packages/ai/src/api/anthropic-messages.ts","packages/ai/src/api/openai-completions.ts","packages/ai/src/api/openai-responses-shared.ts","packages/ai/src/index.ts"],"external":["partial-json"],"role":"JSON 修补与容错解析:repairJson / parseJsonWithRepair / parseStreamingJson(流式增量参数用)","tier":"B","doc":"ai/utils_json-parse.md","readmeLines":124,"docExists":false},{"path":"packages/ai/src/utils/oauth/anthropic.ts","pkg":"ai","rel":"utils/oauth/anthropic.ts","lines":440,"imports":["packages/ai/src/auth/types.ts","packages/ai/src/utils/provider-env.ts","packages/ai/src/utils/oauth/oauth-page.ts","packages/ai/src/utils/oauth/pkce.ts","packages/ai/src/utils/oauth/types.ts"],"importedBy":[],"external":["node:http"],"role":"Anthropic OAuth 完整实现:PKCE、本地回调服务器、token 交换与刷新;refresh/toAuth 在主链上","tier":"A","doc":"ai/utils_oauth_anthropic.md","readmeLines":440,"docExists":false},{"path":"packages/ai/src/utils/oauth/load.ts","pkg":"ai","rel":"utils/oauth/load.ts","lines":16,"imports":["packages/ai/src/auth/types.ts"],"importedBy":["packages/ai/src/providers/anthropic.ts"],"external":[],"role":"用变量说明符动态加载 oauth/anthropic.ts,让打包器不能静态跟随进 Node-only 代码","tier":"A","doc":"ai/utils_oauth_load.md","readmeLines":16,"docExists":false},{"path":"packages/ai/src/utils/oauth/oauth-page.ts","pkg":"ai","rel":"utils/oauth/oauth-page.ts","lines":109,"imports":[],"importedBy":["packages/ai/src/utils/oauth/anthropic.ts"],"external":[],"role":"OAuth 回调成功/失败的静态 HTML 落地页","tier":"B","doc":"ai/utils_oauth_oauth-page.md","readmeLines":109,"docExists":false},{"path":"packages/ai/src/utils/oauth/pkce.ts","pkg":"ai","rel":"utils/oauth/pkce.ts","lines":34,"imports":[],"importedBy":["packages/ai/src/utils/oauth/anthropic.ts"],"external":[],"role":"用 Web Crypto 生成 PKCE 的 verifier/challenge 一对","tier":"B","doc":"ai/utils_oauth_pkce.md","readmeLines":34,"docExists":false},{"path":"packages/ai/src/utils/oauth/types.ts","pkg":"ai","rel":"utils/oauth/types.ts","lines":79,"imports":["packages/ai/src/types.ts"],"importedBy":["packages/ai/src/auth/types.ts","packages/ai/src/index.ts","packages/ai/src/utils/oauth/anthropic.ts"],"external":[],"role":"OAuth 子系统的类型定义(含一个标 @deprecated 的旧接口)","tier":"B","doc":"ai/utils_oauth_types.md","readmeLines":79,"docExists":false},{"path":"packages/ai/src/utils/overflow.ts","pkg":"ai","rel":"utils/overflow.ts","lines":165,"imports":["packages/ai/src/types.ts"],"importedBy":["packages/ai/src/index.ts"],"external":[],"role":"用按 provider 收集的正则判断一条错误消息是不是“上下文超限”,外加两类不报错的隐性溢出","tier":"B","doc":"ai/utils_overflow.md","readmeLines":165,"docExists":false},{"path":"packages/ai/src/utils/provider-env.ts","pkg":"ai","rel":"utils/provider-env.ts","lines":52,"imports":["packages/ai/src/types.ts"],"importedBy":["packages/ai/src/api/anthropic-messages.ts","packages/ai/src/api/openai-completions.ts","packages/ai/src/api/openai-responses.ts","packages/ai/src/utils/oauth/anthropic.ts"],"external":[],"role":"按“显式覆盖 > process.env > /proc/self/environ”取环境变量(绕开 Bun 编译产物的已知 bug)","tier":"B","doc":"ai/utils_provider-env.md","readmeLines":52,"docExists":false},{"path":"packages/ai/src/utils/retry.ts","pkg":"ai","rel":"utils/retry.ts","lines":101,"imports":["packages/ai/src/types.ts"],"importedBy":["packages/ai/src/index.ts"],"external":[],"role":"isRetryableAssistantError:先排除配额/账单类,再匹配过载/限流/网络/流截断;只分类不实现重试","tier":"B","doc":"ai/utils_retry.md","readmeLines":101,"docExists":false},{"path":"packages/ai/src/utils/sanitize-unicode.ts","pkg":"ai","rel":"utils/sanitize-unicode.ts","lines":25,"imports":[],"importedBy":["packages/ai/src/api/anthropic-messages.ts","packages/ai/src/api/openai-completions.ts","packages/ai/src/api/openai-responses-shared.ts"],"external":[],"role":"删除未配对的 UTF-16 代理项(会导致部分 provider 序列化报错)","tier":"B","doc":"ai/utils_sanitize-unicode.md","readmeLines":25,"docExists":false},{"path":"packages/ai/src/utils/typebox-helpers.ts","pkg":"ai","rel":"utils/typebox-helpers.ts","lines":24,"imports":[],"importedBy":["packages/ai/src/index.ts"],"external":["typebox"],"role":"StringEnum:生成 {type:\"string\", enum:[...]} 形式的 schema,绕开某些 provider 不支持 anyOf","tier":"B","doc":"ai/utils_typebox-helpers.md","readmeLines":24,"docExists":false},{"path":"packages/ai/src/utils/validation.ts","pkg":"ai","rel":"utils/validation.ts","lines":310,"imports":["packages/ai/src/types.ts"],"importedBy":["packages/ai/src/index.ts"],"external":["typebox/compile","typebox/error","typebox/value"],"role":"validateToolArguments:TypeBox 编译校验 + 自制 JSON Schema 强制类型转换双保险","tier":"A","doc":"ai/utils_validation.md","readmeLines":310,"docExists":false},{"path":"packages/coding-agent/src/acp/agent.ts","pkg":"coding-agent","rel":"acp/agent.ts","lines":735,"imports":["packages/ai/src/index.ts","packages/agent/src/node.ts","packages/coding-agent/src/core/resources.ts","packages/coding-agent/src/core/system-prompt.ts","packages/coding-agent/src/core/tools/index.ts","packages/coding-agent/src/acp/session.ts"],"importedBy":["packages/coding-agent/src/acp.ts"],"external":["node:os","node:path","@agentclientprotocol/sdk"],"role":"ACP agent 主体:会话表、下拉框构造、斜杠命令、prompt 生命周期(顶替/取消/自动重试/自动压缩)","tier":"A","doc":"coding-agent/acp_agent.md","readmeLines":735,"docExists":false},{"path":"packages/coding-agent/src/acp/models.ts","pkg":"coding-agent","rel":"acp/models.ts","lines":377,"imports":["packages/ai/src/index.ts","packages/ai/src/api/openai-completions.lazy.ts"],"importedBy":["packages/coding-agent/src/acp.ts","packages/coding-agent/src/core/examples/cli.ts"],"external":["node:fs","node:path"],"role":"模型目录与凭据:手写的 provider 表、FileCredentialStore(auth.json,0600)、启动时的 resolveModel","tier":"B","doc":"coding-agent/acp_models.md","readmeLines":377,"docExists":false},{"path":"packages/coding-agent/src/acp/session.ts","pkg":"coding-agent","rel":"acp/session.ts","lines":291,"imports":["packages/agent/src/index.ts","packages/coding-agent/src/core/tools/edit.ts","packages/coding-agent/src/core/tools/read.ts","packages/coding-agent/src/core/tools/write.ts"],"importedBy":["packages/coding-agent/src/acp/agent.ts"],"external":[],"role":"纯翻译层:工具名 → ACP 的 kind/title/locations/content,以及 live 与 replay 两条产出 session/update 的路","tier":"A","doc":"coding-agent/acp_session.md","readmeLines":291,"docExists":false},{"path":"packages/coding-agent/src/acp.ts","pkg":"coding-agent","rel":"acp.ts","lines":76,"imports":["packages/agent/src/node.ts","packages/coding-agent/src/acp/agent.ts","packages/coding-agent/src/acp/models.ts"],"importedBy":[],"external":["node:fs","node:path","node:stream","@agentclientprotocol/sdk"],"role":"ACP 的 bin 入口:改道 console、装配 agent、把 7 个方法挂到 SDK builder、接 stdio 的 ndjson 流","tier":"A","doc":"coding-agent/acp.md","readmeLines":76,"docExists":false},{"path":"packages/coding-agent/src/core/examples/cli.ts","pkg":"coding-agent","rel":"core/examples/cli.ts","lines":458,"imports":["packages/coding-agent/src/acp/models.ts","packages/coding-agent/src/core/examples/enrich.ts","packages/coding-agent/src/core/examples/generic.ts","packages/coding-agent/src/core/examples/indexer.ts","packages/coding-agent/src/core/examples/preflight.ts","packages/coding-agent/src/core/examples/render.ts","packages/coding-agent/src/core/examples/schema.ts","packages/coding-agent/src/core/examples/search.ts","packages/coding-agent/src/core/examples/store.ts","packages/coding-agent/src/core/examples/sync.ts"],"importedBy":[],"external":["node:fs","node:os","node:path","node:util"],"role":"例程库离线 CLI:index / enrich / sync / search / show / preflight / list 七个子命令","tier":"B","doc":"coding-agent/core_examples_cli.md","readmeLines":449,"docExists":false},{"path":"packages/coding-agent/src/core/examples/enrich-schema.ts","pkg":"coding-agent","rel":"core/examples/enrich-schema.ts","lines":244,"imports":["packages/coding-agent/src/core/examples/extract-util.ts"],"importedBy":["packages/coding-agent/src/core/examples/enrich.ts","packages/coding-agent/src/core/examples/index.ts","packages/coding-agent/src/core/examples/preflight.ts","packages/coding-agent/src/core/examples/render.ts","packages/coding-agent/src/core/examples/search.ts","packages/coding-agent/src/core/examples/store.ts"],"external":[],"role":"富化卡片的类型、模型输出净化(字段裁剪/长度封顶/标识符过滤)、JSONL 序列化","tier":"B","doc":"coding-agent/core_examples_enrich-schema.md","readmeLines":244,"docExists":false},{"path":"packages/coding-agent/src/core/examples/enrich.ts","pkg":"coding-agent","rel":"core/examples/enrich.ts","lines":245,"imports":["packages/coding-agent/src/core/examples/enrich-schema.ts","packages/coding-agent/src/core/examples/extract-util.ts","packages/coding-agent/src/core/examples/schema.ts","packages/coding-agent/src/core/examples/store.ts"],"importedBy":["packages/coding-agent/src/core/examples/cli.ts","packages/coding-agent/src/core/examples/generic.ts","packages/coding-agent/src/core/examples/index.ts"],"external":["node:path"],"role":"富化管线:挑文件 → 模型补全 → 净化 → 追加落盘(离线运维工具)","tier":"B","doc":"coding-agent/core_examples_enrich.md","readmeLines":245,"docExists":false},{"path":"packages/coding-agent/src/core/examples/espidf.ts","pkg":"coding-agent","rel":"core/examples/espidf.ts","lines":258,"imports":["packages/coding-agent/src/core/examples/extract-util.ts"],"importedBy":["packages/coding-agent/src/core/examples/index.ts","packages/coding-agent/src/core/examples/indexer.ts"],"external":["node:path"],"role":"esp-idf 语料抽取器:Supported Targets 表、#include 映射外设、组件依赖、pytest 验收脚本","tier":"B","doc":"coding-agent/core_examples_espidf.md","readmeLines":258,"docExists":false},{"path":"packages/coding-agent/src/core/examples/extract-util.ts","pkg":"coding-agent","rel":"core/examples/extract-util.ts","lines":105,"imports":[],"importedBy":["packages/coding-agent/src/core/examples/enrich-schema.ts","packages/coding-agent/src/core/examples/enrich.ts","packages/coding-agent/src/core/examples/espidf.ts","packages/coding-agent/src/core/examples/generic.ts","packages/coding-agent/src/core/examples/index.ts","packages/coding-agent/src/core/examples/indexer.ts","packages/coding-agent/src/core/examples/stm32cube.ts","packages/coding-agent/src/core/tools/examples.ts"],"external":["node:fs"],"role":"抽取器共用小工具:容错读、目录枚举、递归收文件、粗行数统计、路径正斜杠化","tier":"B","doc":"coding-agent/core_examples_extract-util.md","readmeLines":105,"docExists":false},{"path":"packages/coding-agent/src/core/examples/generic.ts","pkg":"coding-agent","rel":"core/examples/generic.ts","lines":260,"imports":["packages/coding-agent/src/core/examples/schema.ts","packages/coding-agent/src/core/examples/store.ts","packages/coding-agent/src/core/examples/extract-util.ts","packages/coding-agent/src/core/examples/enrich.ts"],"importedBy":["packages/coding-agent/src/core/examples/cli.ts"],"external":["node:fs","node:path"],"role":"generic 生态的 AI 索引器:模型提议条目 + 代码核验(path 存在性、loc 实测、buildable 恒 false)","tier":"B","doc":"coding-agent/core_examples_generic.md","readmeLines":249,"docExists":false},{"path":"packages/coding-agent/src/core/examples/index.ts","pkg":"coding-agent","rel":"core/examples/index.ts","lines":115,"imports":["packages/coding-agent/src/core/examples/enrich-schema.ts","packages/coding-agent/src/core/examples/enrich.ts","packages/coding-agent/src/core/examples/espidf.ts","packages/coding-agent/src/core/examples/extract-util.ts","packages/coding-agent/src/core/examples/indexer.ts","packages/coding-agent/src/core/examples/schema.ts","packages/coding-agent/src/core/examples/preflight.ts","packages/coding-agent/src/core/examples/render.ts","packages/coding-agent/src/core/examples/search.ts","packages/coding-agent/src/core/examples/seed.ts","packages/coding-agent/src/core/examples/store.ts","packages/coding-agent/src/core/examples/stm32cube.ts"],"importedBy":["packages/coding-agent/src/index.ts"],"external":[],"role":"examples 子系统的桶文件(注意 sync 与 generic 不在其中)","tier":"A","doc":"coding-agent/core_examples_index.md","readmeLines":115,"docExists":false},{"path":"packages/coding-agent/src/core/examples/indexer.ts","pkg":"coding-agent","rel":"core/examples/indexer.ts","lines":95,"imports":["packages/coding-agent/src/core/examples/espidf.ts","packages/coding-agent/src/core/examples/extract-util.ts","packages/coding-agent/src/core/examples/schema.ts","packages/coding-agent/src/core/examples/stm32cube.ts","packages/coding-agent/src/core/examples/store.ts"],"importedBy":["packages/coding-agent/src/core/examples/cli.ts","packages/coding-agent/src/core/examples/index.ts"],"external":["node:child_process","node:path"],"role":"索引器:语料根 → 按生态分派抽取器 → 盖语料戳 → 落盘 + 记账","tier":"B","doc":"coding-agent/core_examples_indexer.md","readmeLines":95,"docExists":false},{"path":"packages/coding-agent/src/core/examples/preflight.ts","pkg":"coding-agent","rel":"core/examples/preflight.ts","lines":203,"imports":["packages/coding-agent/src/core/examples/enrich-schema.ts","packages/coding-agent/src/core/examples/schema.ts"],"importedBy":["packages/coding-agent/src/core/examples/cli.ts","packages/coding-agent/src/core/examples/index.ts","packages/coding-agent/src/core/examples/render.ts","packages/coding-agent/src/core/tools/examples.ts"],"external":[],"role":"合并预检:比对底盘与供体的资源足迹(引脚/外设/符号/分区),只报事实不做裁决","tier":"B","doc":"coding-agent/core_examples_preflight.md","readmeLines":203,"docExists":false},{"path":"packages/coding-agent/src/core/examples/render.ts","pkg":"coding-agent","rel":"core/examples/render.ts","lines":148,"imports":["packages/coding-agent/src/core/examples/enrich-schema.ts","packages/coding-agent/src/core/examples/preflight.ts","packages/coding-agent/src/core/examples/schema.ts","packages/coding-agent/src/core/examples/search.ts"],"importedBy":["packages/coding-agent/src/core/examples/cli.ts","packages/coding-agent/src/core/examples/index.ts","packages/coding-agent/src/core/tools/examples.ts"],"external":[],"role":"检索结果 / 条目卡片 / 预检报告的文本渲染,CLI 与 agent 工具共用","tier":"A","doc":"coding-agent/core_examples_render.md","readmeLines":148,"docExists":false},{"path":"packages/coding-agent/src/core/examples/schema.ts","pkg":"coding-agent","rel":"core/examples/schema.ts","lines":247,"imports":[],"importedBy":["packages/coding-agent/src/core/examples/cli.ts","packages/coding-agent/src/core/examples/enrich.ts","packages/coding-agent/src/core/examples/generic.ts","packages/coding-agent/src/core/examples/index.ts","packages/coding-agent/src/core/examples/indexer.ts","packages/coding-agent/src/core/examples/preflight.ts","packages/coding-agent/src/core/examples/render.ts","packages/coding-agent/src/core/examples/search.ts","packages/coding-agent/src/core/examples/seed.ts","packages/coding-agent/src/core/examples/store.ts","packages/coding-agent/src/core/examples/sync.ts","packages/coding-agent/src/core/tools/examples.ts"],"external":[],"role":"例程索引的核心类型、JSONL 序列化与逐条容错解析、本机语料账本类型","tier":"A","doc":"coding-agent/core_examples_schema.md","readmeLines":247,"docExists":false},{"path":"packages/coding-agent/src/core/examples/search.ts","pkg":"coding-agent","rel":"core/examples/search.ts","lines":148,"imports":["packages/coding-agent/src/core/examples/enrich-schema.ts","packages/coding-agent/src/core/examples/schema.ts"],"importedBy":["packages/coding-agent/src/core/examples/cli.ts","packages/coding-agent/src/core/examples/index.ts","packages/coding-agent/src/core/examples/render.ts","packages/coding-agent/src/core/tools/examples.ts"],"external":[],"role":"检索:硬过滤(芯片/生态)在前,确定性打分(外设/关键词/板名/体积)在后,纯函数零 IO","tier":"A","doc":"coding-agent/core_examples_search.md","readmeLines":148,"docExists":false},{"path":"packages/coding-agent/src/core/examples/seed.ts","pkg":"coding-agent","rel":"core/examples/seed.ts","lines":74,"imports":["packages/coding-agent/src/core/examples/schema.ts"],"importedBy":["packages/coding-agent/src/core/examples/index.ts","packages/coding-agent/src/core/tools/examples.ts"],"external":["node:fs","node:path"],"role":"把选中例程拷进工作区(排除构建产物)并写 .yoma-seed.json 出处文件","tier":"A","doc":"coding-agent/core_examples_seed.md","readmeLines":74,"docExists":false},{"path":"packages/coding-agent/src/core/examples/stm32cube.ts","pkg":"coding-agent","rel":"core/examples/stm32cube.ts","lines":217,"imports":["packages/coding-agent/src/core/examples/extract-util.ts"],"importedBy":["packages/coding-agent/src/core/examples/index.ts","packages/coding-agent/src/core/examples/indexer.ts"],"external":["node:path"],"role":"STM32Cube 抽取器:doxygen 风格 readme、include + HAL/LL 调用双路证据、H7 双核目录布局","tier":"B","doc":"coding-agent/core_examples_stm32cube.md","readmeLines":217,"docExists":false},{"path":"packages/coding-agent/src/core/examples/store.ts","pkg":"coding-agent","rel":"core/examples/store.ts","lines":302,"imports":["packages/coding-agent/src/core/examples/enrich-schema.ts","packages/coding-agent/src/core/examples/schema.ts"],"importedBy":["packages/coding-agent/src/core/examples/cli.ts","packages/coding-agent/src/core/examples/enrich.ts","packages/coding-agent/src/core/examples/generic.ts","packages/coding-agent/src/core/examples/index.ts","packages/coding-agent/src/core/examples/indexer.ts","packages/coding-agent/src/core/examples/sync.ts","packages/coding-agent/src/core/tools/examples.ts"],"external":["node:crypto","node:fs","node:os","node:path"],"role":"例程库的落盘层:sources/index/enrich/cache 的读写与路径,以及语料三态解析","tier":"A","doc":"coding-agent/core_examples_store.md","readmeLines":302,"docExists":false},{"path":"packages/coding-agent/src/core/examples/sync.ts","pkg":"coding-agent","rel":"core/examples/sync.ts","lines":349,"imports":["packages/coding-agent/src/core/examples/schema.ts","packages/coding-agent/src/core/examples/store.ts"],"importedBy":["packages/coding-agent/src/core/examples/cli.ts","packages/coding-agent/src/core/tools/examples.ts"],"external":["node:child_process","node:crypto","node:events","node:fs","node:path"],"role":"远程语料两级同步:流式下载 + 边下边算 sha256 + 校验通过才原子改名,进程级锁防并发撕裂","tier":"A","doc":"coding-agent/core_examples_sync.md","readmeLines":349,"docExists":false},{"path":"packages/coding-agent/src/core/resources.ts","pkg":"coding-agent","rel":"core/resources.ts","lines":95,"imports":["packages/agent/src/index.ts"],"importedBy":["packages/coding-agent/src/acp/agent.ts"],"external":["node:path"],"role":"资源发现的应用层策略:上下文文件(全局 + 祖先链,双重去重)与技能目录(全局 + 项目)","tier":"A","doc":"coding-agent/core_resources.md","readmeLines":95,"docExists":false},{"path":"packages/coding-agent/src/core/system-prompt.ts","pkg":"coding-agent","rel":"core/system-prompt.ts","lines":165,"imports":["packages/agent/src/index.ts","packages/coding-agent/src/core/tools/types.ts"],"importedBy":["packages/coding-agent/src/acp/agent.ts"],"external":[],"role":"系统提示词构建:从工具定义收出三段,拼出身份/原则/证据规则/工具清单 + 四段统一收尾","tier":"A","doc":"coding-agent/core_system-prompt.md","readmeLines":165,"docExists":false},{"path":"packages/coding-agent/src/core/toolchain/actions.ts","pkg":"coding-agent","rel":"core/toolchain/actions.ts","lines":80,"imports":["packages/coding-agent/src/core/toolchain/ledger.ts","packages/coding-agent/src/core/toolchain/resolve.ts","packages/coding-agent/src/core/toolchain/version.ts"],"importedBy":["packages/coding-agent/src/core/toolchain/index.ts","packages/coding-agent/src/core/tools/toolchain.ts"],"external":["node:fs","node:path"],"role":"两个“写”动作:把新鲜结果记回账本、验证并记录用户指的路径","tier":"A","doc":"coding-agent/core_toolchain_actions.md","readmeLines":80,"docExists":false},{"path":"packages/coding-agent/src/core/toolchain/index.ts","pkg":"coding-agent","rel":"core/toolchain/index.ts","lines":16,"imports":["packages/coding-agent/src/core/toolchain/actions.ts","packages/coding-agent/src/core/toolchain/ledger.ts","packages/coding-agent/src/core/toolchain/locations.ts","packages/coding-agent/src/core/toolchain/resolve.ts","packages/coding-agent/src/core/toolchain/schema.ts","packages/coding-agent/src/core/toolchain/version.ts"],"importedBy":["packages/coding-agent/src/index.ts"],"external":[],"role":"toolchain 子系统的桶文件,汇总转发六个模块","tier":"A","doc":"coding-agent/core_toolchain_index.md","readmeLines":16,"docExists":false},{"path":"packages/coding-agent/src/core/toolchain/ledger.ts","pkg":"coding-agent","rel":"core/toolchain/ledger.ts","lines":187,"imports":["packages/coding-agent/src/core/toolchain/schema.ts"],"importedBy":["packages/coding-agent/src/core/toolchain/actions.ts","packages/coding-agent/src/core/toolchain/index.ts","packages/coding-agent/src/core/toolchain/resolve.ts"],"external":["node:crypto","node:fs","node:os","node:path"],"role":"本机账本的容错读与原子写,以及项目级 local override 的读取","tier":"A","doc":"coding-agent/core_toolchain_ledger.md","readmeLines":187,"docExists":false},{"path":"packages/coding-agent/src/core/toolchain/locations.ts","pkg":"coding-agent","rel":"core/toolchain/locations.ts","lines":378,"imports":["packages/coding-agent/src/core/toolchain/schema.ts"],"importedBy":["packages/coding-agent/src/core/toolchain/index.ts","packages/coding-agent/src/core/toolchain/resolve.ts"],"external":["node:child_process","node:fs","node:os","node:path"],"role":"本机探测三档机制:PATH 扫描、平台已知安装位置表、Windows 注册表 Uninstall 键搜索","tier":"A","doc":"coding-agent/core_toolchain_locations.md","readmeLines":378,"docExists":false},{"path":"packages/coding-agent/src/core/toolchain/resolve.ts","pkg":"coding-agent","rel":"core/toolchain/resolve.ts","lines":482,"imports":["packages/coding-agent/src/core/toolchain/ledger.ts","packages/coding-agent/src/core/toolchain/locations.ts","packages/coding-agent/src/core/toolchain/schema.ts","packages/coding-agent/src/core/toolchain/version.ts"],"importedBy":["packages/coding-agent/src/core/toolchain/actions.ts","packages/coding-agent/src/core/toolchain/index.ts","packages/coding-agent/src/core/tools/toolchain.ts"],"external":["node:fs","node:fs/promises","node:path"],"role":"唯一“下结论”的模块:六档探测编排,导出 shellEnvFor 与 promptSectionFor","tier":"A","doc":"coding-agent/core_toolchain_resolve.md","readmeLines":482,"docExists":false},{"path":"packages/coding-agent/src/core/toolchain/schema.ts","pkg":"coding-agent","rel":"core/toolchain/schema.ts","lines":260,"imports":[],"importedBy":["packages/coding-agent/src/core/toolchain/index.ts","packages/coding-agent/src/core/toolchain/ledger.ts","packages/coding-agent/src/core/toolchain/locations.ts","packages/coding-agent/src/core/toolchain/resolve.ts","packages/coding-agent/src/core/tools/toolchain.ts"],"external":[],"role":"清单类型定义、JSONC-lite 解析、绝对路径扫描校验、按 side 筛选(manifestForSide)","tier":"A","doc":"coding-agent/core_toolchain_schema.md","readmeLines":260,"docExists":false},{"path":"packages/coding-agent/src/core/toolchain/version.ts","pkg":"coding-agent","rel":"core/toolchain/version.ts","lines":201,"imports":[],"importedBy":["packages/coding-agent/src/core/toolchain/actions.ts","packages/coding-agent/src/core/toolchain/index.ts","packages/coding-agent/src/core/toolchain/resolve.ts"],"external":["node:child_process"],"role":"从 --version 输出抠版本号、版本范围比较、起子进程探测版本(超时 + 两级 kill)","tier":"A","doc":"coding-agent/core_toolchain_version.md","readmeLines":201,"docExists":false},{"path":"packages/coding-agent/src/core/tools/bash.ts","pkg":"coding-agent","rel":"core/tools/bash.ts","lines":198,"imports":["packages/agent/src/index.ts","packages/coding-agent/src/core/tools/types.ts"],"importedBy":["packages/coding-agent/src/core/tools/index.ts"],"external":["typebox"],"role":"bash 工具:默认 120 秒超时、尾部截断 + 全量旁落、100ms 节流的流式回报、三种失败形态","tier":"A","doc":"coding-agent/core_tools_bash.md","readmeLines":198,"docExists":false},{"path":"packages/coding-agent/src/core/tools/datasheet.ts","pkg":"coding-agent","rel":"core/tools/datasheet.ts","lines":490,"imports":["packages/agent/src/index.ts","packages/coding-agent/src/core/tools/engines.ts","packages/coding-agent/src/core/tools/types.ts"],"importedBy":["packages/coding-agent/src/core/tools/index.ts"],"external":["node:path","typebox"],"role":"数据手册 RAG 工具:search / read_section / view_figure 三个动作全服务器化,零本地状态","tier":"B","doc":"coding-agent/core_tools_datasheet.md","readmeLines":490,"docExists":false},{"path":"packages/coding-agent/src/core/tools/edit-diff.ts","pkg":"coding-agent","rel":"core/tools/edit-diff.ts","lines":370,"imports":[],"importedBy":["packages/coding-agent/src/core/tools/edit.ts","packages/coding-agent/src/core/tools/index.ts"],"external":["diff"],"role":"edit 的算法层:行尾/BOM、模糊匹配归一化、精确优先的 fuzzyFindText、批量应用与重叠检测、unified patch","tier":"A","doc":"coding-agent/core_tools_edit-diff.md","readmeLines":370,"docExists":false},{"path":"packages/coding-agent/src/core/tools/edit.ts","pkg":"coding-agent","rel":"core/tools/edit.ts","lines":168,"imports":["packages/agent/src/index.ts","packages/coding-agent/src/core/tools/edit-diff.ts","packages/coding-agent/src/core/tools/file-mutation-queue.ts","packages/coding-agent/src/core/tools/path-utils.ts","packages/coding-agent/src/core/tools/types.ts"],"importedBy":["packages/coding-agent/src/acp/session.ts","packages/coding-agent/src/core/tools/index.ts"],"external":["typebox"],"role":"edit 工具外壳:schema、四条使用守则、prepareArguments 兼容层、读改写与 patch 生成流程","tier":"A","doc":"coding-agent/core_tools_edit.md","readmeLines":168,"docExists":false},{"path":"packages/coding-agent/src/core/tools/engines.ts","pkg":"coding-agent","rel":"core/tools/engines.ts","lines":535,"imports":[],"importedBy":["packages/coding-agent/src/core/tools/datasheet.ts","packages/coding-agent/src/core/tools/flash.ts","packages/coding-agent/src/core/tools/gdb.ts","packages/coding-agent/src/core/tools/log.ts","packages/coding-agent/src/core/tools/netlist.ts","packages/coding-agent/src/core/tools/serial.ts","packages/coding-agent/src/core/tools/stm32config.ts","packages/coding-agent/src/index.ts"],"external":["node:child_process","node:fs","node:os","node:path","node:url"],"role":"嵌入式六件套共用的辅助层:引擎定位、探针租约(进程内 + 文件锁)、runEngine、killTree、输出预算","tier":"A","doc":"coding-agent/core_tools_engines.md","readmeLines":535,"docExists":false},{"path":"packages/coding-agent/src/core/tools/examples.ts","pkg":"coding-agent","rel":"core/tools/examples.ts","lines":419,"imports":["packages/agent/src/index.ts","packages/coding-agent/src/core/examples/extract-util.ts","packages/coding-agent/src/core/examples/preflight.ts","packages/coding-agent/src/core/examples/render.ts","packages/coding-agent/src/core/examples/schema.ts","packages/coding-agent/src/core/examples/search.ts","packages/coding-agent/src/core/examples/seed.ts","packages/coding-agent/src/core/examples/store.ts","packages/coding-agent/src/core/examples/sync.ts","packages/coding-agent/src/core/tools/path-utils.ts","packages/coding-agent/src/core/tools/types.ts"],"importedBy":["packages/coding-agent/src/core/tools/index.ts"],"external":["node:path","typebox"],"role":"examples agent 工具:search / info / seed / preflight / sync 五个动作,含方法论指引文本","tier":"A","doc":"coding-agent/core_tools_examples.md","readmeLines":419,"docExists":false},{"path":"packages/coding-agent/src/core/tools/file-mutation-queue.ts","pkg":"coding-agent","rel":"core/tools/file-mutation-queue.ts","lines":68,"imports":["packages/agent/src/index.ts"],"importedBy":["packages/coding-agent/src/core/tools/edit.ts","packages/coding-agent/src/core/tools/index.ts","packages/coding-agent/src/core/tools/write.ts"],"external":[],"role":"同一文件修改的串行化(模块级每文件锁链)与持锁期间的中断检查","tier":"A","doc":"coding-agent/core_tools_file-mutation-queue.md","readmeLines":68,"docExists":false},{"path":"packages/coding-agent/src/core/tools/flash.ts","pkg":"coding-agent","rel":"core/tools/flash.ts","lines":185,"imports":["packages/agent/src/index.ts","packages/coding-agent/src/core/tools/engines.ts","packages/coding-agent/src/core/tools/path-utils.ts","packages/coding-agent/src/core/tools/types.ts"],"importedBy":["packages/coding-agent/src/core/tools/gdb.ts","packages/coding-agent/src/core/tools/index.ts"],"external":["node:crypto","node:fs/promises","node:path","typebox"],"role":"探针独占执行器:模型自带烧录 argv,工具只管租约、超时杀树、ELF sha256 记进 flash-state.json","tier":"A","doc":"coding-agent/core_tools_flash.md","readmeLines":185,"docExists":false},{"path":"packages/coding-agent/src/core/tools/gdb-mi.ts","pkg":"coding-agent","rel":"core/tools/gdb-mi.ts","lines":724,"imports":[],"importedBy":["packages/coding-agent/src/core/tools/gdb.ts","packages/coding-agent/src/core/tools/index.ts"],"external":[],"role":"gdb 的纯函数层:MI3 分帧与解析、Cortex-M 寄存器语义与异常入栈帧解码、帧渲染与截断","tier":"A","doc":"coding-agent/core_tools_gdb-mi.md","readmeLines":724,"docExists":false},{"path":"packages/coding-agent/src/core/tools/gdb.ts","pkg":"coding-agent","rel":"core/tools/gdb.ts","lines":1961,"imports":["packages/agent/src/index.ts","packages/coding-agent/src/core/tools/engines.ts","packages/coding-agent/src/core/tools/flash.ts","packages/coding-agent/src/core/tools/gdb-mi.ts","packages/coding-agent/src/core/tools/path-utils.ts","packages/coding-agent/src/core/tools/types.ts"],"importedBy":["packages/coding-agent/src/core/tools/index.ts","packages/coding-agent/src/core/tools/log.ts"],"external":["node:child_process","node:fs","node:fs/promises","node:net","node:path","typebox"],"role":"把一个活的 gdb 会话接进 agent 循环:六个动作、GdbSession 状态机、server 拉起、eval 闸门、故障现场分析","tier":"A","doc":"coding-agent/core_tools_gdb.md","readmeLines":1961,"docExists":false},{"path":"packages/coding-agent/src/core/tools/index.ts","pkg":"coding-agent","rel":"core/tools/index.ts","lines":263,"imports":["packages/coding-agent/src/core/tools/bash.ts","packages/coding-agent/src/core/tools/datasheet.ts","packages/coding-agent/src/core/tools/edit.ts","packages/coding-agent/src/core/tools/edit-diff.ts","packages/coding-agent/src/core/tools/examples.ts","packages/coding-agent/src/core/tools/file-mutation-queue.ts","packages/coding-agent/src/core/tools/flash.ts","packages/coding-agent/src/core/tools/gdb.ts","packages/coding-agent/src/core/tools/gdb-mi.ts","packages/coding-agent/src/core/tools/log.ts","packages/coding-agent/src/core/tools/netlist.ts","packages/coding-agent/src/core/tools/path-utils.ts","packages/coding-agent/src/core/tools/read.ts","packages/coding-agent/src/core/tools/serial.ts","packages/coding-agent/src/core/tools/stm32config.ts","packages/coding-agent/src/core/tools/toolchain.ts","packages/coding-agent/src/core/tools/types.ts","packages/coding-agent/src/core/tools/write.ts","packages/agent/src/index.ts"],"importedBy":["packages/coding-agent/src/acp/agent.ts","packages/coding-agent/src/index.ts"],"external":[],"role":"工具集装配面:createCodingToolDefinitions 与 createEmbeddedToolDefinitions 两个工厂","tier":"A","doc":"coding-agent/core_tools_index.md","readmeLines":263,"docExists":false},{"path":"packages/coding-agent/src/core/tools/log.ts","pkg":"coding-agent","rel":"core/tools/log.ts","lines":1155,"imports":["packages/agent/src/index.ts","packages/coding-agent/src/core/tools/engines.ts","packages/coding-agent/src/core/tools/gdb.ts","packages/coding-agent/src/core/tools/serial.ts","packages/coding-agent/src/core/tools/types.ts"],"importedBy":["packages/coding-agent/src/core/tools/index.ts"],"external":["node:child_process","node:fs","node:net","node:path","typebox"],"role":"把板子日志接进会话:六个动作、三种源、全量落盘 + 环形缓冲 + 折叠 + 骨架采样 + wait 阻塞匹配","tier":"A","doc":"coding-agent/core_tools_log.md","readmeLines":1155,"docExists":false},{"path":"packages/coding-agent/src/core/tools/netlist.ts","pkg":"coding-agent","rel":"core/tools/netlist.ts","lines":192,"imports":["packages/agent/src/index.ts","packages/coding-agent/src/core/tools/engines.ts","packages/coding-agent/src/core/tools/path-utils.ts","packages/coding-agent/src/core/tools/types.ts"],"importedBy":["packages/coding-agent/src/core/tools/index.ts"],"external":["node:path","typebox"],"role":"原理图网表解析工具:跑 controller_map / board_ir 引擎,产物写进 .my-pi 并内联关键 JSON","tier":"B","doc":"coding-agent/core_tools_netlist.md","readmeLines":192,"docExists":false},{"path":"packages/coding-agent/src/core/tools/path-utils.ts","pkg":"coding-agent","rel":"core/tools/path-utils.ts","lines":72,"imports":["packages/agent/src/index.ts"],"importedBy":["packages/coding-agent/src/core/tools/edit.ts","packages/coding-agent/src/core/tools/examples.ts","packages/coding-agent/src/core/tools/flash.ts","packages/coding-agent/src/core/tools/gdb.ts","packages/coding-agent/src/core/tools/index.ts","packages/coding-agent/src/core/tools/netlist.ts","packages/coding-agent/src/core/tools/read.ts","packages/coding-agent/src/core/tools/stm32config.ts","packages/coding-agent/src/core/tools/write.ts"],"external":[],"role":"工具的路径解析:MSYS 路径翻译、绝对化、read 的 macOS 文件名变体重试","tier":"A","doc":"coding-agent/core_tools_path-utils.md","readmeLines":72,"docExists":false},{"path":"packages/coding-agent/src/core/tools/read.ts","pkg":"coding-agent","rel":"core/tools/read.ts","lines":110,"imports":["packages/agent/src/index.ts","packages/coding-agent/src/core/tools/path-utils.ts","packages/coding-agent/src/core/tools/types.ts"],"importedBy":["packages/coding-agent/src/acp/session.ts","packages/coding-agent/src/core/tools/index.ts"],"external":["typebox"],"role":"read 工具:按行读文本、1-indexed offset/limit、头部截断并追加可执行的续读提示","tier":"A","doc":"coding-agent/core_tools_read.md","readmeLines":110,"docExists":false},{"path":"packages/coding-agent/src/core/tools/serial.ts","pkg":"coding-agent","rel":"core/tools/serial.ts","lines":371,"imports":["packages/coding-agent/src/core/tools/engines.ts"],"importedBy":["packages/coding-agent/src/core/tools/index.ts","packages/coding-agent/src/core/tools/log.ts"],"external":["node:child_process","node:fs","node:path"],"role":"串口的三平台适配:端口名归一、POSIX 开口序列(两次 fd + stty 走 stdin)、Windows PowerShell 读取脚本、端口枚举","tier":"B","doc":"coding-agent/core_tools_serial.md","readmeLines":371,"docExists":false},{"path":"packages/coding-agent/src/core/tools/stm32config.ts","pkg":"coding-agent","rel":"core/tools/stm32config.ts","lines":259,"imports":["packages/agent/src/index.ts","packages/coding-agent/src/core/tools/engines.ts","packages/coding-agent/src/core/tools/path-utils.ts","packages/coding-agent/src/core/tools/types.ts"],"importedBy":["packages/coding-agent/src/core/tools/index.ts"],"external":["node:path","typebox"],"role":"确定性 STM32 配置内核的包装:七个命令拼 argv 跑一次,支持的芯片族由数据包文件名生成","tier":"B","doc":"coding-agent/core_tools_stm32config.md","readmeLines":259,"docExists":false},{"path":"packages/coding-agent/src/core/tools/toolchain.ts","pkg":"coding-agent","rel":"core/tools/toolchain.ts","lines":198,"imports":["packages/agent/src/index.ts","packages/coding-agent/src/core/toolchain/actions.ts","packages/coding-agent/src/core/toolchain/resolve.ts","packages/coding-agent/src/core/toolchain/schema.ts","packages/coding-agent/src/core/tools/types.ts"],"importedBy":["packages/coding-agent/src/core/tools/index.ts"],"external":["typebox"],"role":"工具链工具:check / resolve / set 三个动作的参数、渲染与 side/manifestText 注入口","tier":"A","doc":"coding-agent/core_tools_toolchain.md","readmeLines":198,"docExists":false},{"path":"packages/coding-agent/src/core/tools/types.ts","pkg":"coding-agent","rel":"core/tools/types.ts","lines":53,"imports":["packages/agent/src/index.ts"],"importedBy":["packages/coding-agent/src/core/system-prompt.ts","packages/coding-agent/src/core/tools/bash.ts","packages/coding-agent/src/core/tools/datasheet.ts","packages/coding-agent/src/core/tools/edit.ts","packages/coding-agent/src/core/tools/examples.ts","packages/coding-agent/src/core/tools/flash.ts","packages/coding-agent/src/core/tools/gdb.ts","packages/coding-agent/src/core/tools/index.ts","packages/coding-agent/src/core/tools/log.ts","packages/coding-agent/src/core/tools/netlist.ts","packages/coding-agent/src/core/tools/read.ts","packages/coding-agent/src/core/tools/stm32config.ts","packages/coding-agent/src/core/tools/toolchain.ts","packages/coding-agent/src/core/tools/write.ts"],"external":["typebox"],"role":"本包的工具形状 ToolDefinition(比 AgentTool 多两类提示词元数据)与 wrapToolDefinition","tier":"A","doc":"coding-agent/core_tools_types.md","readmeLines":53,"docExists":false},{"path":"packages/coding-agent/src/core/tools/write.ts","pkg":"coding-agent","rel":"core/tools/write.ts","lines":83,"imports":["packages/agent/src/index.ts","packages/coding-agent/src/core/tools/file-mutation-queue.ts","packages/coding-agent/src/core/tools/path-utils.ts","packages/coding-agent/src/core/tools/types.ts"],"importedBy":["packages/coding-agent/src/acp/session.ts","packages/coding-agent/src/core/tools/index.ts"],"external":["typebox"],"role":"write 工具:整文件创建或覆盖,details 带 created/oldContent/newContent 供画 diff","tier":"A","doc":"coding-agent/core_tools_write.md","readmeLines":83,"docExists":false},{"path":"packages/coding-agent/src/index.ts","pkg":"coding-agent","rel":"index.ts","lines":8,"imports":["packages/coding-agent/src/core/examples/index.ts","packages/coding-agent/src/core/tools/engines.ts","packages/coding-agent/src/core/tools/index.ts","packages/coding-agent/src/core/toolchain/index.ts"],"importedBy":[],"external":[],"role":"包主入口,纯 re-export 四个桶;刻意不导出 ACP(避免把协议 SDK 拖进桌面端产物)","tier":"B","doc":"coding-agent/index.md","readmeLines":8,"docExists":false}],"docsWritten":24,"footNote":"\n\t<strong>这张图是怎么来的。</strong>\n\t文件清单与 382 条 import 边由\n\t<code>scratchpad/extract-graph.ts</code> 解析三个包 <code>src/</code> 下全部 <code>.ts</code> 源码得到 ——\n\t静态 <code>import/export … from \"…\"</code> 与动态 <code>import()</code> 都算,相对说明符解析到具体文件,\n\t裸说明符(<code>@yoma/my-pi</code> / <code>@earendil-works/pi-ai</code>)归到对应包的入口文件。\n\t档位与一句话职责取自 <code>docs/learn/README.md</code>。<br>\n\t<strong>口径说明。</strong>快照时间 2026-08-21 15:11。此刻 <code>packages/agent</code> 的行数\n\t<em>包含</em>本次学习任务加进去的中文注释(约 5,500 行),所以它比 <code>main</code> 上的原始行数大;\n\t另外两个包基本是原始行数。这里只统计包内互相 import 的边,\n\t<code>node:*</code>、<code>typebox</code>、<code>openai</code> 这类外部依赖不计入边数,但在每个文件的详情里列了出来。<br>\n\t<strong>颜色。</strong>三个包用的是 dataviz 参考调色板的前三个分类槽,已用\n\t<code>validate_palette.js</code> 在深浅两种模式下跑过全对偶校验(色觉缺陷 ΔE 与常态 ΔE 均达标)。\n\t浅色模式下 aqua 的表面对比度低于 3:1,因此每一块都带可见文字标签,并另备表格视图 —— 颜色从不单独承载信息。\n"};
+const FILES = DATA.files;
+const BY_PATH = new Map(FILES.map(f => [f.path, f]));
+for (const f of FILES) { f.nIn = f.importedBy.length; f.nOut = f.imports.length; }
+
+const PKG_COLOR = { agent: "var(--pkg-agent)", ai: "var(--pkg-ai)", "coding-agent": "var(--pkg-coding)" };
+const PKG_LABEL = { agent: "agent", ai: "ai", "coding-agent": "coding-agent" };
+const PKG_DESC = {
+	ai: "@earendil-works/pi-ai · 契约层与协议层",
+	agent: "@yoma/my-pi · 循环、会话与上下文",
+	"coding-agent": "@yoma/my-pi-coding-agent · 工具、提示词与宿主",
+};
+const ORDER = ["ai", "agent", "coding-agent"];
+const NS = "http://www.w3.org/2000/svg";
+const el = (n, a = {}) => { const e = document.createElementNS(NS, n); for (const k in a) e.setAttribute(k, a[k]); return e; };
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+/* ── 主题切换:显式 data-theme 覆盖系统设置 ───────────────── */
+document.getElementById("themeBtn").onclick = () => {
+	const cur = document.documentElement.getAttribute("data-theme");
+	const sysDark = matchMedia("(prefers-color-scheme: dark)").matches;
+	const now = cur ? cur : (sysDark ? "dark" : "light");
+	document.documentElement.setAttribute("data-theme", now === "dark" ? "light" : "dark");
+};
+
+/* ── 统计条 ───────────────────────────────────────────────── */
+{
+	const loc = FILES.reduce((s, f) => s + f.lines, 0);
+	const edges = FILES.reduce((s, f) => s + f.nOut, 0);
+	const cells = [
+		[FILES.length, "个源文件"],
+		[loc.toLocaleString(), "行代码"],
+		[edges, "条包内 import 边"],
+		[FILES.filter(f => f.tier === "A").length, "个 A 档(主链)"],
+		[DATA.docsWritten, "篇讲解已写"],
+	];
+	document.getElementById("stats").innerHTML = cells
+		.map(([v, k]) => `<div class="stat"><div class="v">${v}</div><div class="k">${k}</div></div>`).join("");
+}
+
+/* ── 1. 三包分层图 ────────────────────────────────────────── */
+{
+	const svg = document.getElementById("layers");
+	const rows = [
+		{ pkg: "coding-agent", y: 16 },
+		{ pkg: "agent", y: 112 },
+		{ pkg: "ai", y: 208 },
+	];
+	for (const r of rows) {
+		const fs = FILES.filter(f => f.pkg === r.pkg);
+		const loc = fs.reduce((s, f) => s + f.lines, 0);
+		const g = el("g");
+		g.appendChild(el("rect", { x: 40, y: r.y, width: 560, height: 72, rx: 10, fill: PKG_COLOR[r.pkg], "fill-opacity": .13, stroke: PKG_COLOR[r.pkg], "stroke-width": 1.5 }));
+		const t1 = el("text", { x: 60, y: r.y + 30, fill: "var(--ink-1)", "font-size": 15, "font-weight": 620 });
+		t1.textContent = PKG_LABEL[r.pkg];
+		const t2 = el("text", { x: 60, y: r.y + 51, fill: "var(--ink-2)", "font-size": 12.5 });
+		t2.textContent = PKG_DESC[r.pkg];
+		const t3 = el("text", { x: 580, y: r.y + 41, fill: "var(--ink-2)", "font-size": 12.5, "text-anchor": "end" });
+		t3.textContent = `${fs.length} 文件 · ${loc.toLocaleString()} 行`;
+		g.append(t1, t2, t3);
+		svg.appendChild(g);
+	}
+	// 跨包边:从数据里数出来,不写死
+	const cross = {};
+	for (const f of FILES) for (const t of f.imports) {
+		const tp = BY_PATH.get(t).pkg;
+		if (tp !== f.pkg) cross[`${f.pkg}>${tp}`] = (cross[`${f.pkg}>${tp}`] ?? 0) + 1;
+	}
+	const arrows = [
+		{ key: "coding-agent>agent", x: 640, y1: 88, y2: 112, label: "coding-agent → agent" },
+		{ key: "agent>ai", x: 640, y1: 184, y2: 208, label: "agent → ai" },
+		{ key: "coding-agent>ai", x: 790, y1: 88, y2: 208, label: "coding-agent → ai" },
+	];
+	const defs = el("defs");
+	const mk = el("marker", { id: "ah", viewBox: "0 0 8 8", refX: 6, refY: 4, markerWidth: 6, markerHeight: 6, orient: "auto" });
+	mk.appendChild(el("path", { d: "M0,0 L8,4 L0,8 z", fill: "var(--axis)" }));
+	defs.appendChild(mk); svg.appendChild(defs);
+	for (const a of arrows) {
+		const n = cross[a.key] ?? 0;
+		const p = el("path", {
+			d: `M${a.x},${a.y1 - 26} L${a.x},${a.y2 + 46}`,
+			stroke: "var(--axis)", "stroke-width": 1.5, fill: "none", "marker-end": "url(#ah)",
+		});
+		svg.appendChild(p);
+		const t = el("text", { x: a.x + 10, y: (a.y1 + a.y2) / 2 + 14, fill: "var(--ink-2)", "font-size": 12 });
+		t.textContent = `${n} 条`;
+		svg.appendChild(t);
+		const t2 = el("text", { x: a.x + 10, y: (a.y1 + a.y2) / 2 + 30, fill: "var(--ink-muted)", "font-size": 11 });
+		t2.textContent = a.label;
+		svg.appendChild(t2);
+	}
+	const note = el("text", { x: 40, y: 292, fill: "var(--ink-muted)", "font-size": 11.5 });
+	note.textContent = "反方向一条都没有 —— 分层是单向的,ai 不知道 agent 存在,agent 不知道 coding-agent 存在。";
+	svg.appendChild(note);
+}
+
+/* ── squarified treemap ───────────────────────────────────── */
+function worstRatio(areas, sum, short) {
+	const mx = Math.max(...areas), mn = Math.min(...areas);
+	const s2 = sum * sum, l2 = short * short;
+	return Math.max((l2 * mx) / s2, s2 / (l2 * mn));
+}
+function squarify(items, rect) {
+	// items: [{value, ...}] → 返回带 x/y/w/h 的副本。经典 squarified 算法:
+	// 每次沿短边铺一行,直到再加一个会让长宽比变差为止。
+	const out = [];
+	const list = items.slice().sort((a, b) => b.value - a.value).filter(i => i.value > 0);
+	let { x, y, w, h } = rect;
+	let i = 0;
+	while (i < list.length && w > .5 && h > .5) {
+		const rest = list.slice(i).reduce((s, it) => s + it.value, 0);
+		if (rest <= 0) break;
+		const scale = (w * h) / rest;
+		const short = Math.min(w, h);
+		const row = [];
+		let sum = 0, best = Infinity;
+		while (i < list.length) {
+			const a = list[i].value * scale;
+			const cand = worstRatio([...row.map(r => r.a), a], sum + a, short);
+			if (row.length === 0 || cand <= best) { row.push({ it: list[i], a }); sum += a; best = cand; i++; }
+			else break;
+		}
+		const thick = sum / short;
+		let off = 0;
+		for (const r of row) {
+			const len = r.a / thick;
+			if (w >= h) out.push({ ...r.it, x, y: y + off, w: thick, h: len });
+			else out.push({ ...r.it, x: x + off, y, w: len, h: thick });
+			off += len;
+		}
+		if (w >= h) { x += thick; w -= thick; } else { y += thick; h -= thick; }
+	}
+	return out;
+}
+
+/* ── 2. Treemap 渲染 ──────────────────────────────────────── */
+const tmSvg = document.getElementById("treemap");
+const W = 1000, H = 660, PAD = 2;
+let selected = null;
+const tileByPath = new Map();
+
+function buildTree() {
+	// 包 → 目录 → 文件 三层
+	const pkgs = ORDER.map(pkg => {
+		const fs = FILES.filter(f => f.pkg === pkg);
+		const dirs = {};
+		for (const f of fs) {
+			const d = f.rel.includes("/") ? f.rel.slice(0, f.rel.lastIndexOf("/")) : ".";
+			(dirs[d] ??= []).push(f);
+		}
+		return {
+			pkg, value: fs.reduce((s, f) => s + f.lines, 0),
+			dirs: Object.entries(dirs).map(([name, files]) => ({
+				name, files, value: files.reduce((s, f) => s + f.lines, 0),
+			})),
+		};
+	});
+	return squarify(pkgs, { x: 0, y: 0, w: W, h: H });
+}
+
+function renderTreemap() {
+	tmSvg.innerHTML = "";
+	tmSvg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+	tileByPath.clear();
+	for (const p of buildTree()) {
+		const g = el("g");
+		g.appendChild(el("rect", { x: p.x + 1, y: p.y + 1, width: Math.max(0, p.w - 2), height: Math.max(0, p.h - 2), rx: 7, fill: PKG_COLOR[p.pkg], "fill-opacity": .05, stroke: PKG_COLOR[p.pkg], "stroke-opacity": .45, "stroke-width": 1.2 }));
+		const lab = el("text", { x: p.x + 10, y: p.y + 19, fill: "var(--ink-1)", "font-size": 13.5, "font-weight": 640 });
+		lab.textContent = PKG_LABEL[p.pkg];
+		g.appendChild(lab);
+		const HEAD = 26;
+		for (const d of squarify(p.dirs, { x: p.x + 4, y: p.y + HEAD, w: Math.max(0, p.w - 8), h: Math.max(0, p.h - HEAD - 4) })) {
+			const dg = el("g");
+			const DH = d.h > 42 && d.w > 60 ? 15 : 0;
+			if (DH) {
+				const dl = el("text", { x: d.x + 4, y: d.y + 11, fill: "var(--ink-muted)", "font-size": 10.5 });
+				dl.textContent = d.name === "." ? "(包根)" : d.name + "/";
+				dg.appendChild(dl);
+			}
+			for (const t of squarify(d.files.map(f => ({ f, value: f.lines })), { x: d.x, y: d.y + DH, w: Math.max(0, d.w - PAD), h: Math.max(0, d.h - DH - PAD) })) {
+				const f = t.f;
+				const r = el("rect", {
+					x: t.x + 1, y: t.y + 1, width: Math.max(0, t.w - 2), height: Math.max(0, t.h - 2), rx: 3,
+					fill: PKG_COLOR[f.pkg], "fill-opacity": f.tier === "A" ? .92 : .38,
+					stroke: PKG_COLOR[f.pkg], "stroke-width": f.tier === "A" ? 0 : 1,
+					"stroke-dasharray": f.tier === "A" ? "" : "2 2",
+				});
+				r.classList.add("tm-file");
+				r.dataset.path = f.path;
+				dg.appendChild(r);
+				tileByPath.set(f.path, r);
+				// 直接标签:面积够就写文件名(light 模式下 aqua 对比度不足,靠标签兜底)
+				if (t.w > 46 && t.h > 17) {
+					const short = f.rel.split("/").pop().replace(/\.ts$/, "");
+					const nm = el("text", {
+						x: t.x + 5, y: t.y + 13, "font-size": 10,
+						fill: f.tier === "A" ? "#fff" : "var(--ink-1)",
+						"font-weight": f.tier === "A" ? 500 : 400,
+					});
+					nm.textContent = short.length * 5.6 > t.w - 8 ? short.slice(0, Math.max(1, Math.floor((t.w - 8) / 5.6))) + "…" : short;
+					dg.appendChild(nm);
+					if (t.h > 30 && t.w > 60) {
+						const ln = el("text", { x: t.x + 5, y: t.y + 25, "font-size": 9, fill: f.tier === "A" ? "rgba(255,255,255,.8)" : "var(--ink-muted)" });
+						ln.textContent = f.lines + " 行";
+						dg.appendChild(ln);
+					}
+				}
+			}
+			g.appendChild(dg);
+		}
+		tmSvg.appendChild(g);
+	}
+	applySelection();
+}
+
+/* ── 图例 ─────────────────────────────────────────────────── */
+document.getElementById("legend").innerHTML =
+	ORDER.map(p => `<span class="item"><span class="swatch" style="background:${PKG_COLOR[p]}"></span>${PKG_LABEL[p]}</span>`).join("")
+	+ `<span class="sep"></span>`
+	+ `<span class="item"><span class="swatch" style="background:var(--ink-muted)"></span>A 档 · 主链(实心)</span>`
+	+ `<span class="item"><span class="swatch" style="background:var(--ink-muted);opacity:.38;border:1px dashed var(--ink-muted)"></span>B 档 · 外围(淡+虚线)</span>`
+	+ `<span class="sep"></span><span class="item">面积 = 代码行数</span>`;
+document.getElementById("tmCount").textContent = `${FILES.length} 个文件,面积按行数`;
+
+/* ── 选中态 ───────────────────────────────────────────────── */
+function applySelection() {
+	if (!selected) {
+		for (const r of tileByPath.values()) { r.classList.remove("dimmed"); r.style.stroke = ""; r.style.strokeWidth = ""; r.style.strokeDasharray = ""; }
+		return;
+	}
+	const f = BY_PATH.get(selected);
+	const outs = new Set(f.imports), ins = new Set(f.importedBy);
+	for (const [p, r] of tileByPath) {
+		const on = p === selected || outs.has(p) || ins.has(p);
+		r.classList.toggle("dimmed", !on);
+		if (p === selected) { r.style.stroke = "var(--ink-1)"; r.style.strokeWidth = "2.5"; r.style.strokeDasharray = ""; }
+		else if (outs.has(p)) { r.style.stroke = "var(--ink-1)"; r.style.strokeWidth = "1.8"; r.style.strokeDasharray = "4 2"; }
+		else if (ins.has(p)) { r.style.stroke = "var(--ink-1)"; r.style.strokeWidth = "1.8"; r.style.strokeDasharray = "1 2"; }
+		else { r.style.stroke = ""; r.style.strokeWidth = ""; r.style.strokeDasharray = ""; }
+	}
+}
+
+function select(path) {
+	selected = selected === path ? null : path;
+	applySelection();
+	renderDetail();
+	if (selected) {
+		const r = tileByPath.get(selected);
+		if (r) r.scrollIntoView({ block: "nearest", behavior: "smooth" });
+	}
+}
+
+function renderDetail() {
+	const box = document.getElementById("detail");
+	if (!selected) { box.innerHTML = `<div class="empty">点左侧任意一块看它的依赖关系。</div>`; return; }
+	const f = BY_PATH.get(selected);
+	const link = f.docExists
+		? `<a class="doclink" href="./${esc(f.doc)}">阅读逐节讲解 →</a>`
+		: `<span class="pill">讲解待生成</span>`;
+	const list = (arr, empty) => arr.length
+		? arr.map(p => `<button class="dep" data-go="${esc(p)}">${esc(BY_PATH.get(p).pkg)} / ${esc(BY_PATH.get(p).rel)}</button>`).join("")
+		: `<div class="empty" style="font-size:12px">${empty}</div>`;
+	box.innerHTML = `
+		<h3>${esc(f.rel)}</h3>
+		<div class="meta">${esc(f.pkg)} · ${f.lines} 行 · ${f.tier === "A" ? "A 档 主链" : "B 档 外围"}</div>
+		<div class="role">${esc(f.role)}</div>
+		${link}
+		<h4>它依赖的(${f.nOut})</h4>${list(f.imports, "不依赖包内任何文件 —— 叶子模块")}
+		<h4>依赖它的(${f.nIn})</h4>${list(f.importedBy, "包内没有文件 import 它(入口或未被引用)")}
+		${f.external.length ? `<h4>外部依赖</h4><div style="font-size:12px;color:var(--ink-2);font-family:ui-monospace,Consolas,monospace">${f.external.map(esc).join("<br>")}</div>` : ""}
+	`;
+	box.querySelectorAll("[data-go]").forEach(b => b.onclick = () => select(b.dataset.go));
+}
+
+/* ── tooltip ──────────────────────────────────────────────── */
+const tip = document.getElementById("tip");
+tmSvg.addEventListener("mousemove", e => {
+	const t = e.target.closest?.(".tm-file");
+	if (!t) { tip.style.opacity = 0; return; }
+	const f = BY_PATH.get(t.dataset.path);
+	tip.innerHTML = `<div><strong>${esc(f.rel)}</strong></div>
+		<div class="p">${esc(f.pkg)} · ${f.lines} 行 · ${f.tier} 档 · 被依赖 ${f.nIn} · 依赖 ${f.nOut}</div>
+		<div class="r">${esc(f.role)}</div>`;
+	tip.style.opacity = 1;
+	const r = tip.getBoundingClientRect();
+	tip.style.left = Math.min(e.clientX + 14, innerWidth - r.width - 12) + "px";
+	tip.style.top = Math.min(e.clientY + 14, innerHeight - r.height - 12) + "px";
+});
+tmSvg.addEventListener("mouseleave", () => tip.style.opacity = 0);
+tmSvg.addEventListener("click", e => {
+	const t = e.target.closest?.(".tm-file");
+	if (t) select(t.dataset.path);
+});
+
+/* ── 3. 被依赖排行 ────────────────────────────────────────── */
+{
+	const top = FILES.slice().sort((a, b) => b.nIn - a.nIn).slice(0, 15);
+	const max = top[0].nIn;
+	document.getElementById("bars").innerHTML = top.map(f => `
+		<div class="bar-row">
+			<div class="nm" data-go="${esc(f.path)}" title="${esc(f.path)}">${esc(f.pkg)}/${esc(f.rel)}</div>
+			<div class="bar-track"><div class="bar-fill" style="width:${(f.nIn / max * 100).toFixed(1)}%;background:${PKG_COLOR[f.pkg]}"></div></div>
+			<div class="vv">${f.nIn}</div>
+		</div>`).join("");
+	document.querySelectorAll("#bars [data-go]").forEach(b => b.onclick = () => {
+		select(b.dataset.go);
+		document.getElementById("treemap").scrollIntoView({ behavior: "smooth", block: "center" });
+	});
+}
+
+/* ── 4. 生命周期 ──────────────────────────────────────────── */
+{
+	const STAGES = [{"title":"装配(建会话时跑一次)","pkg":"coding-agent","desc":"解析凭据与模型注册表 → 造执行环境 → 开会话文件 → 发现上下文文件与技能 → 装配工具 → 拼系统提示词 → <code>new AgentHarness(...)</code>。这一步之后 harness 才存在。","files":["packages/coding-agent/src/acp/models.ts","packages/ai/src/models.ts","packages/agent/src/harness/env/nodejs.ts","packages/agent/src/harness/session/jsonl-repo.ts","packages/coding-agent/src/core/resources.ts","packages/coding-agent/src/core/tools/index.ts","packages/coding-agent/src/core/system-prompt.ts"]},{"title":"进入内核:同步守卫 + 冻结快照","pkg":"agent","desc":"<code>harness.prompt()</code> 第一件事是<strong>同步</strong>检查相位 —— 非 idle 直接抛 busy,不排队。然后建 turn 快照:从会话树投影出 messages、解析系统提示词、过滤活跃工具。快照一旦冻结,本轮就不再受配置改动影响。","files":["packages/agent/src/harness/agent-harness.ts","packages/agent/src/harness/session/session.ts","packages/agent/src/harness/messages.ts"]},{"title":"循环开局","pkg":"agent","desc":"<code>runAgentLoop</code> 建两个数组:一个将来还给调用方,一个喂给模型。进入双层 while —— 外层管 follow-up「续摊」,内层管工具多轮与 steering「插队」。","files":["packages/agent/src/agent-loop.ts","packages/agent/src/types.ts"]},{"title":"发一次请求","pkg":"ai","desc":"统一的 Message 形状被翻译成各家协议:Anthropic 的 messages 或 OpenAI 的 completions/responses。工具定义、思考档位、prompt cache 打点都在这一层落定。","files":["packages/ai/src/api/anthropic-messages.ts","packages/ai/src/api/openai-completions.ts","packages/ai/src/api/transform-messages.ts","packages/ai/src/types.ts"]},{"title":"流式回程","pkg":"ai","desc":"SSE 逐块解析成事件;工具参数是增量 JSON,要边收边拼。事件经 <code>EventStream</code> 推给调用方,前端据此逐字渲染。","files":["packages/ai/src/utils/event-stream.ts","packages/ai/src/utils/json-parse.ts","packages/ai/src/api/openai-responses-shared.ts"]},{"title":"执行工具","pkg":"coding-agent","desc":"参数先按 schema 校验,再按并行/串行模式执行。编码四件套之外,Yoma 的特色是那组<strong>嵌入式工具</strong> —— 烧录、日志、gdb、串口、网表。","files":["packages/ai/src/utils/validation.ts","packages/coding-agent/src/core/tools/bash.ts","packages/coding-agent/src/core/tools/edit.ts","packages/coding-agent/src/core/tools/gdb.ts","packages/coding-agent/src/core/tools/log.ts","packages/coding-agent/src/core/tools/flash.ts"]},{"title":"轮末与收尾","pkg":"agent","desc":"有工具结果就再来一轮;都settle了就问 follow-up 队列。挂起的会话写入这时才落盘(JSONL 追加一行一条目)。上下文超阈值时触发压缩 —— 压缩只改<strong>投影</strong>,历史条目一条不删。","files":["packages/agent/src/harness/session/jsonl-storage.ts","packages/agent/src/harness/compaction/compaction.ts","packages/agent/src/harness/utils/truncate.ts"]},{"title":"善后(宿主策略层,不在这三个包里)","pkg":"agent","desc":"自动压缩何时触发、provider 失败要不要重试、事件怎么投影成前端形状 —— 内核只给机制,策略在 <code>packages/kernel/src/host/</code>。这也是为什么读完内核还得读 host 那一层。","files":["packages/agent/src/harness/types.ts"]}];
+	document.getElementById("flow").innerHTML = STAGES.map((s, i) => `
+		<div class="stage">
+			<div class="stage-n" style="background:${PKG_COLOR[s.pkg]}">${i}</div>
+			<div class="stage-body">
+				<div class="stage-t">${esc(s.title)}</div>
+				<div class="stage-d">${s.desc}</div>
+				<div class="chips">${s.files.map(p => BY_PATH.has(p)
+					? `<button class="chip" data-go="${esc(p)}">${esc(BY_PATH.get(p).rel)}</button>`
+					: `<span class="chip" style="cursor:default;opacity:.6">${esc(p)}</span>`).join("")}</div>
+			</div>
+		</div>`).join("");
+	document.querySelectorAll("#flow [data-go]").forEach(b => b.onclick = () => {
+		select(b.dataset.go);
+		document.getElementById("treemap").scrollIntoView({ behavior: "smooth", block: "center" });
+	});
+}
+
+/* ── 5. 表格 ──────────────────────────────────────────────── */
+{
+	let sortK = "lines", sortDir = -1;
+	const q = document.getElementById("q"), fp = document.getElementById("fpkg"), ft = document.getElementById("ftier");
+	function draw() {
+		const term = q.value.trim().toLowerCase();
+		let rows = FILES.filter(f =>
+			(!fp.value || f.pkg === fp.value) && (!ft.value || f.tier === ft.value) &&
+			(!term || f.path.toLowerCase().includes(term) || (f.role || "").toLowerCase().includes(term)));
+		rows.sort((a, b) => {
+			const x = a[sortK], y = b[sortK];
+			return (typeof x === "number" ? x - y : String(x).localeCompare(String(y))) * sortDir;
+		});
+		document.getElementById("tbody").innerHTML = rows.map(f => `
+			<tr data-go="${esc(f.path)}">
+				<td class="mono">${esc(f.rel)}</td>
+				<td><span class="swatch" style="display:inline-block;background:${PKG_COLOR[f.pkg]};vertical-align:-2px;margin-right:5px"></span>${esc(f.pkg)}</td>
+				<td class="num">${f.lines}</td><td>${f.tier}</td>
+				<td class="num">${f.nIn}</td><td class="num">${f.nOut}</td>
+				<td><div class="rolecell">${esc(f.role)}</div></td>
+				<td>${f.docExists ? `<a class="doclink" href="./${esc(f.doc)}">讲解</a>` : `<span style="color:var(--ink-muted)">待生成</span>`}</td>
+			</tr>`).join("");
+		document.querySelectorAll("#tbody [data-go]").forEach(tr => tr.onclick = e => {
+			if (e.target.tagName === "A") return;
+			select(tr.dataset.go);
+			document.getElementById("treemap").scrollIntoView({ behavior: "smooth", block: "center" });
+		});
+	}
+	document.querySelectorAll("th[data-k]").forEach(th => th.onclick = () => {
+		const k = th.dataset.k;
+		if (sortK === k) sortDir *= -1; else { sortK = k; sortDir = (k === "lines" || k === "nIn" || k === "nOut") ? -1 : 1; }
+		draw();
+	});
+	[q, fp, ft].forEach(c => c.oninput = draw);
+	draw();
+}
+
+document.getElementById("foot").innerHTML = DATA.footNote;
+renderTreemap();
+</script>
