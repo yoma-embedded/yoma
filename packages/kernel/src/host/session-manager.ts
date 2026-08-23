@@ -42,12 +42,13 @@ import {
   type ToolDef,
 } from "@yoma/coding-agent"
 import { buildSystemPrompt, collectToolPromptData } from "@yoma/coding-agent/system-prompt"
-import { resolveModel } from "@yoma/coding-agent/models"
+import { configurableProviders, resolveModel } from "@yoma/coding-agent/models"
 import { discoverSkills, loadContextFiles } from "@yoma/coding-agent/resources"
 import {
   clampThinkingLevel,
   getSupportedThinkingLevels,
   type AssistantMessage,
+  type AuthContext,
   type Model,
   type Models,
 } from "@earendil-works/pi-ai"
@@ -64,7 +65,7 @@ import { sessionNotFound } from "../types.ts"
 import { SessionProjection } from "./projector.ts"
 import { overflowAction, shouldAutoCompact } from "./compaction.ts"
 import { retryDelayMs, retrySleep, shouldAutoRetry } from "./retry.ts"
-import { CONFIGURABLE_PROVIDERS, migrateLegacyPiAuth, yomaConfigDir, removeAuthKey, writeAuthKey } from "./auth.ts"
+import { migrateLegacyPiAuth, yomaConfigDir, removeAuthKey, writeAuthKey } from "./auth.ts"
 
 /** 同时活着的 harness 上限。淘汰只是丢弃内存态,重开就是 repo.open + buildContext,很便宜。 */
 const MAX_LIVE_SESSIONS = 8
@@ -151,11 +152,17 @@ export interface SessionManagerOptions {
    */
   configDir?: string
   /**
-   * 模型目录的来源。默认复用 yoma 的 resolveModel()(读 ~/.pi/agent/auth.json)。
+   * 模型目录的来源。默认复用 yoma 的 resolveModel()(读 `<configDir>/auth.json`)。
    * 可注入是为了两件事:测试用 pi-ai 的 faux provider 跑完整一轮而不需要网络和 key;
    * 以及 P6 换成我们自己的凭据管理(Electron safeStorage)时不用改这里。
    */
   resolveModels?: () => Promise<{ models: Models; model: Model<string> }>
+  /**
+   * 凭据解析看哪个环境(pi-ai 的 AuthContext:环境变量 + 文件存在性)。**测试接缝**,生产不传。
+   * 目录有 40 家 provider,开发机上一个 ANTHROPIC_API_KEY 或一份 ~/.aws/credentials 就能让
+   * "首跑没有任何 key"的测试说谎;测试传 yoma 的 NO_AMBIENT_AUTH,只认 auth.json。
+   */
+  authContext?: AuthContext
   /**
    * 没人选档时用哪一档。不传则 harness 落到 `"off"`。
    * 桌面端与 bench 都传 `max`;`setModel` 的显式选择压过它。
@@ -210,7 +217,7 @@ export class SessionManager {
   /**
    * 延迟解析模型目录。
    *
-   * 复用 yoma 自己的 resolveModel() —— 它读 ~/.pi/agent/auth.json,也就是用户配 pi/Zed
+   * 复用 yoma 自己的 resolveModel() —— 它读 `<configDir>/auth.json`,也就是用户配 Zed
    * 时已经填好的凭据,于是桌面端零配置就能开跑。**不在构造时解析**:没有 key 时它会抛,
    * 那不该让整个内核进程起不来 —— 前端还得能显示会话列表并引导去配置。
    */
@@ -226,7 +233,10 @@ export class SessionManager {
       if (!this.options.resolveModels && !this.options.configDir) migrateLegacyPiAuth(this.configDir)
       const resolved = this.options.resolveModels
         ? await this.options.resolveModels()
-        : ((await resolveModel(this.configDir)) as { models: Models; model: Model<string> })
+        : ((await resolveModel(this.configDir, { authContext: this.options.authContext })) as {
+            models: Models
+            model: Model<string>
+          })
       this.models = resolved.models
       this.defaultModel = resolved.model as Model<string>
       this.modelError = undefined
@@ -249,30 +259,26 @@ export class SessionManager {
    * 解析失败不抛:返回空列表,让前端去引导配置凭据,而不是白屏。
    */
   async providers(): Promise<ProviderInfo[]> {
+    // 只要一个 key 就能连的 provider(yoma 按 pi-ai 的 login 流程推导)。没配的也要列出来
+    // (空模型表 + authenticated: false),用户才能从连接对话框里给它加 key。
+    const configurable = await configurableProviders()
     let models: Models
     try {
       models = (await this.ensureModels()).models
     } catch {
       // 一个 key 都没配时 resolveModel() 直接抛,注册表是空的。这时必须交出
       // 可配置目录(authenticated: false),否则连接对话框无物可列,首跑用户被锁死。
-      return CONFIGURABLE_PROVIDERS.map((spec) => ({ id: spec.id, name: spec.name, authenticated: false, models: [] }))
+      return configurable.map((spec) => ({ id: spec.id, name: spec.name, authenticated: false, models: [] }))
     }
 
+    // resolveModel() 的不变式:注册 == 已配置(没凭据的它不注册),所以注册表里的一律 authenticated。
     const out: ProviderInfo[] = []
     for (const provider of models.getProviders()) {
-      const list = provider.getModels()
-      // 没配凭据的 provider 也要列出来,否则用户不知道还能选什么。
-      let authenticated = false
-      try {
-        authenticated = list.length > 0 && Boolean(await models.getAuth(list[0]!))
-      } catch {
-        authenticated = false
-      }
       out.push({
         id: provider.id,
         name: provider.name,
-        authenticated,
-        models: list.map((model) => ({
+        authenticated: true,
+        models: provider.getModels().map((model) => ({
           id: model.id,
           providerID: provider.id,
           name: model.name ?? model.id,
@@ -290,9 +296,7 @@ export class SessionManager {
         })),
       })
     }
-    // resolveModel() 只注册 auth.json 里有 key 的 provider。没配的也要列出来
-    // (空模型表 + authenticated: false),用户才能从连接对话框里给它加 key。
-    for (const spec of CONFIGURABLE_PROVIDERS) {
+    for (const spec of configurable) {
       if (!out.some((provider) => provider.id === spec.id))
         out.push({ id: spec.id, name: spec.name, authenticated: false, models: [] })
     }
@@ -304,7 +308,7 @@ export class SessionManager {
   // -------------------------------------------------------------------------
 
   /**
-   * 写入一个 provider 的 API key(落到 yoma 读的那份 ~/.pi/agent/auth.json)。
+   * 写入一个 provider 的 API key(落到 yoma 读的那份 `<configDir>/auth.json`)。
    *
    * 写完必须丢弃已解析的模型目录:resolveModel() 只注册写入当时有 key 的 provider,
    * 不重解析的话新 key 要等重启进程才生效。注意 **已经开着的会话拿的还是旧注册表**
@@ -317,10 +321,9 @@ export class SessionManager {
   async setAuth(providerID: string, apiKey: string): Promise<ProviderInfo[]> {
     const trimmed = apiKey.trim()
     if (!trimmed) throw new Error("API key 不能为空")
-    if (!CONFIGURABLE_PROVIDERS.some((spec) => spec.id === providerID))
-      throw new Error(
-        `未知 provider ${providerID}。可配置:${CONFIGURABLE_PROVIDERS.map((spec) => spec.id).join(", ")}`,
-      )
+    const configurable = await configurableProviders()
+    if (!configurable.some((spec) => spec.id === providerID))
+      throw new Error(`未知 provider ${providerID}。可配置:${configurable.map((spec) => spec.id).join(", ")}`)
     await writeAuthKey(providerID, trimmed, this.configDir)
     this.invalidateModels()
     return this.providers()

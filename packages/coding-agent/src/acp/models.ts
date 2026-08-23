@@ -1,204 +1,38 @@
 /**
  * 模型解析与模型目录。
  *
+ * 目录的真源是 pi-ai 的内建目录(`builtinProviders()`,40 家、元数据由 pi-ai 生成),
+ * 这里不再手写 provider 表 —— 从前的手写表只有两家,compat/thinkingLevelMap 靠人工从
+ * pi-ai 的 JSON 抄,抄错的直接后果是 thinking 档位在 Zed 里能选但发不出去。本文件只管三件事:
+ * 凭证、选择、以及"只要一个 key 就能用"的过滤。
+ *
  * 凭证完全独立于 pi:key 存 <configDir>/auth.json(FileCredentialStore,0600),
- * 或走各家的标准环境变量(DEEPSEEK_API_KEY / MOONSHOT_API_KEY)。解析发生在每次
- * 请求时(models.streamSimple → resolveProviderAuth):存储的凭证优先,环境变量
- * 兜底 —— 改 auth.json 不用重启。
+ * 或走各家的标准环境变量 / 凭证文件(由 pi-ai 各 provider 的 auth 自己定义)。解析发生在每次
+ * 请求时(models.streamSimple → resolveProviderAuth):存储的凭证优先,环境兜底 ——
+ * 改 auth.json 不用重启。
  *
  * 选择顺序:YOMA_PROVIDER/YOMA_MODEL 环境变量 → <configDir>/settings.json 的
- * defaultProvider/defaultModel → 第一个有凭证的 provider。
+ * defaultProvider/defaultModel → 第一个有凭证的 provider 的第一个目录模型。
  *
- * 注册策略:凡是有凭证的 provider,统统注册进同一个 Models 注册表 ——
- * 不能只注册"当前选中的那一个"。AgentHarness.models 是 readonly,harness 建好之后
- * 换不掉注册表;而 ModelsImpl.requireProvider 对未注册的 provider 会抛 Unknown provider。
- * 所以跨 provider 的 setModel() 只有在 provider 提前注册好的前提下才不会在发请求时才炸。
- *
- * 模型元数据(reasoning / thinkingLevelMap / compat)抄自 pi-ai 的生成目录
- * (node_modules/@earendil-works/pi-ai/dist/providers/data/*.json),不要凭空编 —— thinkingLevelMap
- * 写错的直接后果是 thinking 档位在 Zed 里能选但发不出去。
+ * 注册策略:注册 == 已配置。凡是 checkAuth 通过的 provider 全部注册进同一个 Models,
+ * 没配置的从注册表里删掉 —— Zed 的模型下拉和桌面端都靠这条(未配置的家桌面端另经
+ * configurableProviders() 单列)。不能只注册"当前选中的那一个":AgentHarness.models 是
+ * readonly,harness 建好之后换不掉注册表,跨 provider 的 setModel() 只有在 provider 提前
+ * 注册好的前提下才不会在发请求时才炸。
  */
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
+	type AuthContext,
 	createModels,
-	createProvider,
 	type Credential,
 	type CredentialInfo,
 	type CredentialStore,
-	envApiKeyAuth,
 	type Model,
-	type ModelCost,
 	type Models,
-	type MutableModels,
-	type OpenAICompletionsCompat,
-	type ThinkingLevelMap,
+	type Provider,
 } from "@earendil-works/pi-ai";
-import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
-
-interface ModelSpec {
-	id: string;
-	name: string;
-	reasoning: boolean;
-	input: ("text" | "image")[];
-	cost: ModelCost;
-	contextWindow: number;
-	maxTokens: number;
-	/** 缺省键走 provider 默认值,null 表示该档位不支持。见 getSupportedThinkingLevels。 */
-	thinkingLevelMap?: ThinkingLevelMap;
-	compat?: OpenAICompletionsCompat;
-}
-
-interface ProviderSpec {
-	id: string;
-	name: string;
-	baseUrl: string;
-	/** 标准 API key 环境变量,与上游 pi-ai 的约定一致;按序取第一个有值的。 */
-	envVars: readonly string[];
-	/** 没指定模型时用哪个,必须是 models 里的 id。 */
-	defaultModel: string;
-	models: ModelSpec[];
-}
-
-/** DeepSeek 与 Moonshot 共用的 OpenAI-completions 兼容位。 */
-const DEEPSEEK_COMPAT: OpenAICompletionsCompat = {
-	supportsStore: false,
-	supportsDeveloperRole: false,
-	requiresReasoningContentOnAssistantMessages: true,
-	// DeepSeek 静默忽略 max_completion_tokens(实测),不钉的话压缩/摘要请求没有输出上限。
-	maxTokensField: "max_tokens",
-	thinkingFormat: "deepseek",
-};
-
-const MOONSHOT_COMPAT: OpenAICompletionsCompat = {
-	supportsStore: false,
-	supportsDeveloperRole: false,
-	supportsReasoningEffort: false,
-	maxTokensField: "max_tokens",
-	supportsStrictMode: false,
-	thinkingFormat: "deepseek",
-};
-
-/** 已知的 OpenAI-completions 兼容 provider。加新家只需要在这里加一条。 */
-const PROVIDERS: Record<string, ProviderSpec> = {
-	deepseek: {
-		id: "deepseek",
-		name: "DeepSeek",
-		baseUrl: "https://api.deepseek.com",
-		envVars: ["DEEPSEEK_API_KEY"],
-		defaultModel: "deepseek-v4-pro",
-		models: [
-			{
-				id: "deepseek-v4-pro",
-				name: "DeepSeek V4 Pro",
-				reasoning: true,
-				input: ["text"],
-				cost: { input: 0.435, output: 0.87, cacheRead: 0.003625, cacheWrite: 0 },
-				contextWindow: 1000000,
-				maxTokens: 384000,
-				thinkingLevelMap: { minimal: null, low: null, medium: null, high: "high", max: "max" },
-				compat: DEEPSEEK_COMPAT,
-			},
-			{
-				id: "deepseek-v4-flash",
-				name: "DeepSeek V4 Flash",
-				reasoning: true,
-				input: ["text"],
-				cost: { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0 },
-				contextWindow: 1000000,
-				maxTokens: 384000,
-				thinkingLevelMap: { minimal: null, low: null, medium: null, high: "high", max: "max" },
-				compat: DEEPSEEK_COMPAT,
-			},
-			{
-				id: "deepseek-chat",
-				name: "DeepSeek Chat",
-				reasoning: false,
-				input: ["text"],
-				cost: { input: 0.27, output: 1.1, cacheRead: 0.07, cacheWrite: 0 },
-				contextWindow: 65536,
-				maxTokens: 8192,
-				compat: DEEPSEEK_COMPAT,
-			},
-		],
-	},
-	"moonshotai-cn": {
-		id: "moonshotai-cn",
-		name: "Moonshot (Kimi)",
-		baseUrl: "https://api.moonshot.cn/v1",
-		envVars: ["MOONSHOT_API_KEY"],
-		defaultModel: "kimi-k2-turbo-preview",
-		models: [
-			{
-				id: "kimi-k2-turbo-preview",
-				name: "Kimi K2 Turbo",
-				reasoning: false,
-				input: ["text"],
-				cost: { input: 2.4, output: 10, cacheRead: 0.6, cacheWrite: 0 },
-				contextWindow: 262144,
-				maxTokens: 262144,
-				compat: MOONSHOT_COMPAT,
-			},
-			{
-				id: "kimi-k2-thinking",
-				name: "Kimi K2 Thinking",
-				reasoning: true,
-				input: ["text"],
-				cost: { input: 0.6, output: 2.5, cacheRead: 0.15, cacheWrite: 0 },
-				contextWindow: 262144,
-				maxTokens: 262144,
-				compat: MOONSHOT_COMPAT,
-			},
-			{
-				id: "kimi-k2.5",
-				name: "Kimi K2.5",
-				reasoning: true,
-				input: ["text", "image"],
-				cost: { input: 0.6, output: 3, cacheRead: 0.1, cacheWrite: 0 },
-				contextWindow: 262144,
-				maxTokens: 262144,
-				compat: MOONSHOT_COMPAT,
-			},
-			{
-				id: "kimi-k2.6",
-				name: "Kimi K2.6",
-				reasoning: true,
-				input: ["text", "image"],
-				cost: { input: 0.95, output: 4, cacheRead: 0.16, cacheWrite: 0 },
-				contextWindow: 262144,
-				maxTokens: 262144,
-				compat: MOONSHOT_COMPAT,
-			},
-			{
-				id: "kimi-k3",
-				name: "Kimi K3",
-				reasoning: true,
-				input: ["text", "image"],
-				cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 0 },
-				contextWindow: 1048576,
-				maxTokens: 131072,
-				thinkingLevelMap: {
-					off: null,
-					minimal: null,
-					low: "low",
-					medium: null,
-					high: "high",
-					xhigh: null,
-					max: "max",
-				},
-				compat: {
-					supportsStore: false,
-					supportsDeveloperRole: false,
-					supportsReasoningEffort: true,
-					maxTokensField: "max_tokens",
-					supportsStrictMode: false,
-					thinkingFormat: "openai",
-					requiresReasoningContentOnAssistantMessages: true,
-				},
-			},
-		],
-	},
-};
+import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 
 function readJson(path: string): any {
 	try {
@@ -288,97 +122,107 @@ export class FileCredentialStore implements CredentialStore {
 	}
 }
 
+/** 测试隔离:不读环境变量、不看文件,只认 auth.json。 */
+export const NO_AMBIENT_AUTH: AuthContext = {
+	env: async () => undefined,
+	fileExists: async () => false,
+};
+
+export interface ResolveModelOptions {
+	authContext?: AuthContext;
+}
+
 export interface ResolvedModel {
 	models: Models;
 	model: Model<any>;
 }
 
-function toModel(spec: ProviderSpec, m: ModelSpec): Model<"openai-completions"> {
-	return {
-		id: m.id,
-		name: m.name,
-		api: "openai-completions",
-		provider: spec.id,
-		baseUrl: spec.baseUrl,
-		reasoning: m.reasoning,
-		thinkingLevelMap: m.thinkingLevelMap,
-		input: m.input,
-		cost: m.cost,
-		contextWindow: m.contextWindow,
-		maxTokens: m.maxTokens,
-		compat: m.compat,
-	};
-}
-
-function registerProvider(models: MutableModels, spec: ProviderSpec): void {
-	models.setProvider(
-		createProvider({
-			id: spec.id,
-			name: spec.name,
-			baseUrl: spec.baseUrl,
-			// 每次请求时才解析:注入的 FileCredentialStore 里存储的 key 优先,
-			// spec.envVars 兜底(envApiKeyAuth 的既定语义)。
-			auth: { apiKey: envApiKeyAuth(`${spec.name} API key`, spec.envVars) },
-			models: spec.models.map((m) => toModel(spec, m)),
-			api: openAICompletionsApi(),
-		}),
-	);
-}
-
 /**
- * 装配注册表:凡是有凭证(auth.json 或环境变量)的 provider 全部注册进去,并选出默认模型。
- *
- * 一次性把所有可用 provider 都注册好,是跨 provider 切模型能工作的前提。
+ * 装配注册表:注册全部内建 provider,再把没凭证的删掉,并选出默认模型。
  */
-export async function resolveModel(configDir: string): Promise<ResolvedModel> {
+export async function resolveModel(configDir: string, options?: ResolveModelOptions): Promise<ResolvedModel> {
 	const authPath = join(configDir, "auth.json");
-	const credentials = new FileCredentialStore(authPath);
 	const settings = readJson(join(configDir, "settings.json")) ?? {};
+	const models = createModels({ credentials: new FileCredentialStore(authPath), authContext: options?.authContext });
 
-	const hasCredential = async (spec: ProviderSpec): Promise<boolean> => {
-		const stored = await credentials.read(spec.id);
-		if (stored?.type === "api_key" && stored.key) return true;
-		return spec.envVars.some((name) => process.env[name]);
-	};
-
-	const available: string[] = [];
-	for (const spec of Object.values(PROVIDERS)) {
-		if (await hasCredential(spec)) available.push(spec.id);
+	const builtin = builtinProviders();
+	for (const provider of builtin) models.setProvider(provider);
+	const configured: string[] = [];
+	for (const provider of builtin) {
+		if (await models.checkAuth(provider.id)) configured.push(provider.id);
+		else models.deleteProvider(provider.id);
 	}
 
-	const providerId =
+	const knownIds = builtin.map((p) => p.id);
+	const providerId: string | undefined =
 		process.env.YOMA_PROVIDER ??
-		(settings.defaultProvider && PROVIDERS[settings.defaultProvider] ? settings.defaultProvider : undefined) ??
-		available[0];
+		(knownIds.includes(settings.defaultProvider) ? settings.defaultProvider : undefined) ??
+		configured[0];
 
 	if (!providerId) {
-		const envVars = Object.values(PROVIDERS).flatMap((spec) => spec.envVars);
 		throw new Error(
-			`No usable provider. Add a key to ${authPath} like {"deepseek":{"type":"api_key","key":"sk-..."}}, or export one of: ${envVars.join(", ")}.`,
+			`No usable provider. Add a key to ${authPath} like {"deepseek":{"type":"api_key","key":"sk-..."}}, or export the provider's standard env var (DEEPSEEK_API_KEY, ANTHROPIC_API_KEY, ...).`,
 		);
 	}
-	const spec = PROVIDERS[providerId];
-	if (!spec) {
-		throw new Error(`Unknown provider: ${providerId}. Known providers: ${Object.keys(PROVIDERS).join(", ")}`);
+	const provider = builtin.find((p) => p.id === providerId);
+	if (!provider) {
+		throw new Error(`Unknown provider: ${providerId}. Known providers: ${knownIds.join(", ")}`);
 	}
-	if (!available.includes(providerId)) {
-		throw new Error(`No API key for provider ${providerId}. Add it to ${authPath}, or export ${spec.envVars.join(" / ")}.`);
-	}
-
-	const models = createModels({ credentials });
-	for (const id of available) {
-		registerProvider(models, PROVIDERS[id]!);
+	if (!configured.includes(providerId)) {
+		throw new Error(
+			`No API key for provider ${providerId} (${provider.auth.apiKey?.name ?? provider.name}). Add it to ${authPath}.`,
+		);
 	}
 
-	const modelId =
+	const catalog = models.getModels(providerId);
+	const modelId: string | undefined =
 		process.env.YOMA_MODEL ??
 		(settings.defaultProvider === providerId ? settings.defaultModel : undefined) ??
-		spec.defaultModel;
-
-	const model = models.getModel(providerId, modelId) ?? models.getModel(providerId, spec.defaultModel);
+		catalog[0]?.id;
+	const model = modelId === undefined ? undefined : models.getModel(providerId, modelId);
 	if (!model) {
-		throw new Error(`Model ${providerId}/${modelId} not found. Known models: ${spec.models.map((m) => m.id).join(", ")}`);
+		throw new Error(`Model ${providerId}/${modelId} not found. Known models: ${catalog.map((m) => m.id).join(", ")}`);
 	}
 
 	return { models, model };
+}
+
+/** login 只问一个 secret 就返回 ⇒ 一个 API key 就够。多问一句、问别的、或抛出都算不够。 */
+async function isKeyOnly(provider: Provider): Promise<boolean> {
+	const apiKey = provider.auth.apiKey;
+	if (!apiKey?.login || provider.getModels().length === 0) return false;
+	let secrets = 0;
+	try {
+		await apiKey.login({
+			signal: new AbortController().signal,
+			notify() {},
+			async prompt(q) {
+				if (q.type !== "secret" || secrets++ > 0) throw new Error("needs more than one API key");
+				return "probe";
+			},
+		});
+	} catch {
+		return false;
+	}
+	return secrets === 1;
+}
+
+let configurable: Promise<ReadonlyArray<{ id: string; name: string }>> | undefined;
+
+/**
+ * 只要一个 API key 就能用的 provider(桌面端连接对话框列的就是这些),按 pi-ai 的 name。
+ *
+ * 从 login 流程探出来而不是手写表:手写的那份(从前住在 kernel/auth.ts)跟着目录漂移过;
+ * 而 bedrock / vertex / cloudflare 的 login 要的不止一个 key(先选方法、再要 account id),
+ * 只存一个 key 进 auth.json 的话 checkAuth 永远不过,对话框上"已连接"永远不亮。
+ * 探测无副作用:apiKey 的 login 只会 prompt,拿到假 key 就返回,不碰网络。一个进程探一次。
+ */
+export async function configurableProviders(): Promise<ReadonlyArray<{ id: string; name: string }>> {
+	return (configurable ??= (async () => {
+		const out: { id: string; name: string }[] = [];
+		for (const provider of builtinProviders()) {
+			if (await isKeyOnly(provider)) out.push({ id: provider.id, name: provider.name });
+		}
+		return out;
+	})());
 }

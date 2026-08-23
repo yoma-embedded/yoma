@@ -16,10 +16,9 @@
  * 老用户的 key 由 `migrateLegacyPiAuth()` 一次性搬过来(只在新文件不存在时,
  * 且**不删旧文件**)—— 否则升级一次 app 就是"key 不见了",而用户什么都没做。
  *
- * CONFIGURABLE_PROVIDERS 是从 yoma 的 PROVIDERS 表**结构化复制**的(只抄 id 和 name):
- * 那张表没有导出,而首跑时(auth.json 不存在)resolveModel() 直接抛,注册表里一个
- * provider 都没有 —— 不靠这份副本,连接对话框就没有东西可以列,用户被锁在门外。
- * 复制的漂移由 auth.test.ts 兜住。
+ * "连接对话框能列哪些 provider"不在这里:从前这里有一份从 yoma 手写表抄来的
+ * CONFIGURABLE_PROVIDERS,靠一条防漂移测试钉住。现在目录是 pi-ai 的内建目录,
+ * 能列谁由 yoma 的 `configurableProviders()` 推导(session-manager 直接用它),副本没有了。
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
@@ -27,12 +26,6 @@ import { homedir } from "node:os"
 import path from "node:path"
 
 import { FileCredentialStore } from "@yoma/coding-agent/models"
-
-/** yoma 能用的 provider(id 必须和它 PROVIDERS 表的键一致,否则写进去也读不出来)。 */
-export const CONFIGURABLE_PROVIDERS: ReadonlyArray<{ id: string; name: string }> = [
-  { id: "deepseek", name: "DeepSeek" },
-  { id: "moonshotai-cn", name: "Moonshot (Kimi)" },
-]
 
 /** 和 yoma 的 ACP 适配器同一个默认目录(acp/agent.ts 的 CONFIG_DIR)。 */
 export function yomaConfigDir(): string {

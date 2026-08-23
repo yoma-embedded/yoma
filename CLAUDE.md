@@ -210,8 +210,17 @@ v3 规格(`pi/packages/agent/docs/harness.md` §5.5/§5.6)的形状 —— hooks
   但**数值必须抄一致**,否则会变成"Zed 里能自愈、桌面端不能"这种极难归因的差异。
   重试期间 **idle 必须压住**(`entry.retryPending`):退避窗口里漏出 idle,bench 会
   当真去跑判据,而 agent 正要重试,两边同时动板子。
-- **模型目录**(`SessionManager.providers()`)。`thinkingLevels` 必须走 pi-ai 的
-  `getSupportedThinkingLevels(model)` 去问,编错的后果是档位能选但发不出去。
+- **模型目录**(`SessionManager.providers()`)。目录本身是 pi-ai 的内建目录
+  (`@earendil-works/pi-ai/providers/all` 的 `builtinProviders()`,0.84.2 是 40 家),
+  2026-08-23 起**不再手写 provider 表** —— 从前 `acp/models.ts` 手抄两家、kernel 再抄一份
+  id/name 给连接对话框,靠防漂移测试钉住,结果就是"只支持 DeepSeek 和 Kimi"。
+  `resolveModel()` 的不变式是**注册 == 已配置**:全部注册、逐个 `checkAuth()`、没凭据的删掉,
+  所以注册表里的一律 `authenticated`。连接对话框列的是 `configurableProviders()`:运行时
+  用假交互跑一遍各家的 `apiKey.login`,只问一个 secret 的才算"一个 key 就能用";
+  bedrock / vertex / cloudflare(还要账号 id、区域、项目)、openai-codex(只有 OAuth)、
+  radius(目录要联网拉)由此自动排除 —— 这些家填了 key 也永远亮不起"已连接"。
+  `thinkingLevels` 必须走 pi-ai 的 `getSupportedThinkingLevels(model)` 去问,编错的后果是
+  档位能选但发不出去。
 - **默认思考档位**(`src/thinking.ts` + `KernelHostOptions.defaultThinkingLevel`)。
   yoma 没人指定档位时落到 `"off"`(`agent-harness.ts:214`),而 `"off"` 会把
   `reasoning` 整个从请求里摘掉(同文件 `:429`)—— 对 reasoning 模型这就是**最强的
@@ -262,8 +271,10 @@ v3 规格(`pi/packages/agent/docs/harness.md` §5.5/§5.6)的形状 —— hooks
   迁移幂等、不删旧文件(用户可能还在用 pi 命令行)。
 
 `configDir` 一处管三样:凭据、技能、上下文文件,与 yoma ACP 的 `CONFIG_DIR` 同义。
-provider 目录在无 key 时来自 `CONFIGURABLE_PROVIDERS`(yoma `PROVIDERS` 表的结构化
-复制,防漂移测试在 `host/auth.test.ts`)。
+凭据解析还有第二个注入口 `authContext`(pi-ai 的 `AuthContext`:环境变量 + 文件存在性,
+`KernelHostOptions` / `SessionManagerOptions` / `resolveModel()` 都收):**测试必须传
+`NO_AMBIENT_AUTH`**。目录有 40 家,开发机上一个 `ANTHROPIC_API_KEY` 或一份
+`~/.aws/credentials` 就会让"首跑无凭据"的测试说谎,逐个删环境变量列不全。生产不传。
 
 ### 调试台(`packages/bench`)
 

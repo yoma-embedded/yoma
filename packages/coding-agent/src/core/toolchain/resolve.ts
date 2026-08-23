@@ -50,7 +50,7 @@ import path from "node:path";
 
 import { emptyLedger, readLedger, readLocalOverrides } from "./ledger.ts";
 import type { Ledger, LedgerEntry } from "./ledger.ts";
-import { findEnvKey, findOnPath, registryCandidates, wellKnownCandidates } from "./locations.ts";
+import { findEnvKey, findOnPath, registryCandidates, wellKnownCandidates, withPath } from "./locations.ts";
 import { installHint, manifestForSide, MANIFEST_RELATIVE, parseManifest } from "./schema.ts";
 import type { ToolchainManifest, ToolSpec } from "./schema.ts";
 import { probeVersion, satisfies } from "./version.ts";
@@ -166,7 +166,7 @@ function pathHits(tool: ToolSpec, env: NodeJS.ProcessEnv): Hit[] {
 
 /** 在给定的一组目录里找 names,当它们是唯一的 PATH 条目 —— 复用 findOnPath 的 PATHEXT 展开,不用另写一套。 */
 function resolveNamesInDirs(names: string[], dirs: string[], env: NodeJS.ProcessEnv): Record<string, string> | undefined {
-	const synthetic: NodeJS.ProcessEnv = { ...env, PATH: dirs.join(path.delimiter) };
+	const synthetic = withPath(env, dirs);
 	const bin: Record<string, string> = {};
 	for (const name of names) {
 		const found = findOnPath(name, synthetic);

@@ -44,6 +44,8 @@ export interface KernelHostOptions {
   configDir?: string
   /** 模型目录的来源。默认复用 yoma 的 resolveModel();测试注入 faux provider。 */
   resolveModels?: SessionManagerOptions["resolveModels"]
+  /** 凭据解析看哪个环境。测试接缝(传 NO_AMBIENT_AUTH 挡住开发机的真实 key);生产不传。 */
+  authContext?: SessionManagerOptions["authContext"]
   /** 没人选档时的思考档位。不传则 `"off"`。桌面端和 bench 都传 `max`。 */
   defaultThinkingLevel?: SessionManagerOptions["defaultThinkingLevel"]
   /**
@@ -74,6 +76,7 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     enginesDir: options.enginesDir,
     configDir: options.configDir,
     resolveModels: options.resolveModels,
+    authContext: options.authContext,
     defaultThinkingLevel: options.defaultThinkingLevel,
     toolchainSide: options.toolchainSide,
     toolchainManifestText: options.toolchainManifestText,

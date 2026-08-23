@@ -18,6 +18,7 @@ import {
 	expandGlobPath,
 	findEnvKey,
 	findOnPath,
+	withPath,
 	parseInstallLocations,
 	registryCandidates,
 	tableLookup,
@@ -64,6 +65,17 @@ describe("findEnvKey", () => {
 		);
 		expect(proxy.PATH).toBe("x"); // 代理确实是大小写不敏感的
 		expect(findEnvKey(proxy, "PATH")).toBe("Path");
+	});
+});
+
+describe("withPath", () => {
+	// Windows 形状的 env:真实键叫 "Path"。这条在 Mac 上也会真的失败 —— 不用等 Windows CI。
+	it("替换 PATH 时把原来的 Path 键一起拿掉,findOnPath 扫的才是指定目录", () => {
+		writeFileSync(join(dir, "mytool.exe"), "");
+		// PATHEXT 用小写:扩展名大小写取自它,小写在区分大小写的 ext4 与不区分的 APFS/NTFS 上拼出同一个名字。
+		const env = withPath({ Path: "/somewhere/else", PATHEXT: ".exe" }, [dir]);
+		expect(Object.keys(env).filter((k) => k.toLowerCase() === "path")).toEqual(["PATH"]);
+		expect(findOnPath("mytool", env)).toBe(join(dir, "mytool.exe"));
 	});
 });
 

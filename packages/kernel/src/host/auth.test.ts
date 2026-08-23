@@ -1,7 +1,9 @@
 /**
- * 凭据写入端 + CONFIGURABLE_PROVIDERS 副本的防漂移闸 + 老位置迁移。
+ * 凭据写入端 + 连接对话框的可配置目录 + 老位置迁移。
  *
- * **本进程里绝不碰真实的 ~/.yoma**:所有入口都注入 configDir,指向 mkdtemp 目录。
+ * **本进程里绝不碰真实的 ~/.yoma**:所有入口都注入 configDir,指向 mkdtemp 目录;
+ * 凭据解析注入 NO_AMBIENT_AUTH,开发机上真实的 ANTHROPIC_API_KEY / ~/.aws 一概看不见
+ * (目录有 40 家,逐个删环境变量列不全)。
  *
  * 2026-08 之前这套测试要起一个"出生时 HOME 就是临时目录"的子进程 —— 因为当年
  * yoma 的 resolveModel() 直接读 os.homedir(),而 Bun 的 homedir() 在进程启动时定死,
@@ -15,11 +17,10 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { homedir, tmpdir } from "node:os"
 import path from "node:path"
 
-import { resolveModel } from "@yoma/coding-agent/models"
+import { configurableProviders, NO_AMBIENT_AUTH } from "@yoma/coding-agent/models"
 
 import {
   authFilePath,
-  CONFIGURABLE_PROVIDERS,
   migrateLegacyPiAuth,
   yomaConfigDir,
   readAuthFile,
@@ -45,30 +46,22 @@ describe("默认位置", () => {
   })
 })
 
-describe("CONFIGURABLE_PROVIDERS 与 yoma 的 PROVIDERS 表一致", () => {
-  test("用 YOMA_PROVIDER 逼出的 Known providers 集合和副本相等", async () => {
-    // PROVIDERS 表没有导出,唯一能拿到完整键集合的地方是这条报错:指定一个不存在的
-    // provider,resolveModel 在碰任何凭据逻辑之前就抛 Unknown provider + 完整名单。
-    // 措辞变了这里会响,照着新措辞修 —— 重点是别让名单默默漂移。
-    const savedProvider = process.env.YOMA_PROVIDER
-    process.env.YOMA_PROVIDER = "__yoma_drift_probe__"
-    let message = ""
-    try {
-      await resolveModel(tempDir())
-    } catch (error) {
-      message = (error as Error).message
-    } finally {
-      if (savedProvider === undefined) delete process.env.YOMA_PROVIDER
-      else process.env.YOMA_PROVIDER = savedProvider
-    }
-    const match = message.match(/Known providers: (.+)$/)
-    expect([message, Boolean(match)]).toEqual([message, true])
-    const known = match![1]!
-      .split(",")
-      .map((id) => id.trim())
-      .filter(Boolean)
-      .sort()
-    expect(CONFIGURABLE_PROVIDERS.map((spec) => spec.id).sort()).toEqual(known)
+describe("连接对话框的可配置目录来自 yoma 的 configurableProviders()", () => {
+  test("首跑(零凭据)列出的正是它,而且不含填一个 key 也亮不起来的那几家", async () => {
+    const manager = new SessionManager({
+      sessionsRoot: tempDir("yoma-auth-sessions-"),
+      configDir: tempDir(),
+      authContext: NO_AMBIENT_AUTH,
+      emit: () => {},
+    })
+    const listed = (await manager.providers()).map((p) => [p.id, p.authenticated, p.models.length])
+    const configurable = await configurableProviders()
+    expect(listed).toEqual(configurable.map((spec) => [spec.id, false, 0]))
+
+    const ids = listed.map(([id]) => id)
+    for (const id of ["deepseek", "moonshotai-cn", "anthropic", "openai"]) expect(ids).toContain(id)
+    // 只有 OAuth / 还要账号 id / 目录要联网拉
+    for (const id of ["openai-codex", "cloudflare-workers-ai", "radius"]) expect(ids).not.toContain(id)
     cleanup()
   })
 })
@@ -170,7 +163,12 @@ describe("老位置迁移(~/.pi/agent/auth.json → <configDir>/auth.json)", () 
 describe("SessionManager.setAuth 的入参校验(写入之前就抛,不碰文件)", () => {
   test("空 key / 未知 provider 明确拒绝", async () => {
     const sessionsRoot = tempDir("yoma-auth-sessions-")
-    const manager = new SessionManager({ sessionsRoot, configDir: tempDir(), emit: () => {} })
+    const manager = new SessionManager({
+      sessionsRoot,
+      configDir: tempDir(),
+      authContext: NO_AMBIENT_AUTH,
+      emit: () => {},
+    })
     await expect(manager.setAuth("deepseek", "   ")).rejects.toThrow("不能为空")
     await expect(manager.setAuth("nope", "sk-x")).rejects.toThrow("未知 provider")
     cleanup()
@@ -181,30 +179,30 @@ describe("凭据全链路(注入 configDir,进程内)", () => {
   test("首跑目录 → setAuth 后 authenticated + 真实模型表 → removeAuth 复原", async () => {
     const configDir = tempDir("yoma-auth-config-")
     const sessionsRoot = tempDir("yoma-auth-sessions-")
-
-    // 开发机上可能真的设了这些,会让"首跑没有任何 key"的前提不成立。
+    // YOMA_PROVIDER / YOMA_MODEL 是 yoma 自己的开关,仍直接读 process.env;key 类的环境
+    // 由 NO_AMBIENT_AUTH 挡掉,不用逐个删。
     const saved: Record<string, string | undefined> = {}
-    for (const name of ["YOMA_PROVIDER", "YOMA_MODEL", "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY"]) {
+    for (const name of ["YOMA_PROVIDER", "YOMA_MODEL"]) {
       saved[name] = process.env[name]
       delete process.env[name]
     }
 
     try {
-      const manager = new SessionManager({ sessionsRoot, configDir, emit: () => {} })
+      const manager = new SessionManager({ sessionsRoot, configDir, authContext: NO_AMBIENT_AUTH, emit: () => {} })
+      const configurable = await configurableProviders()
+      const allUnauthenticated = configurable.map((spec) => [spec.id, false, 0])
 
       const empty = await manager.providers()
-      expect(empty.map((p) => [p.id, p.authenticated, p.models.length])).toEqual(
-        CONFIGURABLE_PROVIDERS.map((spec) => [spec.id, false, 0]) as never,
-      )
+      expect(empty.map((p) => [p.id, p.authenticated, p.models.length])).toEqual(allUnauthenticated)
 
       const afterSet = await manager.setAuth("deepseek", "  sk-e2e  ")
       const deepseek = afterSet.find((p) => p.id === "deepseek")!
       expect(deepseek.authenticated).toBe(true)
       expect(deepseek.models.length).toBeGreaterThan(0)
-      // 没配 key 的 provider 仍然列出来,等着被连接
+      // 没配 key 的 provider 仍然列出来,等着被连接;名字跟 pi-ai 走
       expect(afterSet.find((p) => p.id === "moonshotai-cn")).toEqual({
         id: "moonshotai-cn",
-        name: "Moonshot (Kimi)",
+        name: configurable.find((spec) => spec.id === "moonshotai-cn")!.name,
         authenticated: false,
         models: [],
       })
@@ -212,9 +210,7 @@ describe("凭据全链路(注入 configDir,进程内)", () => {
       expect(readAuthFile(configDir)).toEqual({ deepseek: { type: "api_key", key: "sk-e2e" } })
 
       const afterRemove = await manager.removeAuth("deepseek")
-      expect(afterRemove.map((p) => [p.id, p.authenticated, p.models.length])).toEqual(
-        CONFIGURABLE_PROVIDERS.map((spec) => [spec.id, false, 0]) as never,
-      )
+      expect(afterRemove.map((p) => [p.id, p.authenticated, p.models.length])).toEqual(allUnauthenticated)
     } finally {
       for (const [name, value] of Object.entries(saved)) {
         if (value === undefined) delete process.env[name]
@@ -229,12 +225,12 @@ describe("凭据全链路(注入 configDir,进程内)", () => {
     const sessionsRoot = tempDir("yoma-auth-sessions-")
     writeFileSync(authFilePath(configDir), JSON.stringify({ deepseek: { key: "sk-no-type" } }))
     const saved: Record<string, string | undefined> = {}
-    for (const name of ["YOMA_PROVIDER", "YOMA_MODEL", "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY"]) {
+    for (const name of ["YOMA_PROVIDER", "YOMA_MODEL"]) {
       saved[name] = process.env[name]
       delete process.env[name]
     }
     try {
-      const manager = new SessionManager({ sessionsRoot, configDir, emit: () => {} })
+      const manager = new SessionManager({ sessionsRoot, configDir, authContext: NO_AMBIENT_AUTH, emit: () => {} })
       const list = await manager.providers()
       const deepseek = list.find((p) => p.id === "deepseek")!
       expect(deepseek.authenticated).toBe(true)

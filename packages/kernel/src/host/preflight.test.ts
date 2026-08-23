@@ -3,6 +3,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
+import { NO_AMBIENT_AUTH } from "@yoma/coding-agent/models"
+
 import { inspectEngines } from "./preflight.ts"
 import { createKernelHost } from "./index.ts"
 
@@ -46,7 +48,8 @@ describe("inspectEngines", () => {
 describe("app.preflight", () => {
   test("no key → auth.missing, no engines dir → engines.missingDir", async () => {
     const saved: Record<string, string | undefined> = {}
-    for (const name of ["YOMA_PROVIDER", "YOMA_MODEL", "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY"]) {
+    // key 类环境由 NO_AMBIENT_AUTH 挡掉;这两个是 yoma 自己的开关,仍直接读 process.env。
+    for (const name of ["YOMA_PROVIDER", "YOMA_MODEL"]) {
       saved[name] = process.env[name]
       delete process.env[name]
     }
@@ -55,6 +58,7 @@ describe("app.preflight", () => {
         sessionsRoot: tempDir("yoma-pf-sessions-"),
         stateDir: tempDir("yoma-pf-state-"),
         configDir: tempDir("yoma-pf-config-"),
+        authContext: NO_AMBIENT_AUTH,
         version: "test",
         onEvents: () => {},
       })

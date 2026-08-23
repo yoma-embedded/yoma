@@ -20,8 +20,10 @@
   yoma 在 `kernel/src/host/{compaction,retry,session-manager}.ts` 重建了只服务桌面端的最小子集 ——
   要找上游参照(比如溢出压缩策略)去 `D:\toy\pi\packages\coding-agent\src\core\agent-session.ts`,
   不要被"内核只给了机制"这句话误导成上游没有。
-- `src/acp/models.ts` 的 `PROVIDERS` 表 + `FileCredentialStore` **同时是桌面端、bench、Zed 三个消费方的模型目录来源**
-  (经 `@yoma/coding-agent/models` 深引用别名可达)。动它要验三条路。
+- `src/acp/models.ts` **同时是桌面端、bench、Zed 三个消费方的模型目录来源**(经 `@yoma/coding-agent/models`
+  深引用别名可达)。目录本身来自 pi-ai 的 `builtinProviders()`(2026-08-23 起,从前是两家的手写表);这个文件
+  只管凭证(`FileCredentialStore`)、选择(`YOMA_*` / settings.json)和"一个 key 就能用"的过滤
+  (`configurableProviders()`)。动它要验三条路。
 
 ## 与上游工具层的关系:不跟 `agent/src/harness/tools/`
 
@@ -51,8 +53,9 @@
 
 ## 不做
 
-- 不接上游扩展系统 / pi packages 分发 / `registerProvider` + `models.json`:嵌入式工具组是产品内置,
-  不需要第三方分发;手写 PROVIDERS 表的维护成本低于引入 settings + 远程目录 + 扩展加载器。
+- 不接上游扩展系统 / pi packages 分发 / `registerProvider` + `models.json`(coding-agent 的 `ModelRuntime`
+  那一层):嵌入式工具组是产品内置,不需要第三方分发;pi-ai 的静态内建目录已经覆盖全部 40 家,
+  叠加 settings + 远程目录 + 扩展 provider 换来的只是自定义 baseUrl 与离线目录更新,不值 2000 行。
 - 不接上游 RPC(`--mode rpc` JSONL)/ 新 `packages/protocol`:yoma 的 renderer↔内核协议见 `packages/kernel`。
 - 不迁到 `createAgentSession()` SDK:它 0.80.6 就有,当初不用是因为它拖着 3469 行 `AgentSession`
   + 八个值级 import pi-tui 的工具文件;"用 SDK"对 yoma 的真实成本是移植并长期维护那份 fork 差异,不是 bundle 体积。

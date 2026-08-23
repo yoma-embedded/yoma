@@ -10,7 +10,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { writeLedgerEntry } from "./ledger.ts";
-import { findOnPath } from "./locations.ts";
+import { findOnPath, withPath } from "./locations.ts";
 import type { ToolchainResolution } from "./resolve.ts";
 import { MANIFEST_RELATIVE, parseManifest } from "./schema.ts";
 import { probeVersion } from "./version.ts";
@@ -58,7 +58,7 @@ export interface RecordedToolchainPath {
  * 展开),用户"把安装目录整个贴进来"于是和自动探测撞见同一个目录时行为一致。
  */
 function resolveBinsInDir(dir: string, bins: string[]): Record<string, string> {
-	const synthetic: NodeJS.ProcessEnv = { ...process.env, PATH: [dir, path.join(dir, "bin")].join(path.delimiter) };
+	const synthetic = withPath(process.env, [dir, path.join(dir, "bin")]);
 	const found: Record<string, string> = {};
 	for (const name of bins) {
 		const hit = findOnPath(name, synthetic);

@@ -63,6 +63,21 @@ function candidateExtensions(env: NodeJS.ProcessEnv): string[] {
 }
 
 /**
+ * 把 env 的 PATH 换成给定目录,其余不动。**必须先删掉原来那个键**:Windows 上真
+ * `process.env` 的键叫 "Path",`{...env, PATH: …}` 展开后两个键并存,findEnvKey 扫
+ * Object.keys 先撞见旧的 "Path" —— 于是 findOnPath 扫的是机器真实 PATH,不是你指的
+ * 目录。实测(2026-08-23):CI 的 Windows 岗上"贴目录解析可执行文件"两条测试因此红了三次,
+ * 而 Mac 上键本来就叫 PATH,覆盖掉了,本地永远绿。
+ */
+export function withPath(env: NodeJS.ProcessEnv, dirs: string[]): NodeJS.ProcessEnv {
+	const out: NodeJS.ProcessEnv = { ...env };
+	const key = findEnvKey(out, "PATH");
+	if (key !== undefined) delete out[key];
+	out.PATH = dirs.join(path.delimiter);
+	return out;
+}
+
+/**
  * PATH 扫描,按 PATHEXT 展开候选后缀 —— cmake 用 winget/choco 装出来常是
  * `.cmd` 垫片,ninja 靠 scoop 装时也是 `.cmd`/`.bat`,只拼 `.exe` 会在这些
  * 情况下假阴性(gdb.ts:1153 的 findOnPath 就是这个坑,这次不抄它)。
