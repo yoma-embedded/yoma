@@ -33,3 +33,7 @@ engines/data/
 
 # Claude Code 的临时工作树(harness 生成,不属于本仓)
 .claude/worktrees/
+
+# 产品 agent 技能与内部施工/协议文档:只在本机保留,不入库(与公开发布保持一致)
+/.agents/
+/docs/
