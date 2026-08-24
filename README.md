@@ -1,5 +1,7 @@
 # Yoma
 
+[English](README.en.md) | 简体中文
+
 面向**嵌入式工程师**的agent——不止是代码编辑，而是可以根据硬件事实全流程闭环调试。
 
 ### 原生集成嵌入式特定工具
@@ -27,23 +29,42 @@
 - **git 信箱同步**：轮次指令、附件、代码补丁、板端证据经 git 仓库传递，全程可审计
 - **双端独立 agent**：两端各跑一个 agent，模型上下文留在本机，不过网
 
-## 下载桌面版
+## 使用指南
 
-目前提供 **Windows x64** 安装包：
+### 1. 安装
 
-- [直接下载最新版安装包](https://github.com/yoma-embedded/yoma-pi/releases/latest/download/yoma-win-x64.exe)
-- [查看所有版本与更新说明](https://github.com/yoma-embedded/yoma-pi/releases)
+安装包发在 [GitHub Releases](https://github.com/yoma-embedded/yoma-pi/releases)。
 
-当前安装包尚未做 Windows 代码签名，因此 SmartScreen 可能显示“Windows 已保护你的电脑”。
-请只从上面的官方 Release 下载，按需用 Release 内的 `SHA256SUMS.txt` 校验文件；确认无误后可选择
-“更多信息 → 仍要运行”。
+下载 `yoma-win-x64.exe`后。安装可能提示“Windows 已保护你的电脑”：选 **更多信息 → 仍要运行**。
 
-```powershell
-Get-FileHash .\yoma-win-x64.exe -Algorithm SHA256
+### 2. 配 API key
+
+目前只支持 DeepSeek 和 Kimi。
+
+- 第一次：顶部提示「还没配 API key」→ 点 **去连接**
+- 之后：左上角菜单 **File → Settings**（或 `Ctrl+,`）→ 左侧 **提供商** → 选 DeepSeek / Kimi → **连接** → 粘贴 API key
+
+### 3. 烧录 / GDB / 日志 工具路径配置
+
+本机安装项目用的 OpenOCD、J-Link 或厂商工具链。设置左侧 **工具链** 里按芯片平台所需路径配置。
+
+### 4. 数据手册检索
+
+Yoma 不内置数据手册检索服务，需要一个存储数据手册的服务器地址。在本机 `~/.yoma/.env` 写入：
+
+```
+YOMA_DATASHEET_SERVER=http://你的服务器:端口
 ```
 
-安装启动后，在设置里配置模型服务的 API key。烧录、GDB 和日志采集还需要本机安装项目使用的
-OpenOCD、J-Link 或厂商工具链。
+### 5. 第一次生成 STM32 驱动
+
+用这个工具前，按所用的芯片类别把拉一次 HAL 源码即可：
+
+```powershell
+powershell -File engines/stm32-config-kernel/tools/fetch-fw.ps1 -Families STM32F1
+```
+
+当已经安装了 CubeMX 时从其安装目录拷贝，否则从 ST 官方 GitHub 仓库拉。产物例如 `engines/data/stm32/fw/STM32F1/`（相对仓库根目录）。
 
 ## 从源码运行
 
@@ -51,30 +72,9 @@ OpenOCD、J-Link 或厂商工具链。
 git clone https://github.com/yoma-embedded/yoma-pi.git yoma-pi
 cd yoma-pi
 bun install
-bun engines/build.ts    # 网表解析 / STM32 工具。STM32 配置需要本机已装 CubeMX：build 会解析器件库生成 irpack(不入库)
+bun engines/build.ts    # 网表解析 / STM32 工具。STM32 配置需要本机已装 CubeMX：build 会解析器件库生成 irpack
 bun dev:desktop         # 改内核要重启这条命令
 ```
-
-维护者发布新版本见 [桌面版发布流程](docs/桌面版发布流程.md)。
-
-启动后在设置里配 API key。无权限确认，能烧录、能 gdb、能跑命令——只在你信任的本机上用。
-
-**STM32驱动配置工具获取HAL库源码** — 只需在第一次调用STM32驱动生成工具前跑一次，按照芯片族拉取：
-
-```powershell
-powershell -File engines/stm32-config-kernel/tools/fetch-fw.ps1 -Families STM32F1
-```
-
-有 CubeMX 且下过固件包时，脚本会先从 `%USERPROFILE%\STM32Cube\Repository`（如 `C:\Users\你\STM32Cube\Repository`）拷贝；否则从 ST 的 GitHub 拉。产物落在仓库内 `engines/data/stm32/fw/STM32F1/`（相对克隆目录）。
-
-**数据手册服务器配置** — Yoma 不内置服务器，要有一台跑着手册 RAG 服务的机器（团队自建或内网部署）。在本机写 `~/.yoma/.env`：
-
-```
-YOMA_DATASHEET_SERVER=http://你的服务器:端口
-```
-
-重启 `bun dev:desktop` 后，agent 的 `datasheet` 工具才能检索手册。
-
 
 ## 许可
 
