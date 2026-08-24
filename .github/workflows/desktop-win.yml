@@ -4,13 +4,15 @@
 #   推送 tag `v*`               → 当场编引擎、构建 prod、验收安装包、创建正式 Release。
 #
 # 引擎来源:
-#   tag `v*` 和 engines=build —— 当场 `bun engines/build.ts --dist`(cargo + PyInstaller)。
+#   tag `v*` 和 engines=build —— 当场 `bun engines/build.ts --dist`
+#                               (cargo + PyInstaller + MSYS2 编 yoma-la)。
 #                               不依赖另一份 engines-v* Release。
 #   engines=prebuilt(仅手动触发的默认)—— 按 packages/desktop/engines.lock.json 下载。
 #                               跨平台复用预编译 zip 时才用。
 #
 # GitHub 托管机没有 CubeMX,`--dist --allow-missing-irpacks` 仍出网表引擎;
 # 安装包里没有 STM32 配置 irpack。本机有 CubeMX 时去掉该 flag 再编即可补上。
+# yoma-la 在 Windows 上硬依赖 MSYS2 ucrt64 —— 漏装会直接红,不会默默少一个引擎。
 #
 # 产出的是**未签名**包:装的时候 SmartScreen 会拦,点「更多信息 → 仍要运行」。
 # 要消除得买 Windows 代码签名证书,那是产品决定不是技术问题。
@@ -88,9 +90,29 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         if: env.BUILD_ENGINES == 'true'
 
+      # yoma-la 是 C 工程,Windows 上只能 MinGW。engines.yml 同一套;漏了这一步
+      # `--dist` 会硬失败(C:\msys64\ucrt64\bin\gcc.exe 不存在)。
+      - uses: msys2/setup-msys2@v2
+        if: env.BUILD_ENGINES == 'true'
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-glib2
+            mingw-w64-ucrt-x86_64-libusb
+            mingw-w64-ucrt-x86_64-zlib
+            mingw-w64-ucrt-x86_64-python
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+
       # 当场冻结可分发引擎。托管机没有 CubeMX,允许缺 irpack,否则 --dist 会硬失败。
+      # setup-msys2 装在 ${runner.temp}\msys64;build.ts 按 YOMA_LA_MSYS2 找 ucrt64。
       - name: 构建可分发引擎
         if: env.BUILD_ENGINES == 'true'
+        env:
+          YOMA_LA_MSYS2: ${{ format('{0}\msys64', runner.temp) }}
         run: bun engines/build.ts --dist --allow-missing-irpacks --out engines-dist
 
       - name: 构建 renderer / main / preload
