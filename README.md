@@ -1,81 +1,81 @@
 # Yoma
 
-[English](README.en.md) | 简体中文
+English | [简体中文](README.zh-CN.md)
 
-面向**嵌入式工程师**的agent——不止是代码编辑，而是可以根据硬件事实全流程闭环调试。
+An agent for **embedded engineers** — not just a code editor, but a full closed-loop debugging workflow grounded in hardware facts.
 
-### 原生集成嵌入式特定工具
+### Natively integrated embedded-specific tools
 
-- **烧录工具**：支持不同硬件平台的烧录
-- **日志采集**：支持串口或 RTT 长时间采集日志并分析
-- **gdb 调试**：断点、单步、表达式、故障分析等功能
+- **Flashing**: flash firmware across different hardware platforms
+- **Log capture**: long-running log collection over serial or RTT, with analysis
+- **gdb debugging**: breakpoints, single-stepping, expressions, fault analysis, and more
 
-### 贴合硬件事实
+### Grounded in hardware facts
 
-- **原理图 / 网表解析工具**：从 net格式或者pdf格式解析原理图，解析引脚映射与外设连接，理解硬件信息
-- **数据手册检索**：在手册库里按芯片搜寄存器/外设说明，作为代码的第一手证据，避免AI幻觉（需配 `YOMA_DATASHEET_SERVER`路径）
+- **Schematic / netlist parsing**: parse schematics from net or PDF files to extract pin mappings and peripheral connections, so the agent understands the hardware
+- **Datasheet search**: search a datasheet library for register/peripheral descriptions by chip, as first-hand evidence for code and a guard against AI hallucination (requires `YOMA_DATASHEET_SERVER` to be configured)
 
-### 永远从例程工程起步，不空白写驱动
+### Always start from an example project — never write drivers from scratch
 
-从厂商已验证例程检索、逐步加能力——先跑通绿点，再改一处、验一处。STM32 还可写配置文档，校验后自动生成可编译运行的驱动代码
+Search vendor-verified examples and add capabilities step by step: get to a green light first, then change one thing and verify one thing at a time. For STM32 you can also write a configuration document; after validation it automatically generates driver code that compiles and runs.
 
-### 自主闭环验证
+### Autonomous closed-loop verification
 
-代码改动 -> 工程编译通过 -> 烧录固件验证，有 **log 或 gdb** 的板级证据；寄存器级结论要有手册引用。
+Code change -> project compiles -> firmware flashed and verified, with board-level evidence from **logs or gdb**; register-level conclusions must cite the datasheet.
 
-### 支持远程调试（experimental）
+### Remote debugging (experimental)
 
-- **跨机多轮闭环**：开发端下发指令与固件，调试端上板复现并回传 log、采集数据与结论，多轮往返直到问题收敛
-- **git 信箱同步**：轮次指令、附件、代码补丁、板端证据经 git 仓库传递，全程可审计
-- **双端独立 agent**：两端各跑一个 agent，模型上下文留在本机，不过网
+- **Cross-machine multi-round loop**: the development side issues instructions and firmware; the debugging side reproduces on the board and sends back logs, captured data and conclusions, round after round until the problem converges
+- **git mailbox sync**: per-round instructions, attachments, code patches and board-side evidence travel through a git repository, fully auditable
+- **Independent agents on both ends**: each side runs its own agent; model context stays on the local machine and never crosses the network
 
-## 使用指南
+## User guide
 
-### 1. 安装
+### 1. Install
 
-安装包发在 [GitHub Releases](https://github.com/yoma-embedded/yoma/releases)。
+Installers are published on [GitHub Releases](https://github.com/yoma-embedded/yoma/releases).
 
-下载 `yoma-win-x64.exe`后。安装可能提示“Windows 已保护你的电脑”：选 **更多信息 → 仍要运行**。
+Download `yoma-win-x64.exe`. The installer may show "Windows protected your PC": choose **More info → Run anyway**.
 
-### 2. 配 API key
+### 2. Configure an API key
 
-目前只支持 DeepSeek 和 Kimi。
+Currently only DeepSeek and Kimi are supported.
 
-- 第一次：顶部提示「还没配 API key」→ 点 **去连接**
-- 之后：左上角菜单 **File → Settings**（或 `Ctrl+,`）→ 左侧 **提供商** → 选 DeepSeek / Kimi → **连接** → 粘贴 API key
+- First time: the banner at the top says "No API key configured yet" → click **Connect**
+- Afterwards: top-left menu **File → Settings** (or `Ctrl+,`) → **Providers** on the left → pick DeepSeek / Kimi → **Connect** → paste your API key
 
-### 3. 烧录 / GDB / 日志 工具路径配置
+### 3. Tool paths for flashing / GDB / logs
 
-本机安装项目用的 OpenOCD、J-Link 或厂商工具链。设置左侧 **工具链** 里按芯片平台所需路径配置。
+Install the OpenOCD, J-Link or vendor toolchain your project uses on this machine. Then, under **Toolchain** on the left side of Settings, configure the paths required for each chip platform.
 
-### 4. 数据手册检索
+### 4. Datasheet search
 
-Yoma 不内置数据手册检索服务，需要一个存储数据手册的服务器地址。在本机 `~/.yoma/.env` 写入：
+Yoma does not bundle a datasheet search service; you need the address of a server that stores the datasheets. On this machine, write to `~/.yoma/.env`:
 
 ```
-YOMA_DATASHEET_SERVER=http://你的服务器:端口
+YOMA_DATASHEET_SERVER=http://your-server:port
 ```
 
-### 5. 第一次生成 STM32 驱动
+### 5. Generating an STM32 driver for the first time
 
-用这个工具前，按所用的芯片类别把拉一次 HAL 源码即可：
+Before using this tool, fetch the HAL sources once for the chip family you use:
 
 ```powershell
 powershell -File engines/stm32-config-kernel/tools/fetch-fw.ps1 -Families STM32F1
 ```
 
-当已经安装了 CubeMX 时从其安装目录拷贝，否则从 ST 官方 GitHub 仓库拉。产物例如 `engines/data/stm32/fw/STM32F1/`（相对仓库根目录）。
+If CubeMX is already installed, the sources are copied from its installation directory; otherwise they are pulled from ST's official GitHub repositories. The output lands in, for example, `engines/data/stm32/fw/STM32F1/` (relative to the repository root).
 
-## 从源码运行
+## Run from source
 
 ```bash
 git clone https://github.com/yoma-embedded/yoma.git yoma
 cd yoma
 bun install
-bun engines/build.ts    # 网表解析 / STM32 工具。STM32 配置需要本机已装 CubeMX：build 会解析器件库生成 irpack
-bun dev:desktop         # 改内核要重启这条命令
+bun engines/build.ts    # netlist parsing / STM32 tools. STM32 configuration needs CubeMX installed locally: build parses the device database to generate irpacks
+bun dev:desktop         # restart this command after changing the kernel
 ```
 
-## 许可
+## License
 
-MIT。第三方来源见 `NOTICE`：桌面端继承自 [opencode](https://github.com/anomalyco/opencode)；内核派生自 [pi](https://github.com/earendil-works/pi)（`@earendil-works/pi-ai` 为 npm 依赖，`packages/agent`、`packages/coding-agent` 为派生）。
+MIT. Third-party sources are listed in `NOTICE`: the desktop app is inherited from [opencode](https://github.com/anomalyco/opencode); the kernel is derived from [pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-ai` is an npm dependency; `packages/agent` and `packages/coding-agent` are derived works).

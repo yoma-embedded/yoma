@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-给 Claude Code 在本仓库工作时的说明。`README.md`(中文)是面向用户的权威文档。
+给 Claude Code 在本仓库工作时的说明。`README.md`(英文)与 `README.zh-CN.md`(中文)是面向用户的权威文档。
 `packages/app/AGENTS.md` 和 `packages/desktop/AGENTS.md` 是包级规则,必须遵守。
 
 ## 这是什么
