@@ -40,3 +40,6 @@ engines/data/
 # 产品 agent 技能与内部施工/协议文档:只在本机保留,不入库(与公开发布保持一致)
 /.agents/
 /docs/
+
+# 个人本地笔记 / 上手文档,不入库
+doc_ljq_local/
