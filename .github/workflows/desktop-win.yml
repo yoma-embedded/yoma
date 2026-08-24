@@ -1,12 +1,16 @@
 # 在 Windows runner 上直接出安装包(NSIS),并在版本 tag 上发布 GitHub Release。
 #
 #   手动触发(workflow_dispatch) → 构建并上传临时 artifact,用于验证不同渠道;
-#   推送 tag `v*`               → 构建 prod、验收安装包、创建正式 Release。
+#   推送 tag `v*`               → 当场编引擎、构建 prod、验收安装包、创建正式 Release。
 #
-# 引擎来源两选一,由 engines 输入决定:
-#   prebuilt(默认)—— 按 packages/desktop/engines.lock.json 钉住的 tag 下载。
-#                     快(几十秒),但要求那个 tag 的 Release 里有 win32 产物。
-#   build         —— 当场从源码构建(cargo + PyInstaller),十几分钟,不依赖 Release。
+# 引擎来源:
+#   tag `v*` 和 engines=build —— 当场 `bun engines/build.ts --dist`(cargo + PyInstaller)。
+#                               不依赖另一份 engines-v* Release。
+#   engines=prebuilt(仅手动触发的默认)—— 按 packages/desktop/engines.lock.json 下载。
+#                               跨平台复用预编译 zip 时才用。
+#
+# GitHub 托管机没有 CubeMX,`--dist --allow-missing-irpacks` 仍出网表引擎;
+# 安装包里没有 STM32 配置 irpack。本机有 CubeMX 时去掉该 flag 再编即可补上。
 #
 # 产出的是**未签名**包:装的时候 SmartScreen 会拦,点「更多信息 → 仍要运行」。
 # 要消除得买 Windows 代码签名证书,那是产品决定不是技术问题。
@@ -35,6 +39,10 @@ permissions:
 jobs:
   package:
     runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      # tag 触发没有 workflow_dispatch inputs,正式发布一律当场编引擎。
+      BUILD_ENGINES: ${{ github.event_name == 'push' || inputs.engines == 'build' }}
     steps:
       # 引擎源码已吸收进本仓(engines/ 是普通目录),engines=build 从源码构建
       # 不再需要私有 submodule 的 ENGINES_TOKEN。
@@ -71,19 +79,19 @@ jobs:
           }
 
       - uses: dtolnay/rust-toolchain@stable
-        if: inputs.engines == 'build'
+        if: env.BUILD_ENGINES == 'true'
       - uses: Swatinem/rust-cache@v2
-        if: inputs.engines == 'build'
+        if: env.BUILD_ENGINES == 'true'
         with:
           workspaces: |
             engines/stm32-config-kernel
       - uses: astral-sh/setup-uv@v5
-        if: inputs.engines == 'build'
+        if: env.BUILD_ENGINES == 'true'
 
-      # 仅 engines=build:当场 cargo+uv。没 CubeMX 时跳过 irpack,网表引擎照装。
-      - name: 构建引擎(仅 engines=build)
-        if: inputs.engines == 'build'
-        run: bun engines/build.ts
+      # 当场冻结可分发引擎。托管机没有 CubeMX,允许缺 irpack,否则 --dist 会硬失败。
+      - name: 构建可分发引擎
+        if: env.BUILD_ENGINES == 'true'
+        run: bun engines/build.ts --dist --allow-missing-irpacks --out engines-dist
 
       - name: 构建 renderer / main / preload
         env:
@@ -91,12 +99,12 @@ jobs:
           YOMA_CHANNEL: ${{ inputs.channel || 'prod' }}
         run: bun build:desktop
 
-      # stage-engines 自己会判断:本地 engines 满足 win32 就用本地(engines=build 的情况),
-      # 否则按 engines.lock.json 下载预编译产物。gh 用内置令牌鉴权(同仓 Release)。
+      # 当场编过就指那份 dist;否则 stage-engines 按 engines.lock.json 下载预编译产物。
       - name: 出安装包
         env:
           YOMA_CHANNEL: ${{ inputs.channel || 'prod' }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          YOMA_ENGINES_DIR: ${{ env.BUILD_ENGINES == 'true' && format('{0}/engines-dist', github.workspace) || '' }}
         run: bun --cwd packages/desktop package:win
 
       - name: 检查产物里的引擎确实是 Windows 二进制

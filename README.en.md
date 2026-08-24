@@ -33,7 +33,7 @@ Code change -> project compiles -> firmware flashed and verified, with board-lev
 
 ### 1. Install
 
-Installers are published on [GitHub Releases](https://github.com/yoma-embedded/yoma-pi/releases).
+Installers are published on [GitHub Releases](https://github.com/yoma-embedded/yoma/releases).
 
 Download `yoma-win-x64.exe`. The installer may show "Windows protected your PC": choose **More info → Run anyway**.
 
@@ -69,8 +69,8 @@ If CubeMX is already installed, the sources are copied from its installation dir
 ## Run from source
 
 ```bash
-git clone https://github.com/yoma-embedded/yoma-pi.git yoma-pi
-cd yoma-pi
+git clone https://github.com/yoma-embedded/yoma.git yoma
+cd yoma
 bun install
 bun engines/build.ts    # netlist parsing / STM32 tools. STM32 configuration needs CubeMX installed locally: build parses the device database to generate irpacks
 bun dev:desktop         # restart this command after changing the kernel

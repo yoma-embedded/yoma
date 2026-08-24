@@ -1,4 +1,4 @@
-title = "yoma-pi"
+title = "yoma"
 
 [allowlist]
 description = "generic-api-key false positives (CubeMX pin names, keybinds, generated SDK ids)"

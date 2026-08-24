@@ -57,7 +57,7 @@ const hasAppleNotaryCreds = Boolean(
 
 // Owner of the GitHub repos the packaged app checks for auto-updates
 // (yoma-embedded/yoma-desktop, and yoma-embedded/yoma-desktop-beta for the beta channel).
-// 自动更新的来源仓库。2026-08 合库后源码在 yoma-pi,这里必须跟着改 ——
+// 自动更新的来源仓库。2026-08 公开仓是 yoma,自动更新必须指向它 ——
 // 继续指向 yoma-desktop 的后果不是"更新不到",而是**可能被降级**:那边还挂着旧
 // Release,而下面 updater 开了 allowDowngrade。
 // Override the owner via env at release time if needed, e.g. YOMA_GH_OWNER=other-org.
@@ -191,7 +191,7 @@ function getConfig() {
         appId,
         productName: "Yoma Beta",
         protocols: { name: "Yoma Beta", schemes: ["yoma"] },
-        publish: { provider: "github", owner: GH_OWNER, repo: "yoma-pi-beta", channel: "latest" },
+        publish: { provider: "github", owner: GH_OWNER, repo: "yoma-beta", channel: "latest" },
         rpm: { packageName: "yoma-beta" },
       }
     }
@@ -201,7 +201,7 @@ function getConfig() {
         appId,
         productName: "Yoma",
         protocols: { name: "Yoma", schemes: ["yoma"] },
-        publish: { provider: "github", owner: GH_OWNER, repo: "yoma-pi", channel: "latest" },
+        publish: { provider: "github", owner: GH_OWNER, repo: "yoma", channel: "latest" },
         deb: { fpm: [legacyDesktopEntryFpm] },
         rpm: { packageName: "yoma", fpm: [legacyDesktopEntryFpm] },
       }

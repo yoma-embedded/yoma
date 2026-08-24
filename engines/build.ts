@@ -4,6 +4,8 @@
 //   bun engines/build.ts           # build + install + doctor
 //   bun engines/build.ts --check   # doctor only
 //   bun engines/build.ts --dist    # 产出可分发的自包含产物到 engines/dist/
+//   bun engines/build.ts --dist --allow-missing-irpacks
+//     # 没 CubeMX 时仍冻结网表引擎;STM32 配置不进产物(CI 出 Windows 包用)
 // Needs cargo (stm32-config-kernel) and uv (controller_map). logic-analyzer (yoma-la, C/CMake,
 // Windows 上要 MSYS2 ucrt64)没有工具链时跳过 —— 像没有 CubeMX 时跳过 irpack 一样,但 manifest 里会写明。
 //
@@ -39,6 +41,7 @@ import { buildLa, findLaToolchain, installLa, selfCheckLa } from "./logic-analyz
 const here = path.dirname(fileURLToPath(import.meta.url));
 const checkOnly = process.argv.includes("--check");
 const dist = process.argv.includes("--dist");
+const allowMissingIrpacks = process.argv.includes("--allow-missing-irpacks");
 const distDir = (() => {
 	const at = process.argv.indexOf("--out");
 	return at >= 0 && process.argv[at + 1] ? path.resolve(process.argv[at + 1]!) : path.join(here, "dist");
@@ -280,7 +283,7 @@ if (dist) {
 
 	console.log("\n[1/5] stm32-config-kernel — cargo build --release + import irpacks");
 	await $`cargo build --release`.cwd(kernelDir);
-	await ensureIrpacks(true);
+	await ensureIrpacks(!allowMissingIrpacks);
 
 	console.log("\n[2/5] controller_map — uv sync");
 	await $`uv sync`.cwd(path.join(here, "controller_map"));
@@ -333,10 +336,14 @@ if (dist) {
 
 	const { problems, notes } = auditDist(distDir);
 	if (irpacks < MIN_IRPACKS) {
-		problems.push(
+		const detail =
 			`只收到 ${irpacks} 个 irpack(期望 ≥${MIN_IRPACKS})—— CubeMX 解析没跑完。` +
-				`装 STM32CubeMX 或设 STM32CK_CUBEMX_DB,再跑 \`bun engines/build.ts --dist\`。`,
-		);
+			`装 STM32CubeMX 或设 STM32CK_CUBEMX_DB,再跑 \`bun engines/build.ts --dist\`。`;
+		if (allowMissingIrpacks) {
+			notes.push(detail + "已显式允许缺 irpack:安装包里没有 STM32 配置数据。");
+		} else {
+			problems.push(detail);
+		}
 	}
 	const manifest = {
 		platform: process.platform,

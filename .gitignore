@@ -20,6 +20,9 @@ coverage/
 engines/bin/
 engines/data/
 
+# desktop-win 当场 --dist 的产物(不入库)
+/engines-dist/
+
 # vendored pi-ai is consumed via its prebuilt dist — keep it in git
 !packages/ai/dist/
 

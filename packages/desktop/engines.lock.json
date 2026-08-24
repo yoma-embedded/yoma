@@ -1,5 +1,5 @@
 {
   "//": "预编译引擎产物的钉子。合库之后引擎源码就在本仓 engines/,本地能直接构建;这个钉子只用于**跨平台打包**(比如在 Mac 上打 Windows 包,本机产不出 PE 二进制)和 CI 复现。产物由本仓 .github/workflows/engines.yml 打 engines-v* tag 时产出。",
-  "repo": "yoma-embedded/yoma-pi",
+  "repo": "yoma-embedded/yoma",
   "tag": "engines-v0.2.0"
 }

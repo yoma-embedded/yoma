@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "name": "yoma-pi",
+  "name": "yoma",
   "description": "Yoma:嵌入式 agent —— 内核与桌面端在同一棵树上",
   "private": true,
   "type": "module",

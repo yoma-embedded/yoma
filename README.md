@@ -33,7 +33,7 @@
 
 ### 1. 安装
 
-安装包发在 [GitHub Releases](https://github.com/yoma-embedded/yoma-pi/releases)。
+安装包发在 [GitHub Releases](https://github.com/yoma-embedded/yoma/releases)。
 
 下载 `yoma-win-x64.exe`后。安装可能提示“Windows 已保护你的电脑”：选 **更多信息 → 仍要运行**。
 
@@ -69,8 +69,8 @@ powershell -File engines/stm32-config-kernel/tools/fetch-fw.ps1 -Families STM32F
 ## 从源码运行
 
 ```bash
-git clone https://github.com/yoma-embedded/yoma-pi.git yoma-pi
-cd yoma-pi
+git clone https://github.com/yoma-embedded/yoma.git yoma
+cd yoma
 bun install
 bun engines/build.ts    # 网表解析 / STM32 工具。STM32 配置需要本机已装 CubeMX：build 会解析器件库生成 irpack
 bun dev:desktop         # 改内核要重启这条命令
