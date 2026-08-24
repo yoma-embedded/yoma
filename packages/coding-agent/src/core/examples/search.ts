@@ -8,7 +8,7 @@
  */
 
 import type { EnrichmentRecord } from "./enrich-schema.ts";
-import type { Ecosystem, ExampleEntry } from "./schema.ts";
+import type { Ecosystem, EntryKind, ExampleEntry, Tier } from "./schema.ts";
 
 /**
  * 生态的芯片前缀:targets 为空(元数据缺失)的条目要靠它兜住跨生态泄漏 ——
@@ -34,6 +34,24 @@ export interface SearchQuery {
 	keywords?: string[];
 	/** 只要底盘资格(能编)的。找供体(只读代码)时别开。 */
 	buildableOnly?: boolean;
+	/**
+	 * 分层过滤。缺省按"带不带芯片"分:带 `target` 时默认 `"seed"`,不带时 `"all"` ——
+	 * 分层是给「笼统查询」兜底的(实测:只给 stm32f407 时命中从 47 条炸到 375 条,
+	 * 前 8 名全被库本体占),带外设的具体查询本来就不会被淹。
+	 *
+	 * - `"all"`   不按分层过滤
+	 * - `"seed"`  排除**显式标了 `lib`** 的条目;**未标的不排除** —— 与 targets 空数组
+	 *             同一条纪律,而且旧索引一条 tier 都没有,不这样写就等于把它们全部隐掉
+	 * - `"lib"`   只留显式标了 `lib` 的 —— 显式要库本体是主动收窄,未标的不在其中
+	 */
+	tier?: Tier | "all";
+	/**
+	 * 粒度过滤。给了就只留这些粒度,**未标粒度的条目会被排除** —— 与 tier 的
+	 * "未标不排除"相反,因为按粒度筛本身就是显式收窄(要 project 就是不要整棵树)。
+	 */
+	entryKind?: EntryKind | EntryKind[];
+	/** 只在这些语料 id 里找。空/不给 = 全部。 */
+	corpora?: string[];
 	limit?: number;
 }
 
@@ -83,11 +101,28 @@ export function searchIndex(
 	// Number.isFinite 而不是 ??:limit 为 NaN 时 slice(0, NaN) 是空数组,主检索路径
 	// 直接变成"没有命中"的假阴性(审查实测)。
 	const limit = Number.isFinite(query.limit) ? (query.limit as number) : 12;
+	// 分层默认值只看"带不带芯片" —— 见 SearchQuery.tier 的注释。
+	const tierMode: Tier | "all" = query.tier ?? (query.target ? "seed" : "all");
+	// 空数组 = 不过滤,与 corpora / peripherals 同一口径。不这样写的话 `[]` 是真值,
+	// 下面每一条都判 `![].includes(...)` 为真 → 逐条排除 → 零命中,而调用方(工具 schema
+	// 里 entryKind 是可选数组,传空数组完全合法)从报告里根本看不出发生了什么。
+	const kindList = query.entryKind === undefined
+		? []
+		: Array.isArray(query.entryKind)
+			? query.entryKind
+			: [query.entryKind];
+	const kinds = kindList.length > 0 ? kindList : undefined;
+	const corpora = (query.corpora ?? []).map((item) => item.trim()).filter((item) => item !== "");
 
 	const scored: ScoredExample[] = [];
 	for (const entry of entries) {
 		const record = enrichment?.get(entry.id);
+		if (corpora.length > 0 && !corpora.includes(entry.corpus)) continue;
 		if (query.ecosystem && entry.ecosystem !== query.ecosystem) continue;
+		// entry.tier 已经在 parseIndex 里继承过语料级默认值,这里看到的就是最终值。
+		if (tierMode === "seed" && entry.tier === "lib") continue;
+		if (tierMode === "lib" && entry.tier !== "lib") continue;
+		if (kinds && (entry.entryKind === undefined || !kinds.includes(entry.entryKind))) continue;
 		if (query.target && !targetMatches(query.target, entry.targets)) continue;
 		if (
 			query.target &&
@@ -113,6 +148,16 @@ export function searchIndex(
 			if (entry.targets.length === 0) reasons.push("芯片元数据缺失,未据此排除 —— 用前自行核对");
 			else reasons.push(`芯片匹配 ${entry.targets.join(",")}`);
 		}
+
+		// 分层/粒度/证据来源进**理由**不进打分:它们是过滤条件与可信度提示,不是
+		// "这条更好"的证据。targetSource 尤其要露出来 —— dir(目录名)和 build-system
+		// (构建系统的过滤声明)是天差地别的两档,读结果的人得看得见自己在信什么。
+		const facets = [
+			entry.tier ? `分层 ${entry.tier}` : undefined,
+			entry.entryKind ? `粒度 ${entry.entryKind}` : undefined,
+			entry.targetSource ? `targets 来源 ${entry.targetSource}` : undefined,
+		].filter((item): item is string => item !== undefined);
+		if (facets.length > 0) reasons.push(facets.join("、"));
 
 		const haystackStrong = `${entry.title ?? ""}\n${entry.name}`.toLowerCase();
 		const haystackWeak =

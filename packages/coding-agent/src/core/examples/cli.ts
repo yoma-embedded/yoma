@@ -4,10 +4,11 @@
  * 上已发布的语料落到本机(索引 MB 级,--code 连语料树 GB 级)。
  *
  *   bun packages/coding-agent/src/core/examples/cli.ts index  --ecosystem esp-idf|stm32cube --root <目录> [--corpus <id>] [--config-dir <目录>]
+ *   bun packages/coding-agent/src/core/examples/cli.ts index  --ecosystem generic --root <目录> --corpus <id> --proposal <file> [--tier seed|lib] [--indexer provided|agent]
  *   bun packages/coding-agent/src/core/examples/cli.ts enrich [--corpus <id>]... [--model <provider/model>] [--concurrency <n>] [--limit <n>]
  *   bun packages/coding-agent/src/core/examples/cli.ts sync   [--server <url>] [--config-dir <目录>]        # 远端清单 × 本地状态
  *   bun packages/coding-agent/src/core/examples/cli.ts sync   <语料id>... [--server <url>] [--code] [--config-dir <目录>]
- *   bun packages/coding-agent/src/core/examples/cli.ts search [--ecosystem <e>] [--target <t>] [--board <b>] [--peripheral <p> ...] [--keyword <k> ...] [--buildable] [--limit <n>]
+ *   bun packages/coding-agent/src/core/examples/cli.ts search [--ecosystem <e>] [--target <t>] [--board <b>] [--peripheral <p> ...] [--keyword <k> ...] [--buildable] [--tier <t>] [--kind <k> ...] [--corpus <id> ...] [--json] [--limit <n>]
  *   bun packages/coding-agent/src/core/examples/cli.ts show   <条目 id>
  *   bun packages/coding-agent/src/core/examples/cli.ts preflight <底盘id> <供体id>...
  *   bun packages/coding-agent/src/core/examples/cli.ts list
@@ -20,11 +21,25 @@ import { parseArgs } from "node:util";
 
 import { resolveModel } from "../../acp/models.ts";
 import { type EnrichCompletion, enrichCorpus } from "./enrich.ts";
-import { indexGeneric } from "./generic.ts";
+import { GENERIC_MAX_ENTRIES, type GenericIndexResult, indexGeneric, verifyProposal } from "./generic.ts";
 import { indexCorpus } from "./indexer.ts";
 import { checkMergeConflicts, type PreflightInput } from "./preflight.ts";
 import { renderEntryCard, renderNoIndexHelp, renderPreflightReport, renderSearchReport } from "./render.ts";
-import { type Ecosystem, type ExampleEntry, type ExamplesIndex, isEcosystem } from "./schema.ts";
+import {
+	type Ecosystem,
+	ENTRY_KINDS,
+	type EntryKind,
+	type ExampleEntry,
+	type ExamplesIndex,
+	INDEXERS,
+	type Indexer,
+	isEcosystem,
+	isEntryKind,
+	isIndexer,
+	isTier,
+	type Tier,
+	TIERS,
+} from "./schema.ts";
 import { searchIndex, type SearchQuery } from "./search.ts";
 import {
 	corpusCacheDir,
@@ -46,10 +61,13 @@ import {
 
 const USAGE = `用法:
   cli.ts index     --ecosystem esp-idf|stm32cube --root <语料目录> [--corpus <id>] [--config-dir <目录>]
+  cli.ts index     --ecosystem generic --root <语料目录> --corpus <id> --description-file <文件> [--tier seed|lib] [--model <provider/model>]
+  cli.ts index     --ecosystem generic --root <语料目录> --corpus <id> --proposal <文件> [--tier seed|lib] [--indexer provided|agent]
   cli.ts enrich    [--corpus <id>]... [--model <provider/model>] [--concurrency <n>] [--limit <n>] [--config-dir <目录>]
   cli.ts sync      [--server <url>] [--config-dir <目录>]
   cli.ts sync      <语料id>... [--server <url>] [--code] [--config-dir <目录>]
-  cli.ts search    [--ecosystem <e>] [--target <t>] [--board <b>] [--peripheral <p>]... [--keyword <k>]... [--buildable] [--limit <n>] [--config-dir <目录>]
+  cli.ts search    [--ecosystem <e>] [--target <t>] [--board <b>] [--peripheral <p>]... [--keyword <k>]... [--buildable]
+                   [--tier seed|lib|all] [--kind project|module|corpus]... [--corpus <语料id>]... [--json] [--limit <n>] [--config-dir <目录>]
   cli.ts show      <条目 id> [--config-dir <目录>]
   cli.ts preflight <底盘id> <供体id>... [--config-dir <目录>]
   cli.ts list      [--config-dir <目录>]`;
@@ -62,6 +80,104 @@ function fail(message: string): never {
 	process.exit(1);
 }
 
+function parseTierFlag(value: string | undefined, flag: string): Tier | undefined {
+	if (value === undefined) return undefined;
+	if (!isTier(value)) fail(`${flag} 只认 ${TIERS.join(" / ")},收到:${value}`);
+	return value;
+}
+
+/**
+ * generic 索引的产出报告。两条通道(一次性调用 / 自带提议)共用一份 —— 口径不一致时,
+ * 同一份产物在两条路上读起来会像两回事,查问题时互相指认(render.ts 文件头同理)。
+ */
+function renderIndexNotes(result: GenericIndexResult, meta: { how: string; started: number; cost?: number }): string {
+	const header = result.index.header;
+	const notes = [
+		`语料 ${header.corpus}`,
+		`${meta.how} ${result.index.entries.length} 条(提议被核验丢弃 ${result.dropped} 条),`
+			+ `用时 ${((Date.now() - meta.started) / 1000).toFixed(1)}s`
+			+ (meta.cost !== undefined ? `,费用 ~$${meta.cost.toFixed(3)}` : ""),
+		`落盘 ${result.file}`,
+	];
+	if (header.indexer || header.tier) {
+		notes.push(`语料级 indexer=${header.indexer ?? "(未标)"} tier=${header.tier ?? "(未标)"}`);
+	}
+	if (header.libraryKind || header.candidateCount !== undefined) {
+		// 三个数并排给,不替读者做减法。从前这里算的是 candidateCount - 存活数,并把它
+		// 说成"产出方主动放弃的" —— 那既混进了核验层的丢弃,又会打负数:标准 fixture
+		// (tinyusb)枚举候选 46、提议 48(多出的是 src 与 hw/bsp 两条汇总条目),
+		// 差额 -2,而"主动放弃 -2 条"没有任何意思。
+		const proposed = result.index.entries.length + result.dropped;
+		notes.push(
+			`库定性 ${header.libraryKind ?? "(未给)"} | 枚举候选 ${header.candidateCount ?? "(未给)"}`
+				+ ` | 提议 ${proposed} 条 | 核验后存活 ${result.index.entries.length} 条`,
+		);
+	}
+	const reasons = Object.entries(result.dropReasons);
+	if (reasons.length > 0) {
+		notes.push(`丢弃明细:${reasons.map(([reason, n]) => `${reason}=${n}`).join("  ")}`);
+		const overLimit = result.dropReasons["over-limit"];
+		if (overLimit) {
+			// 撞上限和幻觉路径在总数里长得一模一样,但一个该调参数、一个该查模型。
+			notes.push(`  其中 ${overLimit} 条是**撞上限被砍的**(当前上限 ${GENERIC_MAX_ENTRIES})——`
+				+ " 这不是模型的判断,调大 YOMA_CODELIB_MAX_ENTRIES 后重跑才拿得到。");
+		}
+	}
+	if (result.fieldWarnings.length > 0) {
+		notes.push('字段取值非法(已当"未标"处理,其余字段不受影响):');
+		notes.push(...result.fieldWarnings.map((line) => `  ${line}`));
+	}
+	if (result.parseError) {
+		notes.push(`提议整体解析失败(不是"没提议"):${result.parseError}`);
+		notes.push("  多半是输出被 maxTokens 截断,JSON 断在半路 —— 调大上限或调小条目上限后重跑。");
+	}
+	if (result.summaryTruncated.length > 0) {
+		notes.push(`树摘要被截断,丢掉了 ${result.summaryTruncated.length} 行(可加大 YOMA_CODELIB_SUMMARY_BUDGET 后重跑):`);
+		notes.push(result.summaryTruncated.slice(-5).join("\n"));
+	}
+	return notes.join("\n");
+}
+
+/**
+ * 机器可读的产出摘要 —— `--json` 用。rag_yoma 的 dry-run(POST /api/codelibs/validate)
+ * 读它:让服务器去解析上面那份给人看的中文散文,等于把措辞变成接口契约,改一个字就断。
+ */
+function indexResultJson(result: GenericIndexResult): unknown {
+	const header = result.index.header;
+	const tally = (pick: (entry: ExampleEntry) => string | undefined): Record<string, number> => {
+		const counts: Record<string, number> = {};
+		for (const entry of result.index.entries) {
+			const key = pick(entry) ?? "(未标)";
+			counts[key] = (counts[key] ?? 0) + 1;
+		}
+		return counts;
+	};
+	return {
+		corpus: header.corpus,
+		file: result.file,
+		proposed: result.index.entries.length + result.dropped,
+		survived: result.index.entries.length,
+		dropped: result.dropped,
+		dropReasons: result.dropReasons,
+		parseError: result.parseError,
+		fieldWarnings: result.fieldWarnings,
+		summaryTruncated: result.summaryTruncated.length,
+		header: {
+			indexer: header.indexer ?? null,
+			tier: header.tier ?? null,
+			libraryKind: header.libraryKind ?? null,
+			candidateCount: header.candidateCount ?? null,
+		},
+		stats: {
+			withTargets: result.index.entries.filter((entry) => entry.targets.length > 0).length,
+			withPeripherals: result.index.entries.filter((entry) => entry.peripherals.length > 0).length,
+			entryKinds: tally((entry) => entry.entryKind),
+			tiers: tally((entry) => entry.tier),
+			targetSources: tally((entry) => entry.targetSource),
+		},
+	};
+}
+
 async function commandIndex(argv: string[]): Promise<void> {
 	const { values } = parseArgs({
 		args: argv,
@@ -72,18 +188,69 @@ async function commandIndex(argv: string[]): Promise<void> {
 			"config-dir": { type: "string" },
 			"description-file": { type: "string" },
 			model: { type: "string" },
+			proposal: { type: "string" },
+			tier: { type: "string" },
+			indexer: { type: "string" },
+			json: { type: "boolean" },
 		},
 	});
 	if (!values.ecosystem || !isEcosystem(values.ecosystem)) {
 		fail(`--ecosystem 必须是 esp-idf / stm32cube / generic,收到:${values.ecosystem ?? "(空)"}`);
 	}
 	if (!values.root) fail("--root 必填:语料检出目录");
+	// --indexer 只在 --proposal 分支被读。不拦的话它会被静默忽略:调用方以为登记的是
+	// provided,实际照样调了模型花了钱,而 header 里写的是 indexer="llm"。
+	if (values.indexer !== undefined && !values.proposal) {
+		fail("--indexer 只在带 --proposal 时有意义(它说的是这份提议是谁给的);"
+			+ "不带 --proposal 走的是一次性调用,通道恒为 llm");
+	}
 	const started = Date.now();
+	// tier 对两条通道都有效 —— 机械抽取器自己判不出分层,但登记方给得出。
+	const tier = parseTierFlag(values.tier, "--tier");
 
 	// generic = AI 索引(PLAN-codelib-console D2/D11):说明经文件传入,模型提议条目、
 	// 代码核验。与 rag_yoma/codelib 复制品同一份(generic.ts 同步维护)。
 	if (values.ecosystem === "generic") {
-		if (!values["description-file"]) fail("generic 生态必须带 --description-file:说明文本文件");
+		const corpusId = values.corpus;
+		if (!corpusId) fail("generic 生态必须带 --corpus <id>(如 my-project@abc12345)");
+
+		// --proposal:自带提议,不调模型。服务器侧跑 agent(indexer=agent)与调用方
+		// 自带索引(indexer=provided)走的是同一条路 —— **产出照样原样过核验层**,
+		// 外部产出一律不可信,这是「模型提议、代码裁决」不能绕的那道闸门。
+		if (values.proposal) {
+			let raw: string;
+			try {
+				raw = readFileSync(values.proposal, "utf8");
+			} catch (e) {
+				fail(`读不到 --proposal:${values.proposal}(${e instanceof Error ? e.message : String(e)})`);
+			}
+			let indexer: Indexer = "provided";
+			if (values.indexer !== undefined) {
+				if (!isIndexer(values.indexer)) fail(`--indexer 只认 ${INDEXERS.join(" / ")},收到:${values.indexer}`);
+				if (values.indexer !== "provided" && values.indexer !== "agent") {
+					fail(`--proposal 只配 --indexer provided / agent(产出是谁给的),收到:${values.indexer}`);
+				}
+				indexer = values.indexer;
+			}
+			const result = verifyProposal({
+				root: values.root,
+				corpusId,
+				proposal: raw,
+				configDir: values["config-dir"],
+				tier,
+				indexer,
+			});
+			if (values.json) console.log(JSON.stringify(indexResultJson(result)));
+			else console.log(renderIndexNotes(result, { how: `自带提议(${indexer})核验后`, started }));
+			// 解析失败必须非零退出:否则管线会把一份空索引当成"这个库没东西可索引"
+			// 照常发布出去 —— 那是被 max_tokens 截断那个 bug 的形态,只是换了条通道。
+			if (result.parseError) process.exit(1);
+			return;
+		}
+
+		if (!values["description-file"]) {
+			fail("generic 生态必须带 --description-file(说明文本文件),或 --proposal(自带提议,不调模型)");
+		}
 		let description: string;
 		try {
 			description = readFileSync(values["description-file"], "utf8").trim();
@@ -92,9 +259,8 @@ async function commandIndex(argv: string[]): Promise<void> {
 		}
 		if (!description) fail("--description-file 是空的 —— 说明必填(AI 索引以它为参考)");
 		const usage = { cost: 0, calls: 0 };
-		const complete = await makeCompletion(values.model ?? DEFAULT_ENRICH_MODEL, values["config-dir"], usage);
-		const corpusId = values.corpus;
-		if (!corpusId) fail("generic 生态必须带 --corpus <id>(如 my-project@abc12345)");
+		// 提示词允许 200 条 x 实测 ~45 token/条 ≈ 9000,给到模型单次输出上限。
+		const complete = await makeCompletion(values.model ?? DEFAULT_ENRICH_MODEL, values["config-dir"], usage, 8192);
 		const result = await indexGeneric({
 			root: values.root,
 			corpusId,
@@ -102,18 +268,15 @@ async function commandIndex(argv: string[]): Promise<void> {
 			configDir: values["config-dir"],
 			complete,
 			model: values.model ?? DEFAULT_ENRICH_MODEL,
+			tier,
+			indexer: "llm",
 		});
-		const notes = [
-			`语料 ${result.index.header.corpus}`,
-			`AI 索引 ${result.index.entries.length} 条(模型提议被核验丢弃 ${result.dropped} 条),`
-				+ `用时 ${((Date.now() - started) / 1000).toFixed(1)}s,费用 ~$${usage.cost.toFixed(3)}`,
-			`落盘 ${result.file}`,
-		];
-		if (result.summaryTruncated.length > 0) {
-			notes.push(`树摘要被截断,丢掉了 ${result.summaryTruncated.length} 行(可加大后重跑):`);
-			notes.push(result.summaryTruncated.slice(-5).join("\n"));
-		}
-		console.log(notes.join("\n"));
+		if (values.json) console.log(JSON.stringify(indexResultJson(result)));
+		else console.log(renderIndexNotes(result, { how: "AI 索引", started, cost: usage.cost }));
+		// 与 --proposal 分支同一道闸门。从前只有那边有,于是模型输出被 max_tokens 截断时
+		// 这条路退出码 0、落一份 entries=0 的索引,管线照常打包发布 —— 与「这个库确实
+		// 没东西可索引」在产物上完全不可区分。要归档不建索引请用 indexer:"none"。
+		if (result.parseError) process.exit(1);
 		return;
 	}
 
@@ -122,6 +285,7 @@ async function commandIndex(argv: string[]): Promise<void> {
 		ecosystem: values.ecosystem as Ecosystem,
 		corpusId: values.corpus,
 		configDir: values["config-dir"],
+		tier,
 	});
 	const buildableCount = index.entries.filter((entry) => entry.buildable).length;
 	console.log(
@@ -168,6 +332,7 @@ async function makeCompletion(
 	modelRef: string,
 	configDir: string | undefined,
 	usage: { cost: number; calls: number },
+	maxTokens = 2400,
 ): Promise<EnrichCompletion> {
 	const slash = modelRef.indexOf("/");
 	if (slash <= 0 || slash === modelRef.length - 1) {
@@ -188,7 +353,10 @@ async function makeCompletion(
 				messages: [{ role: "user", content: [{ type: "text", text: user }], timestamp: Date.now() }],
 			},
 			// 2400:1600 实测会把长卡片(蓝牙吞吐这类)截在 JSON 中间,重试也同样截断。
-			{ maxTokens: 2400 },
+			// 但 2400 只够 enrich 的"一次一张卡片"。generic 索引是"一次吐 N 条"的批量
+			// 任务:实测 ~45 token/条,2400 只装得下 ~53 条,大仓必然截断 -> JSON 解析
+			// 失败 -> 0 条。所以上限按用途传进来,不写死。
+			{ maxTokens },
 		);
 		if (response.stopReason === "error" || response.stopReason === "aborted") {
 			throw new Error(response.errorMessage || `补全失败(${response.stopReason})`);
@@ -294,13 +462,23 @@ function commandSearch(argv: string[]): void {
 			peripheral: { type: "string", multiple: true },
 			keyword: { type: "string", multiple: true },
 			buildable: { type: "boolean" },
+			tier: { type: "string" },
+			kind: { type: "string", multiple: true },
+			corpus: { type: "string", multiple: true },
+			json: { type: "boolean" },
 			limit: { type: "string" },
 			"config-dir": { type: "string" },
 		},
 	});
 	if (values.ecosystem !== undefined && !isEcosystem(values.ecosystem)) {
-		fail(`--ecosystem 必须是 esp-idf 或 stm32cube,收到:${values.ecosystem}`);
+		fail(`--ecosystem 必须是 esp-idf / stm32cube / generic,收到:${values.ecosystem}`);
 	}
+	const kinds = collectMulti(values.kind);
+	for (const kind of kinds ?? []) {
+		if (!isEntryKind(kind)) fail(`--kind 只认 ${ENTRY_KINDS.join(" / ")},收到:${kind}`);
+	}
+	// "all" 是查询侧独有的档位(条目上不存在),所以不能直接走 isTier。
+	const tier = values.tier === "all" ? "all" : parseTierFlag(values.tier, "--tier(或 all)");
 	const indexes = readAllIndexes(values["config-dir"]);
 	if (indexes.length === 0) fail(renderNoIndexHelp());
 	const query: SearchQuery = {
@@ -310,11 +488,32 @@ function commandSearch(argv: string[]): void {
 		peripherals: collectMulti(values.peripheral),
 		keywords: collectMulti(values.keyword),
 		buildableOnly: values.buildable,
+		tier,
+		entryKind: kinds as EntryKind[] | undefined,
+		corpora: collectMulti(values.corpus),
 		limit: parseCountFlag(values.limit, "--limit"),
 	};
 	const entries = indexes.flatMap((index) => index.entries);
 	const enrichment = enrichmentMapForAll(indexes, values["config-dir"]);
-	console.log(renderSearchReport(indexes, query, searchIndex(entries, query, enrichment)));
+	const hits = searchIndex(entries, query, enrichment);
+	// --json 是给**服务器端检索**用的(rag_yoma 的 POST /api/codelibs/search):服务器
+	// 不重写一份检索实现,而是拿 bun 跑这里,拿到的就必然与客户端 searchIndex 严格
+	// 同语义 ——「两份实现必然漂移」在 search.ts 那份副本上已经吃过一次亏了。
+	if (values.json) {
+		console.log(JSON.stringify({
+			corpora: indexes.map((index) => ({
+				id: index.header.corpus,
+				ecosystem: index.header.ecosystem,
+				entries: index.header.entries,
+				indexer: index.header.indexer ?? null,
+				tier: index.header.tier ?? null,
+			})),
+			query,
+			hits,
+		}));
+		return;
+	}
+	console.log(renderSearchReport(indexes, query, hits));
 }
 
 function commandShow(argv: string[]): void {

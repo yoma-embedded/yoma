@@ -112,3 +112,56 @@ describe("corpusSlug", () => {
 		expect(corpusSlug("a/b@c")).toBe("a-b-c");
 	});
 });
+
+// 粒度/分层/证据来源:条目级严格(坏取值当坏行丢),语料级宽松(只校验类型)——
+// 这个不对称是有意的,理由见 ExamplesIndexHeader 的注释,这里逐条钉住。
+describe("entryKind / tier / targetSource", () => {
+	test("合法取值认", () => {
+		expect(isExampleEntry(entryOf({ entryKind: "project", tier: "seed", targetSource: "build-system" }))).toBe(true);
+	});
+
+	test("三个都可缺省 —— 旧索引一条都没有,缺省必须等价于从前的行为", () => {
+		const entry = entryOf();
+		expect(isExampleEntry(entry)).toBe(true);
+		expect(entry.entryKind).toBeUndefined();
+		expect(entry.tier).toBeUndefined();
+	});
+
+	test("取值不在册当坏行丢(与 ecosystem 同一档待遇)", () => {
+		expect(isExampleEntry(entryOf({ entryKind: "projekt" as never }))).toBe(false);
+		expect(isExampleEntry(entryOf({ tier: "seeed" as never }))).toBe(false);
+		expect(isExampleEntry(entryOf({ targetSource: "vibes" as never }))).toBe(false);
+	});
+
+	test("语料级 tier 被条目继承,条目显式标的赢", () => {
+		const index = indexOf([entryOf({ id: "a" }), entryOf({ id: "b", tier: "seed" })]);
+		index.header.tier = "lib";
+		const parsed = parseIndex(serializeIndex(index));
+		expect(parsed?.entries.map((entry) => entry.tier)).toEqual(["lib", "seed"]);
+	});
+
+	test("header 的 tier 取值不认识时当没有 —— 否则它会盖到每一条上再被逐条判废,整份索引静默变空", () => {
+		const index = indexOf([entryOf({ id: "a" })]);
+		(index.header as { tier?: string }).tier = "seeed";
+		const parsed = parseIndex(serializeIndex(index));
+		expect(parsed?.entries).toHaveLength(1);
+		expect(parsed?.entries[0]?.tier).toBeUndefined();
+	});
+
+	test("语料级元数据只校验类型:不认识的 indexer 不判废整份索引", () => {
+		const index = indexOf([entryOf({ id: "a" })]);
+		index.header.indexer = "some-future-indexer";
+		index.header.libraryKind = "例程集";
+		index.header.candidateCount = 46;
+		const parsed = parseIndex(serializeIndex(index));
+		expect(parsed?.header.indexer).toBe("some-future-indexer");
+		expect(parsed?.header.libraryKind).toBe("例程集");
+		expect(parsed?.header.candidateCount).toBe(46);
+	});
+
+	test("语料级元数据类型不对才判废(candidateCount 不是数)", () => {
+		const index = indexOf([entryOf({ id: "a" })]);
+		(index.header as { candidateCount?: unknown }).candidateCount = "四十六";
+		expect(parseIndex(serializeIndex(index))).toBeUndefined();
+	});
+});
