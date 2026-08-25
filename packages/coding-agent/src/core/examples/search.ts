@@ -79,13 +79,6 @@ export function targetMatches(queryTarget: string, entryTargets: string[]): bool
 	return entryTargets.some((target) => wanted.startsWith(normalizeTarget(target)));
 }
 
-function locBonus(loc: number): number {
-	if (loc < 200) return 3;
-	if (loc < 500) return 2;
-	if (loc < 1000) return 1;
-	return 0;
-}
-
 /**
  * enrichment(可选)是富化表(store.ts 的 enrichmentMapForAll):有卡片的条目,
  * 外设匹配并上模型标的能力词(脚本抽不到的 lowpower/ota 这类靠它),关键词弱命中
@@ -144,9 +137,21 @@ export function searchIndex(
 			reasons.push(`外设命中 ${hits.join("/")}`);
 		}
 
+		// 芯片命中要**加分**,不能只进 reasons —— 从前只加理由不加分,于是"精确声明了
+		// 这颗芯片"和"只是没被排除(targets 空)"在排序里完全等价,主用途 `{target}` 的
+		// 得分里一分查询相关性都没有,排序退化成"谁的目录小"。实测(现网 5 语料同时在库):
+		// freertos 自己的 10 问跨语料 **0/10**,七个芯片查询返回的是同一批 3~60 行的
+		// lvgl 小目录;补上这一分之后 **10/10**。
+		//
+		// targets 为空仍然不加分,这正是 targetMatches 那条注释想要的语义:空 = 不知道
+		// 或"任何芯片都行",不排除、但也不该压过真正声明了这颗芯片的条目 —— 它排在后面
+		// 是正确的,不需要靠标 lib 把它藏起来。
 		if (query.target) {
 			if (entry.targets.length === 0) reasons.push("芯片元数据缺失,未据此排除 —— 用前自行核对");
-			else reasons.push(`芯片匹配 ${entry.targets.join(",")}`);
+			else {
+				score += 3;
+				reasons.push(`芯片匹配 ${entry.targets.join(",")}`);
+			}
 		}
 
 		// 分层/粒度/证据来源进**理由**不进打分:它们是过滤条件与可信度提示,不是
@@ -163,8 +168,12 @@ export function searchIndex(
 		const haystackWeak =
 			`${entry.summary ?? ""}\n${entry.path}\n${record?.card.summaryZh ?? ""}\n${record?.card.capabilities.join(" ") ?? ""}`.toLowerCase();
 		for (const keyword of keywords) {
+			// 标题/名命中要压过芯片分(+3):芯片是**约束**(而且已经硬过滤过一道),
+			// 用户敲进来的那个词才是**请求**。实测 `{stm32f407, json}` —— 芯片分补上之后,
+			// 真·stm32 的 FreeRTOS 端口(+3)会盖过 cJSON.c(标题命中),而用户要的是 json;
+			// 提到 +4 之后 cJSON.c 回到第 1。
 			if (haystackStrong.includes(keyword)) {
-				score += 2;
+				score += 4;
 				reasons.push(`关键词 ${keyword}(标题/名)`);
 			} else if (haystackWeak.includes(keyword)) {
 				score += 1;
@@ -179,12 +188,11 @@ export function searchIndex(
 
 		if (entry.buildable) score += 2;
 
-		const bonus = locBonus(entry.loc);
-		if (bonus > 0) {
-			score += bonus;
-			reasons.push(`小种子(${entry.loc} 行)`);
-		}
-
+		// 这里从前有一个 locBonus(<200 行 +3 / <500 +2 / <1000 +1)。删掉了:它与下面
+		// sort 的第二排序键(loc 升序)**冗余** —— 同分时小目录本来就在前,而作为分值它
+		// 唯一多干的事是让**体积跨过相关性档位**:一个 3 行的占位目录(+3)能压过标题
+		// 精确命中(+2),于是它在每一个芯片查询里都排第 1。实测删掉之后,iter1 记录的
+		// "全部剩余失分来源"(heap / 内核 task 两问)一并修好,"偏好小种子"一点没丢。
 		scored.push(record ? { entry, score, reasons, enrichment: record } : { entry, score, reasons });
 	}
 

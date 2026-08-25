@@ -124,7 +124,9 @@ function renderIndexNotes(result: GenericIndexResult, meta: { how: string; start
 		}
 	}
 	if (result.fieldWarnings.length > 0) {
-		notes.push('字段取值非法(已当"未标"处理,其余字段不受影响):');
+		// 两个通道合流:枚举收敛留痕(已当"未标"处理)+ 质量体检("质量:"开头,只是提醒)。
+		// 表头得说清楚,否则读日志的人会把"兄弟条目过多"当成一条非法取值。
+		notes.push('索引质量提醒(非法取值已当"未标"处理;"质量:"开头的只是提醒,不影响落盘):');
 		notes.push(...result.fieldWarnings.map((line) => `  ${line}`));
 	}
 	if (result.parseError) {

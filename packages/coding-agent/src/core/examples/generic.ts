@@ -229,6 +229,67 @@ interface VerifyContext {
 
 type VerifiedProposal = Omit<GenericIndexResult, "file" | "summaryTruncated">;
 
+/** 核名不是芯片名 —— 用户不会拿它当芯片查,填了反而会被 targetMatches 主动排除。 */
+const CORE_NAMES = ["cortex", "armv", "riscv", "risc-v", "xtensa", "aarch"];
+/** 这些本身就是用户会输入的芯片名,不算核名。 */
+const CHIP_LIKE = ["rp2040", "esp32", "msp430", "avr", "pic32", "rx600", "rx6"];
+/** 它们是证据来源,不是"能当起点"的候选。 */
+const JUNK_SEGMENTS = ["test", "tests", "benches", "bench", "fuzzing", "fuzz", "docs", ".github", ".gitlab", "third_party", "vendor", "deps"];
+/** 低于这个行数基本是占位目录 / 没拉下来的子模块,不是起点。 */
+const MIN_LOC = 10;
+/** 同一父目录下的兄弟条目超过这个数,就该说得出"用户按哪个词挑"。 */
+const FANOUT_WARN = 10;
+
+/**
+ * 质量体检:把 SKILL.md 自查清单里**机械可判**的那几条变成代码。
+ *
+ * 只报警告,不改判成败 —— 硬核验(路径存在 / 去重 / 上限 / isExampleEntry)才决定丢不丢。
+ * 软规则有正当例外:FreeRTOS 的 `portable/GCC` 下 54 条兄弟是对的(用户就是按端口挑),
+ * 一票否决会教人忽略整个警告通道。
+ *
+ * 每类聚合成一条 —— `fieldWarnings` 截断在 10 条,一条目一条会把别的警告挤掉。
+ */
+function qualityLint(entries: ExampleEntry[], candidateCount: number | undefined): string[] {
+	const notes: string[] = [];
+	const some = (bad: string[], head: string): void => {
+		if (bad.length === 0) return;
+		notes.push(`质量:${bad.length} 条${head} —— ${bad.slice(0, 5).join("、")}${bad.length > 5 ? " 等" : ""}`);
+	};
+
+	if (candidateCount !== undefined && candidateCount < entries.length) {
+		notes.push(`质量:candidateCount(${candidateCount})小于条目数(${entries.length})—— 口径是"枚举出的全部候选,含主动放弃的"`);
+	}
+	some(entries.filter((x) => x.loc < MIN_LOC).map((x) => `${x.path}(${x.loc} 行)`),
+		`目录里几乎没有源码(<${MIN_LOC} 行),不该建条目`);
+	some(entries.filter((x) => x.path.split("/").some((seg) => JUNK_SEGMENTS.includes(seg))).map((x) => x.path),
+		"建在测试 / 文档 / 第三方目录上");
+	some(entries.filter((x) => x.peripherals.length < 2).map((x) => x.path),
+		"peripherals 不足 2 个(它是硬过滤,漏标即在带该词的查询里隐身)");
+	some(entries.filter((x) => x.targets.some((t) => {
+		const low = t.toLowerCase();
+		return CORE_NAMES.some((core) => low.startsWith(core)) && !CHIP_LIKE.includes(low);
+	})).map((x) => `${x.path}[${x.targets.join(",")}]`),
+		"targets 里是核名不是芯片名(比留空更糟:会被主动排除)");
+	some(entries.filter((x) => x.targets.some((t) => t.length < 3)).map((x) => `${x.path}[${x.targets.join(",")}]`),
+		"targets 前缀短于 3 字符,会吸走别家芯片的查询");
+	some(entries.filter((x) => x.tier === undefined).map((x) => x.path),
+		"没有显式标 tier(会继承语料级默认,可移植库因此整库在主用途里隐身)");
+
+	const byParent = new Map<string, number>();
+	for (const entry of entries) {
+		const parent = entry.path.split("/").slice(0, -1).join("/") || "(仓库根)";
+		byParent.set(parent, (byParent.get(parent) ?? 0) + 1);
+	}
+	const fanout = [...byParent.entries()].filter(([, n]) => n > FANOUT_WARN).sort((a, b) => b[1] - a[1]);
+	if (fanout.length > 0) {
+		notes.push(
+			`质量:兄弟条目过多 —— ${fanout.slice(0, 4).map(([dir, n]) => `${dir}/ ${n} 条`).join("、")}` +
+				`;说得出"用户会输入哪个词来挑"(芯片 / 板 / 端口 / 协议名)就留着,说不出该合并成一条并把能力词聚合上去`,
+		);
+	}
+	return notes;
+}
+
 /**
  * 提议 -> 索引的**核验层**:规则全部是确定性的(PLAN D2),模型说了不算 ——
  * path 必须存在、去重、上限、小写化、loc/files 实测、buildable 恒 false、
@@ -345,6 +406,11 @@ function verifyEntries(raw: string, options: VerifyContext): VerifiedProposal {
 	}
 
 	index.header.entries = index.entries.length;
+	// 质量体检放在这里,而不是放进某个本机 CLI —— 建库(codelibs.py 的 `cli.ts index --proposal`)
+	// 与干跑(`POST /api/codelibs/validate`)都在这条路上,而建索引的 agent 跑的是
+	// `--tools read,grep,find,ls,write`(**没有 bash**),它跑不了任何校验脚本。清单只有变成
+	// 这里的代码才数得清:每次建库的 job 日志、干跑的返回、本机 verify-proposal,三处一起白得。
+	for (const note of qualityLint(index.entries, index.header.candidateCount)) warned.set(note, 1);
 	const fieldWarnings = [...warned.entries()]
 		.slice(0, 10)
 		.map(([note, count]) => (count > 1 ? `${note}(${count} 处)` : note));

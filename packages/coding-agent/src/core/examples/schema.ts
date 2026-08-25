@@ -125,7 +125,7 @@ export interface ExampleEntry {
 	/** buildable=false 的原因或构建前提,人话。 */
 	buildNote?: string;
 	license?: string;
-	/** 源码行数(粗):小种子偏好的依据 —— 要在它上面做加法,越小越好审。 */
+	/** 源码行数(粗):小种子偏好的依据 —— 同分时按它升序排,越小越好审。 */
 	loc: number;
 	files: number;
 	/**
