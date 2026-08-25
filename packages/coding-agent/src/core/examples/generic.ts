@@ -239,6 +239,10 @@ const JUNK_SEGMENTS = ["test", "tests", "benches", "bench", "fuzzing", "fuzz", "
 const MIN_LOC = 10;
 /** 同一父目录下的兄弟条目超过这个数,就该说得出"用户按哪个词挑"。 */
 const FANOUT_WARN = 10;
+/** 少于这么多 seed 时不查"能力词覆盖不齐" —— 样本太小,一两条缺席说明不了什么。 */
+const CAPABILITY_MIN_SEEDS = 5;
+/** 覆盖率到这个比例才算"这个库的共同能力",低于它是正常的能力分化。 */
+const CAPABILITY_COVER = 0.7;
 
 /**
  * 质量体检:把 SKILL.md 自查清单里**机械可判**的那几条变成代码。
@@ -280,6 +284,33 @@ function qualityLint(entries: ExampleEntry[], candidateCount: number | undefined
 		const parent = entry.path.split("/").slice(0, -1).join("/") || "(仓库根)";
 		byParent.set(parent, (byParent.get(parent) ?? 0) + 1);
 	}
+	// 能力词覆盖不齐:一个词覆盖了绝大多数 seed,却在少数几条上缺席 —— 那几条多半是漏标。
+	// `peripherals` 是**硬过滤**,漏一个词 = 在带该词的查询里整条隐身。
+	//
+	// 实测(u8g2):`display`/`oled` 覆盖 22 条 seed 里的 19 条,缺的 3 条其中一条是
+	// `sys/arm/stm32l011x4` —— 于是 `{stm32l011f4, display}` 把它硬排除,提问集实测 MISS。
+	// 一个显示库的例程没标 display,靠"至少 2 个词"那条查不出来(它有 adc/gpio/timer 三个)。
+	//
+	// 只报**疑问**不报错误:正当例外确实存在(tinyusb 的 `board_test` 不涉 usb、
+	// openocd 的 fpga/cpld 条目不走 swd),但每一条都该被看一眼。
+	const seeds = entries.filter((x) => x.tier !== "lib");
+	if (seeds.length >= CAPABILITY_MIN_SEEDS) {
+		const cover = new Map<string, number>();
+		for (const entry of seeds) for (const word of new Set(entry.peripherals)) cover.set(word, (cover.get(word) ?? 0) + 1);
+		const gap = [...cover.entries()]
+			.filter(([, n]) => n / seeds.length >= CAPABILITY_COVER && n < seeds.length)
+			.sort((a, b) => b[1] - a[1])[0];
+		if (gap) {
+			const [word, n] = gap;
+			const missing = seeds.filter((x) => !x.peripherals.includes(word)).map((x) => x.path);
+			notes.push(
+				`质量:能力词覆盖不齐 —— \`${word}\` 覆盖了 ${n}/${seeds.length} 条 seed,这 ${missing.length} 条没标:` +
+					`${missing.slice(0, 5).join("、")}${missing.length > 5 ? " 等" : ""};` +
+					"peripherals 是硬过滤,漏标 = 在带该词的查询里整条隐身",
+			);
+		}
+	}
+
 	const fanout = [...byParent.entries()].filter(([, n]) => n > FANOUT_WARN).sort((a, b) => b[1] - a[1]);
 	if (fanout.length > 0) {
 		notes.push(
