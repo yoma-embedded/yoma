@@ -41,5 +41,9 @@ engines/data/
 /.agents/
 /docs/
 
+# Python 字节码缓存(harbor 适配器被 import 时生成)
+__pycache__/
+*.pyc
+
 # 个人本地笔记 / 上手文档,不入库
 doc_ljq_local/

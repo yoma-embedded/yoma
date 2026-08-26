@@ -15,7 +15,8 @@
   "scripts": {
     "typecheck": "tsgo --noEmit",
     "test": "bun test src",
-    "bench": "bun ./src/cli.ts"
+    "bench": "bun ./src/cli.ts",
+    "build:eval": "bun ./scripts/build-eval-entry.ts"
   },
   "dependencies": {
     "@yoma-desktop/kernel": "workspace:*"
@@ -24,6 +25,7 @@
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
     "@typescript/native-preview": "catalog:",
+    "esbuild": "catalog:",
     "typescript": "catalog:"
   }
 }
