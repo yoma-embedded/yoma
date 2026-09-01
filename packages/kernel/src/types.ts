@@ -387,10 +387,15 @@ export interface DatasheetSearchHit {
 }
 
 export interface DatasheetToolDetails {
-  action: "search" | "read_section" | "view_figure"
+  action: "search" | "read_section" | "view_figure" | "chips"
   chip?: string
+  /** search:入参 chip 是型号时,实际搜的那个家族索引名(相等时不填)。 */
+  resolvedChip?: string
   rev?: string
   topK?: number
+  /** chips:索引里的家族数 / 手册数。 */
+  families?: number
+  manuals?: number
   hits?: DatasheetSearchHit[]
   parsedPath?: string
   mode?: string

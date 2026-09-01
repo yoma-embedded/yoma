@@ -13,6 +13,7 @@
  *                 服务器端 bge-m3 + Lance;端点尚未上线时返回引导信息
  * - read_section: GET {server}/artifacts/<parsed_path> + 本文件内的 markdown 章节抽取
  * - view_figure:  GET {server}/artifacts/<image_path> → ImageContent(模型直接读图)
+ * - chips:        GET {server}/api/manifest → 索引里有哪些芯片家族、每个家族有哪些手册
  *
  * 前身是从 yoma 移植的四个本地工具(datasheet_search/read_manual_section/
  * view_figure/download_manual + datasheet/ lib);按"不走本地"的决定合并重写,
@@ -142,6 +143,147 @@ export function formatCitation(h: SearchHit, i: number): string {
 	return out;
 }
 
+// ─── 芯片索引(/api/manifest 的家族视图) ─────────────────────────────────────
+//
+// 服务器按**家族**归档(`AT32F`、`STM32F4`、`MM32SPIN`),而模型手上永远是具体型号
+// (`AT32F421C8T7`)。猜错家族名时服务器**不报错**:chip 过滤匹配不到任何手册,它照样
+// 200 返回 GENERAL 语料的命中,分数还挺高(0.5~0.68)。实测代价(2026-09-01 一次真会话):
+// 模型试了 AT32F421 / AT32 / AT32F4 / AT32F421xx 共 11 次 search 全部落空,据此告诉用户
+// "服务器没收录这颗芯片" —— 而它收录了 16 本雅特力手册,索引名就是 `AT32F`;用户随后
+// 得自己 curl 六轮 API 才把 /api/manifest 挖出来。三分钟,零结果。
+//
+// 所以自己兜住三件事:①一条目标家族的命中都没有时,拉一次 manifest 把型号解析成家族名
+// 重查;②解析不出来就**明说不认识**并给候选,绝不让 GENERAL 噪声冒充答案;③给一个
+// `chips` 动作,让"服务器都收录了什么"变成一次调用而不是一场考古。
+
+export type ManifestEntry = {
+	chip: string;
+	rev: string;
+	manual_name?: string;
+	kind?: string;
+	num_chunks?: number;
+};
+
+export type ChipFamily = { chip: string; manuals: { rev: string; manual_name: string; kind: string }[] };
+
+/** 归一化:大写 + 去掉分隔符 —— `ESP32-S3`、`esp32 s3`、`ESP32_S3` 是同一个家族。 */
+export function normChip(s: string): string {
+	return s.toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+export function buildChipIndex(entries: ManifestEntry[]): Map<string, ChipFamily> {
+	const index = new Map<string, ChipFamily>();
+	for (const entry of entries) {
+		if (!entry || typeof entry.chip !== "string" || !entry.chip.trim()) continue;
+		const key = normChip(entry.chip);
+		let family = index.get(key);
+		if (!family) index.set(key, (family = { chip: entry.chip, manuals: [] }));
+		family.manuals.push({ rev: entry.rev ?? "", manual_name: entry.manual_name ?? "", kind: entry.kind ?? "" });
+	}
+	return index;
+}
+
+// 每个成员一个字面量 kind:写成 `"exact" | "family"` 的复合判别字段,TS 在
+// `if (kind === "exact" || kind === "family") return` 之后 narrow 不掉剩下那两支。
+export type ChipResolution =
+	| { kind: "exact"; chip: string }
+	| { kind: "family"; chip: string }
+	| { kind: "ambiguous"; candidates: string[] }
+	| { kind: "unknown"; candidates: string[] };
+
+function familyNames(index: Map<string, ChipFamily>): string[] {
+	return [...index.values()].map((f) => f.chip).sort();
+}
+
+/**
+ * 型号 → 家族索引名。三条规则按确定性排序:
+ * 1. 归一化后完全相等;
+ * 2. **最长**的、是型号前缀的家族名(AT32F421C8T7 → AT32F,STM32F407 → STM32F4,
+ *    MM32SPIN25 → MM32SPIN)—— 这条治的就是"模型拿型号当索引名"这个必然错误;
+ * 3. 反过来以它开头的家族(AT32 → AT32A/AT32F/AT32L/…):唯一才用,多个报歧义并列出来
+ *    (瞎挑一个等于把"查错了芯片"藏进一份看着正常的输出里)。
+ */
+export function resolveChip(index: Map<string, ChipFamily>, wanted: string): ChipResolution {
+	const want = normChip(wanted);
+	if (!want) return { kind: "unknown", candidates: familyNames(index) };
+	const exact = index.get(want);
+	if (exact) return { kind: "exact", chip: exact.chip };
+
+	let longest = "";
+	for (const key of index.keys()) {
+		if (want.startsWith(key) && key.length > longest.length) longest = key;
+	}
+	if (longest) return { kind: "family", chip: index.get(longest)!.chip };
+
+	const starts = [...index.entries()].filter(([key]) => key.startsWith(want)).map(([, f]) => f.chip);
+	if (starts.length === 1) return { kind: "family", chip: starts[0] };
+	if (starts.length > 1) return { kind: "ambiguous", candidates: starts.sort() };
+
+	// 完全不认识:共享前 3 个字符的家族当候选;一个都没有就给全表(七十来个家族也就几百字)。
+	const near = [...index.entries()].filter(([key]) => key.slice(0, 3) === want.slice(0, 3)).map(([, f]) => f.chip);
+	return { kind: "unknown", candidates: near.length ? near.sort() : familyNames(index) };
+}
+
+export function formatChipList(index: Map<string, ChipFamily>): string {
+	return [...index.values()]
+		.sort((a, b) => a.chip.localeCompare(b.chip))
+		.map((f) => `${f.chip} (${f.manuals.length})`)
+		.join(", ");
+}
+
+export function formatFamilyManuals(family: ChipFamily, limit = 60): string {
+	const rows = family.manuals
+		.slice(0, limit)
+		.map((m) => `  rev "${m.rev}"${m.kind ? ` [${m.kind}]` : ""} — ${m.manual_name}`);
+	const more = family.manuals.length > limit ? `\n  … (+${family.manuals.length - limit} more)` : "";
+	return rows.join("\n") + more;
+}
+
+/** chip 认得,但这次查询没从它里面命中任何东西 —— 说清楚,并把这家族的手册摆出来。 */
+export function chipMissNote(family: ChipFamily, rev: string | undefined): string {
+	const badRev = rev ? !family.manuals.some((m) => m.rev.toLowerCase() === rev.trim().toLowerCase()) : false;
+	const head = badRev
+		? `NOTE: no manual with rev "${rev}" exists for chip "${family.chip}" — the rev filter matched nothing, so the hits below are NOT from your chip.`
+		: `NOTE: chip "${family.chip}" IS indexed (${family.manuals.length} manual(s)) but nothing in it matched this query — every hit below comes from the cross-chip GENERAL corpus, not from your chip.`;
+	return [
+		head,
+		`Manuals indexed for ${family.chip}:`,
+		formatFamilyManuals(family),
+		`Rephrase the query with the peripheral/register name, or pass one of the revs above.`,
+	].join("\n");
+}
+
+/** chip 不是索引名(或指向多个家族)时的候选清单。 */
+export function chipCandidatesNote(wanted: string, resolution: ChipResolution): string {
+	if (resolution.kind === "exact" || resolution.kind === "family") return "";
+	const head =
+		resolution.kind === "ambiguous"
+			? `"${wanted}" matches several indexed families — pick one: ${resolution.candidates.join(", ")}.`
+			: `"${wanted}" is not an indexed chip family. Closest index names: ${resolution.candidates.slice(0, 30).join(", ")}.`;
+	return [
+		head,
+		`The corpus is filed by device FAMILY, not by part number (AT32F421C8T7 → "AT32F", STM32F407 → "STM32F4", CH32V307 → "CH32V").`,
+		`Use action "chips" for the whole family list, or action "chips" with \`chip\` for one family's manuals.`,
+	].join("\n");
+}
+
+/** chip 根本不是索引名 —— 不搜,把候选摆出来,让下一次调用就对。 */
+export function unknownChipHelp(wanted: string, resolution: ChipResolution): string {
+	const candidates = chipCandidatesNote(wanted, resolution);
+	if (!candidates) return "";
+	return `NO SEARCH PERFORMED — searching an unknown chip returns cross-chip GENERAL prose that reads like an answer but is not about your part.\n${candidates}`;
+}
+
+// 进程内缓存:manifest 是 ~2 MB / 350+ 本,一个内核进程拉一次够了。给 TTL 是因为语料会长
+// (服务器 2026-09-01 一次就从 96 本涨到 352 本),长跑的会话不该一直看着开机那一刻的表。
+const CHIP_INDEX_TTL_MS = 10 * 60 * 1000;
+let chipIndexCache: { server: string; at: number; index: Map<string, ChipFamily> } | undefined;
+
+/** 测试用:清掉进程内的芯片索引缓存。 */
+export function resetChipIndexCache(): void {
+	chipIndexCache = undefined;
+}
+
 // 这两个曾经是 engines.ts clamp() 的逐字重写(gdb/log 早就在用那一份)。改成委托,
 // 但**函数留着**:它们是导出的,而 test/datasheet.test.ts 那六条断言是全仓唯一钉住
 // 这四个数字的地方 —— 同样的数字还写在下面 schema 的 description 里给模型看,删了闸门
@@ -161,16 +303,20 @@ export function clampChars(n: number | undefined): number {
 
 const datasheetSchema = Type.Object({
 	// 显式元组而非 .map():数组会丢掉元组结构,Static 推导塌成 never。
-	action: Type.Union([Type.Literal("search"), Type.Literal("read_section"), Type.Literal("view_figure")], {
-		description: "search = RAG retrieval with citations | read_section = full manual section | view_figure = see a figure image",
-	}),
+	action: Type.Union(
+		[Type.Literal("search"), Type.Literal("read_section"), Type.Literal("view_figure"), Type.Literal("chips")],
+		{
+			description:
+				"search = RAG retrieval with citations | read_section = full manual section | view_figure = see a figure image | chips = list the indexed chip families (and one family's manuals)",
+		},
+	),
 	query: Type.Optional(
 		Type.String({ description: "search: natural-language manual question to retrieve chunks for. Required for search." }),
 	),
 	chip: Type.Optional(
 		Type.String({
 			description:
-				'search: target chip FAMILY as indexed, e.g. "STM32F4" (not "STM32F405"). Required for search — the corpus is multi-chip.',
+				'search: target chip FAMILY as indexed, e.g. "STM32F4" (not "STM32F405") or "AT32F" (not "AT32F421C8T7"). Required for search — the corpus is multi-chip; a part number is resolved to its family when possible, and refused with candidates when not. | chips: optional — list just this family\'s manuals.',
 		}),
 	),
 	rev: Type.Optional(
@@ -204,10 +350,15 @@ const datasheetSchema = Type.Object({
 export type DatasheetToolInput = Static<typeof datasheetSchema>;
 
 export interface DatasheetToolDetails {
-	action: "search" | "read_section" | "view_figure";
+	action: "search" | "read_section" | "view_figure" | "chips";
 	chip?: string;
+	/** search: 入参 chip 是型号时,实际搜的那个家族索引名(相等时不填)。 */
+	resolvedChip?: string;
 	rev?: string;
 	topK?: number;
+	/** chips: 索引里的家族数 / 手册数。 */
+	families?: number;
+	manuals?: number;
 	hits?: Pick<SearchHit, "manual_name" | "page" | "headings" | "score" | "parsed_path" | "image_path" | "source_pdf">[];
 	parsedPath?: string;
 	mode?: string;
@@ -238,9 +389,12 @@ Actions:
 - search (query, chip, [rev, topK]): retrieval-only search over indexed manual PROSE. Returns the top matching RAW chunks WITH citations (manual name, page, section breadcrumb, score). It does NOT answer the question — read the chunks and write the answer yourself, citing page/section.
 - read_section (parsedPath, [heading, maxChars]): search chunks are short (~512 tokens). To read the COMPLETE section behind a hit (a full register table, a complete procedure, adjacent bitfields), pass the hit's parsed_path and headings breadcrumb. Omit heading for a table of contents.
 - view_figure (imagePath, [caption]): for hits marked [FIGURE] the chunk text is only the caption — pass the hit's image_path to SEE the figure (clock tree, block diagram, memory map, timing diagram, pinout) whenever the answer depends on the diagram itself.
+- chips ([chip]): what the server actually holds. With no argument: every indexed chip FAMILY with its manual count. With \`chip\`: that family's manuals, each with the \`rev\` to pass to search. One call — never go probing the server's HTTP API by hand.
 
 Search rules:
-- Always pass \`chip\` as the manual's device FAMILY as indexed (the corpus is multi-chip): STM32F405/407/427/429 → "STM32F4", STM32F103 → "STM32F1" — NOT the exact part number. Pass \`rev\` (e.g. "RM0090") when you know it; if omitted, all revisions for that chip are searched and each citation shows its source rev.
+- Always pass \`chip\` as the manual's device FAMILY as indexed (the corpus is multi-chip): STM32F405/407/427/429 → "STM32F4", AT32F421C8T7 → "AT32F", CH32V307 → "CH32V" — NOT the exact part number. A part number is resolved to its family automatically and the reply tells you the name to use; when it cannot be resolved the tool refuses to search and lists the candidates. Pass \`rev\` (e.g. "RM0090", "AT32F421_DS") when you know it; if omitted, all revisions for that chip are searched and each citation shows its source rev.
+- The corpus is MULTI-VENDOR and largely Chinese-language (ST, Artery 雅特力, GigaDevice 兆易创新, WCH 沁恒, MindMotion 灵动, Nations 国民技术, HDSC 华大, HK 航顺, Geehy 极海, Nordic, Espressif …). Never conclude a part is not indexed because it is not an STM32, and never conclude it from one failed search — check with action "chips".
+- A reply where EVERY citation is tagged [GENERAL] means nothing from your chip matched: that is a miss, not an answer. The tool says so explicitly when it happens — re-read the note instead of quoting those chunks at the user.
 - When you omit \`rev\`, a shared GENERAL corpus (cross-chip material: schematic conventions, tutorials, reference notes) is automatically folded in. Do NOT pass \`chip: "GENERAL"\` yourself.
 - Citations are prefixed with tags that classify the hit (they may combine): \`[GENERAL]\` = cross-chip corpus; \`[SCHEMATIC]\` / \`[TUTORIAL]\` / \`[REFERENCE]\` = the chunk's kind; \`[FIGURE]\` = has an image. Treat tags as context, not as a filter.
 - Use search before answering any register-level or peripheral-behavior question — do not answer such questions from memory. Phrase queries the way the manual would: "TIM1 PWM output mode configuration" beats "how to blink motor"; if results miss, rephrase with the peripheral/register name or raise topK.
@@ -300,6 +454,7 @@ export function createDatasheetToolDefinition(
 		promptGuidelines: serverUrl()
 			? [
 					"Before answering any register-level or peripheral-behavior question, search the indexed manuals with the datasheet tool and cite page/section. If the tool says lookup is unavailable or unreachable, do not invent those facts from memory — tell the user manuals cannot be queried.",
+					'The manual corpus is multi-vendor (ST, Artery, GigaDevice, WCH, MindMotion, Nations, HDSC, Nordic, Espressif, …) and filed by device FAMILY, not by part number. Never tell the user a chip is missing from it on the strength of a failed search — run the datasheet tool\'s "chips" action and read the actual index first.',
 				]
 			: [
 					"Datasheet lookup is not configured (YOMA_DATASHEET_SERVER). Do not answer register-level, electrical, or peripheral-behavior questions from memory — say you cannot look up the manual.",
@@ -318,39 +473,71 @@ export function createDatasheetToolDefinition(
 				}
 			};
 
+			/** manifest → 家族索引。端点不在(旧服务器)时 undefined;网络失败照旧抛 tagged Error。 */
+			const fetchChipIndex = async (): Promise<Map<string, ChipFamily> | undefined> => {
+				const cached = chipIndexCache;
+				if (cached && cached.server === server && Date.now() - cached.at < CHIP_INDEX_TTL_MS) return cached.index;
+				const res = await fetchServer(`${server}/api/manifest`);
+				if (!res.ok) return undefined;
+				const json = (await res.json().catch(() => undefined)) as ManifestEntry[] | undefined;
+				if (!Array.isArray(json) || json.length === 0) return undefined;
+				const index = buildChipIndex(json);
+				chipIndexCache = { server, at: Date.now(), index };
+				return index;
+			};
+			// search 的兜底路径用这一份:索引拿不到是我们自己的额外功课,绝不能反过来把搜索挡掉。
+			const chipIndexQuietly = async (): Promise<Map<string, ChipFamily> | undefined> => {
+				try {
+					return await fetchChipIndex();
+				} catch {
+					return undefined;
+				}
+			};
+
 			try {
 			switch (params.action) {
 				case "search": {
 					const query = need(params.query, "search", "query");
-					const chip = need(params.chip, "search", "chip");
+					const wanted = need(params.chip, "search", "chip");
 					const k = clampTopK(params.topK);
-					const res = await fetchServer(`${server}/api/search`, {
-						method: "POST",
-						headers: { "Content-Type": "application/json" },
-						body: JSON.stringify({ query, chip, rev: params.rev, top_k: k }),
-					});
-					if (res.status === 404) {
-						return textResult(searchUnavailableHelp(server), { action: "search", chip, rev: params.rev });
-					}
-					if (!res.ok) {
-						const body = await res.text().catch(() => "");
-						return textResult(
-							unreachableHelp(server, `HTTP ${res.status} ${res.statusText}${body ? `: ${body.slice(0, 300)}` : ""}`),
-							{ action: "search", chip, rev: params.rev },
-						);
-					}
-					const json = (await res.json()) as { hits?: SearchHit[] };
-					const hits = (json.hits ?? []).slice(0, k).map((h) => ({ ...h, kind: h.kind ?? "" }));
-					return {
+
+					const post = async (
+						chip: string,
+					): Promise<{ hits: SearchHit[] } | { failed: ReturnType<typeof textResult> }> => {
+						const res = await fetchServer(`${server}/api/search`, {
+							method: "POST",
+							headers: { "Content-Type": "application/json" },
+							body: JSON.stringify({ query, chip, rev: params.rev, top_k: k }),
+						});
+						if (res.status === 404) {
+							return { failed: textResult(searchUnavailableHelp(server), { action: "search", chip, rev: params.rev }) };
+						}
+						if (!res.ok) {
+							const body = await res.text().catch(() => "");
+							return {
+								failed: textResult(
+									unreachableHelp(server, `HTTP ${res.status} ${res.statusText}${body ? `: ${body.slice(0, 300)}` : ""}`),
+									{ action: "search", chip, rev: params.rev },
+								),
+							};
+						}
+						const json = (await res.json()) as { hits?: SearchHit[] };
+						return { hits: (json.hits ?? []).slice(0, k).map((h) => ({ ...h, kind: h.kind ?? "" })) };
+					};
+
+					const answer = (hits: SearchHit[], searched: string, note: string) => ({
 						content: [
 							{
 								type: "text" as const,
-								text: hits.map(formatCitation).join("\n---\n") || "(no matching datasheet chunks found)",
+								text:
+									(note ? `${note}\n\n` : "") +
+									(hits.map(formatCitation).join("\n---\n") || "(no matching datasheet chunks found)"),
 							},
 						],
 						details: {
 							action: "search" as const,
-							chip,
+							chip: wanted,
+							resolvedChip: searched === wanted ? undefined : searched,
 							rev: params.rev,
 							topK: k,
 							hits: hits.map((h) => ({
@@ -363,7 +550,75 @@ export function createDatasheetToolDefinition(
 								source_pdf: h.source_pdf,
 							})),
 						},
-					};
+					});
+
+					// 有一条命中来自目标家族就算搜到了。**全是 GENERAL 说明 chip 过滤根本没匹配上** ——
+					// 服务器对不认识的 chip 不报错,照样 200 返回跨芯片语料,分数还挺高。
+					const onTarget = (hits: SearchHit[]) => hits.some((h) => normChip(h.chip ?? "") !== "GENERAL");
+
+					const first = await post(wanted);
+					if ("failed" in first) return first.failed;
+					if (normChip(wanted) === "GENERAL" || onTarget(first.hits)) return answer(first.hits, wanted, "");
+
+					const index = await chipIndexQuietly();
+					if (!index) return answer(first.hits, wanted, ""); // 索引不可用:维持老行为
+
+					const resolution = resolveChip(index, wanted);
+					if (resolution.kind === "exact") {
+						return answer(first.hits, wanted, chipMissNote(index.get(normChip(wanted))!, params.rev));
+					}
+					if (resolution.kind === "family") {
+						const retry = await post(resolution.chip);
+						if ("failed" in retry) return retry.failed;
+						return answer(
+							retry.hits,
+							resolution.chip,
+							onTarget(retry.hits)
+								? `NOTE: "${wanted}" is not an index name — this corpus is filed by device FAMILY. Searched "${resolution.chip}" instead; pass that as \`chip\` from here on.`
+								: chipMissNote(index.get(normChip(resolution.chip))!, params.rev),
+						);
+					}
+					return textResult(unknownChipHelp(wanted, resolution), {
+						action: "search",
+						chip: wanted,
+						rev: params.rev,
+						topK: k,
+					});
+				}
+
+				case "chips": {
+					const index = await fetchChipIndex();
+					if (!index) {
+						return textResult(
+							`The datasheet server at ${server} does not expose GET /api/manifest, so the indexed chip list cannot be read. ` +
+								`Pass \`chip\` as the device family (not the part number) and search directly.`,
+							{ action: "chips" },
+						);
+					}
+					const asked = params.chip?.trim();
+					if (asked) {
+						const resolution = resolveChip(index, asked);
+						if (resolution.kind === "exact" || resolution.kind === "family") {
+							const family = index.get(normChip(resolution.chip))!;
+							const from = normChip(resolution.chip) === normChip(asked) ? "" : ` (resolved from "${asked}")`;
+							return textResult(
+								`chip "${family.chip}"${from} — ${family.manuals.length} manual(s) indexed:\n${formatFamilyManuals(family, 200)}\n\n` +
+									`Search it with { action: "search", chip: "${family.chip}", query: … }, optionally \`rev\` set to one of the above.`,
+								{ action: "chips", chip: family.chip, manuals: family.manuals.length },
+							);
+						}
+						return textResult(chipCandidatesNote(asked, resolution), {
+							action: "chips",
+							chip: asked,
+							families: index.size,
+						});
+					}
+					const manuals = [...index.values()].reduce((n, f) => n + f.manuals.length, 0);
+					return textResult(
+						`${index.size} indexed chip families, ${manuals} manuals. The number in parentheses is that family's manual count; ` +
+							`pass \`chip\` to list one family's manuals (each with the \`rev\` to search it by).\n\n${formatChipList(index)}`,
+						{ action: "chips", families: index.size, manuals },
+					);
 				}
 
 				case "read_section": {
