@@ -8,7 +8,7 @@
 Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
 
 - **内核**(`packages/{agent,coding-agent}` + npm 的 `@earendil-works/pi-ai`)—— agent 循环、
-  会话树、压缩、技能,以及嵌入式工具组(烧录 / 日志 / gdb / 网表 / 数据手册 / STM32 配置)。
+  会话树、压缩、技能,以及嵌入式工具组(烧录 / 日志 / gdb / 网表 / 数据手册 / STM32 配置 / 逻辑分析仪 / 示波器)。
 - **桌面端**(`packages/{desktop,app,kernel,ui,session-ui,util,bench}`)——
   Electron 外壳 + SolidJS UI,fork 自 opencode 的前端;`bench` 是无人值守调试台。
 
@@ -99,7 +99,7 @@ Bun workspace,`packages/` 下 9 个包 —— 内核两包(`agent` / `coding-age
 | `bun typecheck` | turbo 跑全部 9 个包 —— **必须常绿 9/9**(2026-08-21 起内核两包也有 `typecheck`:从前只有被 kernel 的 paths 拉到的内核源码受检,test 目录没人查) |
 | `bun lint` | oxlint |
 | `bun run test` | 全量单测(根 `package.json` 逐包列出)—— **根上唯一入口**;裸 `bun test` 会误扫 DOM/平台文件 |
-| `bun --cwd packages/desktop smoke` | 内核冒烟:对 **构建产物** 验证 12 个工具 + 4 个引擎二进制 |
+| `bun --cwd packages/desktop smoke` | 内核冒烟:对 **构建产物** 验证 14 个工具(`TOOL_NAMES` 减退役)+ 4 个引擎二进制 |
 | `bun --cwd packages/desktop e2e:ipc` | 生产路径:真 utilityProcess + 真 MessagePort + 真协议帧(不开窗口) |
 | `bun --cwd packages/desktop e2e:renderer` | 最后一跳:真窗口 + 真 preload + **真 contextBridge**(含 mailbox 桥三条) |
 | `bun --cwd packages/desktop smoke:mailbox` | 调试台冒烟:Electron RUN_AS_NODE 对打包产物跑完整**本机演练**(假模型,零 key 零硬件) |
@@ -494,6 +494,48 @@ TS 侧的纪律:
 - 黄金文件:`engines/logic-analyzer/vendor/demo/logic/protocol.demo`(改了后缀的 `.dsl`,16 通道
   25 MHz,I²C SDA=D0/SCL=D1、UART D5、SPI D12–15)。I²C 解出 **300 条注解 / 6 个事务**,UART 47 字节
   "DSLogic series USB-based LA from DreamSourceLab",SPI 5 次传输 288 字。smoke 与 `build.ts` 自检都钉这个数。
+
+### 示波器(`scope` 工具 / `core/scope`)
+
+2026-09-03 起。Siglent **SDS824X HD**(SDS800X HD 一族:4 通道 / 200 MHz / 12 位)**原生集成**,纯 TypeScript,
+不经引擎:USB(USBTMC)或 LAN(SCPI 原始套接字 5025 口)。只在这一台上验证过;同一命令树的 SDS2000X HD 等
+大概率能用,但没验。
+
+**形态**:`packages/coding-agent/src/core/scope/`(`scpi.ts` 传输与分帧、`preamble.ts` WAVEDESC 与换算、
+`analyze.ts` 统计/边沿/文本示意图、`store.ts` 落盘、`siglent.ts` 驱动)+ `tools/scope.ts`(11 个动作:
+connect / status / setup / capture / arm / collect / measure / samples / screenshot / list / raw)。
+样本落在 `<工程>/.yoma/scope/<id>/`(`c<n>.i16` 原始 code + `capture.json`),截图在 `.yoma/scope/screens/`,
+本机仪器地址在 `.yoma/scope.json`;三样都在 `YOMA_IGNORE`。卡片是纯 KV(session-ui 的 `scope-tool.tsx`),
+截图经 attachments 显示在卡片里 —— 用户说过不要花哨前端。
+
+**USB 走 node-usb 3**(`usb@3.1.0`:Rust nusb + napi-rs,各平台预编译包 `@node-usb/usb-<platform>` 作可选依赖,
+**不装 libusb、不编译**)。它在根 catalog、`coding-agent` 与 `desktop` 的 `dependencies` 里都要在:desktop 那份让
+electron-vite 把它外部化(否则 napi 的 `.node` 进不了 inline 的 kernel.js),coding-agent 那份给 typecheck 与 ACP。
+coding-agent 只**动态 import**(`loadUsb()`),平台包缺席时退化成"USB 不可用,走 LAN",不是崩。macOS 免驱直连;
+**Windows 要把仪器绑到 WinUSB(Zadig)**,与 Siglent/NI 的 USBTMC 驱动互斥 —— 那边的正路是 LAN;Linux 要 udev 规则。
+工位机多半是 Windows,所以 LAN 才是产品主路,USB 是开发机的便利。
+
+**真机核实过的怪癖**(固件 4.8.12.1.1.6.5;改协议层前先读):
+
+- 仪器**只接一个客户端**(USB 也算),响应按 FIFO 排队。查询超时之后那条响应仍在队里,下一条查询拿到的是
+  上一条的答案(实测截图超时后 `*IDN?` 读回 PNG),而且**跨进程残留**。USBTMC 的 INITIATE_CLEAR 在这台机器上
+  清不掉它。所以:连接时先 drain,超时后标 dirty 下次先 drain,工具每个动作按需连、闲置 90 s 断开。
+- WAVEDESC 的 VERTICAL_GAIN/OFFSET **不含探头衰减**(10× 探头要乘 10);CODE_PER_DIV 在 WORD 与 BYTE 下都报 7680,
+  BYTE 发的是高字节,不除 256 就小 256 倍(守则:永远 WORD);NOMINAL_BITS 报 16 不是 ADC 位数;COMM_ORDER 说
+  大端而数据是小端;TIMEBASE 枚举表按机型不同 —— 时基一律查 `:TIMebase:SCALe?`。时间轴
+  `t = delay − 5×tdiv + i×interval×stride`(手册公式,10 格)。
+- `:WAVeform:DATA?` 块尾是 `\n\n`,无波形时块前带 `C1:WF ` 前缀;一次最多 MAXPoint(5 M)个点,stride=1 按交付点数
+  推进 `:STARt` 分段,stride>1 只读一个窗口(`:STARt` 在源点空间)。USB2 实测 ~11 MB/s(10 MB 波形 0.86 s)。
+- `:PRINt? PNG` 返回**裸 PNG,没有块头**:TCP 侧靠走 PNG chunk 到 IEND 判长(`pngComplete`),USB 侧靠 EOM。
+- 编程手册说没有错误队列,但这台固件的 `:SYSTem:ERRor?` 能用(-224 非法参数、-113 未定义命令头),驱动当
+  best-effort 用;老固件超时就当没有。**设了就读回**是硬规矩:触发源给关着的通道会被静默改成 LINE、非法
+  存储深度静默忽略。
+- 存储深度要先 `:ACQuire:MMANagement FMDepth` 且触发模式 AUTO 才生效;探头系数写法是 `:CHANnel1:PROBe VALue,10`;
+  这台没有外触发输入(AUX 是触发**输出**),触发源只有 C1–C4 / LINE;`:TIMebase:SCALe` 之后要等 ~500 ms。
+- 量测走 ADVanced 的 P1–P12 槽位(`:MEASure:ADVanced:P<n>:VALue?`),无值时回 `****`;SIMPle 子系统要先开 ITEM。
+
+**还没做 / 没验**:工具级真机联调(只用裸探测脚本验过协议,工具本体是对着假 SCPI 服务器测的)、LAN 路径的真机、
+打包 app 里 `usb` 预编译包的加载、Windows 的 USB、卡片在真窗口里的样子、dock 面板(没有,也不打算先做)。
 
 ## 约定与规矩
 

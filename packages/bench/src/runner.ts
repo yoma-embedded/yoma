@@ -87,6 +87,8 @@ const YOMA_IGNORE = `# yoma 在这个项目里的运行产物,不进版本库(�
 gdb/
 logs/
 la/
+scope/
+scope.json
 back/
 flash-state.json
 bench/turns/

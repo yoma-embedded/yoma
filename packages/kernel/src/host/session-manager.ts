@@ -32,6 +32,7 @@ import {
   createLaToolDefinition,
   createLogToolDefinition,
   createNetlistToolDefinition,
+  createScopeToolDefinition,
   createStm32ConfigToolDefinition,
   findEnvKey,
   promptSectionFor,
@@ -71,8 +72,8 @@ import { migrateLegacyPiAuth, yomaConfigDir, removeAuthKey, writeAuthKey } from 
 const MAX_LIVE_SESSIONS = 8
 
 /**
- * 嵌入式六件套的显式装配,顺序照抄 yoma 的流水线(netlist → datasheet → stm32config
- * → flash → log → gdb)。yoma 2026-08 的精简删掉了聚合 Options 的工厂参数
+ * 嵌入式工具组的显式装配,顺序照抄 yoma 的流水线(netlist → datasheet → stm32config
+ * → flash → log → gdb → la → scope)。yoma 2026-08 的精简删掉了聚合 Options 的工厂参数
  * (createEmbeddedToolDefinitions 只收 env),而 enginesDir 必须显式传
  * (它的向上查找会认下一个没有 bin/ 的空壳)—— 所以按"单工具工厂 + options"自行装配,
  * yoma 的 tools/index.ts 注释明说这是特殊装配的预期用法。
@@ -90,6 +91,8 @@ export function createEmbeddedTools(env: NodeExecutionEnv, enginesDir?: string):
     createGdbToolDefinition(env),
     // la 吃 enginesDir:yoma-la 在 engines/bin,数据(固件/解码器)在 engines/data/la。
     createLaToolDefinition(env, engines),
+    // scope 是纯 TypeScript(USBTMC / TCP-SCPI 直连),没有引擎二进制。
+    createScopeToolDefinition(env),
   ]
 }
 

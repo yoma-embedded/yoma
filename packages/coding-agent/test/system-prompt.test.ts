@@ -203,7 +203,7 @@ describe("collectToolPromptData", () => {
 		const definitions = [...createCodingToolDefinitions(env), ...createEmbeddedToolDefinitions(env)];
 		const modes = Object.fromEntries(definitions.map((definition) => [definition.name, definition.executionMode]));
 
-		for (const name of ["bash", "toolchain", "examples", "netlist", "stm32config", "flash", "la"]) {
+		for (const name of ["bash", "toolchain", "examples", "netlist", "stm32config", "flash", "la", "scope"]) {
 			expect(modes[name]).toBe("sequential");
 		}
 	});

@@ -1,0 +1,44 @@
+[data-component="scope-tool"] {
+  width: 100%;
+  min-width: 0;
+}
+
+/* 通道/测量项是缩进的明细行,与 la 的解码器行同一套写法(等宽 + 左缩进)。 */
+[data-slot="tool-kv-row"][data-scope="scope-channel"] {
+  [data-slot="tool-kv-label"] {
+    padding-left: 10px;
+    font-family: var(--font-family-mono);
+  }
+
+  [data-slot="tool-kv-value"] {
+    font-family: var(--font-family-mono);
+  }
+}
+
+[data-slot="scope-firmware"] {
+  color: var(--v2-text-text-faint);
+}
+
+/* 截图:与 datasheet 的插图同一副长相(点开进 ImagePreview)。 */
+[data-component="scope-figure"] {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+
+  [data-slot="scope-figure-image"] {
+    max-width: 100%;
+    max-height: 60vh;
+    border-radius: 6px;
+    border: 0.5px solid var(--v2-border-border-base);
+    cursor: zoom-in;
+  }
+
+  [data-slot="scope-figure-caption"] {
+    font-family: var(--font-family-sans);
+    font-size: var(--font-size-small);
+    color: var(--v2-text-text-faint);
+  }
+}

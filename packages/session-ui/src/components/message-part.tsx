@@ -40,6 +40,7 @@ import { useDialog } from "@yoma-desktop/ui/context/dialog"
 import { useI18n } from "@yoma-desktop/ui/context/i18n"
 import { BasicTool, GenericTool } from "./basic-tool"
 import { LaTool } from "./la-tool"
+import { ScopeTool } from "./scope-tool"
 import { Accordion } from "@yoma-desktop/ui/accordion"
 import { StickyAccordionHeader } from "@yoma-desktop/ui/sticky-accordion-header"
 import { Collapsible } from "@yoma-desktop/ui/collapsible"
@@ -427,6 +428,13 @@ export function getToolInfo(tool: string, input: any = {}, _metadata?: ToolDetai
         icon: "sliders",
         title: i18n.t("ui.tool.la"),
         subtitle: input.capture ?? "",
+      }
+    // 同上:scope 的卡片是 ScopeTool,自带 trigger(动作徽章 + 采集 id/地址)。
+    case "scope":
+      return {
+        icon: "status",
+        title: i18n.t("ui.tool.scope"),
+        subtitle: input.capture ?? input.address ?? "",
       }
     default:
       return {
@@ -2027,6 +2035,13 @@ ToolRegistry.register({
 ToolRegistry.register({
   name: "la",
   render: LaTool,
+})
+
+// 卡片本体在 ./scope-tool:与 la 同一条边界(自带 trigger + 自己的 KV/截图排版),
+// 只是它不画 canvas —— 原始波形在 <工程>/.yoma/scope/ 的文件里,卡片只显摘要。
+ToolRegistry.register({
+  name: "scope",
+  render: ScopeTool,
 })
 
 const DATASHEET_ACTION_KEYS = {

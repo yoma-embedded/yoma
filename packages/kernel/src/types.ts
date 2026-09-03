@@ -217,6 +217,7 @@ export const TOOL_NAMES = [
   "log",
   "gdb",
   "la",
+  "scope",
 ] as const
 
 /**
@@ -539,6 +540,95 @@ export interface LaViewResult {
   lanes: { key: string; decoderId: string; row: string; items: LaViewLaneItem[]; total: number; truncated: boolean }[]
 }
 
+export type ScopeAction =
+  | "connect"
+  | "status"
+  | "setup"
+  | "capture"
+  | "arm"
+  | "collect"
+  | "measure"
+  | "samples"
+  | "screenshot"
+  | "list"
+  | "raw"
+
+/** 一个通道在本次采集上的统计量。都是引擎侧算好的,前端只格式化。 */
+export interface ScopeChannelStats {
+  min: number
+  max: number
+  pp: number
+  mean: number
+  rms: number
+  freq?: number
+  period?: number
+  duty?: number
+  rise?: number
+  fall?: number
+  edges?: number
+}
+
+/** 一路模拟通道的设置与统计。ch 是 1..4。 */
+export interface ScopeChannelDetails {
+  /** 1..4 */
+  ch: number
+  on?: boolean
+  label?: string
+  /** V/div,已含探头衰减 */
+  vdiv?: number
+  offset?: number
+  coupling?: string
+  probe?: number
+  unit?: string
+  bwlimit?: string
+  /** 本次采集落盘的样本数 */
+  points?: number
+  stats?: ScopeChannelStats
+}
+
+/** 示波器自带的一条测量项。 */
+export interface ScopeMeasurement {
+  type: string
+  source: string
+  /** null = 示波器报 "****"(无法测量) */
+  value: number | null
+  unit?: string
+  n?: number
+  min?: number
+  max?: number
+  mean?: number
+}
+
+/**
+ * 示波器工具(Siglent SDS824X HD,USBTMC 或 TCP/SCPI)。与 la 同一条纪律:details
+ * 只放摘要与句柄,原始波形与截图落在 <工程>/.yoma/scope/ 的文件里。
+ */
+export interface ScopeToolDetails {
+  action: ScopeAction
+  /** "usb:<serial>" 或 "host:port" */
+  address?: string
+  model?: string
+  serial?: string
+  firmware?: string
+  captureId?: string
+  dir?: string
+  /** 截图/采集文件的绝对路径 */
+  file?: string
+  sampleRate?: number
+  interval?: number
+  points?: number
+  mdepth?: string
+  timebase?: { scale: number; delay: number }
+  trigger?: { mode?: string; source?: string; level?: number; slope?: string; status?: string }
+  channels?: ScopeChannelDetails[]
+  measurements?: ScopeMeasurement[]
+  armed?: boolean
+  timedOut?: boolean
+  truncated?: boolean
+  /** 截图字节数 */
+  bytes?: number
+}
+
 /**
  * 按工具名判别的 details。渲染器拿到 ToolPart 之后先 narrow 工具名,再读 metadata,
  * 全程有编译期类型 —— 这是 opencode 那边 `metadata: {[k:string]: unknown}` 给不了的。
@@ -558,6 +648,7 @@ export interface ToolDetailsMap {
   log: LogToolDetails
   gdb: GdbToolDetails
   la: LaToolDetails
+  scope: ScopeToolDetails
 }
 
 export type ToolDetails = ToolDetailsMap[ToolName] | Record<string, unknown>

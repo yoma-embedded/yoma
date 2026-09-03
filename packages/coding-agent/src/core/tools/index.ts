@@ -173,6 +173,18 @@ export {
 	type ReadToolInput,
 } from "./read.ts";
 export {
+	createScopeTool,
+	createScopeToolDefinition,
+	SCOPE_ACTIONS,
+	type ScopeAction,
+	type ScopeChannelDetails,
+	type ScopeChannelStats,
+	type ScopeMeasurement,
+	type ScopeToolDetails,
+	type ScopeToolInput,
+	type ScopeToolOptions,
+} from "./scope.ts";
+export {
 	buildSttyArgs,
 	DEFAULT_BAUD,
 	listSerialPorts,
@@ -224,6 +236,7 @@ import { createLogToolDefinition } from "./log.ts";
 import { createNetlistToolDefinition } from "./netlist.ts";
 import { createLaToolDefinition } from "./la.ts";
 import { createReadToolDefinition } from "./read.ts";
+import { createScopeToolDefinition } from "./scope.ts";
 import { createStm32ConfigToolDefinition } from "./stm32config.ts";
 import { createToolchainToolDefinition, type ToolchainToolOptions } from "./toolchain.ts";
 import type { ToolDefinition } from "./types.ts";
@@ -259,7 +272,8 @@ export function createCodingToolDefinitions(env: ExecutionEnv, options?: { toolc
  * 嵌入式引擎工具组,顺序即流水线:
  * netlist(原理图)→ datasheet(查手册,全在线)→ stm32config(驱动)→ flash(烧录)
  * → log(看板子真正打了什么)→ gdb(日志不够时进去看寄存器和栈)→ la(逻辑分析仪:
- * 日志和 gdb 都看不到线上的时序与总线字节,这是板外的第三只眼)。
+ * 日志和 gdb 都看不到线上的时序与总线字节,这是板外的第三只眼)→ scope(示波器:
+ * 数字量看不到的那些 —— 电源纹波、边沿质量、模拟信号本身,la 之后的第四只眼)。
  * 与编码四件套分开装配:引擎未构建/服务器未配置时工具仍会注册,
  * 调用时才返回修复指引(与 yoma 行为一致)。
  */
@@ -272,5 +286,6 @@ export function createEmbeddedToolDefinitions(env: ExecutionEnv): ToolDef[] {
 		createLogToolDefinition(env),
 		createGdbToolDefinition(env),
 		createLaToolDefinition(env),
+		createScopeToolDefinition(env),
 	];
 }

@@ -70,7 +70,7 @@ async function commandCheck(jobFile: string): Promise<void> {
   const enginesDir = defaultEnginesDir()
   try {
     const report = kernelSelfCheck({ enginesDir })
-    if (report.tools.length < 10) fail(`内核只装配出 ${report.tools.length} 个工具,预期 10 个`)
+    if (report.tools.length < 14) fail(`内核只装配出 ${report.tools.length} 个工具,预期 14 个`)
     say(`${GREEN}✓${RESET} 内核装配出 ${report.tools.length} 个工具`)
   } catch (error) {
     fail(`内核加载失败:${(error as Error).message}`)

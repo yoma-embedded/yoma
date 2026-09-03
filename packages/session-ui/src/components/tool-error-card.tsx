@@ -55,6 +55,7 @@ export function ToolErrorCard(props: ToolErrorCardProps) {
       log: "ui.tool.log",
       gdb: "ui.tool.gdb",
       la: "ui.tool.la",
+      scope: "ui.tool.scope",
     }
     const key = map[split.tool]
     if (!key) return split.tool

@@ -45,13 +45,16 @@ describe(".yoma/.gitignore", () => {
     mkdirSync(path.join(yoma, "bench", "mailbox-sim"), { recursive: true })
     mkdirSync(path.join(yoma, "gdb"), { recursive: true })
     mkdirSync(path.join(yoma, "logs"), { recursive: true })
+    mkdirSync(path.join(yoma, "scope"), { recursive: true })
     writeFileSync(path.join(yoma, "bench", "mailbox.template.json"), "{}")
     writeFileSync(path.join(yoma, "bench", "mailbox.shell-faults.json"), "{}")
     writeFileSync(path.join(yoma, "bench", "turns", "turn-1.json"), "{}")
     writeFileSync(path.join(yoma, "bench", "mailbox-sim", "x.json"), "{}")
     writeFileSync(path.join(yoma, "gdb", "s.mi"), "")
     writeFileSync(path.join(yoma, "logs", "l.txt"), "")
+    writeFileSync(path.join(yoma, "scope", "shot.png"), "")
     writeFileSync(path.join(yoma, "flash-state.json"), "{}")
+    writeFileSync(path.join(yoma, "scope.json"), "{}")
     writeFileSync(path.join(yoma, "toolchain.json"), "{}")
     writeFileSync(path.join(yoma, "toolchain.local.json"), "{}")
 
@@ -65,7 +68,11 @@ describe(".yoma/.gitignore", () => {
     expect(await ignored(repo, ".yoma/bench/mailbox-sim/x.json")).toBe(true)
     expect(await ignored(repo, ".yoma/gdb/s.mi")).toBe(true)
     expect(await ignored(repo, ".yoma/logs/l.txt")).toBe(true)
+    expect(await ignored(repo, ".yoma/scope/shot.png")).toBe(true)
     expect(await ignored(repo, ".yoma/flash-state.json")).toBe(true)
+    // scope.json 是本机的仪器地址(USB 序列号 / IP),跟 toolchain.local.json 同一类:
+    // 长得像项目配置,内容却只对这台机器成立。
+    expect(await ignored(repo, ".yoma/scope.json")).toBe(true)
     // toolchain.local.json 是本机路径,绝不能进版本库 —— 跟 toolchain.json 长得像
     // 项目配置,黑名单必须显式挡它,不能靠"没列出来就放行"的默认值蒙混过去。
     expect(await ignored(repo, ".yoma/toolchain.local.json")).toBe(true)

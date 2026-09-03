@@ -22,6 +22,7 @@
 		"@earendil-works/pi-ai": "catalog:",
 		"@yoma/agent": "workspace:*",
 		"diff": "8.0.4",
-		"typebox": "catalog:"
+		"typebox": "catalog:",
+		"usb": "catalog:"
 	}
 }

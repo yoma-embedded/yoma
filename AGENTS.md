@@ -8,7 +8,7 @@
 Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
 
 - **内核**(`packages/{ai,agent,coding-agent}`)—— agent 循环、会话树、压缩、技能,
-  以及嵌入式工具组(烧录 / 日志 / gdb / 网表 / 数据手册 / STM32 配置)。
+  以及嵌入式工具组(烧录 / 日志 / gdb / 网表 / 数据手册 / STM32 配置 / 逻辑分析仪 / 示波器)。
 - **桌面端**(`packages/{desktop,app,kernel,ui,session-ui,util,bench}`)——
   Electron 外壳 + SolidJS UI,fork 自 opencode 的前端;`bench` 是无人值守调试台。
 
@@ -86,7 +86,7 @@ Bun workspace,`packages/` 下 7 个包:
 | `bun typecheck` | turbo 跑全部 7 个包 —— **必须常绿 7/7** |
 | `bun lint` | oxlint |
 | `bun run test` | 全量单测(根 `package.json` 逐包列出)—— **根上唯一入口**;裸 `bun test` 会误扫 vitest/DOM/平台文件 |
-| `bun --cwd packages/desktop smoke` | 内核冒烟:对 **构建产物** 验证 12 个工具 + 4 个引擎二进制 |
+| `bun --cwd packages/desktop smoke` | 内核冒烟:对 **构建产物** 验证 14 个工具(`TOOL_NAMES` 减退役)+ 4 个引擎二进制 |
 | `bun --cwd packages/desktop e2e:ipc` | 生产路径:真 utilityProcess + 真 MessagePort + 真协议帧(不开窗口) |
 | `bun --cwd packages/desktop e2e:renderer` | 最后一跳:真窗口 + 真 preload + **真 contextBridge**(含 mailbox 桥三条) |
 | `bun --cwd packages/desktop smoke:mailbox` | 调试台冒烟:Electron RUN_AS_NODE 对打包产物跑完整**本机演练**(假模型,零 key 零硬件) |

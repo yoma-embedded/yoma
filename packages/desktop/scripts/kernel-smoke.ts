@@ -44,7 +44,7 @@ try {
 }
 
 // ---------------------------------------------------------------------------
-// 1. 内核在真实 runtime 下加载得起来,而且 10 个工具都构造得出来
+// 1. 内核在真实 runtime 下加载得起来,而且 14 个工具(TOOL_NAMES 减退役)都构造得出来
 // ---------------------------------------------------------------------------
 
 const enginesDir = join(repoRoot, "engines")
@@ -75,6 +75,7 @@ const EXPECTED = [
   "log",
   "gdb",
   "la",
+  "scope",
 ]
 
 const missing = EXPECTED.filter((tool) => !report.tools.includes(tool))

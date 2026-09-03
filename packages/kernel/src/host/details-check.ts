@@ -29,6 +29,7 @@ import type {
   LogToolDetails as PiLog,
   NetlistToolDetails as PiNetlist,
   ReadToolDetails as PiRead,
+  ScopeToolDetails as PiScope,
   Stm32ConfigToolDetails as PiStm32Config,
   ToolchainToolDetails as PiToolchain,
   WriteToolDetails as PiWrite,
@@ -62,3 +63,4 @@ export type Check_datasheet = Expect<Assignable<PiDatasheet, ToolDetailsMap["dat
 export type Check_log = Expect<Assignable<PiLog, ToolDetailsMap["log"]>>
 export type Check_gdb = Expect<Assignable<PiGdb, ToolDetailsMap["gdb"]>>
 export type Check_la = Expect<Assignable<PiLa, ToolDetailsMap["la"]>>
+export type Check_scope = Expect<Assignable<PiScope, ToolDetailsMap["scope"]>>

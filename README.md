@@ -9,6 +9,8 @@ An agent for **embedded engineers** — not just a code editor, but a full close
 - **Flashing**: flash firmware across different hardware platforms
 - **Log capture**: long-running log collection over serial or RTT, with analysis
 - **gdb debugging**: breakpoints, single-stepping, expressions, fault analysis, and more
+- **Logic analyzer**: DSLogic capture and protocol decoding (I²C / SPI / UART / CAN / …, 150 decoders bundled) — bus traffic read as transactions, diffed against what the firmware should have sent
+- **Oscilloscope**: Siglent SDS800X HD over USB or LAN — analog waveforms with statistics and a text plot, the scope's own measurements, screenshots the agent can look at, and arm/collect around a reset or power-up
 
 ### Grounded in hardware facts
 

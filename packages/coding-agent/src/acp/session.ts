@@ -23,6 +23,7 @@ const TOOL_KINDS: Record<string, AcpToolKind> = {
 	bash: "execute",
 	log: "execute",
 	gdb: "execute",
+	scope: "execute",
 };
 
 export function toolKindOf(toolName: string): AcpToolKind {
@@ -59,6 +60,10 @@ export function toolTitleOf(toolName: string, args: unknown): string {
 				return "GDB breakpoints";
 			}
 			return action ? `GDB ${action}` : "GDB";
+		}
+		case "scope": {
+			const action = typeof input.action === "string" ? input.action : "";
+			return action ? `Scope ${action}` : "Scope";
 		}
 		default:
 			return toolName;
