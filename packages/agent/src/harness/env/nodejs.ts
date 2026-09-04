@@ -375,6 +375,20 @@ export class NodeExecutionEnv implements ExecutionEnv {
 		this.shellEnv = options.shellEnv;
 	}
 
+	/**
+	 * 换掉之后所有 exec 的基础环境(已经在跑的子进程不受影响)。存在的理由:宿主在会话
+	 * 中途装了工具链(toolchain install),PATH 要立刻对后续命令生效,而 harness 与这个 env
+	 * 都是按会话缓存的,重建它们代价太大。
+	 */
+	setShellEnv(env: NodeJS.ProcessEnv | undefined): void {
+		this.shellEnv = env;
+	}
+
+	/** 当前的基础环境快照(测试与宿主重算 PATH 时用)。 */
+	getShellEnv(): NodeJS.ProcessEnv | undefined {
+		return this.shellEnv;
+	}
+
 	async absolutePath(path: string): Promise<Result<string, FileError>> {
 		return ok(resolvePath(this.cwd, path));
 	}

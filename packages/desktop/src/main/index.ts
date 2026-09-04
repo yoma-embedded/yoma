@@ -33,7 +33,7 @@ import {
   preferAppEnv,
   setDefaultServerUrl,
 } from "./server"
-import { setupAutoUpdater, showUpdaterDialog } from "./updater"
+import { disableInstallOnQuit, setupAutoUpdater, showUpdaterDialog, updaterAutoCheckPrefs } from "./updater"
 import {
   createMainWindow,
   registerRendererProtocol,
@@ -178,6 +178,9 @@ const main = Effect.gen(function* () {
     await kernel?.stop()
   }
   const relaunch = () => {
+    // 下好的更新不在这次 exit 上装(见 disableInstallOnQuit):NSIS 换文件与 relaunch 拉起
+    // 旧 exe 会撞在一起;留到下一次正常退出。
+    disableInstallOnQuit()
     void stopSidecars().finally(() => {
       app.relaunch()
       app.exit(0)
@@ -228,8 +231,16 @@ const main = Effect.gen(function* () {
     emitDeepLinks([url])
   })
 
-  app.on("before-quit", () => {
-    void stopSidecars()
+  // 退出必须先把守护树与内核带走,**等它们真的死了**再退:electron-updater 的"退出时安装"
+  // 挂在 quit 事件上,fire-and-forget 的 stopSidecars 要几秒(信箱守护 5 s 宽限 + 内核 3 s),
+  // 而 quit 紧跟 will-quit 就来 —— 不拦一下,NSIS 会在烧录 / gdb 的孙进程还活着时开始换文件。
+  // 第一次 before-quit 拦下来、停完再 app.quit();第二次放行。stopSidecars 自身有界(≤ 8 s)。
+  let quitting = false
+  app.on("before-quit", (event) => {
+    if (quitting) return
+    quitting = true
+    event.preventDefault()
+    void stopSidecars().finally(() => app.quit())
   })
 
   app.on("will-quit", () => {
@@ -320,6 +331,7 @@ const main = Effect.gen(function* () {
     checkAppExists: (appName) => checkAppExists(appName),
     resolveAppPath: async (appName) => resolveAppPath(appName),
     updater,
+    updaterAutoCheck: updaterAutoCheckPrefs(),
     mailbox: {
       configure: (settings) => mailbox.controller.configure(settings),
       start: (task) => mailbox.controller.start(task),
@@ -336,7 +348,8 @@ const main = Effect.gen(function* () {
   })
   registerManualsIpcHandlers()
   void updater.start()
-  const updateTimer = setInterval(() => void updater.check(), 10 * 60 * 1000)
+  // 定时检查看"自动检查"开关;设置页的"立即检查"走 check(),不看开关。
+  const updateTimer = setInterval(() => void updater.checkPeriodic(), 10 * 60 * 1000)
   updateTimer.unref()
   app.once("will-quit", () => clearInterval(updateTimer))
   yield* Effect.promise(() => startNetLog()).pipe(

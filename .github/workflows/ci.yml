@@ -42,8 +42,9 @@ jobs:
       # Windows 是主支持平台,但内核单测里能在这里跑绿的只有 agent(185)与 kernel(94)两包(2026-08-21 核过)。
       # coding-agent 有 46 个用例的夹具写死 /bin/echo 与 .sh 脚本、bench 有 5 个依赖 POSIX shell,
       # 它们在 Windows 上红是跑法问题不是代码问题 —— 把夹具改成跨平台之前别把它们加进来。
-      - name: 内核单测(agent + kernel,Windows 岗)
-        run: bun test packages/agent && bun --cwd packages/kernel test
+      # desktop 的单测(更新器状态机、信箱控制器等)是纯 Node 逻辑,Windows 上照跑。
+      - name: 内核单测(agent + kernel + desktop,Windows 岗)
+        run: bun test packages/agent && bun --cwd packages/kernel test && bun --cwd packages/desktop test
       - name: 下载 Electron 二进制
         shell: pwsh
         run: |

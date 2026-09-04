@@ -14,17 +14,21 @@
  * set 的路径验证失败则直接 reject:那是用户刚敲进输入框的东西,拒绝理由要原地报。
  */
 import {
+  catalogPackageFor,
   declaredToolBins,
   familyManifestText,
   findToolchainFamily,
+  installToolchain,
   readLedger,
   recordToolchainPath,
   rememberFreshResults,
   resolveToolchain,
   TOOLCHAIN_FAMILIES,
+  type InstallProgress,
 } from "@yoma/coding-agent"
 
-import type { ToolchainFamiliesView, ToolchainStatusView } from "../types.ts"
+import type { KernelEvent } from "../protocol.ts"
+import type { ToolchainFamiliesView, ToolchainInstallResultView, ToolchainStatusView } from "../types.ts"
 
 export interface ToolchainRpcOptions {
   directory: string
@@ -148,4 +152,140 @@ export async function toolchainFamilySet(
     bins: tool.pathKind === "dir" ? undefined : tool.bin,
   })
   return toolchainFamilyStatus(opts)
+}
+
+// ─── 自动安装 ────────────────────────────────────────────────────────────────
+//
+// 下载 / 校验 / 解压 / 记账全在 coding-agent 的 toolchain/install.ts(与 agent 工具的
+// install 动作同一份实现);这里只做三件事:一个 id 同时只允许一个安装(注册表 +
+// AbortController)、把进度回调翻译成 `toolchain.install` 事件、装完把机器级核账一并
+// 回给 UI。
+
+export interface InstallRegistry {
+  /**
+   * 同一个 key 已在装 ⇒ reject(message 含 "already");否则登记并跑到结束(成功失败都注销)。
+   * key 是包 id(arm-gcc 与 arm-gdb 同一个包,不该一个在装另一个还能点);label 是给 UI 看的
+   * 工具 id,active() 返回的是它。
+   */
+  start<T>(key: string, run: (signal: AbortSignal) => Promise<T>, label?: string): Promise<T>
+  /** 有在装的就 abort 并返回 true;没有返回 false。 */
+  cancel(key: string): boolean
+  /** 在装的工具 id(label)。 */
+  active(): string[]
+}
+
+export function createInstallRegistry(): InstallRegistry {
+  const inflight = new Map<string, { controller: AbortController; label: string }>()
+  return {
+    async start(key, run, label = key) {
+      const current = inflight.get(key)
+      if (current) throw new Error(`${current.label} is already installing — wait for it or cancel it first`)
+      const controller = new AbortController()
+      const record = { controller, label }
+      inflight.set(key, record)
+      try {
+        return await run(controller.signal)
+      } finally {
+        if (inflight.get(key) === record) inflight.delete(key)
+      }
+    },
+    cancel(keyOrLabel) {
+      // 键(包 id)或标签(工具 id)都认:UI 手里只有工具 id。
+      const record =
+        inflight.get(keyOrLabel) ?? [...inflight.values()].find((candidate) => candidate.label === keyOrLabel)
+      if (!record) return false
+      record.controller.abort()
+      return true
+    },
+    active() {
+      return [...inflight.values()].map((record) => record.label)
+    },
+  }
+}
+
+/** 注册表的键:工具所属的包 id(目录里没有的工具就用它自己的 id)。 */
+export function installKey(toolId: string): string {
+  return catalogPackageFor(toolId)?.id ?? toolId
+}
+
+export function installProgressEvent(progress: InstallProgress): KernelEvent {
+  return {
+    type: "toolchain.install",
+    id: progress.toolId,
+    packageId: progress.packageId,
+    version: progress.version,
+    phase: progress.phase,
+    bytes: progress.bytes,
+    total: progress.total,
+    message: progress.message,
+  }
+}
+
+/** 工具 id 所在的第一个预设平台的机器级核账;不在任何预设里(只在项目清单里)时给一份空的 declared:true。 */
+async function statusAfterInstall(opts: ToolchainFamilyRpcOptions & { id: string }): Promise<ToolchainStatusView> {
+  const family = TOOLCHAIN_FAMILIES.find((entry) => entry.tools.some((tool) => tool.id === opts.id))
+  if (!family) return { declared: true, side: opts.side, ok: true, tools: [] }
+  return toolchainFamilyStatus({ ...opts, family: family.id })
+}
+
+export async function toolchainInstall(
+  opts: ToolchainFamilyRpcOptions & {
+    id: string
+    emit: (events: KernelEvent[]) => void
+    registry: InstallRegistry
+    /** 测试注入:替代真实的 installToolchain。 */
+    installer?: typeof installToolchain
+    /** 装成功后的钩子(session-manager 刷新在飞会话的 PATH)。 */
+    onInstalled?: () => Promise<void> | void
+  },
+): Promise<ToolchainInstallResultView> {
+  const installer = opts.installer ?? installToolchain
+  // onInstalled(刷新在飞会话的 PATH)与装完的核账都在注册表持有这个包期间做完:
+  // 否则第二次 install 同一个包可以在 refreshMachineEnv 还没跑完时就开跑。
+  return opts.registry.start(
+    installKey(opts.id),
+    async (signal) => {
+      let installed: Awaited<ReturnType<typeof installer>>
+      try {
+        installed = await installer({
+          toolId: opts.id,
+          configDir: opts.configDir,
+          signal,
+          env: opts.probe?.env,
+          onProgress: (progress) => opts.emit([installProgressEvent(progress)]),
+        })
+      } catch (error) {
+        // 失败 / 取消也要有一条终态事件:UI 的进度行靠它收尾,不然停在最后一个百分比上。
+        // installToolchain 自己在拿到包之后已经报过一条,这里的这条会把它折叠掉(同 id
+        // 相邻),所以 packageId / version 从错误里带,别让最后存活的那条是空串。
+        // 取消的判定优先听错误自己的 phase(ToolchainInstallError),其次看 signal。
+        const info = error as { phase?: string; packageId?: string; version?: string }
+        const cancelled = info?.phase === "cancelled" || signal.aborted
+        const message = (error as Error)?.message ?? String(error)
+        opts.emit([
+          {
+            type: "toolchain.install",
+            id: opts.id,
+            packageId: info?.packageId ?? "",
+            version: info?.version ?? "",
+            phase: cancelled ? "cancelled" : "error",
+            message,
+          },
+        ])
+        throw error
+      }
+      await opts.onInstalled?.()
+      const status = await statusAfterInstall(opts)
+      return {
+        id: opts.id,
+        packageId: installed.packageId,
+        version: installed.version,
+        dir: installed.dir,
+        binDir: installed.binDir,
+        reused: installed.reused,
+        status,
+      }
+    },
+    opts.id,
+  )
 }

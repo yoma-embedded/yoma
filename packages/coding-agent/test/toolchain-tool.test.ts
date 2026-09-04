@@ -15,6 +15,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NodeExecutionEnv } from "@yoma/agent/node";
 import { createToolchainToolDefinition, type ToolchainToolOptions } from "../src/core/tools/toolchain.ts";
+import { hostKey, installableFor, TOOLCHAIN_CATALOG } from "../src/core/toolchain/catalog.ts";
+import { MANAGED_MARKER, managedPackageDir, ToolchainInstallError } from "../src/core/toolchain/install.ts";
 import { readLedger, writeLedgerEntry } from "../src/core/toolchain/ledger.ts";
 import type { ToolSpec } from "../src/core/toolchain/schema.ts";
 
@@ -257,5 +259,135 @@ describe("set", () => {
 		const tool = makeTool();
 		await expect(tool.execute("c1", { action: "set", path: join(binDir, "x.exe") })).rejects.toThrow(/"id"/);
 		await expect(tool.execute("c1", { action: "set", id: "arm-gcc" })).rejects.toThrow(/"path"/);
+	});
+});
+
+// ─── install 动作 ────────────────────────────────────────────────────────────
+//
+// 工具层对 install 同样是薄薄一层("参数 -> installToolchain -> 渲染成人话"),下载 /
+// 校验 / 解压 / 记账的全部行为在 toolchain-install.test.ts 里测。这里钉三件事:
+//
+// 1. **缺 id 要教模型怎么补**(schema 里 id 是可选的,install 需要它);
+// 2. **失败必须原样抛出并带着 phase**——吞成"看起来成功了"会让模型接着去调一个根本
+//    不存在的编译器,报错发生在很远的地方;
+// 3. **成功时的话术要说出 binDir**,因为模型接下来要用它;details.installed 是桌面端
+//    与回放用的结构化事实。
+//
+// 成功路径走的是**复用**分支(包目录里已经有一份 sha 对得上的安装):这一支不碰网络,
+// 于是整条胶水(参数 → installToolchain → 渲染 → 记账)可以在没有网络、没有 300 MB
+// 下载的前提下端到端跑通。目录里的 ninja 是唯一每个宿主都有产物、且解开后可执行文件
+// 就在包目录根(binDir 为空串)的包,拿它做样本最省事。
+
+const NINJA = TOOLCHAIN_CATALOG.find((pkg) => pkg.id === "ninja");
+const NINJA_HOST = hostKey();
+const NINJA_ARTIFACT = NINJA && NINJA_HOST ? NINJA.artifacts[NINJA_HOST] : undefined;
+
+/** 造一份"已经装好"的托管安装:包目录 + 标记(sha 与目录里钉的一致)+ binDir 里的假 exe。 */
+function seedManagedNinja(): { dir: string; binDir: string; version: string } {
+	const pkg = NINJA!;
+	const artifact = NINJA_ARTIFACT!;
+	const dir = managedPackageDir(pkg.id, pkg.version, configDir);
+	const binDirRel = artifact.binDir ?? "bin";
+	const managedBinDir = binDirRel === "" ? dir : join(dir, binDirRel);
+	mkdirSync(managedBinDir, { recursive: true });
+	writeFakeExe(managedBinDir, "ninja", "1.13.2");
+	writeFileSync(
+		join(dir, MANAGED_MARKER),
+		JSON.stringify({
+			packageId: pkg.id,
+			version: pkg.version,
+			dir,
+			binDir: binDirRel,
+			provides: pkg.provides,
+			archiveSha256: artifact.sha256,
+			installedAt: Date.now(),
+		}),
+	);
+	return { dir, binDir: managedBinDir, version: pkg.version };
+}
+
+describe("install", () => {
+	it("缺 id 时明确报错(schema 里 id 是可选的,install 需要它)", async () => {
+		const tool = makeTool();
+		await expect(tool.execute("c1", { action: "install" })).rejects.toThrow(/"id"/);
+	});
+
+	it("装不了的东西:错误原样抛出,带着 phase,不被吞成'看起来成功了'", async () => {
+		const tool = makeTool();
+		let caught: unknown;
+		try {
+			await tool.execute("c1", { action: "install", id: "definitely-not-a-tool" });
+		} catch (error) {
+			caught = error;
+		}
+		expect(caught).toBeInstanceOf(ToolchainInstallError);
+		const error = caught as ToolchainInstallError;
+		expect(error.phase).toBe("resolve");
+		expect(error.toolId).toBe("definitely-not-a-tool");
+		// 账本一个字都不该动。
+		expect((await readLedger(configDir)).entries).toEqual({});
+	});
+
+	it.skipIf(!NINJA_ARTIFACT)("装好之后:话术里有 binDir,details.installed 是结构化事实,账本记 by:'user'", async () => {
+		const seeded = seedManagedNinja();
+		const tool = makeTool();
+
+		const result = await tool.execute("c1", { action: "install", id: "ninja" });
+		const text = textOf(result);
+
+		expect(text).toContain(seeded.binDir);
+		expect(result.details.action).toBe("install");
+		expect(result.details.ok).toBe(true);
+		expect(result.details.id).toBe("ninja");
+		expect(result.details.installed).toEqual({
+			packageId: "ninja",
+			version: seeded.version,
+			dir: seeded.dir,
+			binDir: seeded.binDir,
+			// 已经有一份 sha 对得上的安装 —— 不重新下载。
+			reused: true,
+		});
+
+		const ledger = await readLedger(configDir);
+		expect(ledger.entries.ninja?.by).toBe("user");
+		for (const binPath of Object.values(ledger.entries.ninja?.bin ?? {})) {
+			expect(binPath.toLowerCase().startsWith(seeded.binDir.toLowerCase())).toBe(true);
+		}
+	});
+});
+
+describe("check 的 installable 提示", () => {
+	// 工具 id 用 "arm-gcc" 且不写 from —— 两张探测表的键是 "arm-gnu-toolchain",
+	// 于是这条在任何开发机上都稳定 missing(同 toolchain-resolve.test.ts 的纪律)。
+	it.skipIf(!installableFor("arm-gcc", hostKey()))(
+		'缺失且能自动装时,行尾给出 "installable: <标题> <版本> (~N MB) via toolchain install"',
+		async () => {
+			const installable = installableFor("arm-gcc", hostKey())!;
+			writeManifest([{ id: "arm-gcc", bin: ["arm-none-eabi-gcc"] }]);
+			const tool = makeTool();
+
+			const result = await tool.execute("c1", { action: "check" });
+			const text = textOf(result);
+
+			expect(text).toContain("arm-gcc: MISSING");
+			expect(text).toContain("installable:");
+			expect(text).toContain(`${installable.title} ${installable.version}`);
+			expect(text).toContain(`~${Math.round(installable.bytes / 1e6)} MB`);
+			expect(text).toContain('toolchain install id="arm-gcc"');
+			expect(result.details.tools?.[0].installable).toEqual(installable);
+		},
+	);
+
+	it("装不了的工具行里没有 installable 字样,只有人工安装指引", async () => {
+		const install = { win32: "get gizmo from example.com", darwin: "brew install gizmo", linux: "apt install gizmo" };
+		writeManifest([{ id: "gizmo", bin: ["gizmo"], install }]);
+		const tool = makeTool();
+
+		const result = await tool.execute("c1", { action: "check" });
+		const text = textOf(result);
+
+		expect(text).toContain("gizmo: MISSING");
+		expect(text).not.toContain("installable:");
+		expect(result.details.tools?.[0].installable).toBeUndefined();
 	});
 });

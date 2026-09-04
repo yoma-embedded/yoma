@@ -228,6 +228,10 @@ const createPlatform = (): Platform => {
       state: updaterState,
       check: () => window.api.updater.check(),
       install: () => window.api.updater.install(),
+      autoCheck: {
+        get: () => window.api.updater.getAutoCheck(),
+        set: (value) => window.api.updater.setAutoCheck(value),
+      },
     },
 
     exportDebugLogs: () => window.api.exportDebugLogs(),

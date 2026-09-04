@@ -19,7 +19,16 @@ import { yomaConfigDir } from "./auth.ts"
 import { laCaptures, laView } from "./la-view.ts"
 import { ProjectStore, listFiles, readFile, searchFiles, vcsDiff, vcsInfo } from "./services.ts"
 import { StreamSink } from "./stream.ts"
-import { toolchainFamilies, toolchainFamilySet, toolchainFamilyStatus, toolchainSet, toolchainStatus } from "./toolchain.ts"
+import {
+  createInstallRegistry,
+  installKey,
+  toolchainFamilies,
+  toolchainFamilySet,
+  toolchainFamilyStatus,
+  toolchainInstall,
+  toolchainSet,
+  toolchainStatus,
+} from "./toolchain.ts"
 
 // 纯类型模块,无运行时产物。re-export 只为把工具 details 的漂移闸门拉进编译单元。
 export type * from "./details-check.ts"
@@ -84,6 +93,8 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
   })
   const projects = new ProjectStore(path.join(options.stateDir, "projects.json"))
   void projects.load()
+  // 一个 id 同时只装一次;取消走这里的 AbortController。
+  const installs = createInstallRegistry()
 
   const handlers = {
     "app.info": async () => ({
@@ -162,6 +173,20 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
         configDir: options.configDir ?? yomaConfigDir(),
         side: options.toolchainSide ?? "mother",
       }),
+    "toolchain.install": ({ id }) =>
+      toolchainInstall({
+        id,
+        configDir: options.configDir ?? yomaConfigDir(),
+        side: options.toolchainSide ?? "mother",
+        emit: (events) => sink.push(events),
+        registry: installs,
+        // 装完立刻让在飞会话的 bash 与内核进程自己的 PATH 都看见新目录。
+        onInstalled: () => sessions.refreshMachineEnv(),
+      }),
+    "toolchain.installCancel": ({ id }) => {
+      installs.cancel(installKey(id))
+    },
+    "toolchain.installsActive": async () => installs.active(),
 
     "project.list": async () => projects.list(),
     "project.add": ({ directory }) => projects.add(directory),
@@ -192,7 +217,8 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
 export function kernelSelfCheck(options: { enginesDir?: string } = {}) {
   const env = new NodeExecutionEnv({ cwd: process.cwd() })
   const coding = createCodingToolDefinitions(env)
-  const embedded = createEmbeddedTools(env, options.enginesDir)
+  // 自检是对着真机跑的,configDir 就是真实 ~/.yoma —— 但显式传,和会话装配同一条纪律。
+  const embedded = createEmbeddedTools(env, options.enginesDir, { configDir: yomaConfigDir() })
   const engines = inspectEngines(options.enginesDir)
   return {
     node: process.versions.node,

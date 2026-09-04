@@ -28,6 +28,9 @@
       ],
       "@yoma/coding-agent/resources": [
         "../../packages/coding-agent/src/core/resources.ts"
+      ],
+      "@yoma/coding-agent/datasheet-server": [
+        "../../packages/coding-agent/src/core/datasheet-server.ts"
       ]
     },
     "allowImportingTsExtensions": true

@@ -132,3 +132,7 @@ jobs:
         with:
           files: engines-${{ matrix.name }}.*
           fail_on_unmatched_files: true
+          # 引擎 Release 和 app Release 在同一个仓。electron-updater 认的是 GitHub 标成
+          # "latest" 的那个 Release:engines-v* 一旦成了 latest,所有已装用户的自动更新
+          # 都会去找 engines-v*/latest.yml,404 到下一个 app 版本发布为止。
+          make_latest: false

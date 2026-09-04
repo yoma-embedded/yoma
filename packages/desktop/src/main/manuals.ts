@@ -26,6 +26,8 @@ import {
 } from "node:fs"
 import os from "node:os"
 import path from "node:path"
+// 叶子模块(只依赖 node 内建),不会把内核 inline 进 main 的 bundle —— 见该文件头。
+import { resolveDatasheetServer } from "@yoma/coding-agent/datasheet-server"
 import type {
   IndexUpdateResult,
   IngestRequest,
@@ -83,9 +85,17 @@ function indexRoot(): string {
 function artifactsRoot(): string {
   return envVar("YOMA_DATASHEET_ARTIFACTS") ?? path.join(configHome(), "datasheet-artifacts")
 }
+/**
+ * 与内核同一份解析(显式 > 环境变量 > ~/.yoma/.env > 内置默认;off 关闭)—— 手册库页和
+ * agent 的 datasheet 工具必须说同一个地址,否则一边"未配置"一边能查。
+ */
 function serverUrl(): string | null {
-  return envVar("YOMA_DATASHEET_SERVER")?.replace(/\/+$/, "") ?? null
+  return resolveDatasheetServer({ configDir: configHome() }).url ?? null
 }
+/** 有内置默认之后,拿不到地址只剩一种可能:用户显式写了 off。 */
+const SERVER_OFF_MESSAGE = "手册服务器已关闭(YOMA_DATASHEET_SERVER=off)。在 ~/.yoma/.env 里改成服务器地址或删掉这一行即可"
+/** JSON 端点的超时;文件下载在 fetchToFile 里另有一档。 */
+const JSON_TIMEOUT_MS = 20_000
 function ragRepo(): string | null {
   return envVar("YOMA_RAG_REPO") ?? null
 }
@@ -137,7 +147,8 @@ async function fetchToFile(
   dest: string,
   opts: { sha256?: string; onBytes?: (bytes: number) => void } = {},
 ): Promise<{ bytes: number; sha256: string }> {
-  const res = await fetch(url)
+  // 内置默认地址意味着每台机器都会去碰一台可能挂掉的服务器:响应头 60 s 内不到就放弃。
+  const res = await fetch(url, { signal: AbortSignal.timeout(60_000) })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   mkdirSync(path.dirname(dest), { recursive: true })
   const tmp = dest + ".part"
@@ -264,9 +275,9 @@ async function loadInventory(chip: string, rev: string): Promise<ArtifactFile[]>
   const local = readManifest("shared").find((e) => e.chip === chip && e.rev === rev)
   if (local?.artifacts?.length) return local.artifacts
   const base = serverUrl()
-  if (!base) throw new Error("未配置文件服务器(在 ~/.yoma/.env 里设置 YOMA_DATASHEET_SERVER)")
+  if (!base) throw new Error(SERVER_OFF_MESSAGE)
   const url = `${base}/api/bundles/${encodeURIComponent(chip)}/${encodeURIComponent(rev)}.json`
-  const res = await fetch(url)
+  const res = await fetch(url, { signal: AbortSignal.timeout(JSON_TIMEOUT_MS) })
   if (!res.ok) throw new Error(`服务器上没有 ${chip}/${rev}(HTTP ${res.status})`)
   const info = (await res.json()) as { files?: ArtifactFile[] }
   if (!info.files?.length) throw new Error(`服务器返回了空的产物清单(${chip}/${rev})`)
@@ -282,7 +293,7 @@ async function downloadManual(chip: string, rev: string) {
   try {
     const files = await loadInventory(chip, rev)
     const base = serverUrl()
-    if (!base) throw new Error("未配置文件服务器(在 ~/.yoma/.env 里设置 YOMA_DATASHEET_SERVER)")
+    if (!base) throw new Error(SERVER_OFF_MESSAGE)
     const root = path.resolve(artifactsRoot())
     let downloaded = 0
     let skipped = 0
@@ -417,10 +428,10 @@ async function updateIndex(): Promise<IndexUpdateResult> {
   if (indexUpdating) return { ok: false, error: "索引更新已在进行中" }
   if (activeDownloads.size > 0) return { ok: false, error: "有手册正在下载,等它结束后再更新索引" }
   const base = serverUrl()
-  if (!base) return { ok: false, error: "未配置文件服务器(在 ~/.yoma/.env 里设置 YOMA_DATASHEET_SERVER)" }
+  if (!base) return { ok: false, error: SERVER_OFF_MESSAGE }
   indexUpdating = true
   try {
-    const res = await fetch(`${base}/api/index/latest.json`)
+    const res = await fetch(`${base}/api/index/latest.json`, { signal: AbortSignal.timeout(JSON_TIMEOUT_MS) })
     if (res.status === 404) return { ok: false, error: "服务器还没有发布过索引快照(先在管理台发布)" }
     if (!res.ok) return { ok: false, error: `服务器错误(HTTP ${res.status})` }
     const latest = (await res.json()) as LatestSnapshot

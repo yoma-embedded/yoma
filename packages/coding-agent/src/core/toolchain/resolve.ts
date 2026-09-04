@@ -48,6 +48,8 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
+import { type HostKey, hostKey, type Installable, installableFor } from "./catalog.ts";
+import { listManagedInstalls } from "./install.ts";
 import { emptyLedger, readLedger, readLocalOverrides } from "./ledger.ts";
 import type { Ledger, LedgerEntry } from "./ledger.ts";
 import { findEnvKey, findOnPath, registryCandidates, wellKnownCandidates, withPath } from "./locations.ts";
@@ -56,7 +58,12 @@ import type { ToolchainManifest, ToolSpec } from "./schema.ts";
 import { probeVersion, satisfies } from "./version.ts";
 
 export type ToolStatus = "ok" | "version-mismatch" | "ambiguous" | "missing";
-export type ResolveSource = "local" | "ledger" | "env" | "path" | "well-known" | "registry";
+/**
+ * "managed" = Yoma 自己装进 `<configDir>/toolchains/` 的(install.ts),排在账本之后、
+ * 环境变量之前:skipLedger 的新鲜探测也必须找得到它,否则设置页"重新探测"一按,
+ * 刚装好的工具就报 MISSING。
+ */
+export type ResolveSource = "local" | "ledger" | "managed" | "env" | "path" | "well-known" | "registry";
 
 export interface ResolvedTool {
 	id: string;
@@ -71,6 +78,8 @@ export interface ResolvedTool {
 	/** missing / version-mismatch 时的安装指引,走 installHint(manifest, tool, platform)。 */
 	hint?: string;
 	why?: string;
+	/** 非 ok 且 catalog.ts 对这台机器(平台-架构)有包时给出:UI 的"安装"按钮与提示词的自助安装建议都看它。 */
+	installable?: Installable;
 }
 
 export interface ToolchainResolution {
@@ -206,6 +215,23 @@ function registryHits(tool: ToolSpec, platform: string, env: NodeJS.ProcessEnv):
 
 // ─── 单个工具的完整解析 ─────────────────────────────────────────────────────────
 
+/**
+ * Yoma 自己装的(install.ts 的 `<configDir>/toolchains/<包>/<版本>/`):provides 包含这个
+ * 工具 id 的每个包目录算一处候选位置,在它的 binDir 里解析声明名。版本新到旧
+ * (listManagedInstalls 的顺序),同一档内多个版本都满足时取最新的那个。
+ */
+function managedHits(tool: ToolSpec, configDir: string | undefined, env: NodeJS.ProcessEnv): Hit[] {
+	const names = tool.bin ?? [];
+	if (names.length === 0) return [];
+	const hits: Hit[] = [];
+	for (const install of listManagedInstalls(configDir)) {
+		if (!install.provides.includes(tool.id)) continue;
+		const bin = resolveNamesInDirs(names, [install.binDir], env);
+		if (bin) hits.push(bin);
+	}
+	return hits;
+}
+
 interface ResolveCtx {
 	/** 已经按 side 筛过的 manifest —— installHint 要用到它的 providers。 */
 	manifest: ToolchainManifest;
@@ -213,6 +239,10 @@ interface ResolveCtx {
 	ledger: Ledger;
 	platform: string;
 	env: NodeJS.ProcessEnv;
+	/** managed 档扫的目录;不传就是默认 ~/.yoma(与账本同一个)。 */
+	configDir?: string;
+	/** 平台-架构,决定 catalog 里有没有这台机器能装的包;认不出来就没有 installable。 */
+	host: HostKey | undefined;
 }
 
 async function resolveTool(tool: ToolSpec, ctx: ResolveCtx): Promise<ResolvedTool> {
@@ -226,6 +256,7 @@ async function resolveTool(tool: ToolSpec, ctx: ResolveCtx): Promise<ResolvedToo
 	const tiers: Array<[ResolveSource, () => Hit[]]> = [
 		["local", () => entryHits(ctx.localOverrides[tool.id])],
 		["ledger", () => entryHits(ctx.ledger.entries[tool.id])],
+		["managed", () => managedHits(tool, ctx.configDir, ctx.env)],
 		["env", () => envHits(tool, ctx.env)],
 		["path", () => pathHits(tool, ctx.env)],
 		["well-known", () => wellKnownHits(tool, ctx.platform, ctx.env)],
@@ -237,6 +268,12 @@ async function resolveTool(tool: ToolSpec, ctx: ResolveCtx): Promise<ResolvedToo
 	let missVersion: string | undefined;
 
 	const satisfiesWanted = (v: string | undefined): boolean => wanted === undefined || (v !== undefined && satisfies(v, wanted));
+
+	// 能不能让 Yoma 自己装:只看 catalog 有没有这台机器的包。钉的版本满不满足清单要的范围
+	// 是提示词 / UI 展示时的事(lineFor 在不满足时明确说"装了也不够,转告用户"),数据本身
+	// 照样带 —— 设置页要显示"可以装 X 版"让人自己判断。算在探测之前:ambiguous(两套版本
+	// 不一致的安装)也该给出"装一套钉死的"这条出路。
+	const installable = installableFor(tool.id, ctx.host);
 
 	for (const [source, getHits] of tiers) {
 		const hits = getHits();
@@ -284,6 +321,7 @@ async function resolveTool(tool: ToolSpec, ctx: ResolveCtx): Promise<ResolvedToo
 				source,
 				candidates: dedupe(probed.map((p) => p.primary).filter((p): p is string => p !== undefined)),
 				why: tool.why,
+				installable,
 			};
 		}
 
@@ -313,10 +351,11 @@ async function resolveTool(tool: ToolSpec, ctx: ResolveCtx): Promise<ResolvedToo
 			candidates: dedupe(seen),
 			hint,
 			why: tool.why,
+			installable,
 		};
 	}
 
-	return { id: tool.id, status: "missing", optional, bin: {}, wanted, hint, why: tool.why };
+	return { id: tool.id, status: "missing", optional, bin: {}, wanted, hint, why: tool.why, installable };
 }
 
 // ─── 顶层入口 ────────────────────────────────────────────────────────────────
@@ -335,6 +374,8 @@ export async function resolveToolchain(opts: {
 	skipLedger?: boolean;
 	side?: "mother" | "runner";
 	platform?: string;
+	/** 默认 process.arch;与 platform 一起决定 catalog 里有没有这台机器能装的包。测试注入。 */
+	arch?: string;
 	env?: NodeJS.ProcessEnv;
 	/** 注入用,给测试和工位端(它没有项目检出,清单是当附件送过去的)。 */
 	manifestText?: string;
@@ -342,6 +383,7 @@ export async function resolveToolchain(opts: {
 	const side = opts.side ?? "mother";
 	const platform = opts.platform ?? process.platform;
 	const env = opts.env ?? process.env;
+	const host = hostKey(platform, opts.arch ?? process.arch);
 
 	const loaded = await loadManifestText(opts.projectDir, opts.manifestText);
 	if (loaded === undefined) {
@@ -371,7 +413,7 @@ export async function resolveToolchain(opts: {
 	// 实际仍是串行 —— 别以为工具数一乘就线性变快。
 	// 这条路挂在用户等待上:kernel 的 session-manager 在 ensureOpen 里就 await 它,而
 	// 即使全部命中账本也照样每个工具起一次 --version。
-	const ctx: ResolveCtx = { manifest, localOverrides, ledger, platform, env };
+	const ctx: ResolveCtx = { manifest, localOverrides, ledger, platform, env, configDir: opts.configDir, host };
 	const tools = await Promise.all(manifest.tools.map((tool) => resolveTool(tool, ctx)));
 
 	return {
@@ -451,23 +493,40 @@ function lineFor(t: ResolvedTool): string {
 		return `- ${label}: OK —${need}, resolved to ${primary} (${versionPart}, source: ${t.source ?? "unknown"}).`;
 	}
 
+	// Yoma 自己能装的:让模型直接用 toolchain 工具的 install 动作,不必先去问用户。
+	// 下载来源是 catalog 钉死的官方发布 + sha256 校验,这一步没有需要人拍板的东西。
+	// **钉的版本满足不了清单要的范围时不许建议安装**:装完还是 version-mismatch、还是同一句
+	// 建议,模型会在"装 → 核 → 再装"里空转;那种情况明说装了也不够,转告用户。
+	const usable = (i: NonNullable<ResolvedTool["installable"]>) => t.wanted === undefined || satisfies(i.version, t.wanted);
+	const selfService = (i: NonNullable<ResolvedTool["installable"]>) =>
+		usable(i)
+			? `Run the toolchain tool with action "install" and id "${t.id}" to install ${i.title} ${i.version} automatically (pinned official download, sha256-verified, ~${Math.round(i.bytes / 1e6)} MB); it is on PATH for later commands.`
+			: `Yoma could install ${i.title} ${i.version} automatically, but that does NOT satisfy the required ${t.wanted} — do not install it; tell the user instead.`;
+
 	if (t.status === "missing") {
-		const advice = t.hint
-			? `Do not guess a path or hardcode one — tell the user to install it: ${t.hint}`
-			: "No install hint is available for this platform — ask the user how it is normally installed here.";
+		const advice = t.installable
+			? `${selfService(t.installable)}${t.hint ? ` If the user prefers their own install: ${t.hint}` : ""} Never guess or hardcode a path.`
+			: t.hint
+				? `Do not guess a path or hardcode one — tell the user to install it: ${t.hint}`
+				: "No install hint is available for this platform — ask the user how it is normally installed here.";
 		return `- ${label}: MISSING —${need}. ${advice}`;
 	}
 
 	if (t.status === "version-mismatch") {
 		const foundAt = t.candidates?.[0];
 		const found = t.version ? `found version ${t.version}${foundAt ? ` at ${foundAt}` : ""}` : "found an unrecognized version";
-		const advice = t.hint ? ` Do not use it as-is — tell the user to upgrade: ${t.hint}` : "";
+		const advice = t.installable
+			? ` Do not use it as-is. ${selfService(t.installable)}${!usable(t.installable) && t.hint ? ` Upgrade hint: ${t.hint}` : ""}`
+			: t.hint
+				? ` Do not use it as-is — tell the user to upgrade: ${t.hint}`
+				: "";
 		return `- ${label}: VERSION MISMATCH —${need}, ${found}.${advice}`;
 	}
 
 	// ambiguous
 	const list = (t.candidates ?? []).map((c) => `    - ${c}`).join("\n");
-	return `- ${label}: AMBIGUOUS —${need}. Multiple installations found with inconsistent versions; ask the user which one to use, do not guess:\n${list}`;
+	const wayOut = t.installable && usable(t.installable) ? ` Alternatively, ${selfService(t.installable)}` : "";
+	return `- ${label}: AMBIGUOUS —${need}. Multiple installations found with inconsistent versions; ask the user which one to use, do not guess:\n${list}${wayOut}`;
 }
 
 /**

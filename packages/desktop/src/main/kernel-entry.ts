@@ -19,8 +19,8 @@ import {
 } from "@yoma-desktop/kernel"
 import { ensureDatasheetServerEnv } from "./datasheet-server.ts"
 
-// datasheet 工具只读 process.env:这里把 ~/.yoma/.env 里的地址喂进去。
-// 没有内置服务器,没配就是查不了。
+// 把解析出的数据手册服务器地址(环境变量 > ~/.yoma/.env > 内置默认)喂进 process.env,
+// 让内核里所有读法(工具、例程库同步)都得到同一个答案;设了 off 就保持关闭。
 ensureDatasheetServerEnv()
 
 type StartCommand = {

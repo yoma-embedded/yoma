@@ -35,9 +35,12 @@ import {
   createScopeToolDefinition,
   createStm32ConfigToolDefinition,
   findEnvKey,
+  machinePathDirs,
   promptSectionFor,
+  readLedger,
   resolveToolchain,
   shellEnvFor,
+  withMachineOnPath,
   wrapToolDefinitions,
   type ToolchainResolution,
   type ToolDef,
@@ -67,6 +70,7 @@ import { SessionProjection } from "./projector.ts"
 import { overflowAction, shouldAutoCompact } from "./compaction.ts"
 import { retryDelayMs, retrySleep, shouldAutoRetry } from "./retry.ts"
 import { migrateLegacyPiAuth, yomaConfigDir, removeAuthKey, writeAuthKey } from "./auth.ts"
+import { installProgressEvent } from "./toolchain.ts"
 
 /** 同时活着的 harness 上限。淘汰只是丢弃内存态,重开就是 repo.open + buildContext,很便宜。 */
 const MAX_LIVE_SESSIONS = 8
@@ -78,11 +82,17 @@ const MAX_LIVE_SESSIONS = 8
  * (它的向上查找会认下一个没有 bin/ 的空壳)—— 所以按"单工具工厂 + options"自行装配,
  * yoma 的 tools/index.ts 注释明说这是特殊装配的预期用法。
  */
-export function createEmbeddedTools(env: NodeExecutionEnv, enginesDir?: string): ToolDef[] {
+export function createEmbeddedTools(
+  env: NodeExecutionEnv,
+  enginesDir?: string,
+  options?: { configDir?: string },
+): ToolDef[] {
   const engines = enginesDir ? { enginesDir } : undefined
   return [
     createNetlistToolDefinition(env, engines),
-    createDatasheetToolDefinition(env),
+    // datasheet 的服务器地址按 显式 > 环境变量 > <configDir>/.env > 内置默认 解析;
+    // configDir 必须传,不然 bench / 测试读的是真实 ~/.yoma/.env。
+    createDatasheetToolDefinition(env, { configDir: options?.configDir }),
     createStm32ConfigToolDefinition(env, engines),
     // flash/log/gdb 自 2026-08 起不吃 enginesDir:烧录命令模型自带,RTT 走 TCP,
     // gdb server 从 PATH 起 —— 引擎目录只剩上面两个还要。
@@ -115,6 +125,18 @@ function withEnginesOnPath(env: NodeJS.ProcessEnv, enginesDir?: string): NodeJS.
   return out
 }
 
+/**
+ * 把机器级目录前置进**内核进程自己的** PATH。幂等(已在的不重复);写回原键(Windows 的
+ * "Path")。只此一处改 process.env —— 理由见 sessionShellEnv。
+ */
+export function applyMachinePathToProcess(dirs: string[], env: NodeJS.ProcessEnv = process.env): void {
+  if (dirs.length === 0) return
+  const next = withMachineOnPath(env, dirs)
+  if (next === env) return
+  const pathKey = findEnvKey(env, "PATH") ?? "PATH"
+  env[pathKey] = next[pathKey]
+}
+
 interface Entry {
   id: string
   cwd: string
@@ -126,6 +148,10 @@ interface Entry {
   harness?: AgentHarness
   projection?: SessionProjection
   unsubscribe?: () => void
+  /** harness 的执行环境 —— refreshMachineEnv 在会话中途换它的 shellEnv。 */
+  env?: NodeExecutionEnv
+  /** 开会话时的工具链解析结果;刷新 PATH 时重算。 */
+  toolchain?: ToolchainResolution
   status: SessionStatus
   /** 上一次被使用的时刻,LRU 用。 */
   touched: number
@@ -490,8 +516,11 @@ export class SessionManager {
 
     // engines/bin 前置进 PATH:agent 的 bash 工具里要有 rg(在例程语料里 grep 全靠
     // 它,Windows 没有内置 grep)。放 shellEnvFor 之后、env 构造之前,和工具链目录
-    // 同一条规则(前置不替换,去重,写回原键)。
-    const env = new NodeExecutionEnv({ cwd: entry.cwd, shellEnv: withEnginesOnPath(shellEnvFor(toolchain, process.env), this.options.enginesDir) })
+    // 同一条规则(前置不替换,去重,写回原键)。机器级目录(Yoma 装的 + 用户手指的)
+    // 夹在中间:项目清单解析到的赢过它们,它们赢过 process.env 里原有的。
+    const env = new NodeExecutionEnv({ cwd: entry.cwd, shellEnv: await this.sessionShellEnv(toolchain) })
+    entry.env = env
+    entry.toolchain = toolchain
 
     // 资源发现:项目的 AGENTS.md/CLAUDE.md(全局 + 祖先链)与技能(全局 + .agents/skills)。
     // 走 yoma 自己的 resources.ts,不重写:"从哪些目录找"是内核那边定的产品决策,
@@ -536,9 +565,13 @@ export class SessionManager {
           configDir: this.configDir,
           side: this.options.toolchainSide,
           manifestText: this.options.toolchainManifestText,
+          // agent 自己跑 install:进度同样走 toolchain.install 事件(设置页看得见),
+          // 装完刷新在飞会话与内核进程的 PATH —— 否则工具嘴上说"已在 PATH"而下一条命令照样找不到。
+          onInstallProgress: (progress) => this.options.emit([installProgressEvent(progress)]),
+          onInstalled: () => this.refreshMachineEnv(),
         },
       }),
-      ...createEmbeddedTools(env, this.options.enginesDir),
+      ...createEmbeddedTools(env, this.options.enginesDir, { configDir: this.configDir }),
     ]
     const harness = new AgentHarness({
       env,
@@ -589,6 +622,46 @@ export class SessionManager {
    * (shellEnvFor / promptSectionFor)因此不用关心"没有清单"和"清单解析失败"是两回事,
    * 统一按"当作没有清单"处理。
    */
+  /**
+   * 机器级目录:Yoma 装进 `<configDir>/toolchains/` 的 + 用户在设置页手指的(账本
+   * by:"user"),见 coding-agent install.ts 的 machinePathDirs。每次都重新扫 —— 这是
+   * 会话开启 / 安装完成时才调的东西,不在热路径上。
+   */
+  private async machineDirs(): Promise<string[]> {
+    const ledger = await readLedger(this.configDir)
+    return machinePathDirs({ configDir: this.configDir, ledger })
+  }
+
+  /**
+   * 一个会话的 bash 基础环境:engines/bin ⊕ 项目清单解析到的目录 ⊕ 机器级目录 ⊕ process.env。
+   * 顺带把机器级目录也前置进内核进程自己的 PATH —— gdb / flash 这些工具起 openocd、
+   * JLinkGDBServer 时用的是 process.env,不是会话的 shellEnv。
+   */
+  private async sessionShellEnv(toolchain: ToolchainResolution, dirs?: string[]): Promise<NodeJS.ProcessEnv> {
+    const machine = dirs ?? (await this.machineDirs())
+    applyMachinePathToProcess(machine)
+    return withEnginesOnPath(withMachineOnPath(shellEnvFor(toolchain, process.env), machine), this.options.enginesDir)
+  }
+
+  /**
+   * 工具链装好之后调:重算每个**活着的**会话(harness 还在)的 bash 环境
+   * (NodeExecutionEnv.setShellEnv),让下一条命令就看得见新目录,不用重开会话;同时更新
+   * 内核进程自己的 PATH。清单解析也重跑一遍 —— 刚装的可能正是清单里 MISSING 的那个。
+   * 被 LRU 淘汰的会话 dispose 时清掉了 env,这里不会为它们白起 --version 子进程。
+   */
+  async refreshMachineEnv(): Promise<void> {
+    const dirs = await this.machineDirs()
+    for (const entry of this.entries.values()) {
+      if (!entry.env || !entry.harness) continue
+      const toolchain = await this.resolveToolchainSafe(entry)
+      entry.toolchain = toolchain
+      entry.env.setShellEnv(await this.sessionShellEnv(toolchain, dirs))
+    }
+    // 内核进程自己的 PATH 无条件刷一次(幂等):没有开着的会话时上面的循环不会碰它,
+    // 而 gdb / flash 起子进程用的正是 process.env。
+    applyMachinePathToProcess(dirs)
+  }
+
   private async resolveToolchainSafe(entry: Entry): Promise<ToolchainResolution> {
     const side = this.options.toolchainSide ?? "mother"
     try {
@@ -939,6 +1012,8 @@ export class SessionManager {
     entry.harness = undefined
     entry.projection = undefined
     entry.session = undefined
+    entry.env = undefined
+    entry.toolchain = undefined
   }
 
   async disposeAll(): Promise<void> {

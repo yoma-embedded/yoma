@@ -180,6 +180,8 @@ const api: ElectronAPI = {
     },
     check: () => ipcRenderer.invoke("updater-check"),
     install: () => ipcRenderer.invoke("updater-install"),
+    getAutoCheck: () => ipcRenderer.invoke("updater-get-auto-check"),
+    setAutoCheck: (value) => ipcRenderer.invoke("updater-set-auto-check", value),
   },
   consumeInitialDeepLinks: () => ipcRenderer.invoke("consume-initial-deep-links"),
   getDefaultServerUrl: () => ipcRenderer.invoke("get-default-server-url"),

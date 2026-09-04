@@ -98,7 +98,7 @@ Bun workspace,`packages/` 下 9 个包 —— 内核两包(`agent` / `coding-age
 | `bun package:mac` / `:win` / `:linux` | electron-builder 安装包 |
 | `bun typecheck` | turbo 跑全部 9 个包 —— **必须常绿 9/9**(2026-08-21 起内核两包也有 `typecheck`:从前只有被 kernel 的 paths 拉到的内核源码受检,test 目录没人查) |
 | `bun lint` | oxlint |
-| `bun run test` | 全量单测(根 `package.json` 逐包列出)—— **根上唯一入口**;裸 `bun test` 会误扫 DOM/平台文件 |
+| `bun run test` | 全量单测(根 `package.json` 逐包列出,2026-09-05 起含 `packages/desktop`)—— **根上唯一入口**;裸 `bun test` 会误扫 DOM/平台文件 |
 | `bun --cwd packages/desktop smoke` | 内核冒烟:对 **构建产物** 验证 14 个工具(`TOOL_NAMES` 减退役)+ 4 个引擎二进制 |
 | `bun --cwd packages/desktop e2e:ipc` | 生产路径:真 utilityProcess + 真 MessagePort + 真协议帧(不开窗口) |
 | `bun --cwd packages/desktop e2e:renderer` | 最后一跳:真窗口 + 真 preload + **真 contextBridge**(含 mailbox 桥三条) |
@@ -542,6 +542,81 @@ coding-agent 只**动态 import**(`loadUsb()`),平台包缺席时退化成"USB �
 **还没验**:LAN 路径的真机、打包 app 里 `usb` 预编译包的加载、Windows 的 USB、卡片在真窗口里的样子、
 dock 面板(没有,也不打算先做)。
 
+### 工具链自动安装(`toolchain install` / `core/toolchain/{catalog,install}.ts`)
+
+2026-09-05 起。从前工具链只"核账"(装没装、在哪),装是用户的事;现在 catalog 里有包的工具
+(Arm GNU Toolchain 15.2.rel1 = arm-gcc + arm-gdb、CMake、Ninja、xpack OpenOCD、Windows 上的 MinGit)
+桌面设置页一键装、agent 撞到"命令不存在"时自己装。**不打进安装包**:Arm 工具链一个 zip 就 296 MB,
+比整个安装包(166 MB)还大,按需下载。
+
+- **目录是数据**(`catalog.ts`):包 → 宿主(`win32-x64` / `darwin-arm64` / `darwin-x64` / `linux-x64` /
+  `linux-arm64`)→ 官方发布 URL + sha256(抄厂商自己的校验文件)+ 字节数 + 压缩格式 + 解开后的 root/binDir。
+  版本钉死,升版本是一次显式的目录改动。`YOMA_TOOLCHAIN_MIRROR`(基址)与 artifact.mirrors 排在官方 URL
+  之前逐个试。ESP-IDF / Keil / CubeMX / CubeProgrammer / J-Link 不在目录里(账号 / 许可 / 安装器),只给人话指引。
+  Arm 没有 darwin-x64 的 15.x 构建,Intel Mac 走 brew。
+- **落点 `<configDir>/toolchains/<包>/<版本>/`**(与账本 `toolchains.json` 同一个 configDir;bench / 信箱工位端
+  读同一处;app 升级不丢)。绝不落 `process.resourcesPath`。完整性纪律抄 examples/sync.ts:`downloads/*.part`
+  边写边算 sha、对不上就删;解压到 `<包目录>.extracting` 再整体 rename,包目录里写 `.yoma-toolchain.json`
+  标记 —— 半个树不可能顶着最终名字出现;同一个包一把 pid 锁。zip 走 `@zip.js/zip.js`(进程内,
+  Reader **必须继承 `zip.Reader`**,鸭子对象在 getData 里炸;挡 zip-slip;从 external attribute 恢复可执行位),
+  tar.gz/tar.xz 走系统 tar(Windows 用 System32\tar.exe,但目录里 Windows 的产物全是 zip)。
+- **账本不改 schema**:装完对包 provides 的每个 id 调 `recordToolchainPath`(by:"user"),"Yoma 装的"由
+  位置(managed 根)与标记文件识别。resolve.ts 多了 **`managed` 一档**(ledger 之后、env 之前)扫这个根 ——
+  否则设置页"重新探测"(skipLedger)一按,刚装好的就报 MISSING。非 ok 的工具带 `installable`
+  (包名/版本/字节数),UI 的安装按钮与提示词的自助建议都看它。
+- **PATH**:会话 bash 环境 = engines/bin ⊕ 项目清单解析到的目录 ⊕ **机器级目录**(managed binDir + 账本
+  by:"user" 的目录;by:"auto" 的**不**前置 —— 它们本来就在 PATH/已知位置探到,再前置会遮蔽用户 venv 里的
+  python)⊕ process.env。没有项目清单的工程(绝大多数)从前什么都拿不到,现在拿得到机器级目录。
+  机器级目录同时前置进**内核进程自己的** PATH(`applyMachinePathToProcess`):gdb / flash 起 openocd /
+  JLinkGDBServer 用的是 process.env,不是会话 shellEnv。装完 `SessionManager.refreshMachineEnv()` 重算每个
+  在飞会话的 env(`NodeExecutionEnv.setShellEnv`,packages/agent 新加的 setter),下一条命令就看得见。
+- **RPC / 事件**:`toolchain.install {id}`(几分钟;注册表按**包** id 去重 —— arm-gcc 与 arm-gdb 同一个包,
+  第二个 reject "already")、`toolchain.installCancel`、`toolchain.installsActive`(设置页重开时接上进度行,
+  进度事件不重放);进度是 `KernelEvent` `toolchain.install`,StreamSink 把同 id 的相邻进度折叠成最后一条。
+  agent 的 toolchain 工具多了 `install` 动作,**宿主必须传 `onInstalled`**(SessionManager 传的是
+  refreshMachineEnv)否则装完这一会话里仍然找不到;`execute` 要把 harness 的 signal 递给下载,不然用户按停止
+  要等几百 MB 下完。提示词从"叫用户去装"改成"installable 的自己装,其余转告";catalog 钉的版本满足不了
+  清单 `version` 时提示词明说"装了也不够",免得模型在装 → 核 → 再装里空转。
+- **"已装好"看可执行文件,不看目录**(reuse 与解压后的验收都是 `anyBinResolves`):被杀毒软件掏空的包目录
+  若被当成装好,记账会把目录本身记成可执行文件,之后核账永远 ok、构建永远 command not found,而且 install
+  永远走复用分支修不好(评审时实测)。旧包目录先挪到一边再换新的;所有 rmSync 带重试(Windows EBUSY)。
+  `ToolchainInstallError.data`(`_tag` / phase / toolId / packageId)是跨 MessagePort 唯一能带过去的结构化
+  信息,UI 靠它把"用户点了取消"和真失败分开。
+- 退出时装更新(`autoInstallOnAppQuit`)要求 `before-quit` **先拦下来等 stopSidecars 真的结束再 quit**
+  (main/index.ts 的 `quitting` 旗):electron-updater 挂在 `quit` 事件上,fire-and-forget 的 stopSidecars
+  要几秒,不拦的话 NSIS 会在烧录 / gdb 孙进程还活着时换文件。`relaunch()`(app.exit)前先关掉退出时安装,
+  否则 NSIS 换文件和拉起旧 exe 撞在一起。
+- 目录只在真实安装里验过 ninja(Windows,zip);Arm/CMake/OpenOCD 的 root 目录名按厂商惯例写,
+  `locateRoot` 认不到 root 时回落到"唯一的顶层目录"。**首次真装 Arm 工具链前跑一遍**。
+
+### 数据手册服务器默认地址(`core/datasheet-server.ts`)
+
+2026-09-05 起**有内置默认**(`DEFAULT_DATASHEET_SERVER`,一处常量),推翻 ad6df94 的"公开仓不放地址":
+产品决定是用户装完即可查手册,防线在服务器侧(限流 / 反代)。解析规则只有这一份(叶子模块,经
+`@yoma/coding-agent/datasheet-server` 深引用 —— 四份别名表都加了):**显式 > 环境变量
+`YOMA_DATASHEET_SERVER` > `<configDir>/.env`(或 `$YOMA_ENV_FILE`)> 内置默认**,值 off / none / false / 0 =
+显式关闭。datasheet 工具收 `{configDir, server, env, builtIn, timeoutMs}`(kernel 的 createEmbeddedTools
+传 configDir,bench 因此不再是盲区);examples 同步同解;desktop main 的手册库页经叶子模块解析,和内核
+说同一个地址。**每个请求都带超时**(API 20 s、产物 60 s):内置地址意味着所有安装都会去碰一台可能挂掉的
+机器,没有超时就是整轮吊死。2026-09-05 从开发机探默认地址连接超时 —— 维护者要确认或换掉这个常量。
+`ensureDatasheetServerEnv`(kernel-entry)现在只是把解析结果喂进 process.env 的薄壳。
+
+### 热升级(electron-updater)
+
+2026-09-05 核实:仓库公开、GitHub 的 latest 是 app Release、latest.yml + blockmap 都在,差分下载走
+NsisUpdater 的 blockmap 路径 —— 通道本来就通。这次修的是**用户感知不到**这件事:
+- `updater.ts` 不再设 `channel`(setter 会顺手 `allowDowngrade = true`)、`allowDowngrade = false`、
+  `autoInstallOnAppQuit = true`(下好了退出就装,不必点重启;before-quit 已先 stopSidecars)、订阅
+  `download-progress`。状态机(`updater-controller.ts`)多了 `downloading.percent/transferred/total`、
+  `ready.notes`(Release 说明剥成纯文本)、`prefs.autoCheck`(启动 / 定时检查看它;手动 `check()` 不看)、
+  `checkPeriodic()`。
+- UI:标题栏药丸之外,`ready` 时 layout 弹一次 toast(带"重启安装");设置 → 更新有版本行、状态行、
+  自动检查开关(`window.api.updater.getAutoCheck/setAutoCheck`,store `yoma.updater.autoCheck`)、更新说明。
+- `engines.yml` 的 Release 加了 `make_latest: false`:引擎 Release 和 app Release 同仓,engines-v* 一旦被
+  标成 latest,所有用户的更新检查都去找 `engines-v*/latest.yml`,404 到下一个 app 版本为止。
+- `packages/desktop` 有了 `test` 脚本,进根 `bun run test` 与 CI 的 Windows 岗 —— 更新器状态机的测试从前
+  没有任何闸门跑它。`scripts/finalize-latest-{yml,json}.ts` 是 tauri 时代的死代码,删了。
+
 ## 约定与规矩
 
 - **绝不重启 app 或内核进程**(`packages/app/AGENTS.md`)。优先级:稳定 > 简单 > 性能。
@@ -659,6 +734,14 @@ dock 面板(没有,也不打算先做)。
 
 ## 已知的未完成项
 
+- **工具链自动安装只在真实安装里验过 ninja**(Windows zip)。Arm GNU Toolchain / CMake / OpenOCD 的压缩包
+  布局按厂商惯例写进 catalog,首次真装前要跑一遍;macOS / Linux 的 tar 路径没有真机验过;
+  运行期镜像只有 `YOMA_TOOLCHAIN_MIRROR` 一个口子,维护者若要自建镜像,把包放到 `<镜像>/<文件名>` 即可。
+  内核 utilityProcess 里的 `fetch` 不认系统代理设置(main 进程的 `setGlobalProxyFromEnv` 不覆盖它)。
+- **数据手册默认地址待维护者确认**:`DEFAULT_DATASHEET_SERVER` 是 ad6df94 之前的那个 IP,2026-09-05 从
+  开发机探测连接超时。还没有设置页字段可以改它(只能 `~/.yoma/.env` 或环境变量)。
+- **热升级没有真跑过一次两版本升级**:controller 有单测、bridge 有 e2e,但"装 vN → 发布 vN+1 → 自动下载
+  → 退出时安装"的完整路径要一次真实 Release 才验得到。
 - **信箱调试台:2026-08-10 大幅简化之后还没上过真板子。** 这一版删掉了判据层、
   权限层与工位端的项目检出(见"信箱闭环"),`bun --cwd packages/desktop smoke:mailbox`
   与单机 `mailbox sim` 都过了,但**双机真跑一次是必须的**:研发端能不能把上下文

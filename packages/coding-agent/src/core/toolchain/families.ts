@@ -268,6 +268,24 @@ const NRFUTIL: ToolchainFamilyTool = {
 	},
 };
 
+// ─── 通用 ────────────────────────────────────────────────────────────────────
+
+// git 不属于任何芯片平台,但它是内核的硬依赖(vcs.info / 信箱守护 / 交付分支),而
+// Windows 工位机上常常没有。每个平台都列一条 optional,账本按 id 共享,配一次全亮;
+// Windows 上 catalog.ts 有 MinGit 可自动安装,macOS/Linux 走系统包管理器。
+const GIT: ToolchainFamilyTool = {
+	id: "git",
+	title: "Git",
+	pathKind: "exe",
+	optional: true,
+	bin: ["git"],
+	install: {
+		win32: "winget install Git.Git,或让 Yoma 自动安装便携版 MinGit",
+		darwin: "xcode-select --install(随命令行工具附带),或 brew install git",
+		linux: "apt install git(Debian/Ubuntu)",
+	},
+};
+
 // ─── 平台目录 ────────────────────────────────────────────────────────────────
 
 export const TOOLCHAIN_FAMILIES: readonly ToolchainFamily[] = [
@@ -275,12 +293,12 @@ export const TOOLCHAIN_FAMILIES: readonly ToolchainFamily[] = [
 		id: "stm32",
 		name: "STM32",
 		providers: ARM_GNU_PROVIDER,
-		tools: [ARM_GCC, ARM_GDB, CMAKE, NINJA, OPENOCD, STM32CUBEPROG, JLINK, STM32CUBEMX, KEIL],
+		tools: [ARM_GCC, ARM_GDB, CMAKE, NINJA, OPENOCD, STM32CUBEPROG, JLINK, STM32CUBEMX, KEIL, GIT],
 	},
 	{
 		id: "esp32",
 		name: "ESP32(ESP-IDF)",
-		tools: [IDF, PYTHON, ESPTOOL],
+		tools: [IDF, PYTHON, ESPTOOL, GIT],
 	},
 	{
 		// 全部 optional 是有意的:NCS/Zephyr、裸机 gcc、Keil 是三条并行路线,没有哪个
@@ -288,9 +306,18 @@ export const TOOLCHAIN_FAMILIES: readonly ToolchainFamily[] = [
 		id: "nordic",
 		name: "Nordic(nRF)",
 		providers: ARM_GNU_PROVIDER,
-		tools: [WEST, ZEPHYR_SDK, { ...ARM_GCC, optional: true }, NRFUTIL, JLINK, KEIL],
+		tools: [WEST, ZEPHYR_SDK, { ...ARM_GCC, optional: true }, NRFUTIL, JLINK, KEIL, GIT],
 	},
 ];
+
+/** 按工具 id 找预设定义(任一平台里的第一条)—— 安装后记账要用它声明的 bin 名。 */
+export function findFamilyTool(id: string): ToolchainFamilyTool | undefined {
+	for (const family of TOOLCHAIN_FAMILIES) {
+		const tool = family.tools.find((entry) => entry.id === id);
+		if (tool) return tool;
+	}
+	return undefined;
+}
 
 export function findToolchainFamily(id: string): ToolchainFamily | undefined {
 	return TOOLCHAIN_FAMILIES.find((family) => family.id === id);

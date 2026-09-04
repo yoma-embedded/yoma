@@ -173,6 +173,25 @@ app.whenReady().then(async () => {
       window.__mailboxEvent.then((e) => ({ kind: e && e.event && e.event.snapshot && e.event.snapshot.state && e.event.snapshot.state.kind, round: e && e.event && e.event.snapshot && e.event.snapshot.state && e.event.snapshot.state.round }))
     `)
     check("mailbox 事件的嵌套 snapshot 穿桥不丢", eventThrough?.kind === "awaiting-mother" && eventThrough?.round === 2, JSON.stringify(eventThrough))
+
+    // ---------------------------------------------------------------------
+    // 5. 更新器的桥:自动检查开关是 2026-09 新加的两条 invoke,布尔值要原样往返。
+    // ---------------------------------------------------------------------
+    check(
+      "preload 注入了 window.api.updater 的自动检查开关",
+      await win.webContents.executeJavaScript(
+        `typeof window.api?.updater?.getAutoCheck === "function" && typeof window.api?.updater?.setAutoCheck === "function"`,
+      ),
+    )
+    let autoCheckStore = true
+    ipcMain.handle("updater-get-auto-check", () => autoCheckStore)
+    ipcMain.handle("updater-set-auto-check", (_event, value: boolean) => {
+      autoCheckStore = Boolean(value)
+    })
+    const autoCheckThrough = await win.webContents.executeJavaScript(`
+      window.api.updater.setAutoCheck(false).then(() => window.api.updater.getAutoCheck())
+    `)
+    check("updater.setAutoCheck/getAutoCheck 往返", autoCheckThrough === false && autoCheckStore === false, JSON.stringify(autoCheckThrough))
   } catch (error) {
     check("renderer 端到端", false, (error as Error).message)
   }

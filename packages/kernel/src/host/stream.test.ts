@@ -11,6 +11,10 @@ function delta(partID: string, messageID: string, d: string): KernelEvent {
   return { type: "message.part.delta", sessionID: "ses_1", messageID, partID, field: "text", delta: d }
 }
 
+function progress(id: string, bytes: number): KernelEvent {
+  return { type: "toolchain.install", id, packageId: `${id}-pkg`, version: "1.0.0", phase: "download", bytes, total: 100 }
+}
+
 function sink(intervalMs = 0) {
   const batches: KernelEvent[][] = []
   return { sink: new StreamSink({ flush: (events) => batches.push(events), intervalMs }), batches }
@@ -80,6 +84,43 @@ describe("StreamSink", () => {
     for (let i = 0; i < 4; i += 1) s.push(delta(`p${i}`, "m1", "x"))
     expect(batches.length).toBe(1)
     expect(batches[0]!.length).toBe(4)
+  })
+
+  // ─── 工具链安装进度 ────────────────────────────────────────────────────────
+  //
+  // download 阶段每个 chunk 一条,一次 300 MB 的下载能发出上万条;折叠规则与 part
+  // 快照同一条:只看队尾、只折叠同一个 id 的相邻两条,绝不跨类型重排。
+
+  test("同一个工具的相邻安装进度只留最后一条", () => {
+    const { sink: s, batches } = sink()
+    s.push([progress("arm-gcc", 10), progress("arm-gcc", 20), progress("arm-gcc", 30)])
+    s.flushNow()
+    expect(batches[0]!.length).toBe(1)
+    expect(batches[0]![0]).toMatchObject({ type: "toolchain.install", id: "arm-gcc", bytes: 30 })
+  })
+
+  test("不同工具的进度不会被合并(并行装两个时两条进度行各走各的)", () => {
+    const { sink: s, batches } = sink()
+    s.push([progress("arm-gcc", 10), progress("cmake", 5), progress("arm-gcc", 20)])
+    s.flushNow()
+    expect(batches[0]!.length).toBe(3)
+    expect(batches[0]!.map((e) => (e as { bytes?: number }).bytes)).toEqual([10, 5, 20])
+  })
+
+  test("中间隔了别的事件就不折叠,顺序原样保留", () => {
+    const { sink: s, batches } = sink()
+    const message = {
+      id: "m1",
+      sessionID: "ses_1",
+      role: "user" as const,
+      time: { created: 1 },
+      model: { providerID: "p", modelID: "m" },
+    }
+    s.push([progress("arm-gcc", 10), { type: "message.updated", message }, progress("arm-gcc", 20)])
+    s.flushNow()
+    expect(batches[0]!.map((e) => e.type)).toEqual(["toolchain.install", "message.updated", "toolchain.install"])
+    expect((batches[0]![0] as { bytes?: number }).bytes).toBe(10)
+    expect((batches[0]![2] as { bytes?: number }).bytes).toBe(20)
   })
 
   test("close 之后不再接收事件", () => {
