@@ -524,8 +524,11 @@ coding-agent 只**动态 import**(`loadUsb()`),平台包缺席时退化成"USB �
   BYTE 发的是高字节,不除 256 就小 256 倍(守则:永远 WORD);NOMINAL_BITS 报 16 不是 ADC 位数;COMM_ORDER 说
   大端而数据是小端;TIMEBASE 枚举表按机型不同 —— 时基一律查 `:TIMebase:SCALe?`。时间轴
   `t = delay − 5×tdiv + i×interval×stride`(手册公式,10 格)。
-- `:WAVeform:DATA?` 块尾是 `\n\n`,无波形时块前带 `C1:WF ` 前缀;一次最多 MAXPoint(5 M)个点,stride=1 按交付点数
-  推进 `:STARt` 分段,stride>1 只读一个窗口(`:STARt` 在源点空间)。USB2 实测 ~11 MB/s(10 MB 波形 0.86 s)。
+- `:WAVeform:DATA?` 块尾是 `\n\n`,无波形时块前带 `C1:WF ` 前缀。**MAXPoint(5 M)截的是源点窗口**,与 stride 无关
+  (stride 5000 时一窗照样只覆盖 5 M 源点、回 1000 点),所以任何 stride 都按"已交付点数 × stride"推进 `:STARt`
+  分段读;`:STARt` 一旦越过实际数据末尾仪器**根本不回**(挂到超时)。**实际记录长度信 preamble 的
+  WAVE_ARRAY_COUNT**,`:ACQuire:POINts?` 是当前时基的配置值(改了时基还没重新采集时两者能差 5 倍)。
+  USB2 实测 ~11 MB/s(10 MB 波形 0.86 s)。
 - `:PRINt? PNG` 返回**裸 PNG,没有块头**:TCP 侧靠走 PNG chunk 到 IEND 判长(`pngComplete`),USB 侧靠 EOM。
 - 编程手册说没有错误队列,但这台固件的 `:SYSTem:ERRor?` 能用(-224 非法参数、-113 未定义命令头),驱动当
   best-effort 用;老固件超时就当没有。**设了就读回**是硬规矩:触发源给关着的通道会被静默改成 LINE、非法
@@ -534,8 +537,10 @@ coding-agent 只**动态 import**(`loadUsb()`),平台包缺席时退化成"USB �
   这台没有外触发输入(AUX 是触发**输出**),触发源只有 C1–C4 / LINE;`:TIMebase:SCALe` 之后要等 ~500 ms。
 - 量测走 ADVanced 的 P1–P12 槽位(`:MEASure:ADVanced:P<n>:VALue?`),无值时回 `****`;SIMPle 子系统要先开 ITEM。
 
-**还没做 / 没验**:工具级真机联调(只用裸探测脚本验过协议,工具本体是对着假 SCPI 服务器测的)、LAN 路径的真机、
-打包 app 里 `usb` 预编译包的加载、Windows 的 USB、卡片在真窗口里的样子、dock 面板(没有,也不打算先做)。
+**真机联调(2026-09-04,USB)**:11 个动作全走通;校准方波(1 kHz / 3 V)读出 1 kHz / 3.02 Vpp / 50%,与仪器自带
+量测一致;单次触发、arm/collect、边沿时刻(t=0 落在触发点)、存储深度切换、超时后残留响应的清理都在真机上验过。
+**还没验**:LAN 路径的真机、打包 app 里 `usb` 预编译包的加载、Windows 的 USB、卡片在真窗口里的样子、
+dock 面板(没有,也不打算先做)。
 
 ## 约定与规矩
 

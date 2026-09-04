@@ -876,3 +876,39 @@ describe("SiglentScope(对着假 SDS)", () => {
 		expect(await scope.checkError()).toBeUndefined();
 	});
 });
+
+// ─── 真机才暴露的两条(2026-09-04 SDS824X HD 实测) ───────────────────────────
+describe("readWaveform 的窗口语义", () => {
+	it("MAXPoint 按源点截窗口:stride>1 也要按源点推进 STARt 分段读,拼出整条记录", async () => {
+		const fake = await FakeSds.start({ recordPoints: 1000, maxPoint: 300 });
+		try {
+			const s = await SiglentScope.open(fake.address);
+			const w = await s.readWaveform(1, { stride: 2 });
+			expect(w.stride).toBe(2);
+			expect(w.codes.length).toBe(500);
+			for (let i = 0; i < 500; i += 37) expect(w.codes[i]).toBe(defaultSquare(2 * i));
+			const starts = fake.log.filter((c) => /^:WAVeform:STARt /i.test(c)).map((c) => Number(c.split(" ")[1]));
+			// 开头先拨到 0,之后每窗按源点推进 300 / 600 / 900(末尾还会拨回 0,但那条 write 可能还没被假机读到)
+			expect(starts.slice(0, 4)).toEqual([0, 300, 600, 900]);
+			await s.close();
+		} finally {
+			await fake.close();
+		}
+	});
+
+	it("记录长度信 preamble 不信 :ACQuire:POINts?:配置值虚高时不会把 STARt 推过实际数据末尾", async () => {
+		const fake = await FakeSds.start({ recordPoints: 1000, configuredPoints: 10_000, maxPoint: 5_000_000 });
+		try {
+			const s = await SiglentScope.open(fake.address);
+			const w = await s.readWaveform(1, { maxPoints: 4000 });
+			expect(w.recordPoints).toBe(1000);
+			expect(w.stride).toBe(1);
+			expect(w.codes.length).toBe(1000);
+			const starts = fake.log.filter((c) => /^:WAVeform:STARt /i.test(c)).map((c) => Number(c.split(" ")[1]));
+			expect(starts.every((v) => v < 1000)).toBe(true);
+			await s.close();
+		} finally {
+			await fake.close();
+		}
+	});
+});

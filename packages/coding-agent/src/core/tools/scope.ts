@@ -232,7 +232,7 @@ Actions:
 Rules:
 - Probe attenuation must match the physical probe switch (setup channels[].probe) or every voltage is off by 10×.
 - The scope is one instrument for everyone: it is opened per action and released after 90 s idle, so the front panel / EasyScopeX are usable in between. The USB cable and the LAN port both work; over LAN close the browser control page first (one client at a time).
-- Points are a budget: 4000 decimated points show the shape; for edge timing capture with stride=1 over a short timebase, or use measure — the scope measures at full rate for free.
+- Points are a budget: 4000 decimated points show the shape; for edge timing capture with stride=1 over a short timebase (or a small stride like 10–100 over a long one), or use measure — the scope measures at full rate for free. rise/fall in capture stats are limited by the sample spacing shown as "/pt".
 - A capture whose trigger never fired proves nothing: check the trigger source is a channel that is ON, the level sits inside the signal, and the event really happens inside the wait.
 - Time in samples/edges is relative to the trigger point (negative = before). The full waveform stays on disk; narrow the window instead of re-capturing.`;
 
@@ -438,6 +438,8 @@ export function createScopeToolDefinition(env: ExecutionEnv, options: ScopeToolO
 				stats: { min: st.min, max: st.max, pp: st.pp, mean: st.mean, rms: st.rms, freq: st.freq, period: st.period, duty: st.duty, rise: st.rise, fall: st.fall, edges: st.edges },
 			});
 			lines.push(`C${w.ch}${chState.label ? ` (${chState.label})` : ""}: ${si(chState.vdiv, `${w.unit}/div`)} ${chState.coupling} ${w.probe}×  ${statsLine(w.unit, st)}`);
+			// 幅度不到 0.2 格:多半是探头悬空或量程太粗,统计出来的"频率""占空比"是噪声的形状,别让模型当真
+			if (st.pp < chState.vdiv * 0.2) lines.push(`  ⚠ C${w.ch} swings only ${si(st.pp, w.unit)} at ${si(chState.vdiv, `${w.unit}/div`)} — noise or nothing connected? Check the probe/ground and lower vdiv before trusting the frequency/duty above.`);
 			if (plot) lines.push(asciiPlot(w.codes, w.scale, w.time, { label: `C${w.ch}` }));
 		}
 		const meta: ScopeCaptureMeta = {

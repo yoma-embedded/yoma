@@ -8,7 +8,8 @@
  *  - **时基类命令要等**:`:TIMebase:SCALe` 之后 ~500ms 内的下一条命令有几率失效(实测有人踩过
  *    "跳到最小时基")。
  *  - **读波形先停**:RUN 状态下读到的是双缓冲里的哪一帧没有文档保证;要一致快照就 STOP 或
- *    SINGle→Stop 再读。stride>1 只读一个窗口(:STARt 是源点空间,与交付点空间不一致)。
+ *    SINGle→Stop 再读。记录长度信 preamble 的 WAVE_ARRAY_COUNT(实际采集),不信 `:ACQuire:POINts?`(配置值);
+ *    MAXPoint 截的是源点窗口,stride 多大都按 "已交付点数 × stride" 推进 :STARt 分段读(2026-09-04 真机核实)。
  */
 import { parseNumber } from "./analyze.ts";
 import { COUPLING_ENUM, decodeSamples, parseWaveDesc, type TimeScale, type VoltScale, type WaveDesc, voltScaleOf } from "./preamble.ts";
@@ -408,13 +409,23 @@ export class SiglentScope {
 		const n = normalizeChannel(ch);
 		const { signal } = options;
 		const c = this.client;
-		const recordPoints = Math.round(await this.qNum(":ACQuire:POINts?", signal));
+		const configuredPoints = Math.round(await this.qNum(":ACQuire:POINts?", signal));
 		const sampleRate = await this.qNum(":ACQuire:SRATe?", signal);
 		const tdiv = await this.qNum(":TIMebase:SCALe?", signal);
 		const delay = await this.qNum(":TIMebase:DELay?", signal);
 		const probe = await this.qNum(`:CHANnel${n}:PROBe?`, signal);
 		const unit = (await this.q(`:CHANnel${n}:UNIT?`, undefined, signal)).toUpperCase() || "V";
-		const maxPoint = Math.max(1000, Math.round((await this.qNum(":WAVeform:MAXPoint?", signal).catch(() => 5_000_000))));
+		const maxPoint = Math.max(1, Math.round((await this.qNum(":WAVeform:MAXPoint?", signal).catch(() => 5_000_000))));
+		// 五个状态全是粘的,每次都写全;先按整段读 preamble —— 它的 WAVE_ARRAY_COUNT 才是**这次采集**的实际点数,
+		// `:ACQuire:POINts?` 是当前时基的配置值(改了时基但还没重新采集时两者不同,实测差 5 倍);取较小者,
+		// 因为 :STARt 一旦越过实际数据末尾,仪器根本不回(实测挂到超时)。
+		await c.command(`:WAVeform:SOURce C${n}`, { signal });
+		await c.command(":WAVeform:WIDTh WORD", { signal });
+		await c.command(":WAVeform:STARt 0", { signal });
+		await c.command(":WAVeform:INTerval 1", { signal });
+		await c.command(":WAVeform:POINt 0", { signal });
+		const desc = parseWaveDesc(await c.queryBlock(":WAVeform:PREamble?", { signal, headerTimeoutMs: 5000 }));
+		const recordPoints = Math.max(1, Math.min(desc.waveArrayCount > 0 ? desc.waveArrayCount : configuredPoints, configuredPoints > 0 ? configuredPoints : desc.waveArrayCount));
 		let stride = Math.max(1, Math.floor(options.stride ?? 1));
 		if (options.stride === undefined) {
 			// 没指定 stride 时由 maxPoints 预算决定
@@ -423,30 +434,25 @@ export class SiglentScope {
 			// 显式 stride 必须照办(模型要的就是全速边沿);超预算就拒绝,不悄悄改
 			throw new Error(`scope: stride ${stride} over a ${recordPoints.toLocaleString()}-point record is ${Math.floor(recordPoints / stride).toLocaleString()} points, more than the ${options.maxPoints.toLocaleString()} limit — raise stride, shorten the timebase, or lower the memory depth (scope setup mdepth)`);
 		}
-		if (stride > 1 && Math.floor(recordPoints / stride) > maxPoint) stride = Math.ceil(recordPoints / maxPoint);
-		// 五个状态全是粘的,每次都写全
-		await c.command(`:WAVeform:SOURce C${n}`, { signal });
-		await c.command(":WAVeform:WIDTh WORD", { signal });
-		await c.command(":WAVeform:STARt 0", { signal });
-		await c.command(`:WAVeform:INTerval ${stride}`, { signal });
-		await c.command(":WAVeform:POINt 0", { signal });
-		const desc = parseWaveDesc(await c.queryBlock(":WAVeform:PREamble?", { signal, headerTimeoutMs: 5000 }));
+		if (stride > 1) await c.command(`:WAVeform:INTerval ${stride}`, { signal });
+		// MAXPoint 是按**源点**截窗口的(stride 5000 时一窗照样只覆盖 5 M 源点,回 1000 点),所以无论 stride 多少
+		// 都按源点推进 :STARt 分段读:下一窗的起点 = 已交付点数 × stride。
 		const expected = Math.max(1, Math.floor(recordPoints / stride));
 		const chunks: Int16Array[] = [];
 		let got = 0;
-		let start = 0;
-		for (let i = 0; i < 64 && got < expected; i++) {
-			if (start > 0) await c.command(`:WAVeform:STARt ${start}`, { signal });
+		let srcPos = 0;
+		const maxWindows = Math.ceil(recordPoints / maxPoint) + 2;
+		for (let i = 0; i < maxWindows && got < expected && srcPos < recordPoints; i++) {
+			if (srcPos > 0) await c.command(`:WAVeform:STARt ${srcPos}`, { signal });
 			const block = await c.queryBlock(":WAVeform:DATA?", { signal, headerTimeoutMs: 8000 });
 			const codes = decodeSamples(block, desc.commType);
 			if (codes.length === 0) break;
 			const int16 = codes instanceof Int16Array ? codes : Int16Array.from(codes, (v) => v * 256);
 			chunks.push(int16);
 			got += int16.length;
-			start += int16.length;
-			if (stride > 1) break; // 单窗::STARt 在源点空间,分段会重复
+			srcPos += int16.length * stride;
 		}
-		if (start > 0) await c.command(":WAVeform:STARt 0", { signal }).catch(() => undefined);
+		if (srcPos > 0) await c.command(":WAVeform:STARt 0", { signal }).catch(() => undefined);
 		const codes = chunks.length === 1 ? chunks[0]! : concat(chunks, got);
 		if (codes.length === 0) throw new Error(`scope: C${n} returned no samples — is the channel on and has the scope acquired anything (status ${await this.triggerStatus().catch(() => "?")})?`);
 		const scale = voltScaleOf(desc, probe);

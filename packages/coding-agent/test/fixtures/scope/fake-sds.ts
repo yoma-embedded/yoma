@@ -172,6 +172,8 @@ export interface FakeSdsOptions {
 	/** 段间延时(ms),默认 1 */
 	chunkDelayMs?: number;
 	recordPoints?: number;
+	/** `:ACQuire:POINts?` 报的配置值;真机改了时基但还没重新采集时它与实际记录长度不同。默认 = recordPoints */
+	configuredPoints?: number;
 	sampleRate?: number;
 	/** `:WAVeform:MAXPoint?`:一次 DATA? 最多给多少点。真机默认 5e6,测试调小来逼分段。 */
 	maxPoint?: number;
@@ -198,6 +200,7 @@ export class FakeSds {
 	statusIndex = 0;
 	status = "Stop";
 	recordPoints: number;
+	configuredPoints?: number;
 	sampleRate: number;
 	maxPoint: number;
 	generator: (i: number) => number;
@@ -215,6 +218,7 @@ export class FakeSds {
 		this.chunkBytes = options.chunkBytes ?? 0;
 		this.chunkDelayMs = options.chunkDelayMs ?? 1;
 		this.recordPoints = options.recordPoints ?? 1000;
+		this.configuredPoints = options.configuredPoints;
 		this.sampleRate = options.sampleRate ?? 2e9;
 		this.maxPoint = options.maxPoint ?? 5_000_000;
 		this.generator = options.generator ?? defaultSquare;
@@ -520,7 +524,7 @@ export class FakeSds {
 			case "SRAT":
 				return query ? nr3(this.sampleRate) : undefined;
 			case "POIN":
-				return query ? nr3(this.recordPoints) : undefined;
+				return query ? nr3(this.configuredPoints ?? this.recordPoints) : undefined;
 			case "MMAN":
 				if (query) return this.acquire.management;
 				if (/^(AUTO|FMD(EPTH)?)$/i.test(arg)) this.acquire.management = /^AUTO$/i.test(arg) ? "AUTO" : "FMDEPTH";
@@ -572,7 +576,7 @@ export class FakeSds {
 			case "MAXP":
 				return query ? nr3(this.maxPoint) : undefined;
 			case "PRE":
-				return query ? PREAMBLE_RESPONSE : undefined;
+				return query ? this.preambleBlock() : undefined;
 			case "DATA":
 				return query ? this.waveformBlock() : undefined;
 			default:
@@ -580,13 +584,31 @@ export class FakeSds {
 		}
 	}
 
-	/** 块头 + 样本 + 两个换行(真机的块尾就是两个换行)。 */
+	/**
+	 * preamble 按真机的规矩改写夹具:WAVE_ARRAY_COUNT / WAVE_ARRAY_1 是**这次采集的实际长度**(不随 STARt/POINt 变,
+	 * 也不等于 :ACQuire:POINts? 的配置值),FIRST_POINT = STARt,SPARSING = INTerval。块头 `#9000000346` 占 11 字节。
+	 */
+	private preambleBlock(): Uint8Array {
+		const out = new Uint8Array(PREAMBLE_RESPONSE);
+		const dv = new DataView(out.buffer, 11);
+		dv.setInt32(60, this.recordPoints * 2, true);
+		dv.setInt32(116, this.recordPoints, true);
+		dv.setInt32(132, this.wave.start, true);
+		dv.setInt32(136, Math.max(1, this.wave.interval), true);
+		return out;
+	}
+
+	/**
+	 * 块头 + 样本 + 两个换行(真机的块尾就是两个换行)。
+	 * 真机规矩:MAXPoint 截的是**源点**窗口(与 stride 无关),POINt 再截交付点数;STARt 越过记录末尾真机不回,
+	 * 这里回空块(测试不能等超时)。
+	 */
 	private waveformBlock(): Uint8Array {
 		const { start, interval, point, width } = this.wave;
 		const stride = Math.max(1, interval);
 		const available = Math.max(0, this.recordPoints - start);
-		const cap = point > 0 ? Math.min(point, this.maxPoint) : this.maxPoint;
-		const n = Math.min(Math.ceil(available / stride), cap);
+		const window = Math.min(available, this.maxPoint);
+		const n = Math.min(Math.floor(window / stride), point > 0 ? point : Number.POSITIVE_INFINITY);
 		const body = new Uint8Array(width === "BYTE" ? n : n * 2);
 		const dv = new DataView(body.buffer);
 		for (let i = 0; i < n; i++) {
