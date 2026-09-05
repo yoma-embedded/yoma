@@ -87,12 +87,14 @@ export const TOOLCHAIN_CATALOG: readonly CatalogPackage[] = [
 		homepage: "https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads",
 		license: "GPL-3.0 (binaries redistributed by Arm)",
 		artifacts: {
+			// 实测(2026-09-05):Windows 的 zip **没有**顶层包装目录,bin/ lib/ arm-none-eabi/ 直接在根上;
+			// Linux / macOS 的 tar.xz 才有 arm-gnu-toolchain-<ver>-<host>-arm-none-eabi/ 这一层。
 			"win32-x64": {
 				url: `${ARM_BASE}/${armRoot("mingw-w64-x86_64")}.zip`,
 				sha256: "7936cac895611023ffb22a64b8e426098c7104cb689778c1894572ca840b9ece",
 				bytes: 295922350,
 				archive: "zip",
-				root: armRoot("mingw-w64-x86_64"),
+				root: "",
 				binDir: "bin",
 			},
 			"linux-x64": {

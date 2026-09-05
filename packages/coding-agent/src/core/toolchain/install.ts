@@ -637,15 +637,27 @@ async function extractTar(
 	});
 }
 
-/** 压缩包里"成为包目录"的那一层:catalog 的 root,找不到时认唯一的顶层目录。 */
-function locateRoot(extracting: string, root: string | undefined): string {
+/**
+ * 压缩包里"成为包目录"的那一层,按顺序试:catalog 的 root → 解压根下直接就有 binDir(内容就在根上,
+ * 厂商换了打包方式也不至于装不上;Arm 15.2 的 Windows zip 实测就是这样)→ 唯一的顶层目录 →
+ * 唯一顶层目录下面又直接有 binDir。都不是才报错。
+ */
+function locateRoot(extracting: string, root: string | undefined, binDirRel: string): string {
+	const hasBin = (dir: string) => {
+		const bin = binDirRel === "" ? dir : path.join(dir, binDirRel);
+		return existsSync(bin) && statSync(bin).isDirectory();
+	};
 	if (root) {
 		const candidate = path.join(extracting, root);
 		if (existsSync(candidate) && statSync(candidate).isDirectory()) return candidate;
 	}
+	if (binDirRel !== "" && hasBin(extracting)) return extracting;
 	const entries = readdirSync(extracting, { withFileTypes: true }).filter((e) => e.name !== "__MACOSX");
-	if (entries.length === 1 && entries[0].isDirectory()) return path.join(extracting, entries[0].name);
-	if (root) throw new Error(`archive does not contain the expected directory "${root}"`);
+	if (entries.length === 1 && entries[0].isDirectory()) {
+		const only = path.join(extracting, entries[0].name);
+		if (binDirRel === "" || hasBin(only) || !root) return only;
+	}
+	if (root) throw new Error(`archive does not contain the expected directory "${root}" (nor "${binDirRel || "."}" at its root)`);
 	return extracting;
 }
 
@@ -815,7 +827,7 @@ export async function installToolchain(opts: InstallToolchainOptions): Promise<I
 				} else {
 					await extractTar(archiveFile, extracting, opts.tarBinary ?? defaultTarBinary(), env, signal);
 				}
-				const rootDir = locateRoot(extracting, artifact.root);
+				const rootDir = locateRoot(extracting, artifact.root, binDirRel);
 				const stagedBin = binDirRel === "" ? rootDir : path.join(rootDir, binDirRel);
 				if (!existsSync(stagedBin)) {
 					throw new Error(`expected "${binDirRel || "."}" inside the extracted ${pkg.title} archive, found none`);

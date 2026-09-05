@@ -586,8 +586,12 @@ dock 面板(没有,也不打算先做)。
   (main/index.ts 的 `quitting` 旗):electron-updater 挂在 `quit` 事件上,fire-and-forget 的 stopSidecars
   要几秒,不拦的话 NSIS 会在烧录 / gdb 孙进程还活着时换文件。`relaunch()`(app.exit)前先关掉退出时安装,
   否则 NSIS 换文件和拉起旧 exe 撞在一起。
-- 目录只在真实安装里验过 ninja(Windows,zip);Arm/CMake/OpenOCD 的 root 目录名按厂商惯例写,
-  `locateRoot` 认不到 root 时回落到"唯一的顶层目录"。**首次真装 Arm 工具链前跑一遍**。
+- 目录里的五个包在 Windows 上都真装过一遍(2026-09-05,隔离的临时 configDir):ninja / cmake / openocd /
+  arm-gnu-toolchain(29 s 装完,arm-gcc 15.2.1 + arm-gdb 16.3.90)。**厂商的包装方式不统一**:Arm 的 Windows
+  zip 内容直接在根上(bin/ lib/ arm-none-eabi/),tar.xz 才有 `arm-gnu-toolchain-<ver>-<host>-arm-none-eabi/`
+  这一层(darwin-arm64 / x86_64 / aarch64 三个都核过);第一版 catalog 按 tar 的惯例给 zip 也写了 root,
+  真装就炸。`locateRoot` 因此按 root → 根上直接有 binDir → 唯一顶层目录 四步试,改 catalog 时**以真实
+  压缩包为准**。macOS / Linux 的 tar 路径还没在真机上跑过。
 
 ### 数据手册服务器默认地址(`core/datasheet-server.ts`)
 
@@ -734,10 +738,10 @@ NsisUpdater 的 blockmap 路径 —— 通道本来就通。这次修的是**用
 
 ## 已知的未完成项
 
-- **工具链自动安装只在真实安装里验过 ninja**(Windows zip)。Arm GNU Toolchain / CMake / OpenOCD 的压缩包
-  布局按厂商惯例写进 catalog,首次真装前要跑一遍;macOS / Linux 的 tar 路径没有真机验过;
-  运行期镜像只有 `YOMA_TOOLCHAIN_MIRROR` 一个口子,维护者若要自建镜像,把包放到 `<镜像>/<文件名>` 即可。
-  内核 utilityProcess 里的 `fetch` 不认系统代理设置(main 进程的 `setGlobalProxyFromEnv` 不覆盖它)。
+- **工具链自动安装只在 Windows 上真装过**(五个包都装过,见「工具链自动安装」一节);macOS / Linux 的
+  tar 路径与可执行位处理没有真机验过。运行期镜像只有 `YOMA_TOOLCHAIN_MIRROR` 一个口子,维护者若要自建
+  镜像,把包放到 `<镜像>/<文件名>` 即可。内核 utilityProcess 里的 `fetch` 不认系统代理设置(main 进程的
+  `setGlobalProxyFromEnv` 不覆盖它)。
 - **数据手册默认地址待维护者确认**:`DEFAULT_DATASHEET_SERVER` 是 ad6df94 之前的那个 IP,2026-09-05 从
   开发机探测连接超时。还没有设置页字段可以改它(只能 `~/.yoma/.env` 或环境变量)。
 - **热升级没有真跑过一次两版本升级**:controller 有单测、bridge 有 e2e,但"装 vN → 发布 vN+1 → 自动下载
