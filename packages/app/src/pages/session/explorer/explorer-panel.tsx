@@ -185,6 +185,13 @@ export function ExplorerPanel(props: {
     language,
   })
 
+  let bodyEl: HTMLElement | undefined
+  /**
+   * 树的拖宽上限：右栏现在是三页共用的固定宽度（不再"整行减中间栏"），
+   * 树按死数 480 拖能把编辑器挤没，所以按主体实际宽度算，给编辑器留 220px。
+   */
+  const treeMax = () => Math.max(170, Math.min(480, (bodyEl?.clientWidth ?? 700) - 220))
+
   const openPath = () => scope().openPath()
   const buffer = () => {
     const path = openPath()
@@ -359,11 +366,12 @@ export function ExplorerPanel(props: {
       </div>
 
       {/* 主体：树 + 编辑器 */}
-      <div class="flex-1 min-h-0 flex overflow-hidden">
+      <div class="flex-1 min-h-0 flex overflow-hidden" ref={(el: HTMLElement) => (bodyEl = el)}>
         <Show when={scope().treeVisible()}>
           <div
             class="relative shrink-0 h-full flex flex-col border-r border-border-weaker-base group/filetree"
-            style={{ width: `${layout.fileTree.width()}px` }}
+            // max-width 是渲染期的兜底：右栏被拖窄（或旧的宽树宽度）时也留得下编辑器
+            style={{ width: `${layout.fileTree.width()}px`, "max-width": "calc(100% - 220px)" }}
           >
             <div class="h-7 shrink-0 px-3 flex items-center text-12-medium text-text-weak">
               <span class="truncate" title={directory()}>
@@ -385,7 +393,7 @@ export function ExplorerPanel(props: {
               edge="end"
               size={layout.fileTree.width()}
               min={170}
-              max={480}
+              max={treeMax()}
               onResize={(width) => layout.fileTree.resize(width)}
             />
           </div>

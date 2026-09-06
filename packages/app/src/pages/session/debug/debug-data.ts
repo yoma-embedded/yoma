@@ -132,7 +132,6 @@ const INSTRUMENTS: Instrument[] = [
 
 export const debug = createRoot(() => {
   const [opened, setOpened] = createSignal(true)
-  const [width, setWidth] = createSignal(360)
   const [fullscreen, setFullscreen] = createSignal(false)
   const [mode, setMode] = createSignal<DockMode>("debug")
 
@@ -146,8 +145,7 @@ export const debug = createRoot(() => {
       setOpened(false)
     },
     toggle: () => setOpened((v) => !v),
-    width,
-    setWidth,
+    // 宽度不在这儿：右栏三页共用 layout.dock.width（持久化，切页不变）
     fullscreen,
     toggleFullscreen: () => setFullscreen((v) => !v),
     mode,

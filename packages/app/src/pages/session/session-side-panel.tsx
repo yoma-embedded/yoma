@@ -143,13 +143,20 @@ export function SessionSidePanel(props: {
   }
 
   const open = createMemo(() => dock.opened())
-  // file 模式与 changes 一样占满剩余宽度（树 + 编辑器需要空间）
-  const wide = createMemo(() => dock.fullscreen() || dock.mode() === "changes" || dock.mode() === "file")
+  // 三个子页共用同一个宽度（layout.dock.width）：切页只换内容，不换宽度。
+  // 只有全屏才让面板吃掉整行（此时中间会话栏被 session.tsx 隐藏）。
   const panelWidth = createMemo(() => {
     if (!open()) return "0px"
-    if (wide()) return "auto"
-    return `${dock.width()}px`
+    if (dock.fullscreen()) return "auto"
+    return `${layout.dock.width()}px`
   })
+
+  let panelEl: HTMLElement | undefined
+  /** 拖宽上限：按面板所在这一行的实际宽度算，给中间会话栏至少留 450px */
+  const maxWidth = () => {
+    const row = panelEl?.parentElement?.clientWidth ?? (typeof window === "undefined" ? 1200 : window.innerWidth)
+    return Math.max(400, row - 450)
+  }
 
   // ---- 原有数据管线（diff / 文件树 / 标签页）保持不变 ----------------------
   const diffs = createMemo(() => props.diffs())
@@ -309,6 +316,7 @@ export function SessionSidePanel(props: {
       >
         <aside
           id="review-panel"
+          ref={(el: HTMLElement) => (panelEl = el)}
           aria-label={language.t("session.panel.reviewAndFiles")}
           class="relative min-w-0 h-full flex flex-col shrink-0 overflow-hidden bg-background-base"
           classList={{
@@ -316,21 +324,21 @@ export function SessionSidePanel(props: {
               !props.size.active() && !props.reviewSnap,
             "rounded-[10px] shadow-[var(--v2-elevation-raised)]": settings.general.newLayoutDesigns(),
             "border-l border-border-weaker-base": !settings.general.newLayoutDesigns(),
-            "flex-1": wide(),
+            "flex-1": dock.fullscreen(),
           }}
           style={{ width: panelWidth() }}
         >
-          <Show when={!wide()}>
+          <Show when={!dock.fullscreen()}>
             <div onPointerDown={() => props.size.start()}>
               <ResizeHandle
                 direction="horizontal"
                 edge="start"
-                size={dock.width()}
+                size={layout.dock.width()}
                 min={300}
-                max={typeof window === "undefined" ? 720 : Math.max(400, window.innerWidth - 450)}
+                max={maxWidth()}
                 onResize={(width) => {
                   props.size.touch()
-                  dock.setWidth(width)
+                  layout.dock.resize(width)
                 }}
               />
             </div>

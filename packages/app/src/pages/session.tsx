@@ -178,12 +178,13 @@ export default function Page() {
   const desktopSidePanelOpen = createMemo(() => desktopReviewOpen() || desktopFileTreeOpen())
   // 右侧四模式面板的可见性 —— 与 SessionSidePanel 内的 Show 条件保持一致
   const dockVisible = createMemo(() => isDesktop() && !(settings.general.newLayoutDesigns() && !params.id))
+  // 新布局这一行有 gap-2(8px)：中间栏按百分比减宽时要把这道缝一起减掉，
+  // 否则 中间 + 缝 + 右栏 会超出一格，右栏顶掉右侧 8px 留白（贴到窗口边）。
+  const rowGap = () => (settings.general.newLayoutDesigns() ? 8 : 0)
   const sessionPanelWidth = createMemo(() => {
     if (dockVisible()) {
-      if (!debugDock.opened()) return "calc(100% - 36px)" // 收起态：给展开窄条(w-9)留位
-      if (debugDock.mode() === "changes" || debugDock.mode() === "file")
-        return `${layout.session.width()}px` // changes/file：中间固定宽，面板 flex-1
-      return `calc(100% - ${debugDock.width()}px)` // 调试/cmd：面板固定宽
+      if (!debugDock.opened()) return `calc(100% - ${36 + rowGap()}px)` // 收起态：给展开窄条(w-9)留位
+      return `calc(100% - ${layout.dock.width() + rowGap()}px)` // 三个子页同一个宽度：右栏固定宽，中间吃剩下的
     }
     if (!desktopSidePanelOpen()) return "100%"
     if (desktopReviewOpen()) return `${layout.session.width()}px`
@@ -1416,7 +1417,8 @@ export default function Page() {
             <Show when={!!params.id && mobileTabsBottom()}>{mobileTabs(true, true)}</Show>
           </div>
 
-          <Show when={desktopReviewOpen() || (dockVisible() && debugDock.opened() && debugDock.mode() === "file")}>
+          {/* 右栏（三子页）由面板自己左边缘那根手柄统一调宽，这根只服务旧布局，免得同一条缝上叠两根 */}
+          <Show when={!dockVisible() && desktopReviewOpen()}>
             <div onPointerDown={() => size.start()}>
               <ResizeHandle
                 classList={{

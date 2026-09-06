@@ -27,6 +27,8 @@ const AVATAR_COLOR_KEYS = ["pink", "mint", "orange", "purple", "cyan", "lime"] a
 const DEFAULT_SIDEBAR_WIDTH = 344
 const DEFAULT_FILE_TREE_WIDTH = 200
 const DEFAULT_SESSION_WIDTH = 600
+/** 右侧栏(审查 / 调试 / 文件三页共用)的统一宽度默认值 —— 切页不改宽度,只认这一个数 */
+const DEFAULT_DOCK_WIDTH = 480
 const DEFAULT_REVIEW_PANEL_OPENED = false
 export type AvatarColorKey = (typeof AVATAR_COLOR_KEYS)[number]
 
@@ -296,6 +298,9 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         },
         session: {
           width: DEFAULT_SESSION_WIDTH,
+        },
+        dock: {
+          width: DEFAULT_DOCK_WIDTH,
         },
         mobileSidebar: {
           opened: false,
@@ -643,6 +648,21 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
             return
           }
           setStore("session", "width", width)
+        },
+      },
+      /**
+       * 右侧栏宽度 —— 审查 / 调试 / 文件三个子页共用一个值。
+       * 从前每页各自决定宽度(调试页读 dock 自己的 360,审查/文件页是"整行减去中间栏"),
+       * 切页就跳一次;现在只有这一个宽度,切页不动,拖过就记住(跟着 layout 一起持久化)。
+       */
+      dock: {
+        width: createMemo(() => store.dock?.width ?? DEFAULT_DOCK_WIDTH),
+        resize(width: number) {
+          if (!store.dock) {
+            setStore("dock", { width })
+            return
+          }
+          setStore("dock", "width", width)
         },
       },
       mobileSidebar: {
