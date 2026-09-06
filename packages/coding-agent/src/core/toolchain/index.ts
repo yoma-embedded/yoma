@@ -9,7 +9,9 @@
  * 可以放心全量转发,不需要逐个具名。
  */
 export * from "./actions.ts";
+export * from "./catalog.ts";
 export * from "./families.ts";
+export * from "./install.ts";
 export * from "./ledger.ts";
 export * from "./locations.ts";
 export * from "./resolve.ts";

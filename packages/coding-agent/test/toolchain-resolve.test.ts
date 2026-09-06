@@ -23,9 +23,11 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
+import { installableFor } from "../src/core/toolchain/catalog.ts";
+import { MANAGED_MARKER, managedPackageDir } from "../src/core/toolchain/install.ts";
 import { writeLedgerEntry } from "../src/core/toolchain/ledger.ts";
 import { promptSectionFor, resolveToolchain, shellEnvFor } from "../src/core/toolchain/resolve.ts";
-import type { ToolchainResolution } from "../src/core/toolchain/resolve.ts";
+import type { ResolvedTool, ToolchainResolution } from "../src/core/toolchain/resolve.ts";
 import type { ToolchainManifest, ToolSpec } from "../src/core/toolchain/schema.ts";
 
 let projectDir: string;
@@ -471,5 +473,282 @@ describe("promptSectionFor", () => {
 
 		const text = expectSection(resolution);
 		expect(text).toContain("clangd (optional)");
+	});
+});
+
+// ─── managed 档:Yoma 自己装的 ──────────────────────────────────────────────────
+//
+// install.ts 把包装进 `<configDir>/toolchains/<包>/<版本>/`,并在包目录里写下
+// `.yoma-toolchain.json` 标记。这一档排在账本之后、环境变量之前 —— 它存在的全部理由
+// 是:设置页那颗"重新探测"按钮走的是 skipLedger,如果 managed 档不在,刚装好的工具
+// 会在按下去的那一刻报 MISSING。
+
+/** 造一个 install.ts 形态的托管安装:包目录 + 标记 + binDir 里的假 exe。 */
+function seedManagedInstall(opts: {
+	packageId: string;
+	version: string;
+	provides: string[];
+	exeName: string;
+	exeVersion: string;
+}): { dir: string; binDir: string; exe: string } {
+	const dir = managedPackageDir(opts.packageId, opts.version, configDir);
+	const managedBinDir = join(dir, "bin");
+	mkdirSync(managedBinDir, { recursive: true });
+	const exe = writeFakeExe(managedBinDir, opts.exeName, opts.exeVersion);
+	writeFileSync(
+		join(dir, MANAGED_MARKER),
+		JSON.stringify({
+			packageId: opts.packageId,
+			version: opts.version,
+			dir,
+			binDir: "bin",
+			provides: opts.provides,
+			archiveSha256: "d".repeat(64),
+			installedAt: Date.now(),
+		}),
+	);
+	return { dir, binDir: managedBinDir, exe };
+}
+
+describe("managed 档", () => {
+	it('skipLedger 的新鲜探测照样找得到 Yoma 装的东西,source 是 "managed"', async () => {
+		const managed = seedManagedInstall({
+			packageId: "widget-tools",
+			version: "1.2.3",
+			provides: ["widget"],
+			exeName: "widget",
+			exeVersion: "1.2.3",
+		});
+
+		const result = await resolveToolchain({
+			projectDir,
+			configDir,
+			skipLedger: true,
+			platform: process.platform,
+			env: baseEnv(),
+			manifestText: manifestJson([{ id: "widget", bin: ["widget"] }]),
+		});
+
+		const widget = result.tools[0];
+		expect(widget.status).toBe("ok");
+		expect(widget.source).toBe("managed");
+		expect(widget.version).toBe("1.2.3");
+		expect(Object.values(widget.bin).map((p) => p.toLowerCase())).toEqual([managed.exe.toLowerCase()]);
+	});
+
+	it("标记里的 provides 不含这个 id 时不算命中(同一个目录下别的包不该被顶包)", async () => {
+		seedManagedInstall({
+			packageId: "other-tools",
+			version: "1.0.0",
+			provides: ["gadget"],
+			exeName: "widget",
+			exeVersion: "1.2.3",
+		});
+
+		const result = await resolveToolchain({
+			projectDir,
+			configDir,
+			platform: process.platform,
+			env: baseEnv(),
+			manifestText: manifestJson([{ id: "widget", bin: ["widget"] }]),
+		});
+
+		expect(result.tools[0].status).toBe("missing");
+	});
+
+	it("账本赢过 managed(用户/上次确认过的记录优先级更高)", async () => {
+		seedManagedInstall({
+			packageId: "widget-tools",
+			version: "1.2.3",
+			provides: ["widget"],
+			exeName: "widget",
+			exeVersion: "1.2.3",
+		});
+		const ledgerBin = writeFakeExe(binDir, "widget-ledger", "5.5.5");
+		await writeLedgerEntry({ id: "widget", bin: { widget: ledgerBin }, confirmedAt: 1, by: "user" }, configDir);
+
+		const result = await resolveToolchain({
+			projectDir,
+			configDir,
+			platform: process.platform,
+			env: baseEnv(),
+			manifestText: manifestJson([{ id: "widget", bin: ["widget"] }]),
+		});
+
+		expect(result.tools[0].source).toBe("ledger");
+		expect(result.tools[0].version).toBe("5.5.5");
+	});
+
+	it("managed 赢过 PATH(装进来的那一份是我们说了算的,PATH 上的同名工具不该顶掉它)", async () => {
+		seedManagedInstall({
+			packageId: "widget-tools",
+			version: "1.2.3",
+			provides: ["widget"],
+			exeName: "widget",
+			exeVersion: "1.2.3",
+		});
+		const pathDir = join(binDir, "on-path");
+		mkdirSync(pathDir);
+		writeFakeExe(pathDir, "widget", "2.2.2");
+
+		const result = await resolveToolchain({
+			projectDir,
+			configDir,
+			platform: process.platform,
+			env: baseEnv({ PATH: pathDir }),
+			manifestText: manifestJson([{ id: "widget", bin: ["widget"] }]),
+		});
+
+		expect(result.tools[0].source).toBe("managed");
+		expect(result.tools[0].version).toBe("1.2.3");
+	});
+});
+
+// ─── installable ─────────────────────────────────────────────────────────────
+//
+// 非 ok 的工具,只要 catalog.ts 对这台机器(平台-架构)有包,就带上 installable ——
+// 设置页的"安装"按钮和系统提示词里的自助安装建议看的都是它。工具 id 用 "arm-gcc"
+// 且**不写 from**:WELL_KNOWN_LOCATIONS / REGISTRY_SEARCH_TERM 两张表的键是
+// "arm-gnu-toolchain",不写 from 就查不到,于是这条用例在任何开发机上都稳定 missing,
+// 不会因为这台机器真装了 Arm 工具链而变成另一种状态(本文件头部注释里的那个坑)。
+
+describe("installable", () => {
+	it("missing 且 catalog 对这个宿主有包时带上 installable(packageId/title/version/bytes)", async () => {
+		const result = await resolveToolchain({
+			projectDir,
+			configDir,
+			platform: "win32",
+			arch: "x64",
+			env: baseEnv(),
+			manifestText: manifestJson([{ id: "arm-gcc", bin: ["arm-none-eabi-gcc"] }]),
+		});
+
+		const tool = result.tools[0];
+		expect(tool.status).toBe("missing");
+		expect(tool.installable).toEqual(installableFor("arm-gcc", "win32-x64"));
+		expect(tool.installable?.packageId).toBe("arm-gnu-toolchain");
+	});
+
+	it("version-mismatch 也带 installable —— 目录钉的版本满不满足要求由人/模型对照,不在这里替他们判", async () => {
+		writeFakeExe(binDir, "arm-none-eabi-gcc", "1.0.0");
+
+		const result = await resolveToolchain({
+			projectDir,
+			configDir,
+			platform: "win32",
+			arch: "x64",
+			env: baseEnv({ PATH: binDir }),
+			manifestText: manifestJson([{ id: "arm-gcc", bin: ["arm-none-eabi-gcc"], version: ">=99" }]),
+		});
+
+		const tool = result.tools[0];
+		expect(tool.status).toBe("version-mismatch");
+		expect(tool.installable?.packageId).toBe("arm-gnu-toolchain");
+	});
+
+	it("宿主认不出来(平台-架构不在目录里)时没有 installable", async () => {
+		const result = await resolveToolchain({
+			projectDir,
+			configDir,
+			platform: "win32",
+			arch: "ia32",
+			env: baseEnv(),
+			manifestText: manifestJson([{ id: "arm-gcc", bin: ["arm-none-eabi-gcc"] }]),
+		});
+
+		expect(result.tools[0].status).toBe("missing");
+		expect(result.tools[0].installable).toBeUndefined();
+	});
+
+	it("目录里压根没有这个工具时没有 installable", async () => {
+		const result = await resolveToolchain({
+			projectDir,
+			configDir,
+			platform: "win32",
+			arch: "x64",
+			env: baseEnv(),
+			manifestText: manifestJson([{ id: "widget", bin: ["widget"] }]),
+		});
+
+		expect(result.tools[0].status).toBe("missing");
+		expect(result.tools[0].installable).toBeUndefined();
+	});
+
+	it("ok 的工具不带 installable —— 已经能用的东西不该在 UI 上出现安装按钮", async () => {
+		writeFakeExe(binDir, "arm-none-eabi-gcc", "15.2.1");
+
+		const result = await resolveToolchain({
+			projectDir,
+			configDir,
+			platform: "win32",
+			arch: "x64",
+			env: baseEnv({ PATH: binDir }),
+			manifestText: manifestJson([{ id: "arm-gcc", bin: ["arm-none-eabi-gcc"] }]),
+		});
+
+		expect(result.tools[0].status).toBe("ok");
+		expect(result.tools[0].installable).toBeUndefined();
+	});
+});
+
+describe("promptSectionFor 的自助安装话术", () => {
+	const manifest: ToolchainManifest = {
+		schema: "yoma/toolchain@1",
+		tools: [{ id: "arm-gcc", bin: ["arm-none-eabi-gcc"], version: ">=12" }],
+	};
+	const installable = { packageId: "arm-gnu-toolchain", title: "Arm GNU Toolchain", version: "15.2.rel1", bytes: 295922350 };
+
+	function sectionFor(tool: ResolvedTool): string {
+		return expectSection({ manifest, side: "mother", ok: false, needsAttention: [tool], tools: [tool] });
+	}
+
+	it("missing + installable:点名 install 动作与工具 id,并且仍然把人工安装指引带上", () => {
+		const text = sectionFor({
+			id: "arm-gcc",
+			status: "missing",
+			optional: false,
+			bin: {},
+			wanted: ">=12",
+			hint: "winget install Arm.GnuArmEmbeddedToolchain",
+			installable,
+		});
+
+		expect(text).toContain('action "install"');
+		expect(text).toContain('id "arm-gcc"');
+		expect(text).toContain("Arm GNU Toolchain 15.2.rel1");
+		// 自助安装不取代人工指引:用户可能更想用自己那份。
+		expect(text).toContain("winget install Arm.GnuArmEmbeddedToolchain");
+	});
+
+	it("version-mismatch + installable:同样给出 install 动作,并明说别将就用现有的那份", () => {
+		const text = sectionFor({
+			id: "arm-gcc",
+			status: "version-mismatch",
+			optional: false,
+			bin: {},
+			wanted: ">=12",
+			version: "10.3.1",
+			candidates: ["C:\\old\\arm-none-eabi-gcc.exe"],
+			installable,
+		});
+
+		expect(text).toContain("VERSION MISMATCH");
+		expect(text).toContain('action "install"');
+		expect(text).toContain('id "arm-gcc"');
+	});
+
+	it("没有 installable 时话术不变:别猜路径,把安装指引转达给用户", () => {
+		const text = sectionFor({
+			id: "arm-gcc",
+			status: "missing",
+			optional: false,
+			bin: {},
+			wanted: ">=12",
+			hint: "winget install Arm.GnuArmEmbeddedToolchain",
+		});
+
+		expect(text).not.toContain('action "install"');
+		expect(text).toContain("Do not guess a path or hardcode one");
+		expect(text).toContain("winget install Arm.GnuArmEmbeddedToolchain");
 	});
 });

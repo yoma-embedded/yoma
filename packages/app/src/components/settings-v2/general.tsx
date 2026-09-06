@@ -416,19 +416,72 @@ export const SettingsGeneralV2: Component = () => {
     </div>
   )
 
+  // "启动时 / 定时自动检查"开关:持久化在 main 的 store,桌面端才有(web 宿主没有 updater)。
+  const [autoCheck, { mutate: mutateAutoCheck }] = createResource(
+    () => platform.updater?.autoCheck,
+    (api) => api.get(),
+  )
+  const setAutoCheck = (value: boolean) => {
+    mutateAutoCheck(value)
+    void platform.updater?.autoCheck?.set(value)
+  }
+
+  // 状态行:把状态机翻成一句人话(下载百分比 / 已下好等重启 / 出错原因)。
+  const updateStateText = createMemo(() => {
+    const state = platform.updater?.state()
+    switch (state?.status) {
+      case "downloading":
+        return language.t("settings.updates.state.downloading", {
+          version: state.version,
+          percent: state.percent === undefined ? "…" : String(Math.round(state.percent)),
+        })
+      case "ready":
+      case "installing":
+        return language.t("settings.updates.state.ready", { version: state.version })
+      case "up-to-date":
+        return language.t("settings.updates.state.upToDate")
+      case "error":
+        return language.t("settings.updates.state.error", { message: state.message })
+      default:
+        return language.t("settings.updates.row.check.description")
+    }
+  })
+  const updateNotes = createMemo(() => {
+    const state = platform.updater?.state()
+    return state?.status === "ready" ? state.notes : undefined
+  })
+
   const UpdatesSection = () => (
     <div class="settings-v2-section">
       <h3 class="settings-v2-section-title">{language.t("settings.general.section.updates")}</h3>
 
       <SettingsListV2>
+        <Show when={platform.updater?.autoCheck}>
+          <SettingsRowV2
+            title={language.t("settings.updates.row.startup.title")}
+            description={language.t("settings.updates.row.startup.description")}
+          >
+            <div data-action="settings-updates-auto-check">
+              <Switch checked={autoCheck.latest ?? true} onChange={setAutoCheck} />
+            </div>
+          </SettingsRowV2>
+        </Show>
         <SettingsRowV2
-          title={language.t("settings.updates.row.check.title")}
-          description={language.t("settings.updates.row.check.description")}
+          title={language.t("settings.updates.version", { version: platform.version ?? "" })}
+          description={updateStateText()}
         >
           <ButtonV2 size="normal" variant="neutral" disabled={!updater.action().run} onClick={updater.run}>
             {language.t(updater.action().label)}
           </ButtonV2>
         </SettingsRowV2>
+        <Show when={updateNotes()}>
+          {(notes) => (
+            <div class="settings-v2-updates-notes" data-component="settings-updates-notes">
+              <div class="settings-v2-updates-notes-title">{language.t("settings.updates.notes")}</div>
+              <pre class="settings-v2-updates-notes-body">{notes()}</pre>
+            </div>
+          )}
+        </Show>
       </SettingsListV2>
     </div>
   )

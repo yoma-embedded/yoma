@@ -7,6 +7,7 @@ import { clampChars, clampTopK, createDatasheetToolDefinition, encodeRel, format
 import {
 	buildChipIndex,
 	capped,
+	type DatasheetToolOptions,
 	findPhrase,
 	lastSegment,
 	type ManifestEntry,
@@ -15,11 +16,15 @@ import {
 	resetChipIndexCache,
 	resolveChip,
 	sectionRange,
+	serverUrl,
 } from "../src/core/tools/datasheet.ts";
+import { DEFAULT_DATASHEET_SERVER } from "../src/core/datasheet-server.ts";
 
-// ─── 隔离:工具只读 YOMA_DATASHEET_SERVER,测试必须与真机配置切干净 ───────────
+// ─── 隔离:地址按 显式 > YOMA_DATASHEET_SERVER > <configDir>/.env > 内置默认 解析,
+// 所以除了环境变量,configDir 也必须切干净(不注入就读开发机真实的 ~/.yoma/.env)。
 
 const savedServer = process.env.YOMA_DATASHEET_SERVER;
+const savedEnvFile = process.env.YOMA_ENV_FILE;
 
 const tempDirs: string[] = [];
 
@@ -32,12 +37,15 @@ function createTempDir(): string {
 
 function isolate() {
 	delete process.env.YOMA_DATASHEET_SERVER;
+	delete process.env.YOMA_ENV_FILE;
 }
 
 afterEach(() => {
 	resetChipIndexCache(); // 芯片索引缓存是模块级的,不清就会跨用例串味
 	if (savedServer === undefined) delete process.env.YOMA_DATASHEET_SERVER;
 	else process.env.YOMA_DATASHEET_SERVER = savedServer;
+	if (savedEnvFile === undefined) delete process.env.YOMA_ENV_FILE;
+	else process.env.YOMA_ENV_FILE = savedEnvFile;
 	while (tempDirs.length > 0) {
 		const dir = tempDirs.pop()!;
 		if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
@@ -51,7 +59,14 @@ function textOf(result: { content: Array<{ type: string; text?: string }> }): st
 		.join("");
 }
 
-const makeTool = () => createDatasheetToolDefinition(new NodeExecutionEnv({ cwd: createTempDir() }));
+/**
+ * configDir 一律指向一个空的临时目录 —— 工具会去读 `<configDir>/.env`,不注入的话
+ * 断言取决于跑测试的人在 ~/.yoma/.env 里写了什么。要测 .env 那一层就自己往里写。
+ */
+const makeTool = (options?: DatasheetToolOptions) => {
+	const dir = createTempDir();
+	return createDatasheetToolDefinition(new NodeExecutionEnv({ cwd: dir }), { configDir: dir, ...options });
+};
 
 // ─── 纯函数 ──────────────────────────────────────────────────────────────────
 
@@ -300,13 +315,64 @@ function fakeServer(options?: { searchStatus?: number; manifestStatus?: number }
 	return { server, requests };
 }
 
-describe("datasheet tool", () => {
-	it("explains what to configure when no server is set, and forbids inventing chip facts", async () => {
+// ─── 地址解析(2026-09:内置默认回来了,"没配置"变成了"显式关掉") ──────────────
+
+describe("datasheet server resolution", () => {
+	it("nothing configured resolves to the built-in default — install and query, no address to type", () => {
 		isolate();
+		expect(serverUrl({ env: {}, configDir: createTempDir() })).toBe(DEFAULT_DATASHEET_SERVER);
+	});
+
+	it("options.server wins over the environment variable", () => {
+		isolate();
+		process.env.YOMA_DATASHEET_SERVER = "http://from-env";
+		expect(serverUrl({ server: "http://from-option", configDir: createTempDir() })).toBe("http://from-option");
+	});
+
+	it("options.configDir's .env is honoured when nothing else is set", () => {
+		isolate();
+		const dir = createTempDir();
+		writeFileSync(join(dir, ".env"), "YOMA_DATASHEET_SERVER=http://from-dotenv/\n");
+		expect(serverUrl({ env: {}, configDir: dir })).toBe("http://from-dotenv");
+	});
+
+	it("off switches lookup off at every layer instead of falling back to the default", () => {
+		isolate();
+		const dir = createTempDir();
+		writeFileSync(join(dir, ".env"), "YOMA_DATASHEET_SERVER=off\n");
+		expect(serverUrl({ env: {}, configDir: dir })).toBeUndefined();
+		expect(serverUrl({ env: { YOMA_DATASHEET_SERVER: "OFF" }, configDir: createTempDir() })).toBeUndefined();
+		expect(serverUrl({ server: "none", env: {}, configDir: createTempDir() })).toBeUndefined();
+	});
+});
+
+/** 接了连接就再也不回包的服务器 —— 复现"默认地址那台机器挂了"的最坏形态。 */
+function deadServer() {
+	const server = Bun.serve({ port: 0, fetch: () => new Promise<Response>(() => {}) });
+	return { server, url: `http://127.0.0.1:${server.port}` };
+}
+
+describe("datasheet tool", () => {
+	it("says how to re-enable lookup when it is switched off, and forbids inventing chip facts", async () => {
+		isolate();
+		process.env.YOMA_DATASHEET_SERVER = "off";
 		const result = await makeTool().execute("c1", { action: "search", query: "q", chip: "STM32F1" });
-		expect(textOf(result)).toContain("YOMA_DATASHEET_SERVER");
+		const text = textOf(result);
+		expect(text).toContain("YOMA_DATASHEET_SERVER");
+		expect(text).toContain("off"); // 关掉是一个显式选择,文案要说清怎么关/怎么开回来
+		expect(text).toContain("DATASHEET LOOKUP UNAVAILABLE");
+		expect(text).toContain("Do not invent");
+	});
+
+	it("builtIn:null reproduces the same unconfigured path without touching the environment", async () => {
+		isolate();
+		const result = await makeTool({ builtIn: null, env: {} }).execute("c1", {
+			action: "search",
+			query: "q",
+			chip: "STM32F1",
+		});
 		expect(textOf(result)).toContain("DATASHEET LOOKUP UNAVAILABLE");
-		expect(textOf(result)).toContain("Do not invent");
+		expect(textOf(result)).toContain("YOMA_DATASHEET_SERVER");
 	});
 
 	it("search posts to /api/search and formats citations", async () => {
@@ -586,6 +652,61 @@ describe("datasheet tool", () => {
 		try {
 			const result = await makeTool().execute("c1", { action: "view_figure", imagePath: "figures/NOPE/X/f.png" });
 			expect(textOf(result)).toContain("Figure not on the server");
+		} finally {
+			server.stop(true);
+		}
+	});
+
+	// ── 超时:内置默认地址意味着每一台安装都会去碰同一台机器,它挂掉时最坏的形态不是
+	//    报错而是"这一轮再也不回来了"。接了连接却不回包的服务器专门复现这一条。 ──
+
+	it("a server that accepts the connection but never answers times out instead of hanging the turn", async () => {
+		isolate();
+		const { server, url } = deadServer();
+		try {
+			const started = Date.now();
+			const result = await makeTool({ server: url, timeoutMs: 300 }).execute("c1", {
+				action: "search",
+				query: "q",
+				chip: "STM32F1",
+			});
+			const text = textOf(result);
+			expect(text).toContain("DATASHEET LOOKUP UNAVAILABLE");
+			expect(text).toContain("timed out");
+			expect(Date.now() - started).toBeLessThan(2000);
+		} finally {
+			server.stop(true);
+		}
+	});
+
+	it("the tool-call AbortSignal still cancels a request waiting on that timeout", async () => {
+		isolate();
+		const { server, url } = deadServer();
+		const controller = new AbortController();
+		const timer = setTimeout(() => controller.abort(), 50);
+		try {
+			await expect(
+				makeTool({ server: url, timeoutMs: 30_000 }).execute(
+					"c1",
+					{ action: "search", query: "q", chip: "STM32F1" },
+					controller.signal,
+				),
+			).rejects.toThrow();
+		} finally {
+			clearTimeout(timer);
+			server.stop(true);
+		}
+	});
+
+	it("read_section and view_figure are bounded by artifactTimeoutMs, not the API timeout", async () => {
+		isolate();
+		const { server, url } = deadServer();
+		try {
+			const tool = makeTool({ server: url, timeoutMs: 30_000, artifactTimeoutMs: 300 });
+			const started = Date.now();
+			expect(textOf(await tool.execute("c1", { action: "read_section", parsedPath: PARSED_REL }))).toContain("timed out");
+			expect(textOf(await tool.execute("c2", { action: "view_figure", imagePath: FIGURE_REL }))).toContain("timed out");
+			expect(Date.now() - started).toBeLessThan(3000);
 		} finally {
 			server.stop(true);
 		}

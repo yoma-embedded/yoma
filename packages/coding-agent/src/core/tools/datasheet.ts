@@ -22,12 +22,45 @@
 import path from "node:path";
 import type { ExecutionEnv } from "@yoma/agent";
 import { type Static, Type } from "typebox";
+import { DATASHEET_SERVER_ENV, datasheetEnvFile, resolveDatasheetServer } from "../datasheet-server.ts";
 import { clamp } from "./engines.ts";
 import { type ToolDefinition, wrapToolDefinition } from "./types.ts";
 
-/** 数据手册文件服务器基址。 */
-export function serverUrl(): string | undefined {
-	return process.env["YOMA_DATASHEET_SERVER"]?.trim().replace(/\/+$/, "") || undefined;
+export interface DatasheetToolOptions {
+	/** 显式地址,压过环境变量 / .env / 内置默认。 */
+	server?: string;
+	/** `.env` 所在目录,默认 ~/.yoma。测试与 bench 注入。 */
+	configDir?: string;
+	/** 默认 process.env。测试注入。 */
+	env?: NodeJS.ProcessEnv;
+	/** `null` = 没有内置默认(测试复现"未配置");undefined = 用 DEFAULT_DATASHEET_SERVER。 */
+	builtIn?: string | null;
+	/** API 调用(search / manifest)的超时,默认 20 s。 */
+	timeoutMs?: number;
+	/** 产物(parsed markdown / 图片)的超时,默认 60 s。 */
+	artifactTimeoutMs?: number;
+}
+
+const DEFAULT_TIMEOUT_MS = 20_000;
+const DEFAULT_ARTIFACT_TIMEOUT_MS = 60_000;
+
+/**
+ * 数据手册文件服务器基址:显式 > 环境变量 > `<configDir>/.env` > 内置默认;off 关闭。
+ * 解析规则只有一份(../datasheet-server.ts),所有宿主同解。
+ */
+export function serverUrl(options?: DatasheetToolOptions): string | undefined {
+	return resolveDatasheetServer({
+		explicit: options?.server,
+		env: options?.env,
+		configDir: options?.configDir,
+		builtIn: options?.builtIn,
+	}).url;
+}
+
+/** 工具调用的 AbortSignal 与超时二合一;超时那条给人话。 */
+function withTimeout(signal: AbortSignal | undefined, ms: number): AbortSignal {
+	const timeout = AbortSignal.timeout(ms);
+	return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
 export function encodeRel(rel: string): string {
@@ -412,10 +445,11 @@ const LOOKUP_UNAVAILABLE =
 	"DATASHEET LOOKUP UNAVAILABLE. Do not invent register maps, electrical ratings, reset values, or peripheral behavior from memory. " +
 	"Tell the user the manuals cannot be queried from this machine, and that they can set YOMA_DATASHEET_SERVER to a working datasheet server (self-hosted is fine) or look the PDF up themselves.";
 
-function noServerHelp(): string {
+function noServerHelp(options?: DatasheetToolOptions): string {
+	const file = datasheetEnvFile({ env: options?.env, configDir: options?.configDir });
 	return (
 		`${LOOKUP_UNAVAILABLE}\n` +
-		`No datasheet server configured. Set YOMA_DATASHEET_SERVER=<http://server[:port]> in the environment to enable search/read_section/view_figure.`
+		`No datasheet server configured (lookup is switched off). Set ${DATASHEET_SERVER_ENV}=<http://server[:port]> in the environment or in ${file} to enable search/read_section/view_figure; ${DATASHEET_SERVER_ENV}=off keeps it disabled on purpose.`
 	);
 }
 
@@ -445,13 +479,16 @@ const need = (value: string | undefined, action: string, field: string): string 
 
 export function createDatasheetToolDefinition(
 	_env: ExecutionEnv,
+	options?: DatasheetToolOptions,
 ): ToolDefinition<typeof datasheetSchema, DatasheetToolDetails> {
+	const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+	const artifactTimeoutMs = options?.artifactTimeoutMs ?? DEFAULT_ARTIFACT_TIMEOUT_MS;
 	return {
 		name: "datasheet",
 		label: "datasheet",
 		description: DESCRIPTION,
 		promptSnippet: "Search chip manuals with citations, read full sections, view figures (datasheet server)",
-		promptGuidelines: serverUrl()
+		promptGuidelines: serverUrl(options)
 			? [
 					"Before answering any register-level or peripheral-behavior question, search the indexed manuals with the datasheet tool and cite page/section. If the tool says lookup is unavailable or unreachable, do not invent those facts from memory — tell the user manuals cannot be queried.",
 					'The manual corpus is multi-vendor (ST, Artery, GigaDevice, WCH, MindMotion, Nations, HDSC, Nordic, Espressif, …) and filed by device FAMILY, not by part number. Never tell the user a chip is missing from it on the strength of a failed search — run the datasheet tool\'s "chips" action and read the actual index first.',
@@ -461,15 +498,35 @@ export function createDatasheetToolDefinition(
 				],
 		parameters: datasheetSchema,
 		execute: async (_toolCallId, params, signal) => {
-			const server = serverUrl();
-			if (!server) return textResult(noServerHelp(), { action: params.action });
+			const server = serverUrl(options);
+			if (!server) return textResult(noServerHelp(options), { action: params.action });
 
-			const fetchServer = async (url: string, init?: RequestInit): Promise<Response> => {
+			// 每次请求都带超时:内置默认地址意味着所有安装都会去碰一台可能挂掉的机器,
+			// 没有超时的话一个只接连接不回包的主机会把整轮吊死到用户手动中止。
+			const unreachable = (error: unknown, ms: number): Error => {
+				const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+				const detail = timedOut ? `timed out after ${Math.round(ms / 1000)} s` : error instanceof Error ? error.message : String(error);
+				return Object.assign(new Error(unreachableHelp(server, detail)), { datasheetUnreachable: true });
+			};
+			// 超时信号覆盖整个请求:响应头到了之后 body 卡住,超时会从 res.text()/json()/arrayBuffer()
+			// 里抛出来 —— 所以 body 读取也要过同一道人话转换,不然模型拿到的是一句裸 TimeoutError,
+			// 而不是"手册查不了、别凭记忆编"。
+			const fetchServer = async (url: string, init?: RequestInit & { timeoutMs?: number }): Promise<Response> => {
+				const { timeoutMs: perCall, ...rest } = init ?? {};
+				const ms = perCall ?? timeoutMs;
 				try {
-					return await fetch(url, { ...init, signal });
+					return await fetch(url, { ...rest, signal: withTimeout(signal, ms) });
 				} catch (error) {
-					const detail = error instanceof Error ? error.message : String(error);
-					throw Object.assign(new Error(unreachableHelp(server, detail)), { datasheetUnreachable: true });
+					if (signal?.aborted) throw error;
+					throw unreachable(error, ms);
+				}
+			};
+			const readBody = async <T>(read: () => Promise<T>, ms: number = timeoutMs): Promise<T> => {
+				try {
+					return await read();
+				} catch (error) {
+					if (signal?.aborted) throw error;
+					throw unreachable(error, ms);
 				}
 			};
 
@@ -521,7 +578,7 @@ export function createDatasheetToolDefinition(
 								),
 							};
 						}
-						const json = (await res.json()) as { hits?: SearchHit[] };
+						const json = (await readBody(() => res.json())) as { hits?: SearchHit[] };
 						return { hits: (json.hits ?? []).slice(0, k).map((h) => ({ ...h, kind: h.kind ?? "" })) };
 					};
 
@@ -624,7 +681,7 @@ export function createDatasheetToolDefinition(
 				case "read_section": {
 					const rel = need(params.parsedPath, "read_section", "parsedPath");
 					const cap = clampChars(params.maxChars);
-					const res = await fetchServer(`${server}/artifacts/${encodeRel(rel)}`);
+					const res = await fetchServer(`${server}/artifacts/${encodeRel(rel)}`, { timeoutMs: artifactTimeoutMs });
 					if (res.status === 404) {
 						return textResult(
 							`Parsed manual not on the server: ${rel} (HTTP 404). The manual may not be ingested with parsed ` +
@@ -638,7 +695,7 @@ export function createDatasheetToolDefinition(
 							parsedPath: rel,
 						});
 					}
-					const raw = await res.text();
+					const raw = await readBody(() => res.text(), artifactTimeoutMs);
 					const lines = raw.split("\n");
 					const headings = parseHeadings(lines);
 
@@ -698,7 +755,7 @@ export function createDatasheetToolDefinition(
 							{ action: "view_figure", imagePath: rel },
 						);
 					}
-					const res = await fetchServer(`${server}/artifacts/${encodeRel(rel)}`);
+					const res = await fetchServer(`${server}/artifacts/${encodeRel(rel)}`, { timeoutMs: artifactTimeoutMs });
 					if (res.status === 404) {
 						return textResult(
 							`Figure not on the server: ${rel} (HTTP 404). Rely on the search prose chunks and cite those.`,
@@ -711,7 +768,7 @@ export function createDatasheetToolDefinition(
 							imagePath: rel,
 						});
 					}
-					const bytes = Buffer.from(await res.arrayBuffer());
+					const bytes = Buffer.from(await readBody(() => res.arrayBuffer(), artifactTimeoutMs));
 					if (bytes.byteLength > MAX_FIGURE_BYTES) {
 						return textResult(
 							`Figure ${rel} is ${(bytes.byteLength / 1e6).toFixed(1)} MB (cap ${(MAX_FIGURE_BYTES / 1e6).toFixed(0)} MB); not attaching.`,

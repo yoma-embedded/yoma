@@ -285,19 +285,32 @@ export interface ToolchainResolvedTool {
   version?: string
   wanted?: string
   candidates?: string[]
-  source?: "local" | "ledger" | "env" | "path" | "well-known" | "registry"
+  /** "managed" = Yoma 自己装进 ~/.yoma/toolchains 的(coding-agent 的 install.ts)。 */
+  source?: "local" | "ledger" | "managed" | "env" | "path" | "well-known" | "registry"
   hint?: string
   why?: string
+  /** 非 ok 且目录(catalog.ts)对这台机器有包时给出 —— 设置页的"安装"按钮看它。 */
+  installable?: ToolchainInstallableView
+}
+
+/** coding-agent `Installable` 的结构化复制:能自动装什么、多大。 */
+export interface ToolchainInstallableView {
+  packageId: string
+  title: string
+  version: string
+  bytes: number
 }
 
 export interface ToolchainToolDetails {
-  action: "check" | "resolve" | "set"
+  action: "check" | "resolve" | "set" | "install"
   ok: boolean
   side?: "mother" | "runner"
   /** check / resolve 才有:每个声明工具的完整解析结果。 */
   tools?: ToolchainResolvedTool[]
-  /** set 才有:被记录的工具 id。 */
+  /** set / install 才有:被记录的工具 id。 */
   id?: string
+  /** install 才有:装到了哪里。 */
+  installed?: { packageId: string; version: string; dir: string; binDir: string; reused: boolean }
 }
 
 /**
@@ -345,6 +358,34 @@ export interface ToolchainFamilyView {
 export interface ToolchainFamiliesView {
   families: ToolchainFamilyView[]
   recordedIds: string[]
+}
+
+/** coding-agent `InstallPhase` 的结构化复制(install.ts)。 */
+export type ToolchainInstallPhaseView =
+  | "resolve"
+  | "download"
+  | "verify"
+  | "extract"
+  | "record"
+  | "done"
+  | "error"
+  | "cancelled"
+
+/**
+ * `toolchain.install` RPC 的结果:装到了哪里 + 装完后的机器级核账。`status` 是**第一个**
+ * 声明了这个工具 id 的预设平台的核账(cmake 在三个平台里都有,拿到的是 STM32 那份;工具 id 不在
+ * 任何预设里时 tools 为空)—— 设置页若开着别的平台,要按自己的平台再拉一次 familyStatus,
+ * 不能拿它直接 mutate 当前列表。
+ */
+export interface ToolchainInstallResultView {
+  id: string
+  packageId: string
+  version: string
+  dir: string
+  binDir: string
+  /** 已经装好且校验和相同,没有重新下载。 */
+  reused: boolean
+  status: ToolchainStatusView
 }
 
 /**

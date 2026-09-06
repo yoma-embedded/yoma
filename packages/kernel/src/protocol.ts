@@ -26,6 +26,8 @@ import type {
   Session,
   SessionStatus,
   ToolchainFamiliesView,
+  ToolchainInstallPhaseView,
+  ToolchainInstallResultView,
   ToolchainStatusView,
   VcsInfo,
 } from "./types.ts"
@@ -137,6 +139,16 @@ export interface KernelMethods {
   "toolchain.familyStatus": { params: { family: string; fresh?: boolean }; result: ToolchainStatusView }
   /** 机器级手填:按预设的 pathKind 决定验证档(exe 验版本 / dir 只验存在),落进机器账本。 */
   "toolchain.familySet": { params: { family: string; id: string; path: string }; result: ToolchainStatusView }
+  /**
+   * 自动安装一个工具(目录 catalog.ts 里有这台机器的包才行):下载 → sha256 → 解压到
+   * ~/.yoma/toolchains → 记账 → 刷新所有在飞会话的 PATH。**过程可能几分钟**,进度走
+   * `toolchain.install` 事件;同一个 id 同时只允许一个安装(第二次调用 reject)。
+   */
+  "toolchain.install": { params: { id: string }; result: ToolchainInstallResultView }
+  /** 取消进行中的安装(没有在装的 id 是 no-op)。半成品(.part / .extracting)由安装方自己清。 */
+  "toolchain.installCancel": { params: { id: string }; result: void }
+  /** 正在装的工具 id:设置页重新打开时用它把进度行接上(进度事件不重放)。 */
+  "toolchain.installsActive": { params: void; result: string[] }
 
   /**
    * 逻辑分析仪波形视口:Node 侧按列聚合 + 注解泳道,跨进程只传视口大小(几十 KB)。
@@ -192,6 +204,20 @@ export type KernelEvent =
    */
   | { type: "message.part.delta"; sessionID: string; messageID: string; partID: string; field: "text"; delta: string }
   | { type: "vcs.updated"; directory: string; info: VcsInfo }
+  /**
+   * 工具链自动安装的进度(`toolchain.install` RPC 期间,也包括 agent 自己跑 install 动作时)。
+   * download 阶段按字节反复发;StreamSink 把同一个 id 的相邻进度折叠成最后一条。
+   */
+  | {
+      type: "toolchain.install"
+      id: string
+      packageId: string
+      version: string
+      phase: ToolchainInstallPhaseView
+      bytes?: number
+      total?: number
+      message?: string
+    }
 
 export type KernelEventType = KernelEvent["type"]
 

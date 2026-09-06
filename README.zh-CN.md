@@ -15,7 +15,7 @@
 ### 贴合硬件事实
 
 - **原理图 / 网表解析工具**：从 net格式或者pdf格式解析原理图，解析引脚映射与外设连接，理解硬件信息
-- **数据手册检索**：在手册库里按芯片搜寄存器/外设说明，作为代码的第一手证据，避免AI幻觉（需配 `YOMA_DATASHEET_SERVER`路径）
+- **数据手册检索**：在手册库里按芯片搜寄存器/外设说明，作为代码的第一手证据，避免AI幻觉（装完即用，内置公共手册服务器；可换成自建的）
 
 ### 永远从例程工程起步，不空白写驱动
 
@@ -46,17 +46,21 @@
 - 第一次：顶部提示「还没配 API key」→ 点 **去连接**
 - 之后：左上角菜单 **File → Settings**（或 `Ctrl+,`）→ 左侧 **提供商** → 选 DeepSeek / Kimi → **连接** → 粘贴 API key
 
-### 3. 烧录 / GDB / 日志 工具路径配置
+### 3. 工具链(编译器 / CMake / OpenOCD / GDB …)
 
-本机安装项目用的 OpenOCD、J-Link 或厂商工具链。设置左侧 **工具链** 里按芯片平台所需路径配置。
+设置左侧 **工具链** 按芯片平台逐项核账。带「安装」按钮的工具(Arm GNU Toolchain、CMake、Ninja、OpenOCD、Windows 上的 Git)Yoma 可以直接帮你装:从官方发布页下载钉死版本的压缩包、校验 sha256、解压到 `~/.yoma/toolchains/`,之后所有会话自动认得。会话里 agent 撞到「命令不存在」时也会自己装。其余工具(J-Link、STM32CubeProgrammer、Keil、ESP-IDF 等厂商安装器)按提示手动安装后把路径填进来即可。
+
+Windows 上的 Git Bash 里、macOS/Linux 的终端里,这些目录不会自动进你自己的 PATH —— 它们只对 Yoma 的会话生效。
 
 ### 4. 数据手册检索
 
-Yoma 不内置数据手册检索服务，需要一个存储数据手册的服务器地址。在本机 `~/.yoma/.env` 写入：
+装完即用:Yoma 内置了公共手册服务器的地址。检索时发出去的只有你的查询语句和芯片型号。要换成自建服务器,在本机 `~/.yoma/.env` 写入(环境变量 `YOMA_DATASHEET_SERVER` 优先级更高):
 
 ```
 YOMA_DATASHEET_SERVER=http://你的服务器:端口
 ```
+
+不想联网查手册就写 `YOMA_DATASHEET_SERVER=off`。
 
 ### 5. 第一次生成 STM32 驱动
 

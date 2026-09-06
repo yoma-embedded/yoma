@@ -325,15 +325,15 @@ async function runSyncAction(
 	params: ExamplesToolInput,
 	options: { configDir?: string; syncServer?: string },
 ): Promise<{ content: [{ type: "text"; text: string }]; details: ExamplesToolDetails }> {
-	const server = resolveSyncServer(options.syncServer);
+	const server = resolveSyncServer(options.syncServer, options.configDir);
 	if (!server) {
 		return {
 			content: [
 				{
 					type: "text",
 					text: [
-						"未配置语料服务器 —— sync 需要服务器地址(与 datasheet 工具同一个):",
-						"设 YOMA_DATASHEET_SERVER 环境变量(桌面端从 ~/.yoma/.env 注入),或本机 CLI sync --server <url>。",
+						"语料服务器已关闭(YOMA_DATASHEET_SERVER=off)—— sync 需要服务器地址(与 datasheet 工具同一个):",
+						"设 YOMA_DATASHEET_SERVER 环境变量或 ~/.yoma/.env 里的同名项(不设就用内置默认服务器),或本机 CLI sync --server <url>。",
 					].join("\n"),
 				},
 			],

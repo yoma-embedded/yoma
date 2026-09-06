@@ -8,6 +8,7 @@
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",
+		"./datasheet-server": "./src/core/datasheet-server.ts",
 		"./package.json": "./package.json"
 	},
 	"bin": {
@@ -21,6 +22,7 @@
 		"@agentclientprotocol/sdk": "^1.3.0",
 		"@earendil-works/pi-ai": "catalog:",
 		"@yoma/agent": "workspace:*",
+		"@zip.js/zip.js": "catalog:",
 		"diff": "8.0.4",
 		"typebox": "catalog:",
 		"usb": "catalog:"

@@ -10,7 +10,11 @@ export function updaterAction(state: UpdaterState | undefined) {
     case "checking":
       return { label: "settings.updates.action.checking" as const }
     case "downloading":
-      return { label: "settings.updates.action.downloading" as const }
+      // percent 只在 electron-updater 报了进度时才有;按钮文案不变,进度由设置页的状态行展示。
+      return {
+        label: "settings.updates.action.downloading" as const,
+        ...(state.percent === undefined ? {} : { percent: Math.round(state.percent) }),
+      }
     case "ready":
       return { label: "toast.update.action.installRestart" as const, run: "install" as const }
     case "installing":

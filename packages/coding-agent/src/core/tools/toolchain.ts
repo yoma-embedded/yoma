@@ -14,24 +14,26 @@
 import type { AgentToolResult, ExecutionEnv } from "@yoma/agent";
 import { type Static, Type } from "typebox";
 import { declaredToolBins, recordToolchainPath, rememberFreshResults } from "../toolchain/actions.ts";
+import { type InstallProgress, installToolchain } from "../toolchain/install.ts";
 import { type ResolvedTool, resolveToolchain, type ToolchainResolution } from "../toolchain/resolve.ts";
 import { MANIFEST_RELATIVE } from "../toolchain/schema.ts";
+import { satisfies } from "../toolchain/version.ts";
 import { type ToolDefinition, wrapToolDefinition } from "./types.ts";
 
-export const TOOLCHAIN_ACTIONS = ["check", "resolve", "set"] as const;
+export const TOOLCHAIN_ACTIONS = ["check", "resolve", "set", "install"] as const;
 
 export type ToolchainAction = (typeof TOOLCHAIN_ACTIONS)[number];
 
 const toolchainSchema = Type.Object({
 	// 显式元组而非 .map():数组会丢掉元组结构,Static 推导塌成 never。
 	action: Type.Optional(
-		Type.Union([Type.Literal("check"), Type.Literal("resolve"), Type.Literal("set")], {
+		Type.Union([Type.Literal("check"), Type.Literal("resolve"), Type.Literal("set"), Type.Literal("install")], {
 			description:
-				"check (default): report every declared tool's status on this machine. resolve: skip the cached ledger, probe fresh, and remember what is found. set: record a path the user gave you for one tool id (requires id and path).",
+				"check (default): report every declared tool's status on this machine. resolve: skip the cached ledger, probe fresh, and remember what is found. set: record a path the user gave you for one tool id (requires id and path). install: download and install a tool Yoma knows how to install (check says which) into ~/.yoma/toolchains and remember it (requires id).",
 		}),
 	),
 	id: Type.Optional(
-		Type.String({ description: 'Tool id from toolchain.json, e.g. "arm-gcc". Required for action:"set".' }),
+		Type.String({ description: 'Tool id from toolchain.json, e.g. "arm-gcc". Required for action:"set" and action:"install".' }),
 	),
 	path: Type.Optional(
 		Type.String({ description: 'Absolute path to the executable the user pointed you at. Required for action:"set".' }),
@@ -46,11 +48,20 @@ export interface ToolchainToolDetails {
 	side?: "mother" | "runner";
 	/** check / resolve 才有:每个声明工具的完整解析结果。 */
 	tools?: ResolvedTool[];
-	/** set 才有:被记录的工具 id。 */
+	/** set / install 才有:被记录的工具 id。 */
 	id?: string;
+	/** install 才有:装到了哪里。 */
+	installed?: { packageId: string; version: string; dir: string; binDir: string; reused: boolean };
 }
 
 export interface ToolchainToolOptions {
+	/** install 动作的进度旁路(宿主转成事件给 UI);不传就静默。 */
+	onInstallProgress?: (progress: InstallProgress) => void;
+	/**
+	 * install 成功后的钩子:宿主(kernel 的 SessionManager)在这里把新目录灌进在飞会话的
+	 * PATH 与内核进程自己的 PATH。**不传的宿主拿不到"装完立刻可用"** —— 结果文案会如实说。
+	 */
+	onInstalled?: () => Promise<void> | void;
 	/** 账本目录,默认 ~/.yoma(与 ledger.ts 的 defaultConfigDir 同义)。测试与工位端注入。 */
 	configDir?: string;
 	/** 默认 "mother"(resolveToolchain 自己的默认值)。工位端场景由调用方注入 "runner"。 */
@@ -73,12 +84,26 @@ Actions:
 - check (default): report each declared tool's status — ok / missing / version mismatch / ambiguous — with its resolved path, version, and how it was found (cached ledger, PATH, a known install location, ...). Missing or wrong-version tools come with an install hint when the manifest has one.
 - resolve: like check, but skips the cached ledger and probes fresh, then remembers what it finds for every later session on this machine.
 - set (id, path): after asking the user where a tool lives and getting an answer, call this with the tool's id and the path they gave you — either the executable itself or a directory (the tool's declared executable names are resolved inside the directory and its bin/ subdirectory; when none match, the directory itself is recorded as the user gave it). Only a nonexistent or relative path is rejected; a version is recorded when the tool reports one.
+- install (id): when check marks a tool "installable", download the pinned official release (sha256-verified) into ~/.yoma/toolchains, record it in the ledger, and put it on PATH for later commands — no user confirmation needed, nothing outside that directory is touched. Downloads can take minutes (Arm GNU Toolchain is ~300 MB); wait for the result rather than retrying.
 
-When to reach for this: the moment a command fails with "command not found", "'cmake' is not recognized as an internal or external command" (or the Chinese-Windows wording, "不是内部或外部命令"), or the build system reports it can't find a compiler, run \`toolchain check\` FIRST. Do not go hunting for the binary yourself with where/which, do not guess an install path, and never hard-code a path into a script or command — an ad-hoc find like that is never remembered and silently drifts the moment this project is built on a different machine, which is exactly the failure mode this tool exists to prevent. If check reports a tool missing or the wrong version, relay its install hint to the user; once they tell you where the right one actually is, call \`toolchain set\`.
+When to reach for this: the moment a command fails with "command not found", "'cmake' is not recognized as an internal or external command" (or the Chinese-Windows wording, "不是内部或外部命令"), or the build system reports it can't find a compiler, run \`toolchain check\` FIRST. Do not go hunting for the binary yourself with where/which, do not guess an install path, and never hard-code a path into a script or command — an ad-hoc find like that is never remembered and silently drifts the moment this project is built on a different machine, which is exactly the failure mode this tool exists to prevent. If check reports a tool missing or the wrong version and marks it installable, run \`toolchain install\` with that id; otherwise relay its install hint to the user, and once they tell you where the right one actually is, call \`toolchain set\`.
 
 If the project has no ${MANIFEST_RELATIVE}, check says so and asks whether to draft one from the build files — never generate it unprompted, only after the user says yes.`;
 
 // ─── 渲染:ResolvedTool -> 人话一行 ─────────────────────────────────────────────
+
+/**
+ * catalog 有这台机器的包时,在 MISSING / VERSION MISMATCH 行尾告诉模型可以自助安装 ——
+ * 钉的版本满足不了清单要求时反过来明说"装了也不够",免得模型在装 → 核 → 再装里空转。
+ */
+function installableNote(t: ResolvedTool): string {
+	const i = t.installable;
+	if (!i) return "";
+	if (t.wanted !== undefined && !satisfies(i.version, t.wanted)) {
+		return `; Yoma could install ${i.title} ${i.version} but it does NOT satisfy ${t.wanted} — don't install it, tell the user`;
+	}
+	return `; installable: ${i.title} ${i.version} (~${Math.round(i.bytes / 1e6)} MB) via toolchain install id="${t.id}"`;
+}
 
 function renderLine(t: ResolvedTool): string {
 	const label = t.optional ? `${t.id} (optional)` : t.id;
@@ -92,13 +117,13 @@ function renderLine(t: ResolvedTool): string {
 			const advice = t.hint
 				? `install hint: ${t.hint}`
 				: "no install hint for this platform — ask the user how it's normally installed here";
-			return `- ${label}: MISSING${need} — ${advice}`;
+			return `- ${label}: MISSING${need} — ${advice}${installableNote(t)}`;
 		}
 		case "version-mismatch": {
 			const at = t.candidates?.[0];
 			const found = t.version ? `found ${t.version}${at ? ` at ${at}` : ""}` : "found an unrecognized version";
 			const advice = t.hint ? `; upgrade hint: ${t.hint}` : "";
-			return `- ${label}: VERSION MISMATCH${need} — ${found}${advice}`;
+			return `- ${label}: VERSION MISMATCH${need} — ${found}${advice}${installableNote(t)}`;
 		}
 		case "ambiguous": {
 			const list = (t.candidates ?? []).join(", ") || "(no candidates recorded)";
@@ -160,6 +185,61 @@ async function runSet(
 	return { content: [{ type: "text", text }], details: { action: "set", ok: true, id } };
 }
 
+// ─── install 动作 ────────────────────────────────────────────────────────────
+
+/**
+ * 下载 / 校验 / 解压 / 记账全在 toolchain/install.ts —— 与桌面设置页的 toolchain.install
+ * RPC 同一套实现。失败原样抛(ToolchainInstallError 的 message 已经是人话,带 phase),
+ * 让 harness 把它当工具错误摆给模型;不吞成"看起来成功"。
+ */
+async function runInstall(
+	params: ToolchainToolInput,
+	options: ToolchainToolOptions | undefined,
+	signal: AbortSignal | undefined,
+): Promise<AgentToolResult<ToolchainToolDetails>> {
+	const id = params.id?.trim();
+	if (!id) throw new Error('toolchain install requires "id" (the tool id from toolchain check, e.g. "arm-gcc")');
+
+	// signal 是 harness 的中止信号:用户按停止时下载要立刻断,否则会话要等几百 MB 下完才能
+	// 收工,而且包锁一直攥着。
+	const installed = await installToolchain({
+		toolId: id,
+		configDir: options?.configDir,
+		env: options?.env,
+		signal,
+		onProgress: options?.onInstallProgress,
+	});
+	// 装完先让宿主刷 PATH,再告诉模型"已经可用" —— 顺序反了模型下一条命令照样 command not found。
+	await options?.onInstalled?.();
+
+	const recorded = installed.recorded.map((r) => `${r.id} -> ${r.binPath}${r.version ? ` (version ${r.version})` : ""}`);
+	const pathNote = options?.onInstalled
+		? "this directory is on PATH for your later commands in this session and every later session on this machine."
+		: "this directory is on PATH for every later session on this machine; in this session call the executables by the absolute paths above.";
+	const text = [
+		`${installed.reused ? "Already installed" : "Installed"} ${installed.packageId} ${installed.version} at ${installed.dir}.`,
+		`Executables: ${installed.binDir} — ${pathNote}`,
+		recorded.length > 0 ? `Recorded in the toolchain ledger: ${recorded.join("; ")}.` : "",
+	]
+		.filter(Boolean)
+		.join("\n");
+	return {
+		content: [{ type: "text", text }],
+		details: {
+			action: "install",
+			ok: true,
+			id,
+			installed: {
+				packageId: installed.packageId,
+				version: installed.version,
+				dir: installed.dir,
+				binDir: installed.binDir,
+				reused: installed.reused,
+			},
+		},
+	};
+}
+
 // ─── 工厂 ────────────────────────────────────────────────────────────────────
 
 export function createToolchainToolDefinition(
@@ -173,13 +253,15 @@ export function createToolchainToolDefinition(
 		promptSnippet: "Resolve the project's required host toolchains against what's installed on this machine",
 		promptGuidelines: [
 			'The moment a command fails with "command not found" / "not recognized as an internal or external command" / a missing-compiler error, run toolchain check before searching for the binary yourself — never where/which it or hard-code a guessed path.',
+			"When toolchain check marks a missing tool installable, run toolchain install with that id yourself instead of asking the user to install it; only tools without an installable note need the user.",
 			"If toolchain check reports no manifest, ask the user before drafting .yoma/toolchain.json — never generate it unprompted.",
 		],
 		parameters: toolchainSchema,
 		executionMode: "sequential",
-		execute: async (_toolCallId, params) => {
+		execute: async (_toolCallId, params, signal) => {
 			const action: ToolchainAction = params.action ?? "check";
 			if (action === "set") return runSet(params, env, options);
+			if (action === "install") return runInstall(params, options, signal);
 
 			const resolution = await resolveToolchain({
 				projectDir: env.cwd,

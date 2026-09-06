@@ -91,6 +91,12 @@ export class StreamSink {
         this.queue[this.queue.length - 1] = event
         return
       }
+      // 同一个工具的连续安装进度(download 阶段每个 chunk 一条):后一条已经包含前一条的全部信息。
+      // 只折叠相邻的 —— 中间隔了别的事件(哪怕是另一个 id 的进度)就不动,保序。
+      if (tail.type === "toolchain.install" && event.type === "toolchain.install" && tail.id === event.id) {
+        this.queue[this.queue.length - 1] = event
+        return
+      }
     }
     this.queue.push(event)
   }

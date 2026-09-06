@@ -21,6 +21,7 @@ import { once } from "node:events";
 import { createWriteStream, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import path from "node:path";
 
+import { resolveDatasheetServer } from "../datasheet-server.ts";
 import { type Ecosystem, corpusSlug, isEcosystem } from "./schema.ts";
 import {
 	corpusCacheDir,
@@ -56,13 +57,16 @@ export interface SyncEvents {
 }
 
 /**
- * 服务器地址解析:显式参数 > `YOMA_DATASHEET_SERVER`(与 datasheet 工具同一个
- * 服务器、同一套注入管道 —— 桌面主进程已把它兜进内核 env)。无尾斜杠。
+ * 服务器地址解析:显式参数 > `YOMA_DATASHEET_SERVER` > `<configDir>/.env` > 内置默认
+ * (与 datasheet 工具同一个服务器、同一份解析实现 ../datasheet-server.ts)。无尾斜杠;
+ * off 关闭。
  */
-export function resolveSyncServer(explicit?: string): string | undefined {
-	const raw = (explicit ?? process.env.YOMA_DATASHEET_SERVER ?? "").trim();
-	return raw === "" ? undefined : raw.replace(/\/+$/, "");
+export function resolveSyncServer(explicit?: string, configDir?: string, env?: NodeJS.ProcessEnv): string | undefined {
+	return resolveDatasheetServer({ explicit, configDir, env }).url;
 }
+
+/** 元数据类请求(清单 / meta)的超时;归档下载走 fetchToFile,不受它限制。 */
+const META_TIMEOUT_MS = 20_000;
 
 function parseCodelibMeta(item: unknown): CodelibMeta | undefined {
 	if (typeof item !== "object" || item === null) return undefined;
@@ -84,29 +88,42 @@ function parseCodelibMeta(item: unknown): CodelibMeta | undefined {
 	};
 }
 
-/** fetch 的人话包装:连不上/非 2xx 都变成一句话,不把调用栈甩给用户。 */
+/** fetch 的人话包装:连不上/非 2xx/超时都变成一句话,不把调用栈甩给用户。 */
 async function fetchOk(url: string): Promise<Response> {
 	let res: Response;
 	try {
-		res = await fetch(url);
+		res = await fetch(url, { signal: AbortSignal.timeout(META_TIMEOUT_MS) });
 	} catch (error) {
-		const reason = error instanceof Error ? error.message : String(error);
+		const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+		const reason = timedOut ? `超时(${META_TIMEOUT_MS / 1000} s)` : error instanceof Error ? error.message : String(error);
 		throw new Error(`连不上 ${url}:${reason}`);
 	}
 	if (!res.ok) throw new Error(`HTTP ${res.status} ${url}`);
 	return res;
 }
 
+/** body 读取同样可能撞上超时(响应头到了、内容卡住),转成和 fetchOk 一样的人话。 */
+async function readJsonOk(res: Response, url: string): Promise<unknown> {
+	try {
+		return await res.json();
+	} catch (error) {
+		const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+		const reason = timedOut ? `超时(${META_TIMEOUT_MS / 1000} s)` : error instanceof Error ? error.message : String(error);
+		throw new Error(`读不了 ${url} 的响应:${reason}`);
+	}
+}
+
 export async function listRemoteCorpora(server: string): Promise<CodelibMeta[]> {
 	const res = await fetchOk(`${server}/api/codelibs`);
-	const body: unknown = await res.json();
+	const body: unknown = await readJsonOk(res, `${server}/api/codelibs`);
 	if (!Array.isArray(body)) throw new Error("GET /api/codelibs 返回的不是数组");
 	return body.map(parseCodelibMeta).filter((m): m is CodelibMeta => m !== undefined);
 }
 
 export async function fetchCodelibMeta(server: string, corpusId: string): Promise<CodelibMeta> {
-	const res = await fetchOk(`${server}/api/codelibs/${encodeURIComponent(corpusId)}/meta`);
-	const meta = parseCodelibMeta(await res.json());
+	const metaUrl = `${server}/api/codelibs/${encodeURIComponent(corpusId)}/meta`;
+	const res = await fetchOk(metaUrl);
+	const meta = parseCodelibMeta(await readJsonOk(res, metaUrl));
 	if (meta === undefined || meta.id !== corpusId) throw new Error(`服务器返回的 ${corpusId} meta 不完整`);
 	return meta;
 }
