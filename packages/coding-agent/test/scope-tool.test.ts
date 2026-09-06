@@ -295,7 +295,7 @@ describe("scope tool", () => {
 		expect(r.images[0]!.mimeType).toBe("image/png");
 		expect(Buffer.from(r.images[0]!.data, "base64").byteLength).toBe(SCREEN_PNG.byteLength);
 		expect(r.details.bytes).toBe(SCREEN_PNG.byteLength);
-		expect(r.details.file).toMatch(/\.yoma\/scope\/screens\/\d{8}-\d+\.png$/);
+		expect(r.details.file).toMatch(/\.yoma[\\/]scope[\\/]screens[\\/]\d{8}-\d+\.png$/); // Windows 给的是反斜杠
 		expect(statSync(r.details.file!).size).toBe(SCREEN_PNG.byteLength);
 		expect(r.text).toContain("attached below");
 	});

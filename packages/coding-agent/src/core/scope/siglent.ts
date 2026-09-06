@@ -139,8 +139,8 @@ const STATUS_POLL_MS = 50;
 
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => {
-		const t = setTimeout(resolve, ms);
-		(t as unknown as { unref?: () => void }).unref?.();
+		// 不要 unref:见 scpi.ts 的 sleep —— bun 在 Windows 上只剩 unref 句柄时会空转,驱动的每一拍等待都会卡死。
+		setTimeout(resolve, ms);
 	});
 }
 

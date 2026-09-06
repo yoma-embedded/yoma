@@ -65,9 +65,10 @@ export function formatScpiAddress(a: ScpiAddress): string {
 
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => {
-		const t = setTimeout(resolve, ms);
-		// 等待不该拖住进程退出
-		(t as unknown as { unref?: () => void }).unref?.();
+		// 不要 unref:bun 1.3.14 在 Windows 上一旦事件循环里只剩 unref 的句柄,就空转、不触发定时器,
+		// 第二条命令的 5 ms 间隔直接卡死(见 docs/单测-Windows上scope卡死与mailbox失败-20260906.md)。
+		// 这里的等待都在一次进行中的操作里,最长 2.5 s,拖不住进程;空闲连接才该 unref,已在 connect 里做了。
+		setTimeout(resolve, ms);
 	});
 }
 

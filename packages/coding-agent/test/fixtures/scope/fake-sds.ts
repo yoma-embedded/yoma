@@ -132,8 +132,8 @@ function snap125(v: number, min: number, max: number): number {
 
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => {
-		const t = setTimeout(resolve, ms);
-		(t as unknown as { unref?: () => void }).unref?.();
+		// 不要 unref:见 src/core/scope/scpi.ts 的 sleep(bun 在 Windows 上只剩 unref 句柄时会空转)。
+		setTimeout(resolve, ms);
 	});
 }
 
