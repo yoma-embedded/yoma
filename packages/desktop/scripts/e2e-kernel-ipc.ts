@@ -168,6 +168,25 @@ app.whenReady().then(async () => {
     const inited = await request("vcs.init", { directory: workspace }).catch((e: Error) => ({ error: e.message }))
     check("vcs.init 把裸目录变成空仓库(root 有、empty)", !!inited?.root && inited.empty === true, inited?.error ?? inited?.root)
 
+    // 审查页"改完立刻刷新"的那半机制:目录一变,内核要主动推 vcs.updated(带新鲜的 vcs.info)。
+    const before = pushes.flat().filter((e: any) => e?.type === "vcs.updated").length
+    writeFileSync(join(workspace, "watched.md"), "# watched\n")
+    const updated = await new Promise<any>((resolve) => {
+      const started = Date.now()
+      const poll = () => {
+        const events = pushes.flat().filter((e: any) => e?.type === "vcs.updated" && e.directory === workspace)
+        if (events.length > before) return resolve(events[events.length - 1])
+        if (Date.now() - started > 4_000) return resolve(undefined)
+        setTimeout(poll, 100)
+      }
+      poll()
+    })
+    check(
+      "改了文件之后内核主动推 vcs.updated",
+      !!updated && updated.info?.dirty === true,
+      updated ? JSON.stringify(updated.info) : "4 秒内没收到",
+    )
+
     // 内核进程主动推事件(session.created)是"流式能到 renderer"的最小证据。
     await new Promise((resolve) => setTimeout(resolve, 300))
     const created = pushes.flat().some((e: any) => e?.type === "session.created")

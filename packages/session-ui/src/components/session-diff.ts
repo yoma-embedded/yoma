@@ -16,6 +16,9 @@ export type ViewDiff = {
   additions: number
   deletions: number
   status?: DiffStatus
+  /** VS Code 式分组与单字母状态,只有 vcs.diff 这个生产者会给。 */
+  group?: NonNullable<VcsFileDiff["group"]>
+  letter?: string
   fileDiff: FileDiffMetadata
 }
 
@@ -37,6 +40,8 @@ export function normalize(diff: VcsFileDiff): ViewDiff {
     additions: diff.added,
     deletions: diff.removed,
     status: diff.status,
+    group: diff.group,
+    letter: diff.letter,
     fileDiff: resolveFileDiff({ file: diff.path, patch: diff.patch }),
   }
 }

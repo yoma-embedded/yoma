@@ -10,22 +10,19 @@ import { promises as fs } from "node:fs"
 import path from "node:path"
 import { promisify } from "node:util"
 
-import type { FileDiff, FileEntry, VcsInfo } from "../types.ts"
+import type { FileDiff, FileEntry, VcsGroup, VcsInfo } from "../types.ts"
 
 const run = promisify(execFile)
 
-/** 永远不该出现在文件树或 @提及里的目录。 */
-const IGNORED = new Set([
-  ".git",
-  "node_modules",
-  ".venv",
-  "target",
-  "dist",
-  "out",
-  ".turbo",
-  "__pycache__",
-  ".DS_Store",
-])
+/**
+ * 文件树的隐藏名单 = VS Code `files.exclude` 的默认值。其余一律显示 —— node_modules、点文件都显示,
+ * 被 gitignore 的条目带 `ignored` 标记交给前端灰显,和 VS Code 资源管理器一致。
+ * 从前多藏了 node_modules / dist / out 和所有点文件,用户在 VS Code 里看得见的目录到这里是空的(2026-09-06)。
+ */
+const TREE_HIDDEN = new Set([".git", ".svn", ".hg", "CVS", ".DS_Store", "Thumbs.db"])
+
+/** @提及搜索跳过的目录:VS Code 的 search.exclude 也默认排除 node_modules;点开头的目录同样跳过(.yoma 运行产物不该进候选)。 */
+const SEARCH_SKIP = new Set([...TREE_HIDDEN, "node_modules", ".venv", "target", "dist", "out", ".turbo", "__pycache__"])
 
 export async function listFiles(directory: string, relative?: string): Promise<FileEntry[]> {
   const root = path.resolve(directory)
@@ -33,15 +30,41 @@ export async function listFiles(directory: string, relative?: string): Promise<F
   // 越界保护:renderer 传什么都不该能读到工作目录之外。
   if (!isInside(root, dir)) throw new Error("路径越界")
 
-  const entries = await fs.readdir(dir, { withFileTypes: true })
+  const entries = (await fs.readdir(dir, { withFileTypes: true })).filter((entry) => !TREE_HIDDEN.has(entry.name))
+  const ignored = await gitIgnored(
+    dir,
+    entries.map((entry) => entry.name),
+  )
   return entries
-    .filter((entry) => !IGNORED.has(entry.name) && !entry.name.startsWith("."))
-    .map((entry) => ({
-      path: path.relative(root, path.join(dir, entry.name)),
-      name: entry.name,
-      type: entry.isDirectory() ? ("directory" as const) : ("file" as const),
-    }))
+    .map((entry) => {
+      const item: FileEntry = {
+        path: path.relative(root, path.join(dir, entry.name)),
+        name: entry.name,
+        type: entry.isDirectory() ? "directory" : "file",
+      }
+      if (ignored.has(entry.name)) item.ignored = true
+      return item
+    })
     .sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === "directory" ? -1 : 1))
+}
+
+/**
+ * 这一层里哪些名字被 gitignore 了 —— 一次 `check-ignore --stdin` 查完整层。
+ * 退出码 1 只是"没有一个被忽略",128 是不在仓库里(或机器上没有 git),都当作"没有忽略项"。
+ */
+function gitIgnored(dir: string, names: string[]): Promise<Set<string>> {
+  return new Promise((resolve) => {
+    if (names.length === 0) return resolve(new Set())
+    const child = execFile(
+      "git",
+      [...GIT_CONFIG, "check-ignore", "--stdin", "-z"],
+      { cwd: dir, maxBuffer: GIT_MAX_BUFFER },
+      (_error, stdout) => resolve(new Set(String(stdout ?? "").split("\0").filter(Boolean))),
+    )
+    // git 早退(不在仓库里)时再写 stdin 会 EPIPE,吞掉即可。
+    child.stdin?.on("error", () => {})
+    child.stdin?.end(names.map((name) => `${name}\0`).join(""))
+  })
 }
 
 const MAX_READ_BYTES = 2 * 1024 * 1024
@@ -97,7 +120,7 @@ export async function searchFiles(directory: string, query: string, limit = 50):
     }
     for (const entry of entries) {
       visited += 1
-      if (IGNORED.has(entry.name)) continue
+      if (SEARCH_SKIP.has(entry.name) || entry.name.startsWith(".")) continue
       const full = path.join(dir, entry.name)
       if (entry.isDirectory()) {
         queue.push(full)
@@ -162,48 +185,155 @@ export async function vcsInit(directory: string): Promise<VcsInfo> {
 const FULL_CONTEXT = 1_000_000
 /** 超过这个数只列文件不带 patch:审查页本来就按需展开,一次拉几百份全文 diff 只会卡住内核进程。 */
 const MAX_PATCHES = 200
+/** 列表上限:没写 .gitignore 的工程能有几千个未跟踪文件,全列只会把面板卡死。 */
+const MAX_ENTRIES = 500
 /** 同时在飞的 git 子进程数。 */
 const GIT_CONCURRENCY = 8
+/** 分组顺序照 VS Code:合并冲突、暂存的更改、更改、未跟踪。 */
+const GROUP_ORDER: Record<VcsGroup, number> = { conflict: 0, staged: 1, changes: 2, untracked: 3 }
+
+interface StatusEntry {
+  path: string
+  group: VcsGroup
+  letter: string
+  status: FileDiff["status"]
+  origPath?: string
+  /** patch 和行数对着谁算:HEAD→工作树、HEAD→暂存区、还是没有基线(未跟踪)。 */
+  base: "head" | "index" | "none"
+}
 
 /**
- * 工作区相对 HEAD 的改动。每一项都带全上下文的 patch,否则审查面板列得出文件、展开却是空的
- * (它靠 patch 还原前后文本,不另请求;2026-09-06 之前就是这样)。未跟踪的新文件也算 ——
- * agent 用 write 新建的文件正是最该被审查的那种,而 git diff 天然不列它们。
+ * 审查页的数据源,与 VS Code 源代码管理视图同源:`git status --porcelain=v2`,按它的四个分组、
+ * 它的单字母状态。每一项带全上下文 patch(面板靠它还原前后文本,不另请求;没有它列表能出、
+ * 展开却是空的),未跟踪的新文件也算 —— agent 用 write 新建的文件正是最该被审查的那种。
+ *
+ * 与 VS Code 的两处刻意差异:范围按**项目目录**而不是仓库根(列出的文件都在项目内,点开能直接
+ * 进文件页);同一文件既暂存又有未暂存改动时只列一次归"更改",diff 是 HEAD→工作树的合并视图。
  */
 export async function vcsDiff(directory: string): Promise<FileDiff[]> {
-  // --relative:git 默认按仓库根报路径,项目目录是仓库子目录时前端拿它去拼 file.read 会多一层;
-  // 相对当前目录之后顺带只列这个目录下的改动,正是项目视图要的范围。
-  // --no-renames:改名拆成删 + 增,路径永远一个文件一条,不用解析 "{old => new}"。
+  // 项目目录相对仓库根的前缀(仓库根时为空串)。porcelain 的路径永远相对仓库根,要自己剥。
+  const prefix = await git(directory, ["rev-parse", "--show-prefix"])
+    .then((out) => out.trim())
+    .catch(() => undefined)
+  if (prefix === undefined) return []
+  // pathspec "." 把范围收到项目目录;--untracked-files=all 让未跟踪的文件逐个列出,而不是折成一个目录。
+  const status = await git(directory, ["status", "--porcelain=v2", "-z", "--untracked-files=all", "--", "."]).catch(
+    () => "",
+  )
+  const entries = parseStatus(status, prefix)
+    .sort((a, b) => GROUP_ORDER[a.group] - GROUP_ORDER[b.group] || a.path.localeCompare(b.path))
+    .slice(0, MAX_ENTRIES)
+
+  // --relative:路径相对项目目录(前端拿它去拼 file.read);--no-renames:改名拆成删 + 增,路径永远一个文件一条。
   const common = ["--no-ext-diff", "--no-renames", "--relative"]
-  const tracked = await git(directory, ["diff", "--numstat", ...common, "HEAD"])
-    .then((out) => out.split("\n").filter(Boolean))
-    // 没有 HEAD(刚 init)或根本不是仓库:没有可比的基线。
-    .catch(() => [] as string[])
-  const untracked = await git(directory, ["ls-files", "--others", "--exclude-standard"])
-    .then((out) => out.split("\n").filter(Boolean))
-    .catch(() => [] as string[])
+  const [headStat, indexStat] = await Promise.all([
+    numstat(directory, ["diff", "--numstat", ...common, "HEAD"]),
+    numstat(directory, ["diff", "--numstat", "--cached", ...common]),
+  ])
 
-  const out: FileDiff[] = []
-  for (const line of tracked) {
-    const [added, removed, file] = line.split("\t")
-    if (!file) continue
-    out.push({ path: file, added: Number(added) || 0, removed: Number(removed) || 0, status: "modified" })
-  }
-  for (const file of untracked) out.push({ path: file, added: 0, removed: 0, status: "added" })
-
-  await mapLimit(out.slice(0, MAX_PATCHES), GIT_CONCURRENCY, async (entry) => {
-    const patch =
-      entry.status === "added"
-        ? await untrackedPatch(directory, entry.path)
-        : await git(directory, ["diff", `--unified=${FULL_CONTEXT}`, ...common, "HEAD", "--", entry.path]).catch(
-            () => undefined,
-          )
-    if (!patch) return
-    entry.patch = patch
-    if (entry.status === "added") entry.added = countAdded(patch)
-    else if (/^deleted file mode /m.test(patch)) entry.status = "deleted"
-    else if (/^new file mode /m.test(patch)) entry.status = "added"
+  const out: FileDiff[] = entries.map((entry) => {
+    const stat = (entry.base === "index" ? indexStat : headStat).get(entry.path)
+    const diff: FileDiff = {
+      path: entry.path,
+      added: stat?.[0] ?? 0,
+      removed: stat?.[1] ?? 0,
+      status: entry.status,
+      group: entry.group,
+      letter: entry.letter,
+    }
+    if (entry.origPath) diff.origPath = entry.origPath
+    return diff
   })
+
+  await mapLimit(out.slice(0, MAX_PATCHES), GIT_CONCURRENCY, async (diff, index) => {
+    const entry = entries[index]!
+    const patch =
+      entry.base === "none"
+        ? await untrackedPatch(directory, diff.path)
+        : await git(directory, [
+            "diff",
+            ...(entry.base === "index" ? ["--cached"] : []),
+            `--unified=${FULL_CONTEXT}`,
+            ...common,
+            ...(entry.base === "head" ? ["HEAD"] : []),
+            "--",
+            diff.path,
+          ]).catch(() => undefined)
+    if (!patch) return
+    diff.patch = patch
+    if (entry.base === "none") diff.added = countAdded(patch)
+  })
+  return out
+}
+
+/**
+ * 解析 `git status --porcelain=v2 -z`。条目以 NUL 分隔;改名条目(2)后面多跟一个 NUL 结尾的旧路径。
+ * 字段按空格切,路径是最后一个字段之后的全部(路径里可以有空格)。
+ */
+export function parseStatus(text: string, prefix: string): StatusEntry[] {
+  const tokens = text.split("\0")
+  const out: StatusEntry[] = []
+  const strip = (p: string) => (prefix && p.startsWith(prefix) ? p.slice(prefix.length) : p)
+  const statusOf = (letter: string): FileDiff["status"] =>
+    letter === "A" ? "added" : letter === "D" ? "deleted" : letter === "R" ? "renamed" : "modified"
+
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i]!
+    if (!token) continue
+    const kind = token[0]
+    if (kind === "?") {
+      out.push({ path: strip(token.slice(2)), group: "untracked", letter: "U", status: "added", base: "none" })
+      continue
+    }
+    if (kind !== "1" && kind !== "2" && kind !== "u") continue
+
+    // 1: XY sub mH mI mW hH hI <path>            → 8 个字段后是路径
+    // 2: XY sub mH mI mW hH hI Xscore <path>     → 9 个字段,下一 token 是旧路径
+    // u: XY sub m1 m2 m3 mW h1 h2 h3 <path>      → 10 个字段
+    const fields = kind === "1" ? 8 : kind === "2" ? 9 : 10
+    const rawPath = nthRest(token, fields)
+    if (rawPath === undefined) continue
+    const path = strip(rawPath)
+    const xy = token.slice(2, 4)
+    const origPath = kind === "2" ? tokens[++i] : undefined
+
+    if (kind === "u") {
+      // 合并冲突:VS Code 的字母是 "!"。patch 对着 HEAD 算,冲突标记原样进 diff。
+      out.push({ path, group: "conflict", letter: "!", status: "modified", base: "head" })
+      continue
+    }
+    const x = xy[0] ?? "."
+    const y = xy[1] ?? "."
+    if (y !== ".") {
+      // 工作树有改动(不管暂存区有没有):归"更改",diff 是 HEAD→工作树。
+      out.push({ path, group: "changes", letter: y, status: statusOf(y), origPath, base: "head" })
+    } else if (x !== ".") {
+      // 只在暂存区:归"暂存的更改",diff 是 HEAD→暂存区。改名/复制的字母照 git 给的 R / C。
+      out.push({ path, group: "staged", letter: x, status: statusOf(x), origPath, base: "index" })
+    }
+  }
+  return out
+}
+
+/** 跳过前 n 个空格分隔的字段,返回其余(路径)。 */
+function nthRest(token: string, n: number): string | undefined {
+  let pos = 0
+  for (let k = 0; k < n; k++) {
+    const next = token.indexOf(" ", pos)
+    if (next === -1) return undefined
+    pos = next + 1
+  }
+  return token.slice(pos)
+}
+
+/** `git diff --numstat` → 路径 → [增, 删]。二进制是 "-",记 0;没有 HEAD(刚 init)时整张表为空。 */
+async function numstat(directory: string, args: string[]): Promise<Map<string, [number, number]>> {
+  const out = new Map<string, [number, number]>()
+  const text = await git(directory, args).catch(() => "")
+  for (const line of text.split("\n")) {
+    const [added, removed, file] = line.split("\t")
+    if (file) out.set(file, [Number(added) || 0, Number(removed) || 0])
+  }
   return out
 }
 
@@ -229,10 +359,13 @@ function countAdded(patch: string): number {
   return count
 }
 
-async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+async function mapLimit<T>(items: T[], limit: number, fn: (item: T, index: number) => Promise<void>): Promise<void> {
   let next = 0
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (next < items.length) await fn(items[next++]!)
+    while (next < items.length) {
+      const index = next++
+      await fn(items[index]!, index)
+    }
   })
   await Promise.all(workers)
 }

@@ -20,6 +20,7 @@ import { laCaptures, laView } from "./la-view.ts"
 import { ProjectStore, listFiles, readFile, searchFiles, vcsDiff, vcsInfo, vcsInit } from "./services.ts"
 import { StreamSink } from "./stream.ts"
 import { toolchainFamilies, toolchainFamilySet, toolchainFamilyStatus, toolchainSet, toolchainStatus } from "./toolchain.ts"
+import { VcsWatchers } from "./vcs-watch.ts"
 
 // 纯类型模块,无运行时产物。re-export 只为把工具 details 的漂移闸门拉进编译单元。
 export type * from "./details-check.ts"
@@ -84,6 +85,10 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
   })
   const projects = new ProjectStore(path.join(options.stateDir, "projects.json"))
   void projects.load()
+  // 项目目录一有变化就推 vcs.updated,审查页据此重拉 —— VS Code 源代码管理视图"改完立刻刷新"的那半机制。
+  const vcsWatchers = new VcsWatchers({
+    emit: (directory, info) => sink.push([{ type: "vcs.updated", directory, info }]),
+  })
 
   const handlers = {
     "app.info": async () => ({
@@ -126,9 +131,18 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     "la.captures": ({ directory }) => laCaptures(directory),
     "file.search": ({ directory, query, limit }) => searchFiles(directory, query, limit),
 
-    "vcs.info": ({ directory }) => vcsInfo(directory),
+    // app 打开每个项目都会先问一次 vcs.info,是仓库就从这一刻起盯住它的目录。
+    "vcs.info": async ({ directory }) => {
+      const info = await vcsInfo(directory)
+      if (info.root) vcsWatchers.ensure(directory)
+      return info
+    },
     "vcs.diff": ({ directory }) => vcsDiff(directory),
-    "vcs.init": ({ directory }) => vcsInit(directory),
+    "vcs.init": async ({ directory }) => {
+      const info = await vcsInit(directory)
+      if (info.root) vcsWatchers.ensure(directory)
+      return info
+    },
 
     // side 与会话同源(桌面端不传即 mother):设置页核的账必须和系统提示词里那份
     // 一致,两边一边 mother 一边 runner 的话,UI 打的勾对不上 agent 看到的 MISSING。
@@ -183,6 +197,7 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
       sink.flushNow()
     },
     async dispose() {
+      vcsWatchers.dispose()
       sink.close()
       await sessions.disposeAll()
     },

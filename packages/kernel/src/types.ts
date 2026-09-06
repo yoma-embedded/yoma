@@ -718,6 +718,8 @@ export interface FileEntry {
   path: string
   name: string
   type: "file" | "directory"
+  /** 被 gitignore 忽略:文件树照样列出来,只是灰显(和 VS Code 资源管理器一致)。不在仓库里时没有这个字段。 */
+  ignored?: boolean
 }
 
 /** 文件树节点。children 只在展开过的目录上有值。 */
@@ -744,12 +746,21 @@ export interface Project {
   lastOpened: number
 }
 
+/** VS Code 源代码管理视图的四个分组,顺序也照它:合并冲突、暂存的更改、更改、未跟踪。 */
+export type VcsGroup = "conflict" | "staged" | "changes" | "untracked"
+
 export interface FileDiff {
   path: string
   added: number
   removed: number
   status: "added" | "modified" | "deleted" | "renamed"
   patch?: string
+  /** 所属分组。同一文件既暂存又有未暂存改动时只列一次,归"更改"(VS Code 会列两次,我们的面板按路径去重)。 */
+  group?: VcsGroup
+  /** VS Code 的单字母状态:M / A / D / R / T / C / U(未跟踪)/ !(冲突)。 */
+  letter?: string
+  /** 改名时的旧路径(相对仓库根)。 */
+  origPath?: string
 }
 
 /** 版本控制里单个文件的改动。和 FileDiff 同形,保留这个名字是因为调用点按它命名。 */

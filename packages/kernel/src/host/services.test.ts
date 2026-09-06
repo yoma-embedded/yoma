@@ -12,7 +12,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
-import { listFiles, readFile, vcsDiff, vcsInfo, vcsInit } from "./services.ts"
+import { listFiles, parseStatus, readFile, vcsDiff, vcsInfo, vcsInit } from "./services.ts"
 
 let root: string
 let outside: string
@@ -91,6 +91,75 @@ describe("readFile", () => {
   })
 })
 
+describe("listFiles(VS Code 的资源管理器规则)", () => {
+  test("点文件、node_modules 都显示,只藏 .git 这类;gitignore 的条目带 ignored 标记", async () => {
+    const repo = tempRepo("yoma-services-tree-", { ".gitignore": "node_modules/\nbuild/\n", "src/a.c": "int a;\n" })
+    try {
+      mkdirSync(path.join(repo, "node_modules", "x"), { recursive: true })
+      mkdirSync(path.join(repo, "build"))
+      writeFileSync(path.join(repo, ".env.example"), "A=1\n")
+      writeFileSync(path.join(repo, "build", "out.bin"), "x")
+
+      const top = await listFiles(repo)
+      const names = top.map((entry) => entry.name)
+      expect(names).toContain(".gitignore")
+      expect(names).toContain(".env.example")
+      expect(names).toContain("node_modules")
+      expect(names).toContain("build")
+      expect(names).not.toContain(".git")
+
+      const byName = Object.fromEntries(top.map((entry) => [entry.name, entry]))
+      expect(byName["node_modules"]!.ignored).toBe(true)
+      expect(byName["build"]!.ignored).toBe(true)
+      expect(byName["src"]!.ignored).toBeUndefined()
+      expect(byName[".gitignore"]!.ignored).toBeUndefined()
+
+      // 被忽略的目录照样能往下列,里面的东西也标 ignored
+      const inside = await listFiles(repo, "build")
+      expect(inside.map((entry) => entry.name)).toEqual(["out.bin"])
+      expect(inside[0]!.ignored).toBe(true)
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  test("不是仓库的目录:照常列,没有 ignored 字段", async () => {
+    const top = await listFiles(root)
+    expect(top.map((entry) => entry.name)).toEqual(["docs", "stop-all.ps1"])
+    expect(top.every((entry) => entry.ignored === undefined)).toBe(true)
+  })
+})
+
+describe("parseStatus(porcelain v2)", () => {
+  test("四种记录各归各组,字母照 git;路径含空格;改名带旧路径;仓库子目录剥前缀", () => {
+    const text = [
+      "1 .M N... 100644 100644 100644 abc def sub/a b.txt",
+      "1 M. N... 100644 100644 100644 abc def sub/staged.txt",
+      "1 MM N... 100644 100644 100644 abc def sub/both.txt",
+      "1 .D N... 100644 100644 100644 abc def sub/gone.txt",
+      "1 A. N... 000000 100644 100644 000 def sub/new-staged.txt",
+      "2 R. N... 100644 100644 100644 abc abc R100 sub/renamed.txt",
+      "sub/old.txt",
+      "u UU N... 100644 100644 100644 100644 a b c sub/conflict.txt",
+      "? sub/untracked.txt",
+      "? other/outside.txt",
+    ].join("\0")
+    const entries = parseStatus(text, "sub/")
+    expect(entries.map((e) => [e.path, e.group, e.letter, e.status, e.base])).toEqual([
+      ["a b.txt", "changes", "M", "modified", "head"],
+      ["staged.txt", "staged", "M", "modified", "index"],
+      ["both.txt", "changes", "M", "modified", "head"],
+      ["gone.txt", "changes", "D", "deleted", "head"],
+      ["new-staged.txt", "staged", "A", "added", "index"],
+      ["renamed.txt", "staged", "R", "renamed", "index"],
+      ["conflict.txt", "conflict", "!", "modified", "head"],
+      ["untracked.txt", "untracked", "U", "added", "none"],
+      ["other/outside.txt", "untracked", "U", "added", "none"],
+    ])
+    expect(entries.find((e) => e.path === "renamed.txt")!.origPath).toBe("sub/old.txt")
+  })
+})
+
 describe("vcsDiff", () => {
   test("路径相对传入的目录而不是仓库根:项目是仓库子目录时才能原样喂给 file.read", async () => {
     const repo = tempRepo("yoma-services-git-", { "README.md": "root\n", "firmware/src/main.c": "int main(){}\n" })
@@ -106,35 +175,87 @@ describe("vcsDiff", () => {
       const sub = path.join(repo, "firmware")
       const atSub = await vcsDiff(sub)
       expect(atSub.map((d) => d.path)).toEqual(["src/main.c"])
+      expect(atSub[0]!.patch).toContain("+++ b/src/main.c")
       expect((await readFile(sub, atSub[0]!.path)).content).toBe("int main(){return 0;}\n")
     } finally {
       rmSync(repo, { recursive: true, force: true })
     }
   })
 
-  test("每一项带全上下文 patch;删除标 deleted,未跟踪的新文件标 added 并数出行数,二进制不数", async () => {
-    const repo = tempRepo("yoma-services-patch-", { "a.txt": "1\n2\n3\n", "gone.txt": "bye\n" })
+  test("按 VS Code 分组和字母:暂存 / 更改 / 未跟踪,顺序固定,每项带全上下文 patch 和行数", async () => {
+    const repo = tempRepo("yoma-services-groups-", {
+      "a.txt": "1\n2\n3\n",
+      "staged.txt": "s\n",
+      "both.txt": "b\n",
+      "gone.txt": "bye\n",
+      "old.txt": "o\n",
+    })
     try {
-      writeFileSync(path.join(repo, "a.txt"), "1\n2 changed\n3\n")
-      rmSync(path.join(repo, "gone.txt"))
-      writeFileSync(path.join(repo, "fresh.txt"), "x\ny\n")
-      writeFileSync(path.join(repo, "blob.bin"), Buffer.from([0, 1, 2, 3]))
+      writeFileSync(path.join(repo, "a.txt"), "1\n2 changed\n3\n") // 未暂存 M
+      writeFileSync(path.join(repo, "staged.txt"), "s2\n") // 暂存 M
+      git(repo, "add", "staged.txt")
+      writeFileSync(path.join(repo, "both.txt"), "b2\n") // 暂存后又改:归"更改"
+      git(repo, "add", "both.txt")
+      writeFileSync(path.join(repo, "both.txt"), "b3\n")
+      rmSync(path.join(repo, "gone.txt")) // 未暂存 D
+      writeFileSync(path.join(repo, "new-staged.txt"), "n\n") // 暂存 A
+      git(repo, "add", "new-staged.txt")
+      git(repo, "mv", "old.txt", "renamed.txt") // 暂存 R
+      writeFileSync(path.join(repo, "fresh.txt"), "x\ny\n") // 未跟踪
+      writeFileSync(path.join(repo, "blob.bin"), Buffer.from([0, 1, 2, 3])) // 未跟踪二进制
 
-      const byPath = Object.fromEntries((await vcsDiff(repo)).map((d) => [d.path, d]))
-      expect(Object.keys(byPath).sort()).toEqual(["a.txt", "blob.bin", "fresh.txt", "gone.txt"])
+      const diffs = await vcsDiff(repo)
+      expect(diffs.map((d) => [d.path, d.group, d.letter])).toEqual([
+        ["new-staged.txt", "staged", "A"],
+        ["renamed.txt", "staged", "R"],
+        ["staged.txt", "staged", "M"],
+        ["a.txt", "changes", "M"],
+        ["both.txt", "changes", "M"],
+        ["gone.txt", "changes", "D"],
+        ["blob.bin", "untracked", "U"],
+        ["fresh.txt", "untracked", "U"],
+      ])
+      const byPath = Object.fromEntries(diffs.map((d) => [d.path, d]))
 
-      expect(byPath["a.txt"]).toMatchObject({ status: "modified", added: 1, removed: 1 })
       // 全上下文:整个文件收进一个 hunk,面板才能从 patch 还原出前后两份文本
+      expect(byPath["a.txt"]).toMatchObject({ status: "modified", added: 1, removed: 1 })
       expect(byPath["a.txt"]!.patch).toContain("@@ -1,3 +1,3 @@")
       expect(byPath["a.txt"]!.patch).toContain("-2\n+2 changed\n")
-
+      // 暂存的 diff 对着暂存区算
+      expect(byPath["staged.txt"]).toMatchObject({ status: "modified", added: 1, removed: 1 })
+      expect(byPath["staged.txt"]!.patch).toContain("-s\n+s2\n")
+      // 既暂存又改:合并视图,HEAD→工作树
+      expect(byPath["both.txt"]!.patch).toContain("-b\n+b3\n")
       expect(byPath["gone.txt"]).toMatchObject({ status: "deleted", added: 0, removed: 1 })
-
+      expect(byPath["new-staged.txt"]).toMatchObject({ status: "added", added: 1, removed: 0 })
+      expect(byPath["renamed.txt"]).toMatchObject({ status: "renamed", origPath: "old.txt" })
       expect(byPath["fresh.txt"]).toMatchObject({ status: "added", added: 2, removed: 0 })
-      expect(byPath["fresh.txt"]!.patch).toContain("+++ b/fresh.txt")
       expect(byPath["fresh.txt"]!.patch).toContain("+x\n+y\n")
-
       expect(byPath["blob.bin"]).toMatchObject({ status: "added", added: 0, removed: 0 })
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  test("合并冲突归第一组,字母是 VS Code 的 !", async () => {
+    const repo = tempRepo("yoma-services-conflict-", { "c.txt": "base\n" })
+    try {
+      git(repo, "checkout", "-q", "-b", "other")
+      writeFileSync(path.join(repo, "c.txt"), "theirs\n")
+      git(repo, "commit", "-q", "-am", "theirs")
+      git(repo, "checkout", "-q", "main")
+      writeFileSync(path.join(repo, "c.txt"), "ours\n")
+      git(repo, "commit", "-q", "-am", "ours")
+      writeFileSync(path.join(repo, "z.txt"), "z\n")
+      try {
+        git(repo, "merge", "other")
+      } catch {
+        // 冲突时 git 退出码 1,正是要的状态
+      }
+      const diffs = await vcsDiff(repo)
+      expect(diffs[0]).toMatchObject({ path: "c.txt", group: "conflict", letter: "!" })
+      expect(diffs[0]!.patch).toContain("<<<<<<<")
+      expect(diffs.map((d) => d.group)).toEqual(["conflict", "untracked"])
     } finally {
       rmSync(repo, { recursive: true, force: true })
     }
@@ -145,11 +266,16 @@ describe("vcsDiff", () => {
     try {
       writeFileSync(path.join(repo, "说明.md"), "二\n")
       writeFileSync(path.join(repo, "新 文件.txt"), "新\n")
-      const paths = (await vcsDiff(repo)).map((d) => d.path).sort()
-      expect(paths).toEqual(["新 文件.txt", "说明.md"])
+      const diffs = await vcsDiff(repo)
+      expect(diffs.map((d) => d.path)).toEqual(["说明.md", "新 文件.txt"])
+      expect(diffs[1]!.patch).toContain("+新\n")
     } finally {
       rmSync(repo, { recursive: true, force: true })
     }
+  })
+
+  test("不是仓库:空列表,不抛", async () => {
+    expect(await vcsDiff(root)).toEqual([])
   })
 })
 
@@ -166,11 +292,11 @@ describe("vcsInfo / vcsInit", () => {
       expect(typeof inited.branch).toBe("string")
       // 幂等:再按一次按钮不报错
       expect((await vcsInit(dir)).empty).toBe(true)
-      // 空仓库没有基线,diff 是空的而不是报错
-      expect(await vcsDiff(dir)).toEqual([])
-
+      // 空仓库:未跟踪的文件照样列(VS Code 也列),只是没有 HEAD 可比
       writeFileSync(path.join(dir, "a.txt"), "a\n")
       expect((await vcsInfo(dir)).dirty).toBe(true)
+      expect((await vcsDiff(dir)).map((d) => [d.path, d.group])).toEqual([["a.txt", "untracked"]])
+
       git(dir, "add", ".")
       git(dir, "commit", "-q", "-m", "init")
       const after = await vcsInfo(dir)

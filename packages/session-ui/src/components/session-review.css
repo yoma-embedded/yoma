@@ -200,6 +200,46 @@
     color: var(--icon-diff-modified-base);
   }
 
+  /* VS Code 式分组标题:合并冲突 / 暂存的更改 / 更改 / 未跟踪 */
+  [data-slot="session-review-group"] {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 8px 4px;
+    font-family: var(--font-family-sans);
+    font-size: var(--font-size-small);
+    font-weight: var(--font-weight-medium);
+    color: var(--text-weak);
+  }
+
+  [data-slot="session-review-group-count"] {
+    color: var(--text-weaker);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* VS Code 的单字母状态,颜色也照它的 git 装饰色 */
+  [data-slot="session-review-letter"] {
+    font-family: var(--font-family-sans);
+    font-size: var(--font-size-small);
+    font-weight: var(--font-weight-medium);
+    min-width: 1ch;
+    text-align: center;
+    color: var(--icon-diff-modified-base);
+  }
+
+  [data-slot="session-review-letter"][data-letter="A"],
+  [data-slot="session-review-letter"][data-letter="U"] {
+    color: var(--icon-diff-add-base);
+  }
+
+  [data-slot="session-review-letter"][data-letter="D"] {
+    color: var(--icon-diff-delete-base);
+  }
+
+  [data-slot="session-review-letter"][data-letter="!"] {
+    color: var(--icon-warning-base);
+  }
+
   [data-slot="session-review-diff-wrapper"] {
     position: relative;
     overflow: hidden;

@@ -186,6 +186,39 @@ export const SessionReview = (props: SessionReviewProps) => {
     Object.fromEntries(list(props.diffs).map((diff) => [diff.path, { ...normalize(diff), preloaded: diff.preloaded }])),
   )
   const files = createMemo(() => props.diffs.map((diff) => diff.path))
+  /**
+   * 按 VS Code 源代码管理视图的四个分组分段(合并冲突 / 暂存的更改 / 更改 / 未跟踪)。
+   * 没带分组信息的条目(别的生产者)合成一段、不出标题 —— 老样子的平铺列表。
+   */
+  const GROUPS = ["conflict", "staged", "changes", "untracked"] as const
+  const sections = createMemo(() => {
+    const map = itemsMap()
+    const buckets = new Map<string | undefined, string[]>()
+    for (const file of files()) {
+      const group = map[file]?.group
+      const bucket = buckets.get(group)
+      if (bucket) bucket.push(file)
+      else buckets.set(group, [file])
+    }
+    const out: { group?: (typeof GROUPS)[number]; files: string[] }[] = []
+    for (const group of GROUPS) {
+      const bucket = buckets.get(group)
+      if (bucket) out.push({ group, files: bucket })
+    }
+    const rest = buckets.get(undefined)
+    if (rest) out.push({ files: rest })
+    return out
+  })
+  const groupLabel = (group: (typeof GROUPS)[number]) =>
+    i18n.t(
+      group === "conflict"
+        ? "ui.sessionReview.group.conflict"
+        : group === "staged"
+          ? "ui.sessionReview.group.staged"
+          : group === "changes"
+            ? "ui.sessionReview.group.changes"
+            : "ui.sessionReview.group.untracked",
+    )
   const grouped = createMemo(() => {
     const next = new Map<string, SessionReviewComment[]>()
     for (const comment of props.comments ?? []) {
@@ -388,7 +421,18 @@ export const SessionReview = (props: SessionReviewProps) => {
           <Show when={hasDiffs()} fallback={props.empty}>
             <div data-slot="session-review-list" class="pb-6">
               <Accordion multiple value={open()} onChange={handleChange}>
-                <For each={files()}>
+                <For each={sections()}>
+                  {(section) => (
+                    <>
+                      <Show when={section.group}>
+                        {(group) => (
+                          <div data-slot="session-review-group">
+                            <span data-slot="session-review-group-title">{groupLabel(group())}</span>
+                            <span data-slot="session-review-group-count">{section.files.length}</span>
+                          </div>
+                        )}
+                      </Show>
+                <For each={section.files}>
                   {(file) => {
                     const diff = () => itemsMap()[file]
 
@@ -560,6 +604,13 @@ export const SessionReview = (props: SessionReviewProps) => {
                                     <DiffChanges changes={diff()} />
                                   </Match>
                                 </Switch>
+                                <Show when={diff().letter}>
+                                  {(letter) => (
+                                    <span data-slot="session-review-letter" data-letter={letter()}>
+                                      {letter()}
+                                    </span>
+                                  )}
+                                </Show>
                                 <Show when={diffCanRender()}>
                                   <span data-slot="session-review-diff-chevron">
                                     <Icon name="chevron-down" size="small" />
@@ -645,6 +696,9 @@ export const SessionReview = (props: SessionReviewProps) => {
                       </Accordion.Item>
                     )
                   }}
+                </For>
+                    </>
+                  )}
                 </For>
               </Accordion>
             </div>
