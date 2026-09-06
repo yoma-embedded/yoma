@@ -46,14 +46,29 @@ export async function listFiles(directory: string, relative?: string): Promise<F
 
 const MAX_READ_BYTES = 2 * 1024 * 1024
 
-export async function readFile(file: string): Promise<{ content: string; mime: string; truncated: boolean }> {
-  const stat = await fs.stat(file)
+/**
+ * 读工作目录内的一个文件。`file` 是相对 `directory` 的路径(file.list 交出的就是这种),
+ * 绝对路径也收,但必须落在 `directory` 之内。
+ *
+ * 绝不能拿相对路径直接 stat:内核只有一个进程、服务多个项目,它的 cwd(桌面端里是
+ * homedir)不可能是任何项目根 —— 2026-09-06 之前就是这么写的,表现为文件树列得出来、
+ * 点开每个文件都是 ENOENT,路径全落在 ~/ 下面。
+ */
+export async function readFile(
+  directory: string,
+  file: string,
+): Promise<{ content: string; mime: string; truncated: boolean }> {
+  const root = path.resolve(directory)
+  const target = path.resolve(root, file)
+  if (!isInside(root, target)) throw new Error("路径越界")
+
+  const stat = await fs.stat(target)
   const truncated = stat.size > MAX_READ_BYTES
-  const handle = await fs.open(file, "r")
+  const handle = await fs.open(target, "r")
   try {
     const buffer = Buffer.alloc(Math.min(stat.size, MAX_READ_BYTES))
     await handle.read(buffer, 0, buffer.length, 0)
-    return { content: buffer.toString("utf8"), mime: mimeOf(file), truncated }
+    return { content: buffer.toString("utf8"), mime: mimeOf(target), truncated }
   } finally {
     await handle.close()
   }

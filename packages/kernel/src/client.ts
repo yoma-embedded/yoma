@@ -78,7 +78,7 @@ export interface KernelClient {
   }
   file: {
     list(directory: string, path?: string): Promise<FileEntry[]>
-    read(path: string): Promise<KernelResult<"file.read">>
+    read(directory: string, path: string): Promise<KernelResult<"file.read">>
     search(directory: string, query: string, limit?: number): Promise<string[]>
   }
   la: {
@@ -145,7 +145,7 @@ export function createKernelClient(transport: KernelTransport): KernelClient {
     },
     file: {
       list: (directory, path) => call("file.list", { directory, path }),
-      read: (path) => call("file.read", { path }),
+      read: (directory, path) => call("file.read", { directory, path }),
       search: (directory, query, limit) => call("file.search", { directory, query, limit }),
     },
     la: {

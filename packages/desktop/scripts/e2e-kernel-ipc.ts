@@ -11,7 +11,7 @@
  */
 
 import { app, MessageChannelMain, utilityProcess } from "electron"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -144,8 +144,22 @@ app.whenReady().then(async () => {
       Array.isArray(listed) && listed.some((s: { id: string }) => s.id === session.id),
     )
 
+    // 文件页走的那条路:file.list 交出相对路径,原样喂回 file.read 必须读得到。内核进程的
+    // cwd 不是工作目录(桌面端里是 homedir),2026-09-06 之前这里每个文件都 ENOENT ——
+    // 单测复现不了"utilityProcess 的 cwd",只有这条真进程才能钉住它。
+    writeFileSync(join(workspace, "hello.md"), "# e2e\n")
     const files = await request("file.list", { directory: workspace })
     check("file.list 可用", Array.isArray(files))
+    const hello = Array.isArray(files) ? files.find((f: { name: string }) => f.name === "hello.md") : undefined
+    const read = hello
+      ? await request("file.read", { directory: workspace, path: hello.path }).catch((e: Error) => ({ error: e.message }))
+      : { error: "file.list 没列出 hello.md" }
+    check("file.read 按工作目录解析 file.list 给的相对路径", read?.content === "# e2e\n", read?.error ?? hello?.path)
+    const fenced = await request("file.read", { directory: workspace, path: "../outside.txt" }).then(
+      () => "居然读到了",
+      (e: Error) => e.message,
+    )
+    check("file.read 拒绝越界", fenced.includes("路径越界"), fenced)
 
     const vcs = await request("vcs.info", { directory: workspace })
     check("vcs.info 对非 git 目录不报错", vcs && vcs.dirty === false)

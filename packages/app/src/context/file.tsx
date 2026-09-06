@@ -177,7 +177,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       setLoading(file)
 
       const promise = sdk()
-        .client.file.read(file)
+        .client.file.read(directory, file)
         .then((x) => {
           if (scope() !== directory) return
           const content = { path: file, ...x }

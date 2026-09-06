@@ -121,7 +121,7 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     "auth.remove": ({ providerID }) => sessions.removeAuth(providerID),
 
     "file.list": ({ directory, path: relative }) => listFiles(directory, relative),
-    "file.read": ({ path: file }) => readFile(file),
+    "file.read": ({ directory, path: file }) => readFile(directory, file),
     "la.view": (params) => laView(params),
     "la.captures": ({ directory }) => laCaptures(directory),
     "file.search": ({ directory, query, limit }) => searchFiles(directory, query, limit),

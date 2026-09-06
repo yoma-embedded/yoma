@@ -107,7 +107,8 @@ export interface KernelMethods {
   "auth.remove": { params: { providerID: string }; result: ProviderInfo[] }
 
   "file.list": { params: { directory: string; path?: string }; result: FileEntry[] }
-  "file.read": { params: { path: string }; result: { content: string; mime: string; truncated: boolean } }
+  /** path 相对 directory(file.list 交出的就是这种);绝对路径也收,但必须落在 directory 之内,与 file.list 同一道越界保护。 */
+  "file.read": { params: { directory: string; path: string }; result: { content: string; mime: string; truncated: boolean } }
   "file.search": { params: { directory: string; query: string; limit?: number }; result: string[] }
 
   "vcs.info": { params: { directory: string }; result: VcsInfo }
