@@ -112,7 +112,10 @@ export interface KernelMethods {
   "file.search": { params: { directory: string; query: string; limit?: number }; result: string[] }
 
   "vcs.info": { params: { directory: string }; result: VcsInfo }
+  /** 每一项都带全上下文 patch(审查面板靠它还原前后文本),未跟踪的新文件也列(status: added)。 */
   "vcs.diff": { params: { directory: string }; result: FileDiff[] }
+  /** 非 git 目录的审查页引导:就地 git init,回同 vcs.info 的结果(此时 empty:true)。机器上没有 git 时抛错,前端 toast。 */
+  "vcs.init": { params: { directory: string }; result: VcsInfo }
 
   /**
    * 工具链核账:项目声明的清单(<directory>/.yoma/toolchain.json)对上这台机器实际

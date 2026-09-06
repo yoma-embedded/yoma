@@ -89,6 +89,7 @@ export interface KernelClient {
   vcs: {
     info(directory: string): Promise<VcsInfo>
     diff(directory: string): Promise<FileDiff[]>
+    init(directory: string): Promise<VcsInfo>
   }
   toolchain: {
     status(params: { directory: string; fresh?: boolean }): Promise<ToolchainStatusView>
@@ -155,6 +156,7 @@ export function createKernelClient(transport: KernelTransport): KernelClient {
     vcs: {
       info: (directory) => call("vcs.info", { directory }),
       diff: (directory) => call("vcs.diff", { directory }),
+      init: (directory) => call("vcs.init", { directory }),
     },
     toolchain: {
       status: (params) => call("toolchain.status", params),

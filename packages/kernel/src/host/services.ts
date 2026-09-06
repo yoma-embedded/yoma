@@ -114,37 +114,127 @@ export async function searchFiles(directory: string, query: string, limit = 50):
   return out.sort((a, b) => a.length - b.length)
 }
 
+/** 所有 git 调用共用:路径不转义(中文文件名原样输出),缓冲放大到装得下整仓的全上下文 diff。 */
+const GIT_CONFIG = ["-c", "core.quotePath=false"]
+const GIT_MAX_BUFFER = 64 * 1024 * 1024
+
+async function git(cwd: string, args: string[]): Promise<string> {
+  const { stdout } = await run("git", [...GIT_CONFIG, ...args], { cwd, maxBuffer: GIT_MAX_BUFFER })
+  return stdout
+}
+
 export async function vcsInfo(directory: string): Promise<VcsInfo> {
+  let root: string
   try {
-    const { stdout: root } = await run("git", ["rev-parse", "--show-toplevel"], { cwd: directory })
-    const { stdout: branch } = await run("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: directory })
-    const { stdout: status } = await run("git", ["status", "--porcelain"], { cwd: directory })
-    return { root: root.trim(), branch: branch.trim(), dirty: status.trim().length > 0 }
+    root = (await git(directory, ["rev-parse", "--show-toplevel"])).trim()
   } catch {
     // 不是 git 仓库不是错误 —— 固件工程经常就是一个裸目录。
     return { dirty: false }
   }
+  // 刚 git init 的仓库没有 HEAD:rev-parse HEAD 会失败,但 root 和分支名都在。从前这里整段一起
+  // try,于是"刚建的仓库"在前端看来等于"不是仓库",创建按钮按了像没反应。
+  const branch = await git(directory, ["symbolic-ref", "--short", "-q", "HEAD"])
+    .then((out) => out.trim())
+    .catch(() => git(directory, ["rev-parse", "--abbrev-ref", "HEAD"]).then((out) => out.trim()))
+    .catch(() => undefined)
+  const hasHead = await git(directory, ["rev-parse", "--verify", "-q", "HEAD"]).then(
+    () => true,
+    () => false,
+  )
+  const status = await git(directory, ["status", "--porcelain"]).catch(() => "")
+  const info: VcsInfo = { root, dirty: status.trim().length > 0 }
+  if (branch) info.branch = branch
+  if (!hasHead) info.empty = true
+  return info
 }
 
+/**
+ * 非 git 目录的审查页引导:就地 git init,再回同 vcsInfo 的结果(此时 empty:true,要先做一次提交)。
+ * 只 init 不提交 —— 替用户把整个目录 add 进去太越界(没有 .gitignore 的固件工程会连 build/ 一起收),
+ * 上游 opencode 的 initGit 也只做这一步。刻意不吞错:机器上没有 git 才会失败,得让用户看见原因。
+ */
+export async function vcsInit(directory: string): Promise<VcsInfo> {
+  await git(directory, ["init", "--quiet"])
+  return vcsInfo(directory)
+}
+
+/** 全上下文:审查面板要从 patch 还原出整份改动前/改动后的文本(session-diff 的 completePatchContents)。 */
+const FULL_CONTEXT = 1_000_000
+/** 超过这个数只列文件不带 patch:审查页本来就按需展开,一次拉几百份全文 diff 只会卡住内核进程。 */
+const MAX_PATCHES = 200
+/** 同时在飞的 git 子进程数。 */
+const GIT_CONCURRENCY = 8
+
+/**
+ * 工作区相对 HEAD 的改动。每一项都带全上下文的 patch,否则审查面板列得出文件、展开却是空的
+ * (它靠 patch 还原前后文本,不另请求;2026-09-06 之前就是这样)。未跟踪的新文件也算 ——
+ * agent 用 write 新建的文件正是最该被审查的那种,而 git diff 天然不列它们。
+ */
 export async function vcsDiff(directory: string): Promise<FileDiff[]> {
-  try {
-    const { stdout } = await run("git", ["diff", "--numstat", "HEAD"], { cwd: directory })
-    return stdout
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => {
-        const [added, removed, file] = line.split("\t")
-        return {
-          path: file ?? "",
-          added: Number(added) || 0,
-          removed: Number(removed) || 0,
-          status: "modified" as const,
-        }
-      })
-      .filter((entry) => entry.path)
-  } catch {
-    return []
+  // --relative:git 默认按仓库根报路径,项目目录是仓库子目录时前端拿它去拼 file.read 会多一层;
+  // 相对当前目录之后顺带只列这个目录下的改动,正是项目视图要的范围。
+  // --no-renames:改名拆成删 + 增,路径永远一个文件一条,不用解析 "{old => new}"。
+  const common = ["--no-ext-diff", "--no-renames", "--relative"]
+  const tracked = await git(directory, ["diff", "--numstat", ...common, "HEAD"])
+    .then((out) => out.split("\n").filter(Boolean))
+    // 没有 HEAD(刚 init)或根本不是仓库:没有可比的基线。
+    .catch(() => [] as string[])
+  const untracked = await git(directory, ["ls-files", "--others", "--exclude-standard"])
+    .then((out) => out.split("\n").filter(Boolean))
+    .catch(() => [] as string[])
+
+  const out: FileDiff[] = []
+  for (const line of tracked) {
+    const [added, removed, file] = line.split("\t")
+    if (!file) continue
+    out.push({ path: file, added: Number(added) || 0, removed: Number(removed) || 0, status: "modified" })
   }
+  for (const file of untracked) out.push({ path: file, added: 0, removed: 0, status: "added" })
+
+  await mapLimit(out.slice(0, MAX_PATCHES), GIT_CONCURRENCY, async (entry) => {
+    const patch =
+      entry.status === "added"
+        ? await untrackedPatch(directory, entry.path)
+        : await git(directory, ["diff", `--unified=${FULL_CONTEXT}`, ...common, "HEAD", "--", entry.path]).catch(
+            () => undefined,
+          )
+    if (!patch) return
+    entry.patch = patch
+    if (entry.status === "added") entry.added = countAdded(patch)
+    else if (/^deleted file mode /m.test(patch)) entry.status = "deleted"
+    else if (/^new file mode /m.test(patch)) entry.status = "added"
+  })
+  return out
+}
+
+/**
+ * 未跟踪文件没有基线,拿 --no-index 对着 /dev/null 生成 patch(Git for Windows 认这个名字)。
+ * git 在有差异时退出码是 1 —— 那是正常路径,patch 就在 stdout 里,不是错误。
+ */
+async function untrackedPatch(cwd: string, file: string): Promise<string | undefined> {
+  const args = [...GIT_CONFIG, "diff", "--no-index", "--no-ext-diff", `--unified=${FULL_CONTEXT}`, "--", "/dev/null", file]
+  try {
+    const { stdout } = await run("git", args, { cwd, maxBuffer: GIT_MAX_BUFFER })
+    return stdout || undefined
+  } catch (error) {
+    const stdout = (error as { stdout?: unknown }).stdout
+    return typeof stdout === "string" && stdout.startsWith("diff --git") ? stdout : undefined
+  }
+}
+
+/** 新文件的行数就是 patch 里的 + 行数(二进制文件没有 hunk,自然是 0)。 */
+function countAdded(patch: string): number {
+  let count = 0
+  for (const line of patch.split("\n")) if (line.startsWith("+") && !line.startsWith("+++")) count += 1
+  return count
+}
+
+async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let next = 0
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) await fn(items[next++]!)
+  })
+  await Promise.all(workers)
 }
 
 // ---------------------------------------------------------------------------

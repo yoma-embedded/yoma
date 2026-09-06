@@ -43,6 +43,8 @@ function BarButton(props: {
   title: string
   on?: boolean
   label?: string
+  /** 图标右侧的小角标(比如审查的"3 +12 −1"),没有就不占位 */
+  badge?: JSX.Element
   onClick: () => void
 }) {
   return (
@@ -62,6 +64,9 @@ function BarButton(props: {
         <Show when={props.label}>
           <span class="text-12-regular">{props.label}</span>
         </Show>
+        <Show when={props.badge}>
+          <span class="text-12-regular tabular-nums flex items-center gap-1">{props.badge}</span>
+        </Show>
       </button>
     </Tooltip>
   )
@@ -74,6 +79,7 @@ export function SessionSidePanel(props: {
   empty: () => string
   hasReview: () => boolean
   reviewCount: () => number
+  reviewStats: () => { files: number; added: number; removed: number }
   reviewPanel: () => JSX.Element
   activeDiff?: string
   focusReviewDiff: (path: string) => void
@@ -210,6 +216,19 @@ export function SessionSidePanel(props: {
     return getFilenameTruncated(path, 18)
   })
 
+  /** "审查"按钮的角标:文件数 + 增删行数。面板关着也显示,agent 一改文件用户就看得见。 */
+  const reviewBadge = () => {
+    const stats = props.reviewStats()
+    if (stats.files === 0) return undefined
+    return (
+      <>
+        <span>{stats.files}</span>
+        <span style={{ color: "var(--icon-diff-add-base)" }}>+{stats.added}</span>
+        <span style={{ color: "var(--icon-diff-delete-base)" }}>−{stats.removed}</span>
+      </>
+    )
+  }
+
   const showAllFiles = () => {
     if (fileTreeTab() !== "changes") return
     layout.fileTree.setTab("all")
@@ -323,6 +342,7 @@ export function SessionSidePanel(props: {
               icon="review"
               title={language.t("session.tab.review")}
               on={dock.mode() === "changes"}
+              badge={reviewBadge()}
               onClick={() => switchMode("changes")}
             />
             <BarButton icon="debug" title="调试" on={dock.mode() === "debug"} onClick={() => switchMode("debug")} />

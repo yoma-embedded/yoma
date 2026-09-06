@@ -20,6 +20,7 @@ import { debounce } from "@solid-primitives/scheduled"
 import { useLocal } from "@/context/local"
 import { selectionFromLines, useFile, type FileSelection, type SelectedLineRange } from "@/context/file"
 import { createStore } from "solid-js/store"
+import { Button } from "@yoma-desktop/ui/button"
 import { ResizeHandle } from "@yoma-desktop/ui/resize-handle"
 import { Tabs } from "@yoma-desktop/ui/tabs"
 import { createAutoScroll } from "@yoma-desktop/ui/hooks"
@@ -210,7 +211,9 @@ export default function Page() {
     if (!view().reviewPanel.opened()) view().reviewPanel.open()
   }
 
-  const canReview = createMemo(() => !!sync().project)
+  // 项目就是目录:有目录就能审查。别拿 sync().project 当开关 —— 它查的是内核的"最近项目"列表
+  // (project.list),而那份列表从没人写,永远是空的,审查标签因此从来没亮过(2026-09-06 实测)。
+  const canReview = createMemo(() => !!sync().data.project)
   const reviewTab = createMemo(() => isDesktop())
   const tabState = createSessionTabs({
     tabs,
@@ -219,7 +222,6 @@ export default function Page() {
     review: reviewTab,
     hasReview: canReview,
   })
-  const activeTab = tabState.activeTab
   const activeFileTab = tabState.activeFileTab
   const timeline = createTimelineModel({ sessionID: () => params.id })
   const historyLoading = timeline.history.loading
@@ -309,11 +311,6 @@ export default function Page() {
   }, desktopReviewOpen())
 
   const mobileChanges = createMemo(() => !isDesktop() && store.mobileTab === "changes")
-  const wantsReview = createMemo(() =>
-    isDesktop()
-      ? desktopFileTreeOpen() || (desktopReviewOpen() && activeTab() === "review")
-      : store.mobileTab === "changes",
-  )
   /**
    * 变更视图只剩「工作区未提交改动」一种。
    *
@@ -321,9 +318,15 @@ export default function Page() {
    * 没有 default_branch,所以 git / branch / turn 三个模式收敛成一个。
    */
   const vcsKey = createMemo(() => ["session-vcs", sdk().directory, sync().data.vcs?.branch ?? ""] as const)
+  /** vcs.info 还没回来时是 undefined:那时既不能说"不是 git 仓库",也不能说"没改动"。 */
+  const vcsKnown = createMemo(() => sync().data.vcs !== undefined)
+  const hasVcs = createMemo(() => !!sync().data.vcs?.root)
+  /** 刚 git init、一次提交都没有:没有 HEAD 可比,diff 拉了也是空的。 */
+  const vcsEmpty = createMemo(() => !!sync().data.vcs?.empty)
   const vcsQuery = createQuery(() => ({
     queryKey: vcsKey(),
-    enabled: wantsReview() && !!sync().data.vcs?.root,
+    // 面板关着也拉:右栏"审查"按钮上的角标要一直是活的。numstat 很轻,文件内容按需再读。
+    enabled: hasVcs() && !vcsEmpty(),
     queryFn: () =>
       sdk()
         .client.vcs.diff(sdk().directory)
@@ -337,7 +340,29 @@ export default function Page() {
   const reviewDiffs = () => (vcsQuery.isFetched ? (vcsQuery.data ?? []) : [])
   const reviewCount = () => reviewDiffs().length
   const hasReview = () => reviewCount() > 0
-  const reviewReady = () => !vcsQuery.isPending
+  /** 角标用:文件数 + 增删行数(Claude Code 的 +12 -1、Zed 的"几文件几行"那种,信息最密、成本最低)。 */
+  const reviewStats = createMemo(() =>
+    reviewDiffs().reduce(
+      (acc, diff) => ({ files: acc.files + 1, added: acc.added + diff.added, removed: acc.removed + diff.removed }),
+      { files: 0, added: 0, removed: 0 },
+    ),
+  )
+  // 查询被禁用(不是仓库 / 空仓库)时 TanStack 让 isPending 永远为 true,不能拿它当"加载中"。
+  const reviewReady = () => (hasVcs() && !vcsEmpty() ? !vcsQuery.isPending : vcsKnown())
+  const gitInit = useMutation(() => ({
+    mutationFn: () => sdk().client.vcs.init(sdk().directory),
+    onSuccess: (next) => {
+      sync().set("vcs", next)
+      refreshVcs()
+    },
+    onError: (error) => {
+      showToast({
+        variant: "error",
+        title: language.t("session.review.noVcs.createGit.failed"),
+        description: formatServerError(error, language.t),
+      })
+    },
+  }))
 
   const setActiveMessage = (message: UserMessage | undefined) => {
     messageMark = scrollMark
@@ -622,8 +647,29 @@ export default function Page() {
 
   const reviewEmptyText = createMemo(() => language.t("session.review.noUncommittedChanges"))
 
+  // 非 git 目录:引导 git init(Codex app 与 opencode 的做法;把面板禁掉不是主流)。文案沿用上游同键。
+  const createGit = (input: { emptyClass: string }) => (
+    <div class={input.emptyClass}>
+      <div class="flex flex-col gap-3">
+        <div class="text-14-medium text-text-strong">{language.t("session.review.noVcs.createGit.title")}</div>
+        <div class="text-14-regular text-text-base max-w-md" style={{ "line-height": "var(--line-height-normal)" }}>
+          {language.t("session.review.noVcs.createGit.description")}
+        </div>
+      </div>
+      <Button size="large" disabled={gitInit.isPending} onClick={() => gitInit.mutate()}>
+        {gitInit.isPending
+          ? language.t("session.review.noVcs.createGit.actionLoading")
+          : language.t("session.review.noVcs.createGit.action")}
+      </Button>
+    </div>
+  )
+
   const reviewEmpty = (input: { loadingClass: string; emptyClass: string }) => {
-    if (!reviewReady()) return <div class={input.loadingClass}>{language.t("session.review.loadingChanges")}</div>
+    const loading = () => <div class={input.loadingClass}>{language.t("session.review.loadingChanges")}</div>
+    if (!vcsKnown()) return loading()
+    if (!hasVcs()) return createGit(input)
+    if (vcsEmpty()) return empty(language.t("session.review.noCommits"))
+    if (!reviewReady()) return loading()
     return empty(reviewEmptyText())
   }
 
@@ -1394,6 +1440,7 @@ export default function Page() {
           empty={reviewEmptyText}
           hasReview={hasReview}
           reviewCount={reviewCount}
+          reviewStats={reviewStats}
           reviewPanel={reviewPanel}
           activeDiff={tree.activeDiff}
           focusReviewDiff={focusReviewDiff}

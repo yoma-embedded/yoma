@@ -759,4 +759,6 @@ export interface VcsInfo {
   root?: string
   branch?: string
   dirty: boolean
+  /** 是 git 仓库但一次提交都没有(刚 git init):没有 HEAD 可比,审查页要提示"先做一次提交",不能说"暂无改动"。 */
+  empty?: boolean
 }

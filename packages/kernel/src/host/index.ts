@@ -17,7 +17,7 @@ import { createEmbeddedTools, SessionManager, type SessionManagerOptions } from 
 import { runPreflight, inspectEngines } from "./preflight.ts"
 import { yomaConfigDir } from "./auth.ts"
 import { laCaptures, laView } from "./la-view.ts"
-import { ProjectStore, listFiles, readFile, searchFiles, vcsDiff, vcsInfo } from "./services.ts"
+import { ProjectStore, listFiles, readFile, searchFiles, vcsDiff, vcsInfo, vcsInit } from "./services.ts"
 import { StreamSink } from "./stream.ts"
 import { toolchainFamilies, toolchainFamilySet, toolchainFamilyStatus, toolchainSet, toolchainStatus } from "./toolchain.ts"
 
@@ -128,6 +128,7 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
 
     "vcs.info": ({ directory }) => vcsInfo(directory),
     "vcs.diff": ({ directory }) => vcsDiff(directory),
+    "vcs.init": ({ directory }) => vcsInit(directory),
 
     // side 与会话同源(桌面端不传即 mother):设置页核的账必须和系统提示词里那份
     // 一致,两边一边 mother 一边 runner 的话,UI 打的勾对不上 agent 看到的 MISSING。

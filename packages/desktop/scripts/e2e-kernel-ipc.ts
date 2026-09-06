@@ -164,6 +164,10 @@ app.whenReady().then(async () => {
     const vcs = await request("vcs.info", { directory: workspace })
     check("vcs.info 对非 git 目录不报错", vcs && vcs.dirty === false)
 
+    // 审查页的"创建 Git 仓库"按钮走的就是这条:裸目录 init 之后要立刻认得出是空仓库。
+    const inited = await request("vcs.init", { directory: workspace }).catch((e: Error) => ({ error: e.message }))
+    check("vcs.init 把裸目录变成空仓库(root 有、empty)", !!inited?.root && inited.empty === true, inited?.error ?? inited?.root)
+
     // 内核进程主动推事件(session.created)是"流式能到 renderer"的最小证据。
     await new Promise((resolve) => setTimeout(resolve, 300))
     const created = pushes.flat().some((e: any) => e?.type === "session.created")
