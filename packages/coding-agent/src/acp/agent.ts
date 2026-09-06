@@ -258,6 +258,8 @@ export interface YomaAcpAgentOptions {
 	logsDir?: string;
 	/** 上下文文件与技能的全局目录,默认 ~/.yoma。测试用它隔离真实的用户目录。 */
 	configDir?: string;
+	/** `~/.agents/skills` 里那个 `~`,默认 os.homedir()。测试用它隔离开发机上真实装着的全局技能。 */
+	homeDir?: string;
 }
 
 export class YomaAcpAgent {
@@ -422,7 +424,7 @@ export class YomaAcpAgent {
 		const configDir = this.options.configDir ?? CONFIG_DIR;
 		const [contextFiles, { skills, diagnostics }] = await Promise.all([
 			loadContextFiles(env, { cwd, globalDir: configDir }),
-			discoverSkills(env, { cwd, globalDir: configDir }),
+			discoverSkills(env, { cwd, globalDir: configDir, homeDir: this.options.homeDir }),
 		]);
 		// acp.ts 把 console 重定向到了 stderr(落 ~/.yoma/acp.log),诊断记在那里。
 		for (const diagnostic of diagnostics) {

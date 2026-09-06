@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "bun:test";
@@ -14,13 +14,13 @@ import {
 	engineBin,
 	engineDataDir,
 	enginesDir,
-	exe,
 	findEnginesDir,
 	probeFailedHint,
 	releaseProbe,
 	runEngine,
 	sanitizeStem,
 } from "../src/index.ts";
+import { ECHO_ARGV_JS, fakeExeName, writeFakeExe } from "./fixtures/fake-exe.ts";
 
 const tempDirs: string[] = [];
 
@@ -45,35 +45,42 @@ afterEach(() => {
 	}
 });
 
-/** 造一个 bin/data 布局的 engines 根;bins 里给出的假二进制会写进 bin/。 */
+/** 造一个 bin/data 布局的 engines 根;bins 里给出的假引擎(一段 JS,见 fixtures/fake-exe.ts)会写进 bin/。 */
 function makeEnginesDir(bins: Record<string, string> = {}): string {
 	const root = createTempDir();
 	mkdirSync(join(root, "bin"), { recursive: true });
-	for (const [name, script] of Object.entries(bins)) {
-		const binPath = join(root, "bin", exe(name));
-		writeFileSync(binPath, script);
-		chmodSync(binPath, 0o755);
-	}
+	for (const [name, js] of Object.entries(bins)) writeFakeExe(join(root, "bin"), name, js);
 	mkdirSync(join(root, "data", "stm32", "fw"), { recursive: true });
 	return root;
 }
 
-const ECHO_ARGS_KERNEL = `#!/bin/sh
-echo "argv: $@"
+const ECHO_ARGS_KERNEL = ECHO_ARGV_JS;
+
+/** 打一行就退出,但先起一个活 30 s、继承了 stdio 管道的孙进程(从前是 `sh -c "echo started; sleep 30 & exit 0"`)。 */
+const GRANDCHILD_KEEPS_PIPES_JS = `
+import { spawn } from "node:child_process";
+const grandchild = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: ["ignore", "inherit", "inherit"], windowsHide: true });
+grandchild.unref();
+console.log("started");
 `;
 
-/** 造一个独立的假烧录器脚本 —— flash 不再走 enginesDir,命令由模型自带。 */
-function fakeFlasher(script: string): string {
-	const file = join(createTempDir(), exe("flasher"));
-	writeFileSync(file, script);
-	chmodSync(file, 0o755);
-	return file;
+/** 起一个活 30 s 的孙进程,自己也活 30 s(从前是 `sh -c "sleep 30 & sleep 30"`)。 */
+const GRANDCHILD_THEN_SLEEP_JS = `
+import { spawn } from "node:child_process";
+spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: ["ignore", "inherit", "inherit"], windowsHide: true });
+setTimeout(() => {}, 30000);
+`;
+
+/** 造一个独立的假烧录器 —— flash 不再走 enginesDir,命令由模型自带。 */
+function fakeFlasher(js: string): string {
+	return writeFakeExe(createTempDir(), "flasher", js);
 }
 
 describe("engine path resolution", () => {
 	it("resolves binaries and data from the bin/data layout", () => {
 		const root = makeEnginesDir({ stm32kernel: ECHO_ARGS_KERNEL });
-		expect(engineBin("stm32kernel", { enginesDir: root })).toBe(join(root, "bin", exe("stm32kernel")));
+		// Windows 上假引擎是 .cmd 启动器,engineBin 在 .exe 缺席时认它。
+		expect(engineBin("stm32kernel", { enginesDir: root })).toBe(join(root, "bin", fakeExeName("stm32kernel")));
 		expect(engineDataDir("stm32", { enginesDir: root })).toBe(join(root, "data", "stm32"));
 	});
 
@@ -111,7 +118,7 @@ describe("engine path resolution", () => {
 
 describe("runEngine", () => {
 	it("captures stdout and stderr separately and reports the exit code", async () => {
-		const result = await runEngine("/bin/sh", ["-c", "echo out; echo err 1>&2; exit 3"]);
+		const result = await runEngine(process.execPath, ["-e", "console.log('out'); console.error('err'); process.exit(3)"]);
 		expect(result.stdout.trim()).toBe("out");
 		expect(result.stderr.trim()).toBe("err");
 		expect(result.exitCode).toBe(3);
@@ -120,8 +127,9 @@ describe("runEngine", () => {
 	});
 
 	it("passes argv without shell interpretation", async () => {
-		const result = await runEngine("/bin/echo", ["a b", "$HOME", "; rm -rf /"]);
-		expect(result.stdout.trim()).toBe("a b $HOME ; rm -rf /");
+		const echo = writeFakeExe(createTempDir(), "echo", ECHO_ARGV_JS);
+		const result = await runEngine(echo, ["a b", "$HOME", "; rm -rf /"]);
+		expect(result.stdout.trim()).toBe("argv: a b $HOME ; rm -rf /");
 	});
 
 	it("pins PYTHONIOENCODING / PYTHONUTF8 for the engine process", async () => {
@@ -150,7 +158,7 @@ describe("runEngine", () => {
 
 	it("kills the process on timeout", async () => {
 		const start = Date.now();
-		const result = await runEngine("/bin/sh", ["-c", "sleep 30"], { timeoutMs: 200 });
+		const result = await runEngine(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { timeoutMs: 200 });
 		expect(result.timedOut).toBe(true);
 		expect(Date.now() - start).toBeLessThan(5000);
 	});
@@ -158,7 +166,7 @@ describe("runEngine", () => {
 	it("kills the process on abort", async () => {
 		const controller = new AbortController();
 		setTimeout(() => controller.abort(), 100);
-		const result = await runEngine("/bin/sh", ["-c", "sleep 30"], { signal: controller.signal });
+		const result = await runEngine(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { signal: controller.signal });
 		expect(result.aborted).toBe(true);
 	});
 
@@ -167,17 +175,19 @@ describe("runEngine", () => {
 	});
 
 	it("settles after exit even when a grandchild keeps the stdio pipes open", async () => {
-		// sh 立刻退出,但后台 sleep 继承了管道 —— 'close' 被拖住,必须靠 exit+宽限兜底。
+		// 父进程立刻退出,但它起的孙进程继承了管道 —— 'close' 被拖住,必须靠 exit+宽限兜底。
+		const parent = writeFakeExe(createTempDir(), "parent", GRANDCHILD_KEEPS_PIPES_JS);
 		const start = Date.now();
-		const result = await runEngine("/bin/sh", ["-c", "echo started; sleep 30 & exit 0"]);
+		const result = await runEngine(parent, []);
 		expect(result.stdout).toContain("started");
 		expect(result.exitCode).toBe(0);
 		expect(Date.now() - start).toBeLessThan(5000);
 	});
 
 	it("bounds the timeout even when a grandchild survives the kill", async () => {
+		const parent = writeFakeExe(createTempDir(), "parent", GRANDCHILD_THEN_SLEEP_JS);
 		const start = Date.now();
-		const result = await runEngine("/bin/sh", ["-c", "sleep 30 & sleep 30"], { timeoutMs: 200 });
+		const result = await runEngine(parent, [], { timeoutMs: 200 });
 		expect(result.timedOut).toBe(true);
 		expect(Date.now() - start).toBeLessThan(8000);
 	});
@@ -382,7 +392,7 @@ describe("stm32config tool", () => {
 	});
 
 	it("treats exit 1 on config commands as a normal result with fix-it guidance", async () => {
-		const { tool } = makeTool(`#!/bin/sh\necho '{"diagnostics":[{"severity":"error"}]}'\nexit 1\n`);
+		const { tool } = makeTool(`console.log('{"diagnostics":[{"severity":"error"}]}'); process.exitCode = 1;`);
 		const result = await tool.execute("c1", { command: "validate", configPath: "board.json" });
 		expect(textOf(result)).toContain('"diagnostics"');
 		expect(textOf(result)).toContain("Exit code 1: the configuration has ERROR diagnostics");
@@ -397,19 +407,19 @@ describe("stm32config tool", () => {
 	});
 
 	it("throws on exit 2 with stderr in the message", async () => {
-		const { tool } = makeTool(`#!/bin/sh\necho "boom" 1>&2\nexit 2\n`);
+		const { tool } = makeTool(`console.error("boom"); process.exitCode = 2;`);
 		await expect(tool.execute("c1", { command: "list-mcus" })).rejects.toThrow(/failed \(exit 2\): boom/);
 	});
 
 	it("throws on exit 2 even when the kernel printed JSON to stdout", async () => {
 		// 真内核的 usage/内部错误正是这个形态:stdout 上有 {"error":...},exit 2 —— 必须抛,
 		// 不能当 exit 1 那样的诊断回路返回给模型。
-		const { tool } = makeTool(`#!/bin/sh\necho '{"error":"usage"}'\necho "usage" 1>&2\nexit 2\n`);
+		const { tool } = makeTool(`console.log('{"error":"usage"}'); console.error("usage"); process.exitCode = 2;`);
 		await expect(tool.execute("c1", { command: "list-mcus" })).rejects.toThrow(/failed \(exit 2\)/);
 	});
 
 	it("throws on a non-zero exit with empty stdout", async () => {
-		const { tool } = makeTool(`#!/bin/sh\necho "panic" 1>&2\nexit 101\n`);
+		const { tool } = makeTool(`console.error("panic"); process.exitCode = 101;`);
 		await expect(tool.execute("c1", { command: "list-mcus" })).rejects.toThrow(/failed \(exit 101\): panic/);
 	});
 });
@@ -423,26 +433,21 @@ describe("netlist sanitizeStem", () => {
 });
 
 describe("netlist tool", () => {
-	const ECHO_CONTROLLER_MAP = `#!/bin/sh
-echo "detected U2 (confidence high)" 1>&2
-echo "argv: $@"
-`;
+	const ECHO_CONTROLLER_MAP = `
+console.error("detected U2 (confidence high)");
+${ECHO_ARGV_JS}`;
 	// 假 board_ir:抓出 --out-dir/--stem,写下三个产物文件。argv 打到 stderr ——
 	// board_ir 分支按设计丢弃 stdout,只有 stderr 会以 [detection] 透出。
-	const FAKE_BOARD_IR = `#!/bin/sh
-ALL="$@"
-OUT=""; STEM=""
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --out-dir) OUT="$2"; shift 2 ;;
-    --stem) STEM="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-echo '{"map":1}' > "$OUT/\${STEM}_stm32_map.json"
-echo '{"seed":2}' > "$OUT/\${STEM}_cfg_seed.json"
-echo '{"ir":3}' > "$OUT/\${STEM}_board_ir.json"
-echo "argv: $ALL" 1>&2
+	const FAKE_BOARD_IR = `
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+const args = process.argv.slice(2);
+const out = args[args.indexOf("--out-dir") + 1];
+const stem = args[args.indexOf("--stem") + 1];
+writeFileSync(join(out, stem + "_stm32_map.json"), '{"map":1}');
+writeFileSync(join(out, stem + "_cfg_seed.json"), '{"seed":2}');
+writeFileSync(join(out, stem + "_board_ir.json"), '{"ir":3}');
+console.error("argv: " + args.join(" "));
 `;
 
 	function makeTools(bins: Record<string, string>) {
@@ -475,7 +480,7 @@ echo "argv: $ALL" 1>&2
 	});
 
 	it("throws when controller_map exits non-zero", async () => {
-		const { tool, cwd } = makeTools({ controller_map: `#!/bin/sh\necho "parse error" 1>&2\nexit 3\n` });
+		const { tool, cwd } = makeTools({ controller_map: `console.error("parse error"); process.exitCode = 3;` });
 		writeFileSync(join(cwd, "board.NET"), "x");
 		await expect(tool.execute("c1", { netlistPath: "board.NET" })).rejects.toThrow(
 			/controller_map failed \(exit 3\): parse error/,
@@ -516,7 +521,7 @@ echo "argv: $ALL" 1>&2
 
 	it("throws when board_ir exits non-zero", async () => {
 		const { tool, cwd } = makeTools({
-			board_ir: `#!/bin/sh\necho "unknown part" 1>&2\nexit 7\n`,
+			board_ir: `console.error("unknown part"); process.exitCode = 7;`,
 			stm32kernel: ECHO_ARGS_KERNEL,
 		});
 		writeFileSync(join(cwd, "b.NET"), "x");
@@ -553,9 +558,7 @@ describe("probe lease", () => {
 });
 
 describe("flash tool", () => {
-	const ECHO_FLASHER = `#!/bin/sh
-echo "argv: $@"
-`;
+	const ECHO_FLASHER = ECHO_ARGV_JS;
 
 	function makeTool(script: string) {
 		const flasher = fakeFlasher(script);
@@ -572,7 +575,7 @@ echo "argv: $@"
 	});
 
 	it("returns a non-zero exit as a normal result with probe guidance, not an error", async () => {
-		const { tool, flasher } = makeTool(`#!/bin/sh\necho "Error: no probe found" 1>&2\nexit 1\n`);
+		const { tool, flasher } = makeTool(`console.error("Error: no probe found"); process.exitCode = 1;`);
 		const result = await tool.execute("c1", { command: [flasher, "program"] });
 		const text = textOf(result);
 		expect(text).toContain("failed (exit 1)");
@@ -584,7 +587,7 @@ echo "argv: $@"
 
 	it("says the probe is occupied on exclusive access, not a missing board", async () => {
 		const { tool, flasher } = makeTool(
-			`#!/bin/sh\necho "Error: Attaching to probe failed: exclusive access (0xe00002c5)" 1>&2\nexit 1\n`,
+			`console.error("Error: Attaching to probe failed: exclusive access (0xe00002c5)"); process.exitCode = 1;`,
 		);
 		const result = await tool.execute("c1", { command: [flasher, "program"] });
 		const text = textOf(result);
@@ -605,7 +608,7 @@ echo "argv: $@"
 	});
 
 	it("does not record on failure, and rejects a missing elfPath up front", async () => {
-		const { tool, cwd, flasher } = makeTool(`#!/bin/sh\nexit 1\n`);
+		const { tool, cwd, flasher } = makeTool(`process.exitCode = 1;`);
 		writeFileSync(join(cwd, "fw.elf"), "fw");
 		const failed = await tool.execute("c1", { command: [flasher, "program"], elfPath: "fw.elf" });
 		expect(failed.details.recordedElf).toBeUndefined();

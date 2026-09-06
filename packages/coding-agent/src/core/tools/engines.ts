@@ -92,10 +92,14 @@ function engineMissingMessage(name: string, file: string, root: string): string 
 export function engineBin(name: string, options?: EnginePathOptions): string {
 	const root = options?.enginesDir ?? enginesDir();
 	const file = path.join(root, "bin", exe(name));
-	if (!existsSync(file)) {
-		throw new Error(engineMissingMessage(name, file, root));
+	if (existsSync(file)) return file;
+	// Windows 上 .exe 缺席时认 .cmd 包装脚本:脚本形态的引擎(手写的 python 壳之类)和单测里的
+	// 假引擎都走这条 —— libuv 能直接 spawn .cmd,退出码与 stdio 原样透出。
+	if (process.platform === "win32") {
+		const wrapper = path.join(root, "bin", `${name}.cmd`);
+		if (existsSync(wrapper)) return wrapper;
 	}
-	return file;
+	throw new Error(engineMissingMessage(name, file, root));
 }
 
 /** engines/data/ 下的数据目录,如 engineDataDir("stm32")。 */

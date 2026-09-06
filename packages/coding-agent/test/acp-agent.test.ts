@@ -52,6 +52,8 @@ function setup() {
 		logsDir: join(workdir, "logs"),
 		// 与开发机的真实 ~/.yoma 切干净,否则那里的 AGENTS.md/skills 会渗进系统提示词。
 		configDir: join(workdir, "config"),
+		// 同理切掉 ~/.agents/skills:开发机上装的全局技能会以 skill:xxx 混进命令清单。
+		homeDir: join(workdir, "home"),
 	});
 	return { agent, models, first, second };
 }

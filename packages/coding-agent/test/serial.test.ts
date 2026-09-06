@@ -67,7 +67,12 @@ for i in range(200):
 
 /** python3 不在就跳过 —— 这个用例要的是真 tty,没有替代品。 */
 function havePython(): boolean {
-	return Bun.spawnSync(["python3", "-c", "import pty"]).exitCode === 0;
+	try {
+		return Bun.spawnSync(["python3", "-c", "import pty"]).exitCode === 0;
+	} catch {
+		// Windows 上找不到可执行文件时 spawnSync 直接抛,不是回非零退出码;那里也没有 pty 可用。
+		return false;
+	}
 }
 
 async function startFakeDevice(): Promise<string> {

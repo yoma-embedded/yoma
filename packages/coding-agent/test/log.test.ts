@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +15,7 @@ import {
 	splitArgv,
 	splitChunk,
 } from "../src/index.ts";
+import { writeFakeExe } from "./fixtures/fake-exe.ts";
 
 beforeAll(() => {
 	process.env.YOMA_PROBE_LOCK = join(tmpdir(), `yoma-probe-log-${process.pid}.lock`);
@@ -33,12 +34,9 @@ function createTempDir(): string {
 	return dir;
 }
 
-/** 假日志源:写成脚本再 spawn,和 engines.test.ts 的假引擎同一套路。 */
-function writeSource(dir: string, name: string, script: string): string {
-	const file = join(dir, name);
-	writeFileSync(file, script);
-	chmodSync(file, 0o755);
-	return file;
+/** 假日志源:一段 JS,包成可执行文件再 spawn,和 engines.test.ts 的假引擎同一套路(见 fixtures/fake-exe.ts)。 */
+function writeSource(dir: string, name: string, js: string): string {
+	return writeFakeExe(dir, name.replace(/\.sh$/, ""), js);
 }
 
 afterEach(async () => {
@@ -105,31 +103,30 @@ function distinct(i: number): string {
 }
 
 // 假源:立刻两行启动信息,0.2s 后一条 HardFault,然后退出。
-const BOOT_THEN_FAULT = `#!/bin/sh
-echo "[boot] STM32F407VG @ 168 MHz"
-echo "[boot] HAL init ok"
-sleep 0.2
-echo "[halt] HardFault - SIGTRAP (imu.c:192)"
+const BOOT_THEN_FAULT = `
+console.log("[boot] STM32F407VG @ 168 MHz");
+console.log("[boot] HAL init ok");
+setTimeout(() => console.log("[halt] HardFault - SIGTRAP (imu.c:192)"), 200);
 `;
 
-const THREE_LINES_THEN_WAIT = `#!/bin/sh
-echo "line one"
-echo "line two"
-echo "line three"
-sleep 5
+const THREE_LINES_THEN_WAIT = `
+console.log("line one");
+console.log("line two");
+console.log("line three");
+setTimeout(() => {}, 5000);
 `;
 
-const ALIVE_FOREVER = `#!/bin/sh
-echo "alive"
-sleep 30
+const ALIVE_FOREVER = `
+console.log("alive");
+setTimeout(() => {}, 30000);
 `;
 
 /** 40 行互不相同、不含数字的输出。 */
-const FORTY_DISTINCT = `#!/bin/sh
-for w in alpha bravo charlie delta echo foxtrot golf hotel india juliet; do
-  for x in one two three four; do echo "$w $x"; done
-done
-sleep 5
+const FORTY_DISTINCT = `
+for (const w of ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet"]) {
+	for (const x of ["one", "two", "three", "four"]) console.log(w + " " + x);
+}
+setTimeout(() => {}, 5000);
 `;
 
 // ─── 纯函数 ──────────────────────────────────────────────────────────────────
@@ -319,7 +316,7 @@ describe("renderRows", () => {
 describe("LogCapture", () => {
 	it("drops the oldest lines from the ring buffer but keeps them all in the file", async () => {
 		const dir = createTempDir();
-		const source = writeSource(dir, "five.sh", `#!/bin/sh\nfor w in one two three four five; do echo "line $w"; done\n`);
+		const source = writeSource(dir, "five.sh", `for (const w of ["one", "two", "three", "four", "five"]) console.log("line " + w);`);
 		const file = join(dir, "hw.log");
 		const capture = new LogCapture({ kind: "child", argv: [source] }, "five", file, dir, { maxBufferLines: 3 });
 		openCaptures.push(capture);
@@ -340,7 +337,7 @@ describe("LogCapture", () => {
 
 	it("reports a line that never got a newline before the source exited", async () => {
 		const dir = createTempDir();
-		const source = writeSource(dir, "partial.sh", `#!/bin/sh\nprintf "no trailing newline"\n`);
+		const source = writeSource(dir, "partial.sh", `process.stdout.write("no trailing newline");`);
 		const capture = new LogCapture({ kind: "child", argv: [source] }, "partial", join(dir, "hw.log"), dir);
 		openCaptures.push(capture);
 		await capture.start();
@@ -354,15 +351,16 @@ describe("LogCapture", () => {
 		const grandchild = writeSource(
 			dir,
 			"grandchild.sh",
-			`#!/bin/sh\necho $$ > ${pidFile}\nwhile true; do echo tick; sleep 1; done\n`,
+			`import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(pidFile)}, String(process.pid));\nsetInterval(() => console.log("tick"), 1000);`,
 		);
-		// `A && B` 会让 sh fork 出一个孙子进程 —— 真正握着设备的就是它。
-		const capture = new LogCapture(
-			{ kind: "child", argv: ["/bin/sh", "-c", `echo up && ${grandchild}`] },
-			"shell",
-			join(dir, "hw.log"),
+		// 父进程先打一行,再把孙进程 spawn 出来并等它 —— 真正握着设备的就是那个孙进程。
+		// (从前是 `sh -c "echo up && grandchild.sh"`,靠 sh 去 fork;Windows 上没有 sh。)
+		const parent = writeSource(
 			dir,
+			"parent.sh",
+			`import { spawn } from "node:child_process";\nconsole.log("up");\nconst child = spawn(${JSON.stringify(grandchild)}, [], { stdio: ["ignore", "inherit", "inherit"], windowsHide: true });\nchild.on("exit", (code) => process.exit(code ?? 0));`,
 		);
+		const capture = new LogCapture({ kind: "child", argv: [parent] }, "shell", join(dir, "hw.log"), dir);
 		openCaptures.push(capture);
 		await capture.start();
 		await waitFor(() => existsSync(pidFile) && readFileSync(pidFile, "utf8").trim().length > 0);
@@ -383,7 +381,7 @@ describe("LogCapture", () => {
 
 	it("stops appending to the buffer once the capture is finished", async () => {
 		const dir = createTempDir();
-		const source = writeSource(dir, "chatty.sh", `#!/bin/sh\nwhile true; do echo noise; sleep 0.02; done\n`);
+		const source = writeSource(dir, "chatty.sh", `setInterval(() => console.log("noise"), 20);`);
 		const capture = new LogCapture({ kind: "child", argv: [source] }, "chatty", join(dir, "hw.log"), dir);
 		openCaptures.push(capture);
 		await capture.start();
@@ -398,17 +396,17 @@ describe("LogCapture", () => {
 	it("never keeps the process alive on its own", async () => {
 		// 高危回归:采集中的子进程和它的管道如果不 unref,ACP 退出时 yoma 不肯死。
 		const dir = createTempDir();
-		const source = writeSource(dir, "forever.sh", `#!/bin/sh\nwhile true; do echo tick; sleep 1; done\n`);
-		const script = writeSource(
-			dir,
-			"pin-check.ts",
+		const source = writeSource(dir, "forever.sh", `setInterval(() => console.log("tick"), 1000);`);
+		const script = join(dir, "pin-check.ts");
+		writeFileSync(
+			script,
 			`import { LogCapture } from ${JSON.stringify(join(import.meta.dir, "..", "src", "index.ts"))};
 const capture = new LogCapture({ kind: "child", argv: [${JSON.stringify(source)}] }, "forever", ${JSON.stringify(join(dir, "pin.log"))}, ${JSON.stringify(dir)});
 await capture.start();
 // 故意不 stop:进程必须靠自己退出(退出钩子会把子进程收掉)。
 `,
 		);
-		const child = Bun.spawn(["bun", script], { stdout: "ignore", stderr: "ignore" });
+		const child = Bun.spawn([process.execPath, script], { stdout: "ignore", stderr: "ignore" });
 		const exited = await Promise.race([child.exited, Bun.sleep(6000).then(() => "timeout" as const)]);
 		if (exited === "timeout") child.kill("SIGKILL");
 		expect(exited).not.toBe("timeout");
@@ -591,7 +589,7 @@ describe("log tool", () => {
 	it("wait comes back as soon as the source exits without matching", async () => {
 		const { tool } = makeTool();
 		const dir = createTempDir();
-		const source = writeSource(dir, "die.sh", `#!/bin/sh\necho "starting"\nexit 3\n`);
+		const source = writeSource(dir, "die.sh", `console.log("starting"); process.exitCode = 3;`);
 
 		await tool.execute("c1", { action: "start", command: source });
 		const waited = await tool.execute("c2", { action: "wait", pattern: "boot ok", timeoutMs: 5000 });
@@ -608,7 +606,7 @@ describe("log tool", () => {
 		for (let attempt = 0; attempt < 5; attempt++) {
 			const { tool } = makeTool();
 			const dir = createTempDir();
-			const source = writeSource(dir, "late.sh", `#!/bin/sh\nsleep 0.1\necho "BOOT OK"\n`);
+			const source = writeSource(dir, "late.sh", `setTimeout(() => console.log("BOOT OK"), 100);`);
 			await tool.execute("c1", { action: "start", command: source });
 			const waited = await tool.execute("c2", { action: "wait", pattern: "BOOT OK", timeoutMs: 4000 });
 			expect(textOf(waited)).toContain("matched /BOOT OK/");
@@ -673,7 +671,7 @@ describe("log tool", () => {
 		const source = writeSource(
 			dir,
 			"imu.sh",
-			`#!/bin/sh\ni=0\nwhile [ $i -lt 60 ]; do echo "[imu] s=$i ax=128 az=8192"; i=$((i+1)); done\nsleep 5\n`,
+			`for (let i = 0; i < 60; i++) console.log("[imu] s=" + i + " ax=128 az=8192");\nsetTimeout(() => {}, 5000);`,
 		);
 
 		await tool.execute("c1", { action: "start", command: source });
@@ -692,7 +690,7 @@ describe("log tool", () => {
 		const source = writeSource(
 			dir,
 			"fat.sh",
-			`#!/bin/sh\npad=$(printf 'x%.0s' $(seq 1 4000))\nfor w in alpha bravo charlie delta echo foxtrot golf hotel; do echo "$w $pad"; done\nsleep 5\n`,
+			`const pad = "x".repeat(4000);\nfor (const w of ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel"]) console.log(w + " " + pad);\nsetTimeout(() => {}, 5000);`,
 		);
 
 		await tool.execute("c1", { action: "start", command: source });
