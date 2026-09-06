@@ -137,7 +137,12 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
       if (info.root) vcsWatchers.ensure(directory)
       return info
     },
-    "vcs.diff": ({ directory }) => vcsDiff(directory),
+    // 审查页拿着自己那份目录字符串来拉 diff:在这里也登记一次,保证它这种写法一定收得到事件
+    // (bootstrap 那次 vcs.info 可能是别的组件用另一种写法调的)。不是仓库的目录,监视器会自己退场。
+    "vcs.diff": ({ directory }) => {
+      vcsWatchers.ensure(directory)
+      return vcsDiff(directory)
+    },
     "vcs.init": async ({ directory }) => {
       const info = await vcsInit(directory)
       if (info.root) vcsWatchers.ensure(directory)

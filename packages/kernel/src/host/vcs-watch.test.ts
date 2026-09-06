@@ -67,30 +67,50 @@ describe("VcsWatchers", () => {
       git(repo, "add", ".")
       git(repo, "commit", "-q", "-m", "init")
 
+      // 同一目录的第二种写法(带尾斜杠;Windows 上再换成正斜杠):只开一个监视器,事件却要按两种写法各回一条 ——
+      // 前端 session 页按字符串相等认目录,路由里是 D:\x、会话记录里是 D:/x。
+      const alias = repo.replaceAll("\\", "/") + "/"
       watchers.ensure(repo)
+      watchers.ensure(alias)
       expect(watchers.watching(repo)).toBe(true)
+      expect(watchers.watching(alias)).toBe(true)
       // 幂等
       watchers.ensure(repo)
 
       writeFileSync(path.join(repo, "a.txt"), "changed\n")
-      expect(await waitFor(() => events.length >= 1, 3_000)).toBe(true)
-      expect(events[0]!.directory).toBe(repo)
-      expect(events[0]!.info.dirty).toBe(true)
-      expect(events[0]!.info.root).toBeDefined()
+      expect(await waitFor(() => events.length >= 2, 3_000)).toBe(true)
+      expect(events.map((e) => e.directory).sort()).toEqual([repo, alias].sort())
+      expect(events.every((e) => e.info.dirty === true && e.info.root !== undefined)).toBe(true)
 
-      // 上一次 fire 里的 git status 会碰 .git/index;静一秒,不该有第二条
+      // 上一次 fire 里的 git status 会碰 .git/index;静一秒,不该再来
       await sleep(1_000)
-      expect(events.length).toBe(1)
+      expect(events.length).toBe(2)
 
       // 提交之后也要刷(.git/logs/HEAD 变了),而且 dirty 回到 false
       git(repo, "add", ".")
       git(repo, "commit", "-q", "-m", "second")
-      expect(await waitFor(() => events.length >= 2, 3_000)).toBe(true)
+      expect(await waitFor(() => events.length >= 4, 3_000)).toBe(true)
       expect(events[events.length - 1]!.info.dirty).toBe(false)
     } finally {
       watchers.dispose()
       expect(watchers.watching(repo)).toBe(false)
       rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  test("不是仓库的目录:第一次动静之后监视器自己退场,不推事件", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "yoma-vcs-watch-plain-"))
+    const events: unknown[] = []
+    const watchers = new VcsWatchers({ emit: (directory, info) => events.push({ directory, info }), debounceMs: 100 })
+    try {
+      watchers.ensure(dir)
+      expect(watchers.watching(dir)).toBe(true)
+      writeFileSync(path.join(dir, "a.txt"), "a\n")
+      expect(await waitFor(() => !watchers.watching(dir), 3_000)).toBe(true)
+      expect(events.length).toBe(0)
+    } finally {
+      watchers.dispose()
+      rmSync(dir, { recursive: true, force: true })
     }
   })
 

@@ -65,6 +65,7 @@ import { useSessionHashScroll } from "@/pages/session/use-session-hash-scroll"
 import { Identifier } from "@/utils/id"
 import { Persist, persisted } from "@/utils/persist"
 import { formatServerError } from "@/utils/server-errors"
+import { directoryKey } from "@/context/global-sync/utils"
 import { createSessionOwnership } from "./session/session-ownership"
 
 type FollowupItem = FollowupDraft & { id: string }
@@ -471,7 +472,8 @@ export default function Page() {
 
   const stopVcs = serverSDK().event.listen((event) => {
     if (event.type !== "vcs.updated") return
-    if (event.directory !== sdk().directory) return
+    // 同一个目录有 `D:\x` 与 `D:/x` 两种写法在 app 里流转(路由 vs 会话记录),按归一化后的 key 认。
+    if (directoryKey(event.directory) !== directoryKey(sdk().directory)) return
     refreshVcs()
   })
   onCleanup(stopVcs)

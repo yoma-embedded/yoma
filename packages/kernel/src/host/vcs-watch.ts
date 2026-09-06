@@ -15,6 +15,7 @@
  */
 
 import { watch, type FSWatcher } from "node:fs"
+import path from "node:path"
 
 import type { VcsInfo } from "../types.ts"
 import { vcsInfo } from "./services.ts"
@@ -49,6 +50,8 @@ interface Entry {
   watcher: FSWatcher
   timer?: ReturnType<typeof setTimeout>
   lastUsed: number
+  /** 这个目录到来时的各种写法,事件按每种写法各回一条。 */
+  names: Set<string>
 }
 
 export class VcsWatchers {
@@ -64,20 +67,27 @@ export class VcsWatchers {
     }
   }
 
-  /** 开始盯一个目录;已经在盯就只刷新一下"最近用过"。目录字符串原样保留,事件里回的就是它(前端按字符串相等匹配)。 */
+  /**
+   * 开始盯一个目录。同一个目录会以不同写法到来 —— 路由里是 `D:\x`,会话记录里是 `D:/x`,
+   * 前端各处拿着哪种就传哪种,而 session 页收到事件时是**按字符串相等**认目录的。所以按解析后
+   * 的真实路径只开一个监视器,但每种写法都记着,事件按每种写法各回一条。2026-09-06 实测:
+   * 只回登记时那一种写法的话,用户在 VS Code 里改文件,事件到了前端却被当成别的目录丢掉。
+   */
   ensure(directory: string): void {
     if (this.closed) return
-    const existing = this.entries.get(directory)
+    const key = path.resolve(directory)
+    const existing = this.entries.get(key)
     if (existing) {
       existing.lastUsed = Date.now()
+      existing.names.add(directory)
       return
     }
     while (this.entries.size >= this.options.maxWatchers) {
       let oldest: string | undefined
       let oldestUsed = Infinity
-      for (const [key, entry] of this.entries) {
+      for (const [candidate, entry] of this.entries) {
         if (entry.lastUsed < oldestUsed) {
-          oldest = key
+          oldest = candidate
           oldestUsed = entry.lastUsed
         }
       }
@@ -86,20 +96,20 @@ export class VcsWatchers {
     }
     let watcher: FSWatcher
     try {
-      watcher = watch(directory, { recursive: true, persistent: false }, (_event, filename) => {
+      watcher = watch(key, { recursive: true, persistent: false }, (_event, filename) => {
         if (!shouldRefresh(filename)) return
-        this.schedule(directory)
+        this.schedule(key)
       })
     } catch {
       // 平台不支持递归监视,或目录已经没了:没有监视器,审查页退回"agent 跑完再刷"。
       return
     }
-    watcher.on("error", () => this.drop(directory))
-    this.entries.set(directory, { watcher, lastUsed: Date.now() })
+    watcher.on("error", () => this.drop(key))
+    this.entries.set(key, { watcher, lastUsed: Date.now(), names: new Set([directory]) })
   }
 
   watching(directory: string): boolean {
-    return this.entries.has(directory)
+    return this.entries.has(path.resolve(directory))
   }
 
   dispose(): void {
@@ -108,28 +118,34 @@ export class VcsWatchers {
     for (const directory of Array.from(this.entries.keys())) this.drop(directory)
   }
 
-  private schedule(directory: string): void {
-    const entry = this.entries.get(directory)
+  private schedule(key: string): void {
+    const entry = this.entries.get(key)
     if (!entry) return
     if (entry.timer) clearTimeout(entry.timer)
     entry.timer = setTimeout(() => {
       entry.timer = undefined
-      void this.fire(directory)
+      void this.fire(key)
     }, this.options.debounceMs)
     ;(entry.timer as { unref?: () => void }).unref?.()
   }
 
-  private async fire(directory: string): Promise<void> {
-    if (this.closed || !this.entries.has(directory)) return
-    const info = await vcsInfo(directory).catch(() => undefined)
+  private async fire(key: string): Promise<void> {
+    const entry = this.entries.get(key)
+    if (this.closed || !entry) return
+    const info = await vcsInfo(key).catch(() => undefined)
     if (!info || this.closed) return
-    this.options.emit(directory, info)
+    if (!info.root) {
+      // 不是仓库(或 .git 刚被删了):盯着没意义,自己退场;下次 vcs.info / vcs.diff 会再登记。
+      this.drop(key)
+      return
+    }
+    for (const name of entry.names) this.options.emit(name, info)
   }
 
-  private drop(directory: string): void {
-    const entry = this.entries.get(directory)
+  private drop(key: string): void {
+    const entry = this.entries.get(key)
     if (!entry) return
-    this.entries.delete(directory)
+    this.entries.delete(key)
     if (entry.timer) clearTimeout(entry.timer)
     try {
       entry.watcher.close()
