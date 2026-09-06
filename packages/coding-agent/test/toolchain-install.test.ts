@@ -49,6 +49,7 @@ import {
 } from "../src/core/toolchain/install.ts";
 import type { Ledger } from "../src/core/toolchain/ledger.ts";
 import { readLedger } from "../src/core/toolchain/ledger.ts";
+import { writeFakeExe } from "./fixtures/fake-exe.ts";
 
 // zip.js 默认起 web worker 做压缩;测试进程里没必要,而且退出时容易留下悬挂的 worker。
 configure({ useWebWorkers: false });
@@ -646,6 +647,110 @@ describe.skipIf(!hasSystemTar())("tar.gz", () => {
 
 		const ledger = await readLedger(configDir);
 		expect(ledger.entries.widget?.by).toBe("user");
+	});
+});
+
+// ─── tar 子进程的 PATH ────────────────────────────────────────────────────────
+//
+// GNU tar(Linux)自己不解压,gzip / xz 是它按 PATH 去找的**外部程序**;bsdtar(macOS、
+// Windows 的 System32\tar.exe)在库里解完,所以上面那条"走系统 tar"的用例把注入的
+// `PATH: ""` 原样传下去时,只有 Ubuntu 岗会炸(`gzip: Cannot exec: No such file or directory`
+// → `tar: Child returned status 2`,2026-09-06 CI 实测),Windows / macOS 全绿 —— 一个只在
+// 一个平台上会响的闸门。这两条改用**假 tar**:它把自己收到的 PATH 写进探针文件,于是每个
+// 平台都验得到 tarEnv 的两半 —— 注入的 PATH 为空就回落到本进程的 PATH,非空则原样照用
+//(调用方显式给的 PATH 绝不能被顶掉)。
+
+/** 本进程的 PATH(Windows 上这个键可能叫 `Path`)。 */
+function ownPath(): string {
+	const key = Object.keys(process.env).find((name) => name.toUpperCase() === "PATH");
+	return key === undefined ? "" : (process.env[key] ?? "");
+}
+
+/**
+ * 假 tar:把收到的 PATH 写进探针文件(路径直接烤进脚本 —— 注入的 env 只有 PATH,没有别的口子
+ * 传得进来),再造出 `<dest>/<ROOT>/bin/<EXE_NAME>`,让解压后的 anyBinResolves 与记账阶段照常过。
+ */
+function fakeTarJs(probe: string): string {
+	return `
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+const argv = process.argv.slice(2);
+const dest = argv[argv.indexOf("-C") + 1];
+const key = Object.keys(process.env).find((name) => name.toUpperCase() === "PATH");
+writeFileSync(${JSON.stringify(probe)}, key === undefined ? "" : (process.env[key] ?? ""));
+const binDir = join(dest, ${JSON.stringify(ROOT)}, "bin");
+mkdirSync(binDir, { recursive: true });
+const exe = join(binDir, ${JSON.stringify(EXE_NAME)});
+writeFileSync(exe, ${JSON.stringify(EXE_BODY)});
+if (process.platform !== "win32") chmodSync(exe, 0o755);
+`;
+}
+
+describe("tar 子进程的 PATH", () => {
+	let tarDir: string;
+	let probe: string;
+
+	beforeEach(() => {
+		tarDir = mkdtempSync(join(tmpdir(), "yoma-toolchain-install-faketar-"));
+		probe = join(tarDir, "seen-path.txt");
+	});
+
+	afterEach(() => {
+		rmSync(tarDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+	});
+
+	interface FakeTarRun {
+		installed: Awaited<ReturnType<typeof installToolchain>>;
+		progress: InstallProgress[];
+	}
+
+	/** 压缩包的内容无所谓:假 tar 根本不读它,只有 sha256 与字节数要对得上。 */
+	async function installWithFakeTar(env: NodeJS.ProcessEnv): Promise<FakeTarRun> {
+		const archive = Buffer.from("fake archive; the fake tar never reads it\n");
+		bucket.set("/widget.tar.gz", archive);
+		const catalog = fakeCatalog({
+			url: `${baseUrl}/widget.tar.gz`,
+			sha256: sha256(archive),
+			bytes: archive.byteLength,
+			archive: "tar.gz",
+		});
+
+		const progress: InstallProgress[] = [];
+		const installed = await installToolchain({
+			toolId: "widget",
+			configDir,
+			host: HOST,
+			catalog,
+			env,
+			tarBinary: writeFakeExe(tarDir, "faketar", fakeTarJs(probe)),
+			onProgress: (p) => progress.push(p),
+		});
+		return { installed, progress };
+	}
+
+	it("注入的 env 里 PATH 是空的:tar 子进程拿到的是本进程的 PATH,而不是空串", async () => {
+		const { installed, progress } = await installWithFakeTar({ PATH: "" });
+
+		expect(existsSync(probe)).toBe(true);
+		const seen = readFileSync(probe, "utf8");
+		expect(seen).not.toBe("");
+		expect(seen).toBe(ownPath());
+
+		// 回落之后这一趟安装本身也得走完 —— 否则"PATH 对了但装不上"照样是坏的。
+		expect(phaseOrder(progress)).toEqual(["resolve", "download", "verify", "extract", "record", "done"]);
+		expect(existsSync(join(installed.binDir, EXE_NAME))).toBe(true);
+		expect(readMarkerJson(installed.dir).packageId).toBe(PKG_ID);
+		expect(listFiles(join(managedRoot(configDir), "downloads"))).toEqual([]);
+		const ledger = await readLedger(configDir);
+		expect(ledger.entries.widget?.by).toBe("user");
+	});
+
+	it("注入的 env 里 PATH 非空:原样传给 tar,不被本进程的 PATH 顶掉", async () => {
+		const { installed } = await installWithFakeTar({ PATH: tarDir });
+
+		expect(existsSync(probe)).toBe(true);
+		expect(readFileSync(probe, "utf8")).toBe(tarDir);
+		expect(existsSync(join(installed.binDir, EXE_NAME))).toBe(true);
 	});
 });
 

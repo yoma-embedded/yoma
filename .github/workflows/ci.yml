@@ -37,8 +37,17 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.14"
+      # bun 在 Windows runner 上偶发 "EBUSY: failed to link binaries for package: …"(2026-09-06 撞过一次,
+      # 同一提交重跑即绿):刚写下的文件被 Defender 扫描攥着句柄。重试一次比整轮红了再手点重跑便宜。
       - name: 安装依赖
-        run: bun install --frozen-lockfile
+        shell: pwsh
+        run: |
+          bun install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::warning::bun install 失败(多半是 Windows 上的 EBUSY 抖动),重试一次"
+            bun install --frozen-lockfile
+          }
+          if ($LASTEXITCODE -ne 0) { exit 1 }
       # Windows 是主支持平台。agent(185)与 kernel(94)一直在这里跑;coding-agent 从前有 46 个用例的夹具
       # 写死 /bin/echo 与 .sh 脚本,2026-09-06 把夹具改成 JS + 按平台启动器(test/fixtures/fake-exe.ts)
       # 之后整包在 Windows 上全绿(854 过 / 44 跳过),加进来 —— 这是唯一能抓住"只在 Windows 上卡死"

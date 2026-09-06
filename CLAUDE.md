@@ -559,7 +559,9 @@ dock 面板(没有,也不打算先做)。
   边写边算 sha、对不上就删;解压到 `<包目录>.extracting` 再整体 rename,包目录里写 `.yoma-toolchain.json`
   标记 —— 半个树不可能顶着最终名字出现;同一个包一把 pid 锁。zip 走 `@zip.js/zip.js`(进程内,
   Reader **必须继承 `zip.Reader`**,鸭子对象在 getData 里炸;挡 zip-slip;从 external attribute 恢复可执行位),
-  tar.gz/tar.xz 走系统 tar(Windows 用 System32\tar.exe,但目录里 Windows 的产物全是 zip)。
+  tar.gz/tar.xz 走系统 tar(Windows 用 System32\tar.exe,但目录里 Windows 的产物全是 zip)。**GNU tar 靠 PATH
+  找 gzip / xz**(bsdtar 是库内置的),tar 子进程的 PATH 空了就是 `Child returned status 2` —— 注入 env 只给
+  `PATH: ""` 的测试在 Windows / macOS 全绿、Ubuntu 岗红,`tarEnv` 因此在 PATH 为空时回落到进程 PATH。
 - **账本不改 schema**:装完对包 provides 的每个 id 调 `recordToolchainPath`(by:"user"),"Yoma 装的"由
   位置(managed 根)与标记文件识别。resolve.ts 多了 **`managed` 一档**(ledger 之后、env 之前)扫这个根 ——
   否则设置页"重新探测"(skipLedger)一按,刚装好的就报 MISSING。非 ok 的工具带 `installable`

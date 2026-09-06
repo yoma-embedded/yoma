@@ -25,7 +25,8 @@
  *
  * zip 走 @zip.js/zip.js(进程内、流式、可挡 zip-slip、可从 external attribute 恢复可执行位);
  * tar.gz / tar.xz 走系统 tar(POSIX 都有,xz 支持看 tar 的构建;Windows 用 System32\tar.exe,
- * 但目录里 Windows 的产物全是 zip)。
+ * 但目录里 Windows 的产物全是 zip)。GNU tar 靠 PATH 找 gzip / xz,所以 tar 子进程的 PATH 绝不能
+ * 是空的 —— 见 tarEnv。
  *
  * ## 账本
  *
@@ -603,6 +604,21 @@ function defaultTarBinary(): string {
 	return path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe");
 }
 
+/**
+ * tar 子进程的环境。GNU tar(Linux)不内置解压,gzip / xz 是它按 PATH 去找的**外部程序**;
+ * bsdtar(macOS、Windows 的 System32\tar.exe)是库内置的,所以本机怎么跑都看不出来。注入的
+ * env 是"在哪找工具"的口子,测试隔离时只有 `PATH: ""` —— 原样传给 tar 就是
+ * `gzip: Cannot exec: No such file or directory` → `Child returned status 2`(2026-09-06 CI 的
+ * Ubuntu 岗实测,Windows 岗同一用例全绿)。PATH 为空就回落到进程自己的 PATH,其余键照注入的来。
+ */
+export function tarEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+	const key = findEnvKey(env, "PATH");
+	if (key !== undefined && (env[key] ?? "").trim() !== "") return { ...env };
+	const ownKey = findEnvKey(process.env, "PATH");
+	const own = ownKey === undefined ? "" : (process.env[ownKey] ?? "");
+	return withPath(env, own ? [own] : []);
+}
+
 async function extractTar(
 	archive: string,
 	dest: string,
@@ -612,7 +628,7 @@ async function extractTar(
 ): Promise<void> {
 	await new Promise<void>((resolve, reject) => {
 		const child = spawn(tarBinary, ["-xf", archive, "-C", dest], {
-			env: { ...env },
+			env: tarEnv(env),
 			stdio: ["ignore", "ignore", "pipe"],
 			windowsHide: true,
 		});
