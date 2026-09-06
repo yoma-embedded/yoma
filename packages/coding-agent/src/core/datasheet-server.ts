@@ -30,10 +30,10 @@ export const DATASHEET_SERVER_ENV = "YOMA_DATASHEET_SERVER";
 export const DATASHEET_ENV_FILE_ENV = "YOMA_ENV_FILE";
 
 /**
- * 内置默认地址。维护者的服务器 —— 2026-09-05 从开发机探测不可达(连接超时),
- * 维护者需要确认或替换;改这里一处即可,所有宿主一起变。
+ * 内置默认地址。维护者的服务器 —— 2026-09-07 换成 yoma1 那台(旧的 47.122.120.208 已下线,
+ * 从开发机探测连接超时);改这里一处即可,所有宿主一起变。
  */
-export const DEFAULT_DATASHEET_SERVER = "http://47.122.120.208";
+export const DEFAULT_DATASHEET_SERVER = "http://47.122.110.137:8301";
 
 export type DatasheetServerSource = "explicit" | "env" | "file" | "builtin" | "off" | "none";
 
