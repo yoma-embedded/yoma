@@ -214,7 +214,7 @@ describe("collectToolPromptData", () => {
 
 		expect(data.selectedTools).toEqual(["read", "bash", "edit", "write", "toolchain", "examples"]);
 		expect(data.toolSnippets?.read).toBe("Read file contents");
-		expect(data.toolSnippets?.examples).toContain("verified vendor examples");
+		expect(data.toolSnippets?.examples).toContain("code corpora");
 		expect(data.promptGuidelines?.length).toBeGreaterThan(0);
 	});
 
