@@ -1,0 +1,4 @@
+[
+  [{ "tool": "bash", "input": { "command": "ls -la && echo yoma-harbor-smoke" } }],
+  [{ "text": "工作目录看过了。这是一次零 key 冒烟,不会真的解题 —— 判据不过是预期的。" }]
+]

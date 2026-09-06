@@ -9,7 +9,7 @@ import path from "node:path";
 
 import { extractEspIdfExamples } from "./espidf.ts";
 import { toPosix } from "./extract-util.ts";
-import type { Ecosystem, ExampleEntry, ExamplesIndex } from "./schema.ts";
+import type { Ecosystem, ExampleEntry, ExamplesIndex, Tier } from "./schema.ts";
 import { INDEX_SCHEMA_TAG } from "./schema.ts";
 import { detectCubeFamily, extractStm32CubeExamples } from "./stm32cube.ts";
 import { upsertSource, writeIndexFile } from "./store.ts";
@@ -38,6 +38,13 @@ export interface BuildIndexOptions {
 	ecosystem: Ecosystem;
 	/** 缺省 `<ecosystem>@<git 短 commit>`;没有 git 就落到日期 —— 语料必须可指认。 */
 	corpusId?: string;
+	/**
+	 * 语料级默认分层,写进 header 供读侧继承。机械抽取器自己不判分层(路径结构说明不了
+	 * 一份语料该不该参与芯片硬过滤),所以它只能由登记方给 —— 但**必须落进 header**:
+	 * 只记在注册表里的话,检索侧一个字都读不到,注册表说它是 lib、检索却当它没标,
+	 * 三处互相矛盾。
+	 */
+	tier?: Tier;
 }
 
 /**
@@ -73,6 +80,8 @@ export function buildIndex(options: BuildIndexOptions): ExamplesIndex {
 			commit,
 			generatedAt: new Date().toISOString(),
 			entries: entries.length,
+			indexer: "mechanical",
+			...(options.tier ? { tier: options.tier } : {}),
 		},
 		entries,
 	};

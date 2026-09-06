@@ -40,3 +40,10 @@ engines/data/
 # 产品 agent 技能与内部施工/协议文档:只在本机保留,不入库(与公开发布保持一致)
 /.agents/
 /docs/
+
+# Python 字节码缓存(harbor 适配器被 import 时生成)
+__pycache__/
+*.pyc
+
+# 个人本地笔记 / 上手文档,不入库
+doc_ljq_local/

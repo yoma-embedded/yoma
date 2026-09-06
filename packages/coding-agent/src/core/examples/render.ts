@@ -29,6 +29,12 @@ export function describeQuery(query: SearchQuery): string {
 	if (query.peripherals?.length) parts.push(`外设=${query.peripherals.join(",")}`);
 	if (query.keywords?.length) parts.push(`关键词=${query.keywords.join(",")}`);
 	if (query.buildableOnly) parts.push("仅可编");
+	if (query.corpora?.length) parts.push(`语料=${query.corpora.join(",")}`);
+	if (query.entryKind) parts.push(`粒度=${[query.entryKind].flat().join(",")}`);
+	// 分层的默认值是**带不带芯片**决定的,不是"没填就不过滤"。默认生效时也要说出来:
+	// 一个悄悄挡掉库本体的过滤器,不说的话没人能从结果反推出它存在。
+	if (query.tier) parts.push(`分层=${query.tier}`);
+	else if (query.target) parts.push("分层=seed(默认:带芯片时挡住库本体,要全部加 tier=all)");
 	return parts.length > 0 ? parts.join(" ") : "(无过滤条件)";
 }
 
@@ -80,8 +86,11 @@ export function renderEntryCard(
 		entry.summary ? `  ${entry.summary}` : undefined,
 		`  生态 ${entry.ecosystem} | 语料 ${entry.corpus}${options?.commit ? `(commit ${options.commit})` : ""}`,
 		`  路径 ${entry.path}`,
-		`  芯片 ${entry.targets.join(",") || "未知(元数据缺失,用前自行核对)"}${entry.board ? ` | 板 ${entry.board}` : ""}`,
+		`  芯片 ${entry.targets.join(",") || "未知(元数据缺失,用前自行核对)"}${entry.board ? ` | 板 ${entry.board}` : ""}${entry.targetSource ? `(来源 ${entry.targetSource})` : ""}`,
 		`  外设 ${entry.peripherals.join(",") || "无标注"}`,
+		entry.entryKind || entry.tier
+			? `  粒度 ${entry.entryKind ?? "未标"} | 分层 ${entry.tier ?? "未标"}`
+			: undefined,
 		entry.deps?.length ? `  组件依赖 ${entry.deps.join(",")}` : undefined,
 		entry.configKeys?.length ? `  Kconfig ${entry.configKeys.join(",")}` : undefined,
 		entry.acceptance ? `  验收素材 ${entry.acceptance.path}(厂商 CI 判据,绿点验证的现成参考)` : undefined,

@@ -17,7 +17,16 @@ import { type Static, Type } from "typebox";
 import { listDirNames } from "../examples/extract-util.ts";
 import { checkMergeConflicts, type PreflightInput } from "../examples/preflight.ts";
 import { renderEntryCard, renderNoIndexHelp, renderPreflightReport, renderSearchReport } from "../examples/render.ts";
-import { type Ecosystem, type ExampleEntry, type ExamplesIndex, isEcosystem } from "../examples/schema.ts";
+import {
+	type Ecosystem,
+	type EntryKind,
+	type ExampleEntry,
+	type ExamplesIndex,
+	isEcosystem,
+	isEntryKind,
+	isTier,
+	type Tier,
+} from "../examples/schema.ts";
 import { searchIndex, type SearchQuery } from "../examples/search.ts";
 import { seedExample } from "../examples/seed.ts";
 import {
@@ -76,6 +85,18 @@ const examplesSchema = Type.Object({
 	),
 	buildableOnly: Type.Optional(
 		Type.Boolean({ description: "Only examples that can build from the local corpus (chassis candidates). Leave off when hunting donor code to read." }),
+	),
+	tier: Type.Optional(
+		Type.String({
+			description:
+				'Layer: "seed" = example projects you can start from (DEFAULT whenever target is given — library bodies would otherwise flood a chip-only query), "lib" = library bodies / porting layers only, "all" = no layer filter. Only entries explicitly marked lib are excluded, so corpora indexed before layering existed behave exactly as before.',
+		}),
+	),
+	entryKind: Type.Optional(
+		Type.Array(Type.String(), {
+			description:
+				'Granularity: "project" (a buildable starting point), "module" (one sub-module of a library), "corpus" (a whole tree or porting layer). Entries with NO granularity recorded are excluded when this is given, so leave it off unless you specifically want one shape.',
+		}),
 	),
 	limit: Type.Optional(Type.Number({ description: "Max results, default 12." })),
 	id: Type.Optional(Type.String({ description: "Entry id from search results. Required for info and seed." })),
@@ -320,6 +341,14 @@ export function createExamplesToolDefinition(
 				if (params.ecosystem !== undefined && !isEcosystem(params.ecosystem)) {
 					throw new Error(`ecosystem 只认 esp-idf / stm32cube,收到:${params.ecosystem}`);
 				}
+				// 分层/粒度是**排除式**过滤,拼错一个字就等于悄悄少了一批候选 —— 与
+				// ecosystem 同一档待遇,当场报错而不是当没填(examples 的硬过滤纪律)。
+				if (params.tier !== undefined && params.tier !== "all" && !isTier(params.tier)) {
+					throw new Error(`tier 只认 seed / lib / all,收到:${params.tier}`);
+				}
+				for (const kind of params.entryKind ?? []) {
+					if (!isEntryKind(kind)) throw new Error(`entryKind 只认 project / module / corpus,收到:${kind}`);
+				}
 				const query: SearchQuery = {
 					ecosystem: params.ecosystem as Ecosystem | undefined,
 					target: params.target,
@@ -327,6 +356,8 @@ export function createExamplesToolDefinition(
 					peripherals: params.peripherals,
 					keywords: params.keywords,
 					buildableOnly: params.buildableOnly,
+					tier: params.tier as Tier | "all" | undefined,
+					entryKind: params.entryKind as EntryKind[] | undefined,
 					limit: params.limit,
 				};
 				const hits = searchIndex(

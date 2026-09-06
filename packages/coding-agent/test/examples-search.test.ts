@@ -129,3 +129,74 @@ describe("targetMatches", () => {
 		expect(targetMatches("esp32", ["esp32s3"])).toBe(false);
 	});
 });
+
+// 分层是给「笼统查询」兜底的:只给芯片时,库本体条目会把真种子挤掉(实测 47 -> 375)。
+// 但它绝不能连累旧索引 —— 那 10 份语料一条 tier 都没有,"未标"必须仍然等于从前。
+describe("分层(tier)与粒度(entryKind)", () => {
+	const LAYERED: ExampleEntry[] = [
+		entryOf({ id: "t/proj", corpus: "tinyusb", ecosystem: "generic", targets: ["stm32f4"], tier: "seed", entryKind: "project", loc: 300 }),
+		entryOf({ id: "t/src", corpus: "tinyusb", ecosystem: "generic", targets: ["stm32f4"], tier: "lib", entryKind: "corpus", loc: 92_000 }),
+		entryOf({ id: "t/old", corpus: "tinyusb", ecosystem: "generic", targets: ["stm32f4"], loc: 400 }),
+	];
+
+	test("带芯片时默认只搜 seed:显式标 lib 的被挡,未标的照旧不排除", () => {
+		const ids = searchIndex(LAYERED, { target: "stm32f407" }).map((hit) => hit.entry.id);
+		expect(ids.sort()).toEqual(["t/old", "t/proj"]);
+	});
+
+	test("不带芯片时默认不分层", () => {
+		const ids = searchIndex(LAYERED, {}).map((hit) => hit.entry.id);
+		expect(ids.sort()).toEqual(["t/old", "t/proj", "t/src"]);
+	});
+
+	test('tier:"all" 把库本体放回来', () => {
+		const ids = searchIndex(LAYERED, { target: "stm32f407", tier: "all" }).map((hit) => hit.entry.id);
+		expect(ids.sort()).toEqual(["t/old", "t/proj", "t/src"]);
+	});
+
+	test('tier:"lib" 只留显式标 lib 的 —— 显式要库本体是主动收窄,未标的不在其中', () => {
+		const ids = searchIndex(LAYERED, { target: "stm32f407", tier: "lib" }).map((hit) => hit.entry.id);
+		expect(ids).toEqual(["t/src"]);
+	});
+
+	test("entryKind 是显式收窄:未标粒度的条目被排除", () => {
+		const ids = searchIndex(LAYERED, { entryKind: "project" }).map((hit) => hit.entry.id);
+		expect(ids).toEqual(["t/proj"]);
+	});
+
+	test("entryKind 接数组", () => {
+		const ids = searchIndex(LAYERED, { entryKind: ["project", "corpus"] }).map((hit) => hit.entry.id);
+		expect(ids.sort()).toEqual(["t/proj", "t/src"]);
+	});
+
+	test("entryKind 空数组 = 不过滤(与 corpora / peripherals 同口径)", () => {
+		// `[]` 是真值。当成"过滤到零"的话,工具层传个空数组就静默零命中,而报告里
+		// 只会打出一个空的「粒度=」,没人看得出发生了什么。
+		expect(searchIndex(LAYERED, { entryKind: [] }).length).toBe(3);
+		expect(searchIndex(LAYERED, { entryKind: [] })).toEqual(searchIndex(LAYERED, {}));
+	});
+
+	test("corpora 空数组同样不过滤", () => {
+		expect(searchIndex(LAYERED, { corpora: [] })).toEqual(searchIndex(LAYERED, {}));
+	});
+
+	test("corpora 限定语料", () => {
+		const mixed = [...LAYERED, entryOf({ id: "lv/x", corpus: "lvgl", ecosystem: "generic" })];
+		const ids = searchIndex(mixed, { corpora: ["lvgl"] }).map((hit) => hit.entry.id);
+		expect(ids).toEqual(["lv/x"]);
+	});
+
+	test("分层/粒度/证据来源进理由,不进打分", () => {
+		const [hit] = searchIndex(LAYERED, { target: "stm32f407", entryKind: "project" });
+		expect(hit?.reasons.join()).toContain("分层 seed");
+		expect(hit?.reasons.join()).toContain("粒度 project");
+		// 同 loc 同 buildable,只差三个新字段 —— 分数必须一模一样。
+		const bare = searchIndex([entryOf({ id: "b/x", targets: ["stm32f4"], loc: 300 })], { target: "stm32f407" });
+		expect(hit?.score).toBe(bare[0]?.score);
+	});
+
+	test("旧索引(全部未标)的结果与显式 tier:all 逐字相同", () => {
+		const legacy = [entryOf({ id: "l/a", targets: ["esp32"] }), entryOf({ id: "l/b", targets: [] })];
+		expect(searchIndex(legacy, { target: "esp32" })).toEqual(searchIndex(legacy, { target: "esp32", tier: "all" }));
+	});
+});
