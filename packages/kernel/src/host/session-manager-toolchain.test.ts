@@ -12,16 +12,19 @@
  * 2. 系统提示词只在"有需要留意的工具"时才追加一段 <toolchain> 说明;没有清单、
  *    或清单里的工具全部 ok 时字节不变(不追加任何 contextFiles 条目)。
  * 3. 清单存在但内容损坏时发 kernel.error,不拖累会话本身开不起来。
+ * 4.(2026-09)机器级目录:Yoma 自己装的(<configDir>/toolchains/…/bin)与用户手指的
+ *    (账本 by:"user")前置进同一条 PATH,by:"auto" 的不前置;装完 refreshMachineEnv()
+ *    让**已经开着的**会话下一条命令就看得见,不用重开。
  */
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, type Model } from "@earendil-works/pi-ai"
 
 import type { KernelEvent } from "../protocol.ts"
 import type { ToolPart } from "../types.ts"
-import { SessionManager } from "./session-manager.ts"
+import { applyMachinePathToProcess, SessionManager } from "./session-manager.ts"
 
 const roots: string[] = []
 afterEach(() => {
@@ -49,13 +52,13 @@ function harnessWith(steps: unknown[]) {
   return { models, model: faux.getModel() as Model<string> }
 }
 
-function makeManager(steps: unknown[]) {
+function makeManager(steps: unknown[], options: { configDir?: string } = {}) {
   const events: KernelEvent[] = []
   const manager = new SessionManager({
     sessionsRoot: tempDir("yoma-tc-sessions-"),
     // 隔离开发机真实的 ~/.yoma —— 不传的话 resolveToolchain 会去读它的
     // toolchains.json 账本,测试结果就取决于跑测试的机器上账本记了什么。
-    configDir: tempDir("yoma-tc-config-"),
+    configDir: options.configDir ?? tempDir("yoma-tc-config-"),
     emit: (batch) => events.push(...batch),
     resolveModels: async () => harnessWith(steps),
   })
@@ -217,4 +220,163 @@ describe("清单存在但内容损坏", () => {
 
     await manager.disposeAll()
   }, 20_000)
+})
+
+// ─── 机器级目录(managed 安装 + 账本 by:"user")─────────────────────────────────
+//
+// 这一档与项目清单无关:**没有**清单的项目(绝大多数)也必须白得 Yoma 装进
+// <configDir>/toolchains/ 的东西,否则"设置页点了安装、agent 还是说 command not found"。
+// 断言全部走 bash 工具真 spawn 出来的子进程看到的 $PATH —— 与本文件第一条测试同一条
+// 理由:PATH 是跨进程边界的东西,mock 掉构造参数证明不了它真的到了子进程。
+
+/** 造一个假可执行文件(不需要真能跑:这一档只看目录有没有被前置进 PATH)。 */
+function writeFakeExe(dir: string, name: string): string {
+  mkdirSync(dir, { recursive: true })
+  if (process.platform === "win32") {
+    const file = path.join(dir, `${name}.bat`)
+    writeFileSync(file, "@echo off\r\necho 1.0.0\r\n")
+    return file
+  }
+  const file = path.join(dir, name)
+  writeFileSync(file, "#!/bin/sh\necho 1.0.0\n")
+  chmodSync(file, 0o755)
+  return file
+}
+
+/** 按 install.ts 的 ManagedInstall 布局摆一个"Yoma 装过"的包,返回它的 binDir。 */
+function writeManagedInstall(configDir: string, packageId: string, version: string, provides: string[]): string {
+  const dir = path.join(configDir, "toolchains", packageId, version)
+  const binDir = path.join(dir, "bin")
+  writeFakeExe(binDir, `${packageId}-tool`)
+  writeJSON(path.join(dir, ".yoma-toolchain.json"), {
+    packageId,
+    version,
+    dir,
+    binDir: "bin",
+    provides,
+    archiveSha256: "0".repeat(64),
+    installedAt: Date.now(),
+  })
+  return binDir
+}
+
+function writeLedger(configDir: string, entries: Record<string, unknown>): void {
+  writeJSON(path.join(configDir, "toolchains.json"), { schema: "yoma/toolchains@1", entries })
+}
+
+/** 每个工具调用的最终输出,按发生顺序(同一个 part 的多条快照只留完成那条)。 */
+function completedOutputs(events: KernelEvent[]): string[] {
+  const byId = new Map<string, string>()
+  for (const part of toolPartsOf(events)) {
+    if (part.state.status === "completed") byId.set(part.id, part.state.output)
+  }
+  return [...byId.values()]
+}
+
+const echoPath = () => fauxAssistantMessage([fauxToolCall("bash", { command: 'echo "$PATH"' })])
+
+describe("机器级目录进会话 PATH", () => {
+  // sessionShellEnv 会顺带改**内核进程自己的** process.env.PATH(生产行为:gdb/flash
+  // 用 process.env 起子进程)。测试之间必须还原,否则前一条用例的临时目录会留在
+  // 后一条的 PATH 里,断言就不再说明问题了。
+  let savedPath: { key: string; value: string | undefined } | undefined
+  afterEach(() => {
+    if (savedPath) {
+      if (savedPath.value === undefined) delete process.env[savedPath.key]
+      else process.env[savedPath.key] = savedPath.value
+      savedPath = undefined
+    }
+  })
+  function guardProcessPath(): void {
+    const key = Object.keys(process.env).find((k) => k.toLowerCase() === "path") ?? "PATH"
+    savedPath = { key, value: process.env[key] }
+  }
+
+  test("没有项目清单时也前置:managed 的 bin 与账本 by:user 的目录在,by:auto 的不在", async () => {
+    guardProcessPath()
+    const configDir = tempDir("yoma-tc-config-")
+    const workspace = tempDir("yoma-tc-ws-") // 故意没有 .yoma/toolchain.json
+
+    writeManagedInstall(configDir, "yoma-test-managed-pkg", "1.0.0", ["gizmo"])
+    const userDir = tempDir("yoma-tc-userpick-")
+    const autoDir = tempDir("yoma-tc-autoprobe-")
+    const userExe = writeFakeExe(userDir, "usertool")
+    const autoExe = writeFakeExe(autoDir, "autotool")
+    writeLedger(configDir, {
+      usertool: { id: "usertool", bin: { usertool: userExe }, confirmedAt: Date.now(), by: "user" },
+      autotool: { id: "autotool", bin: { autotool: autoExe }, confirmedAt: Date.now(), by: "auto" },
+    })
+
+    const { manager, events } = makeManager([echoPath(), fauxAssistantMessage([fauxText("好")])], { configDir })
+    const session = await manager.create(workspace)
+    await manager.prompt(session.id, { text: "看看 PATH" })
+    await waitFor(() => completedOutputs(events).length >= 1)
+
+    const output = completedOutputs(events)[0]!
+    // Git Bash 会把 PATH 整条转成 POSIX 形式(盘符、分隔符都变),所以只断言目录名
+    // 这个子串在不在 —— 与本文件第一条测试同一条理由。
+    expect(output).toContain("yoma-test-managed-pkg")
+    expect(output).toContain(path.basename(userDir))
+    // by:"auto" 是"在 PATH / 已知位置探到的",再前置只会遮蔽用户自己的同名工具。
+    expect(output).not.toContain(path.basename(autoDir))
+
+    await manager.disposeAll()
+  }, 30_000)
+
+  test("装完调 refreshMachineEnv():已经开着的会话下一条命令就看得见,不用重开", async () => {
+    guardProcessPath()
+    const configDir = tempDir("yoma-tc-config-")
+    const workspace = tempDir("yoma-tc-ws-")
+    writeManagedInstall(configDir, "yoma-test-first-pkg", "1.0.0", ["gizmo"])
+
+    const { manager, events } = makeManager(
+      [echoPath(), fauxAssistantMessage([fauxText("好")]), echoPath(), fauxAssistantMessage([fauxText("好")])],
+      { configDir },
+    )
+    const session = await manager.create(workspace)
+    await manager.prompt(session.id, { text: "第一次" })
+    await waitFor(() => completedOutputs(events).length >= 1)
+    expect(completedOutputs(events)[0]).not.toContain("yoma-test-second-pkg")
+
+    // 安装发生在会话开着的时候。
+    writeManagedInstall(configDir, "yoma-test-second-pkg", "2.0.0", ["widget"])
+    await manager.refreshMachineEnv()
+
+    await manager.prompt(session.id, { text: "第二次" })
+    await waitFor(() => completedOutputs(events).length >= 2)
+
+    const second = completedOutputs(events)[1]!
+    expect(second).toContain("yoma-test-second-pkg")
+    // 旧的不能被顶掉。
+    expect(second).toContain("yoma-test-first-pkg")
+
+    await manager.disposeAll()
+  }, 30_000)
+})
+
+describe("applyMachinePathToProcess", () => {
+  // 注入 env 对象,绝不动真的 process.env —— 这个函数的生产调用点就是改进程自己的
+  // PATH,测试里跟着改会污染同进程的其它用例。
+  test("前置一次、可重复调用不重复前置", () => {
+    const env: NodeJS.ProcessEnv = { PATH: ["/usr/bin", "/bin"].join(path.delimiter) }
+    applyMachinePathToProcess(["/opt/yoma/bin"], env)
+    expect(env.PATH).toBe(["/opt/yoma/bin", "/usr/bin", "/bin"].join(path.delimiter))
+
+    applyMachinePathToProcess(["/opt/yoma/bin"], env)
+    expect(env.PATH).toBe(["/opt/yoma/bin", "/usr/bin", "/bin"].join(path.delimiter))
+    expect(Object.keys(env)).toEqual(["PATH"])
+  })
+
+  test("dirs 为空是彻底的 no-op", () => {
+    const env: NodeJS.ProcessEnv = { PATH: "/usr/bin" }
+    applyMachinePathToProcess([], env)
+    expect(env.PATH).toBe("/usr/bin")
+  })
+
+  test("键叫 Path 时写回 Path,不另开一个 PATH(子进程认哪个是未定义行为)", () => {
+    const env: NodeJS.ProcessEnv = { Path: "C:\\Windows\\System32" }
+    applyMachinePathToProcess(["C:\\yoma\\bin"], env)
+    expect(Object.keys(env)).toEqual(["Path"])
+    expect(env.Path).toBe(["C:\\yoma\\bin", "C:\\Windows\\System32"].join(path.delimiter))
+  })
 })

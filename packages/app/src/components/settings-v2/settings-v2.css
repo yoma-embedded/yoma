@@ -805,3 +805,71 @@
 .settings-v2-toolchain-set > :first-child {
   flex: 1;
 }
+
+/* 自动安装:按钮行 + 进度行 */
+.settings-v2-toolchain-install {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-v2-toolchain-installable {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--v2-text-text-muted);
+}
+
+.settings-v2-toolchain-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--v2-text-text-muted);
+}
+
+.settings-v2-toolchain-progress[data-phase="error"] {
+  color: var(--v2-state-fg-danger);
+}
+
+.settings-v2-toolchain-progress[data-phase="done"] {
+  color: var(--v2-state-fg-success);
+}
+
+.settings-v2-toolchain-progress-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--v2-border-border-base);
+  overflow: hidden;
+}
+
+.settings-v2-toolchain-progress-bar > div {
+  height: 100%;
+  background: var(--v2-state-fg-success);
+  transition: width 120ms linear;
+}
+
+/* 设置页 → 更新:Release 说明 */
+.settings-v2-updates-notes {
+  padding: 12px 0;
+}
+
+.settings-v2-updates-notes-title {
+  font-size: 12px;
+  font-weight: 530;
+  color: var(--v2-text-text-base);
+  padding-bottom: 6px;
+}
+
+.settings-v2-updates-notes-body {
+  max-height: 240px;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 8px;
+  border: 0.5px solid var(--v2-border-border-base);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--v2-text-text-muted);
+}

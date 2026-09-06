@@ -44,8 +44,9 @@ jobs:
       # 之后整包在 Windows 上全绿(854 过 / 44 跳过),加进来 —— 这是唯一能抓住"只在 Windows 上卡死"
       # 这类回归的岗(scope 驱动 unref 定时器那次就是它没跑才漏的)。
       # bench 还有 5 个依赖 POSIX shell 的 mailbox 用例(路径断言、autocrlf、5 s 超时),先不加。
-      - name: 内核单测(agent + kernel + coding-agent,Windows 岗)
-        run: bun test packages/agent && bun --cwd packages/kernel test && bun --cwd packages/coding-agent test
+      # desktop 的单测(更新器状态机、信箱控制器等)是纯 Node 逻辑,Windows 上照跑。
+      - name: 内核单测(agent + kernel + coding-agent + desktop,Windows 岗)
+        run: bun test packages/agent && bun --cwd packages/kernel test && bun --cwd packages/coding-agent test && bun --cwd packages/desktop test
       - name: 下载 Electron 二进制
         shell: pwsh
         run: |

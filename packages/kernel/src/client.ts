@@ -25,6 +25,7 @@ import type {
   Session,
   SessionStatus,
   ToolchainFamiliesView,
+  ToolchainInstallResultView,
   ToolchainStatusView,
   VcsInfo,
 } from "./types.ts"
@@ -96,6 +97,10 @@ export interface KernelClient {
     families(): Promise<ToolchainFamiliesView>
     familyStatus(params: { family: string; fresh?: boolean }): Promise<ToolchainStatusView>
     familySet(params: { family: string; id: string; path: string }): Promise<ToolchainStatusView>
+    /** 可能跑几分钟;进度订阅 `toolchain.install` 事件。 */
+    install(params: { id: string }): Promise<ToolchainInstallResultView>
+    installCancel(params: { id: string }): Promise<void>
+    installsActive(): Promise<string[]>
   }
   project: {
     list(): Promise<KernelResult<"project.list">>
@@ -162,6 +167,9 @@ export function createKernelClient(transport: KernelTransport): KernelClient {
       families: () => call("toolchain.families", undefined),
       familyStatus: (params) => call("toolchain.familyStatus", params),
       familySet: (params) => call("toolchain.familySet", params),
+      install: (params) => call("toolchain.install", params),
+      installCancel: (params) => call("toolchain.installCancel", params),
+      installsActive: () => call("toolchain.installsActive", undefined),
     },
     project: {
       list: () => call("project.list", undefined),

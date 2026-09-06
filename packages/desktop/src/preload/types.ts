@@ -63,6 +63,9 @@ export type UpdaterAPI = {
   subscribe: (cb: (state: UpdaterState) => void) => Promise<() => void>
   check: () => Promise<UpdaterState>
   install: () => Promise<void>
+  /** 启动时 / 定时自动检查的开关。 */
+  getAutoCheck: () => Promise<boolean>
+  setAutoCheck: (value: boolean) => Promise<void>
 }
 
 export type LinuxDisplayBackend = "wayland" | "auto"

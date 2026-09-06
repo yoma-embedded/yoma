@@ -15,7 +15,7 @@ An agent for **embedded engineers** — not just a code editor, but a full close
 ### Grounded in hardware facts
 
 - **Schematic / netlist parsing**: parse schematics from net or PDF files to extract pin mappings and peripheral connections, so the agent understands the hardware
-- **Datasheet search**: search a datasheet library for register/peripheral descriptions by chip, as first-hand evidence for code and a guard against AI hallucination (requires `YOMA_DATASHEET_SERVER` to be configured)
+- **Datasheet search**: search a datasheet library for register/peripheral descriptions by chip, as first-hand evidence for code and a guard against AI hallucination (works out of the box against the public manual server; point it at your own if you prefer)
 
 ### Always start from an example project — never write drivers from scratch
 
@@ -46,17 +46,21 @@ Currently only DeepSeek and Kimi are supported.
 - First time: the banner at the top says "No API key configured yet" → click **Connect**
 - Afterwards: top-left menu **File → Settings** (or `Ctrl+,`) → **Providers** on the left → pick DeepSeek / Kimi → **Connect** → paste your API key
 
-### 3. Tool paths for flashing / GDB / logs
+### 3. Toolchains (compiler / CMake / OpenOCD / GDB …)
 
-Install the OpenOCD, J-Link or vendor toolchain your project uses on this machine. Then, under **Toolchain** on the left side of Settings, configure the paths required for each chip platform.
+Under **Toolchain** on the left side of Settings, audit the tools for your chip platform. Tools with an **Install** button (Arm GNU Toolchain, CMake, Ninja, OpenOCD, and Git on Windows) are installed by Yoma itself: it downloads the pinned official release, verifies the sha256, unpacks it into `~/.yoma/toolchains/`, and every later session finds it automatically. The agent also installs them on its own when a command turns out to be missing. Everything else (J-Link, STM32CubeProgrammer, Keil, ESP-IDF and other vendor installers) is installed by hand following the hint; paste the path afterwards.
+
+Those directories are only on PATH inside Yoma sessions, not in your own terminal.
 
 ### 4. Datasheet search
 
-Yoma does not bundle a datasheet search service; you need the address of a server that stores the datasheets. On this machine, write to `~/.yoma/.env`:
+Works out of the box: Yoma ships with the address of the public manual server. A search sends only your query text and the chip name. To use your own server, write to `~/.yoma/.env` on this machine (the `YOMA_DATASHEET_SERVER` environment variable takes precedence):
 
 ```
 YOMA_DATASHEET_SERVER=http://your-server:port
 ```
+
+Set `YOMA_DATASHEET_SERVER=off` to disable manual lookup entirely.
 
 ### 5. Generating an STM32 driver for the first time
 

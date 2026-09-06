@@ -22,6 +22,7 @@ import { recordToolchainPath } from "../src/core/toolchain/actions.ts";
 import {
 	familyManifest,
 	familyManifestText,
+	findFamilyTool,
 	findToolchainFamily,
 	TOOLCHAIN_FAMILIES,
 	type ToolchainFamilyTool,
@@ -216,5 +217,48 @@ describe("recordToolchainPath 的目录输入与 probe 档位", () => {
 			recordToolchainPath({ id: "idf", path: join(installDir, "nope"), configDir, probe: "exists" }),
 		).rejects.toThrow(/does not exist/);
 		expect((await readLedger(configDir)).entries).toEqual({});
+	});
+});
+
+// ─── git ─────────────────────────────────────────────────────────────────────
+//
+// git 不属于任何芯片平台,但内核本身要用它(vcs.info / 信箱守护 / 交付分支),而
+// Windows 工位机上常常没有。它必须在**每个**平台里都列着:账本按 id 全机共享,漏掉
+// 一个平台的后果是"选了 ESP32 的用户永远看不到这一行",而缺 git 的表现是信箱那侧
+// 一个看起来毫不相关的报错。optional:缺它不该把整份工具链判成不 ok。
+
+describe("git", () => {
+	it("每个平台都列了 git,且都是同一条定义(optional / pathKind exe / bin ['git'])", () => {
+		for (const family of TOOLCHAIN_FAMILIES) {
+			const git = family.tools.find((tool) => tool.id === "git");
+			expect({ family: family.id, hasGit: git !== undefined }).toEqual({ family: family.id, hasGit: true });
+			expect({ family: family.id, optional: git?.optional }).toEqual({ family: family.id, optional: true });
+			expect({ family: family.id, pathKind: git?.pathKind }).toEqual({ family: family.id, pathKind: "exe" });
+			expect({ family: family.id, bin: git?.bin }).toEqual({ family: family.id, bin: ["git"] });
+		}
+	});
+
+	it("三个平台都有人话安装指引(Windows 那条要提到 Yoma 能自动装便携版)", () => {
+		const git = findFamilyTool("git");
+		expect(git?.install?.win32).toBeDefined();
+		expect(git?.install?.darwin).toBeDefined();
+		expect(git?.install?.linux).toBeDefined();
+	});
+});
+
+describe("findFamilyTool", () => {
+	it("按 id 命中(任一平台里的第一条),未知 id 返回 undefined", () => {
+		const git = findFamilyTool("git");
+		expect(git?.id).toBe("git");
+		expect(git?.title).toBe("Git");
+		expect(findFamilyTool("nope")).toBeUndefined();
+	});
+
+	it("每个平台里出现过的 id 都查得到 —— 安装后记账靠它拿声明的可执行名", () => {
+		for (const family of TOOLCHAIN_FAMILIES) {
+			for (const tool of family.tools) {
+				expect({ id: tool.id, found: findFamilyTool(tool.id)?.id }).toEqual({ id: tool.id, found: tool.id });
+			}
+		}
 	});
 });

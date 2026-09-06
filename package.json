@@ -16,7 +16,7 @@
     "lint": "oxlint",
     "example:01": "bun example/01-minimal-agent.ts",
     "example:02": "bun example/02-parallel-tools.ts",
-    "test": "bun test packages/agent && bun test --cwd packages/coding-agent && bun --cwd packages/kernel test && bun --cwd packages/bench test && bun --cwd packages/app test src && bun --cwd packages/session-ui test src && bun --cwd packages/ui test src"
+    "test": "bun test packages/agent && bun test --cwd packages/coding-agent && bun --cwd packages/kernel test && bun --cwd packages/bench test && bun --cwd packages/desktop test && bun --cwd packages/app test src && bun --cwd packages/session-ui test src && bun --cwd packages/ui test src"
   },
   "workspaces": {
     "packages": [
@@ -72,6 +72,7 @@
       "zod": "4.1.8",
       "typebox": "1.3.7",
       "usb": "3.1.0",
+      "@zip.js/zip.js": "2.7.62",
       "@earendil-works/pi-ai": "0.84.2",
       "remeda": "2.26.0",
       "sst": "4.13.1",

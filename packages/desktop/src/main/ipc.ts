@@ -37,6 +37,8 @@ type Deps = {
   checkAppExists: (appName: string) => Promise<boolean> | boolean
   resolveAppPath: (appName: string) => Promise<string | null>
   updater: UpdaterController
+  /** "启动时 / 定时自动检查更新"的开关(yoma.updater store)。 */
+  updaterAutoCheck: { get: () => boolean; set: (value: boolean) => void }
   /** 信箱调试台:controller 四动作 + 连通自检 + 任务书生成。返回值全是普通对象,不抛 Error。 */
   mailbox: Pick<MailboxController, "configure" | "start" | "stop" | "status"> &
     Pick<MailboxMain, "probe" | "composeJob" | "ackHuman">
@@ -96,6 +98,10 @@ export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle("updater-unsubscribe", (event) => updaterSubscriptions.delete(event.sender.id))
   ipcMain.handle("updater-check", () => deps.updater.check())
   ipcMain.handle("updater-install", () => deps.updater.install())
+  ipcMain.handle("updater-get-auto-check", () => deps.updaterAutoCheck.get())
+  ipcMain.handle("updater-set-auto-check", (_event: IpcMainInvokeEvent, value: boolean) =>
+    deps.updaterAutoCheck.set(Boolean(value)),
+  )
   ipcMain.handle("set-background-color", (_event: IpcMainInvokeEvent, color: string) => deps.setBackgroundColor(color))
   ipcMain.handle("export-debug-logs", () => deps.exportDebugLogs())
   ipcMain.handle("record-fatal-renderer-error", (_event: IpcMainInvokeEvent, error: FatalRendererError) =>
