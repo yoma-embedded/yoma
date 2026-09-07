@@ -82,6 +82,24 @@ bun engines/build.ts    # netlist parsing / STM32 tools. STM32 configuration nee
 bun dev:desktop         # restart this command after changing the kernel
 ```
 
+### Standalone core CLI (experimental)
+
+No Electron or engine build is needed for this entry point. After `bun install`:
+
+```bash
+bun run cli --cwd /path/to/project
+bun run cli --cwd /path/to/project --continue
+bun run cli --cwd /path/to/project -p "Read AGENTS.md and explain how to verify this project"
+```
+
+Uses the existing Harness directly with **read / bash / edit / write**, streaming output,
+Ctrl+C cancellation and saved sessions. Credentials reuse `~/.yoma/auth.json`; CLI sessions
+are separate under `~/.yoma/cli/sessions`. New sessions request `max` thinking, clamped to
+model support; the actual model and level are displayed. Use `--model provider/id` and
+`--thinking off` to override. Compaction and retries are **manual**, and restoring history
+does not automatically replay interrupted tools. This is not the new pi runtime or a sandbox.
+See `bun run cli --help` and [the CLI/development guide (Chinese)](packages/coding-agent/CLI.md).
+
 ## License
 
 MIT. Third-party sources are listed in `NOTICE`: the desktop app is inherited from [opencode](https://github.com/anomalyco/opencode); the kernel is derived from [pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-ai` is an npm dependency; `packages/agent` and `packages/coding-agent` are derived works).

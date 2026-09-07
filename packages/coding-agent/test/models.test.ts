@@ -210,6 +210,22 @@ describe("resolveModel", () => {
 		expect(fromEnv.model.id).toBe("deepseek-v4-flash");
 	});
 
+	it("lets explicit host selections override defaults and environment without mutating process.env", async () => {
+		const dir = createTempDir();
+		writeAuth(dir, { deepseek: { type: "api_key", key: "sk-test" } });
+		process.env.YOMA_PROVIDER = "unavailable-provider";
+		process.env.YOMA_MODEL = "unavailable-model";
+		const { model } = await resolveModel(dir, {
+			...isolated,
+			provider: "deepseek",
+			modelId: "deepseek-v4-flash",
+		});
+		expect(model.provider).toBe("deepseek");
+		expect(model.id).toBe("deepseek-v4-flash");
+		expect(process.env.YOMA_PROVIDER).toBe("unavailable-provider");
+		expect(process.env.YOMA_MODEL).toBe("unavailable-model");
+	});
+
 	it("throws actionable guidance when nothing is configured", async () => {
 		const dir = createTempDir();
 		// 内核的 preflight 拿这条错误当"没配 key"的证据,而且要能从里面抄出 auth.json 的格式。

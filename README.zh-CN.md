@@ -82,6 +82,23 @@ bun engines/build.ts    # 网表解析 / STM32 工具。STM32 配置需要本机
 bun dev:desktop         # 改内核要重启这条命令
 ```
 
+### 独立内核 CLI（实验性）
+
+不需要 Electron，也不用先构建引擎。`bun install` 后直接运行：
+
+```bash
+bun run cli --cwd /path/to/project
+bun run cli --cwd /path/to/project --continue
+bun run cli --cwd /path/to/project -p "读一下 AGENTS.md，说明这个工程如何验证"
+```
+
+直接连接当前 Harness，只有 **read / bash / edit / write** 四工具，支持流式回答、
+Ctrl+C 停止和会话保存/恢复。凭据复用 `~/.yoma/auth.json`；CLI 会话独立存放于
+`~/.yoma/cli/sessions`。新会话默认请求 `max` 思考档位，按模型能力钳制，启动时显示实际值；
+用 `--model provider/id`、`--thinking off` 显式选择。压缩/重试是**手动**的，
+恢复历史不会自动重跑中断工具；这不是 pi 新运行时，也不是沙箱。
+详见 `bun run cli --help` 和 [CLI 使用与多机开发说明](packages/coding-agent/CLI.md)。
+
 ## 许可
 
 MIT。第三方来源见 `NOTICE`：桌面端继承自 [opencode](https://github.com/anomalyco/opencode)；内核派生自 [pi](https://github.com/earendil-works/pi)（`@earendil-works/pi-ai` 为 npm 依赖，`packages/agent`、`packages/coding-agent` 为派生）。

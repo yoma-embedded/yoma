@@ -130,6 +130,9 @@ export const NO_AMBIENT_AUTH: AuthContext = {
 
 export interface ResolveModelOptions {
 	authContext?: AuthContext;
+	/** 宿主的显式选择(如 CLI 参数或恢复的会话),优先于环境与默认设置。 */
+	provider?: string;
+	modelId?: string;
 }
 
 export interface ResolvedModel {
@@ -155,6 +158,7 @@ export async function resolveModel(configDir: string, options?: ResolveModelOpti
 
 	const knownIds = builtin.map((p) => p.id);
 	const providerId: string | undefined =
+		options?.provider ??
 		process.env.YOMA_PROVIDER ??
 		(knownIds.includes(settings.defaultProvider) ? settings.defaultProvider : undefined) ??
 		configured[0];
@@ -176,6 +180,7 @@ export async function resolveModel(configDir: string, options?: ResolveModelOpti
 
 	const catalog = models.getModels(providerId);
 	const modelId: string | undefined =
+		options?.modelId ??
 		process.env.YOMA_MODEL ??
 		(settings.defaultProvider === providerId ? settings.defaultModel : undefined) ??
 		catalog[0]?.id;
