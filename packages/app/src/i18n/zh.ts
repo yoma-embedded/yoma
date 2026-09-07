@@ -145,6 +145,7 @@ export const dict = {
   "prompt.example.24": "给工位机打一份诊断脚本",
   "prompt.example.25": "两台机器的信箱要怎么配？",
   "prompt.popover.emptyResults": "没有匹配的结果",
+  "prompt.popover.enterDirectory": "进入",
   "prompt.popover.emptyCommands": "没有匹配的命令",
   "prompt.dropzone.label": "将图片拖放到此处（文本文件会转为 @ 提及）",
   "prompt.dropzone.file.label": "拖放以 @提及文件",

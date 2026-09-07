@@ -199,13 +199,24 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
     }
 
     // 内核没有文件监视事件流,所以没有 watcher 失效路径 —— 打开的文件靠显式 reload。
-    const search = (query: string, _dirs: "true" | "false") =>
+    const search = (query: string, dirs: "true" | "false") =>
       sdk()
-        .client.file.search(sdk().directory, query)
+        .client.file.search(sdk().directory, query, undefined, dirs === "true")
         .then(
           (x) => x.map(path.normalize),
           () => [],
         )
+
+    /**
+     * 列一层目录,给 @提及的浏览用(`dir` 为空即项目根)。
+     *
+     * 刻意不走 `tree.listDir` —— 那个是往文件树的 store 里灌节点、带 loaded/expanded 状态,
+     * 借它来喂一个转瞬即逝的 popover 等于让输入框去改文件树的展开状态。这里只要一次 readdir。
+     */
+    const listEntries = (dir: string) =>
+      sdk()
+        .client.file.list(sdk().directory, dir || undefined)
+        .catch(() => [])
 
     const get = (input: string) => {
       const file = path.normalize(input)
@@ -265,6 +276,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       setSelectedLines,
       searchFiles: (query: string) => search(query, "false"),
       searchFilesAndDirectories: (query: string) => search(query, "true"),
+      listEntries,
     }
   },
 })

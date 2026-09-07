@@ -45,7 +45,13 @@ import { Persist, persisted } from "@/utils/persist"
 import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
 import { createSessionTabs } from "@/pages/session/helpers"
-import { createTextFragment, getCursorPosition, setCursorPosition, setRangeEdge } from "./prompt-input/editor-dom"
+import {
+  atMentionRange,
+  createTextFragment,
+  getCursorPosition,
+  setCursorPosition,
+  setRangeEdge,
+} from "./prompt-input/editor-dom"
 import { createPromptAttachments } from "./prompt-input/attachments"
 import { ACCEPTED_FILE_TYPES, pickAttachmentFiles } from "./prompt-input/files"
 import {
@@ -59,6 +65,14 @@ import {
 } from "./prompt-input/history"
 import { createPromptSubmit, type FollowupDraft } from "./prompt-input/submit"
 import { PromptPopover, type AtOption, type SlashCommand } from "./prompt-input/slash-popover"
+import {
+  entryOptions,
+  isDirectoryPath,
+  mergeAtOptions,
+  parseAtQuery,
+  recentOptions,
+  searchOptions,
+} from "./prompt-input/at-options"
 import { PromptContextItems } from "./prompt-input/context-items"
 import { PromptImageAttachments } from "./prompt-input/image-attachments"
 import { PromptDragOverlay } from "./prompt-input/drag-overlay"
@@ -566,8 +580,20 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     })
   }
 
-  const handleAtSelect = (option: AtOption | undefined) => {
+  /**
+   * 选中一个候选。
+   *
+   * 目录有两种意图:**下钻**(把输入补成 `@dir/`,popover 接着列下一层)和**插入**
+   * (整个目录当一条提及塞进正文,让 agent 自己去看里面有什么)。键盘上 Tab 下钻、
+   * Enter 插入;鼠标点目录行走下钻 —— 在一棵树上点文件夹就是进去,点文件才是选中。
+   * 文件没有下钻可言,两种意图都是插入。
+   */
+  const handleAtSelect = (option: AtOption | undefined, intent: "insert" | "drill" = "insert") => {
     if (!option) return
+    if (intent === "drill" && isDirectoryPath(option.path)) {
+      replaceAtQuery(option.path)
+      return
+    }
     addPart({ type: "file", path: option.path, content: "@" + option.path, start: 0, end: 0 })
   }
 
@@ -581,15 +607,13 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     onKeyDown: atOnKeyDown,
   } = useFilteredList<AtOption>({
     items: async (query) => {
-      const open = recent()
-      const seen = new Set(open)
-      const pinned: AtOption[] = open.map((path) => ({ type: "file", path, display: path, recent: true }))
-      if (!query.trim()) return pinned
-      const paths: string[] = await files.searchFilesAndDirectories(query)
-      const fileOptions: AtOption[] = paths
-        .filter((path) => !seen.has(path))
-        .map((path) => ({ type: "file", path, display: path }))
-      return [...pinned, ...fileOptions]
+      const parsed = parseAtQuery(query)
+      const pinned = recentOptions(recent())
+      if (parsed.mode === "search") {
+        return mergeAtOptions(pinned, searchOptions(await files.searchFilesAndDirectories(parsed.needle)))
+      }
+      // 钻进 packages/ 之后再把别处打开的文件列一遍是噪音 —— 只有根那一层配得上置顶。
+      return mergeAtOptions(parsed.dir ? [] : pinned, entryOptions(await files.listEntries(parsed.dir)))
     },
     key: atKey,
     filterKeys: ["display"],
@@ -599,7 +623,8 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       const rank = (category: string) => (category === "recent" ? 0 : 1)
       return rank(a.category) - rank(b.category)
     },
-    onSelect: handleAtSelect,
+    // 不能直接传 handleAtSelect:useFilteredList 的 onSelect 第二个参数是 index,会当成 intent。
+    onSelect: (item) => handleAtSelect(item),
   })
 
   const slashCommands = createMemo<SlashCommand[]>(() =>
@@ -700,13 +725,13 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       element?.scrollIntoView({ block: "nearest", behavior: "smooth" })
     })
   }
-  const selectPopoverActive = () => {
+  const selectPopoverActive = (intent: "insert" | "drill" = "insert") => {
     if (store.popover === "at") {
       const items = atFlat()
       if (items.length === 0) return
       const active = atActive()
       const item = items.find((entry) => atKey(entry) === active) ?? items[0]
-      handleAtSelect(item)
+      handleAtSelect(item, intent)
       return
     }
 
@@ -873,6 +898,50 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     queueScroll()
   }
 
+  /**
+   * 把光标前那段 `@…` 原地换成 `@value`,**不插 pill、不关 popover**——目录下钻用的就是它。
+   *
+   * 和 `addPart` 的 file 分支共用同一套 range 拼接(`setRangeEdge` 按纯文本偏移定位,pill 记
+   * 一个长度单位),区别只在落下去的是文本节点而不是 pill。结尾那次 `handleInput()` 会重新
+   * 匹配到 `@dir/` 并让候选列表切到下一层 —— 于是"下钻"不需要任何额外状态,它就是一次输入。
+   */
+  const replaceAtQuery = (value: string) => {
+    const selection = window.getSelection()
+    if (!selection) return false
+
+    if (selection.rangeCount === 0 || !editorRef.contains(selection.anchorNode)) {
+      editorRef.focus()
+      const cursor = prompt.cursor() ?? promptLength(prompt.current())
+      setCursorPosition(editorRef, cursor)
+    }
+
+    if (selection.rangeCount === 0) return false
+    const range = selection.getRangeAt(0)
+    if (!editorRef.contains(range.startContainer)) return false
+
+    const cursorPosition = getCursorPosition(editorRef)
+    const rawText = prompt
+      .current()
+      .map((p) => ("content" in p ? p.content : ""))
+      .join("")
+    const mention = atMentionRange(rawText, cursorPosition)
+    if (!mention) return false
+
+    setRangeEdge(editorRef, range, "start", mention.start)
+    setRangeEdge(editorRef, range, "end", mention.end)
+    range.deleteContents()
+
+    const text = document.createTextNode("@" + value)
+    range.insertNode(text)
+    range.setStart(text, text.length)
+    range.collapse(true)
+    selection.removeAllRanges()
+    selection.addRange(range)
+
+    handleInput()
+    return true
+  }
+
   const addPart = (part: ContentPart) => {
     if (part.type === "image") return false
 
@@ -895,15 +964,14 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
         .current()
         .map((p) => ("content" in p ? p.content : ""))
         .join("")
-      const textBeforeCursor = rawText.substring(0, cursorPosition)
-      const atMatch = textBeforeCursor.match(/@(\S*)$/)
+      // 没有 `@…` 可替换时(拖拽进来的附件)就地插入,不动 range。
+      const mention = atMentionRange(rawText, cursorPosition)
       const pill = createPill(part)
       const gap = document.createTextNode(" ")
 
-      if (atMatch) {
-        const start = atMatch.index ?? cursorPosition - atMatch[0].length
-        setRangeEdge(editorRef, range, "start", start)
-        setRangeEdge(editorRef, range, "end", cursorPosition)
+      if (mention) {
+        setRangeEdge(editorRef, range, "start", mention.start)
+        setRangeEdge(editorRef, range, "end", mention.end)
       }
 
       range.deleteContents()
@@ -1130,7 +1198,8 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
 
     if (store.popover) {
       if (event.key === "Tab") {
-        selectPopoverActive()
+        // Tab 在目录上是"进去",在文件上和 Enter 没区别(handleAtSelect 自己分流)。
+        selectPopoverActive("drill")
         event.preventDefault()
         return
       }
@@ -1242,7 +1311,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
         atActive={atActive() ?? undefined}
         atKey={atKey}
         setAtActive={setAtActive}
-        onAtSelect={handleAtSelect}
+        onAtSelect={(item) => handleAtSelect(item, "drill")}
         slashFlat={slashFlat()}
         slashActive={slashActive() ?? undefined}
         setSlashActive={setSlashActive}

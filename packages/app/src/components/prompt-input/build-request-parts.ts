@@ -64,14 +64,27 @@ const parseCommentMentions = (comment: string) => {
 
 const isFileAttachment = (part: Prompt[number]): part is FileAttachmentPart => part.type === "file"
 
+/**
+ * 目录提及(`@packages/`)不生成 file part。
+ *
+ * 内核对 `file://` 的提及件本来就只是丢掉(见 session-manager 的 prompt()),提及能生效
+ * 靠的是路径以文本留在正文里 —— 而正文由每个 part 的 `content` 拼成,pill 的 content 就是
+ * `@packages/`,所以少这个 part 模型什么都没少看见。多出来的话,transcript 会为一个目录
+ * 画一张文件附件卡。
+ */
+const isDirectoryMention = (path: string) => path.endsWith("/") || path.endsWith("\\")
+
 export function buildRequestParts(input: BuildRequestPartsInput) {
-  const files = input.prompt.filter(isFileAttachment).map((attachment) => {
+  const files = input.prompt.filter(isFileAttachment).flatMap((attachment) => {
+    if (isDirectoryMention(attachment.path)) return []
     const path = absolute(input.sessionDirectory, attachment.path)
-    return {
-      mime: attachment.mime ?? "text/plain",
-      url: attachment.url ?? `file://${encodeFilePath(path)}${fileQuery(attachment.selection)}`,
-      filename: attachment.filename ?? getFilename(attachment.path),
-    } satisfies RequestFile
+    return [
+      {
+        mime: attachment.mime ?? "text/plain",
+        url: attachment.url ?? `file://${encodeFilePath(path)}${fileQuery(attachment.selection)}`,
+        filename: attachment.filename ?? getFilename(attachment.path),
+      } satisfies RequestFile,
+    ]
   })
 
   const used = new Set(files.map((part) => part.url))
@@ -95,6 +108,7 @@ export function buildRequestParts(input: BuildRequestPartsInput) {
     notes.push(formatCommentNote({ path: item.path, selection: item.selection, comment }))
 
     const mentions = parseCommentMentions(comment).flatMap((mentioned) => {
+      if (isDirectoryMention(mentioned)) return []
       const mentionURL = `file://${encodeFilePath(absolute(input.sessionDirectory, mentioned))}`
       if (used.has(mentionURL)) return []
       used.add(mentionURL)

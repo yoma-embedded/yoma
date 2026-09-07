@@ -80,7 +80,8 @@ export interface KernelClient {
   file: {
     list(directory: string, path?: string): Promise<FileEntry[]>
     read(directory: string, path: string): Promise<KernelResult<"file.read">>
-    search(directory: string, query: string, limit?: number): Promise<string[]>
+    /** query 与结果都用 `/` 作分隔符;`directories` 打开时目录也进候选(以 `/` 结尾)。 */
+    search(directory: string, query: string, limit?: number, directories?: boolean): Promise<string[]>
   }
   la: {
     /** 逻辑分析仪波形视口(Node 侧降采样,只传视口大小)。 */
@@ -152,7 +153,7 @@ export function createKernelClient(transport: KernelTransport): KernelClient {
     file: {
       list: (directory, path) => call("file.list", { directory, path }),
       read: (directory, path) => call("file.read", { directory, path }),
-      search: (directory, query, limit) => call("file.search", { directory, query, limit }),
+      search: (directory, query, limit, directories) => call("file.search", { directory, query, limit, directories }),
     },
     la: {
       view: (params) => call("la.view", params),

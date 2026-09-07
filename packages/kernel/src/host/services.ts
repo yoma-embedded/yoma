@@ -10,19 +10,28 @@ import { promises as fs } from "node:fs"
 import path from "node:path"
 import { promisify } from "node:util"
 
+import { MENTION_HIDDEN_NAMES, TREE_HIDDEN_NAMES } from "../file-filter.ts"
 import type { FileDiff, FileEntry, VcsGroup, VcsInfo } from "../types.ts"
 
 const run = promisify(execFile)
 
 /**
- * 文件树的隐藏名单 = VS Code `files.exclude` 的默认值。其余一律显示 —— node_modules、点文件都显示,
- * 被 gitignore 的条目带 `ignored` 标记交给前端灰显,和 VS Code 资源管理器一致。
- * 从前多藏了 node_modules / dist / out 和所有点文件,用户在 VS Code 里看得见的目录到这里是空的(2026-09-06)。
+ * 两张名单都住在浏览器安全的 `../file-filter.ts` —— @ popover 列一层目录时要用同一份
+ * (见那边的注释)。树显示 node_modules 与点文件、提及不显示,这个差别是有意的。
+ * 从前树也多藏了 node_modules / dist / out 和所有点文件,用户在 VS Code 里看得见的目录
+ * 到这里是空的(2026-09-06)。
  */
-const TREE_HIDDEN = new Set([".git", ".svn", ".hg", "CVS", ".DS_Store", "Thumbs.db"])
+const TREE_HIDDEN = TREE_HIDDEN_NAMES
+const SEARCH_SKIP = MENTION_HIDDEN_NAMES
 
-/** @提及搜索跳过的目录:VS Code 的 search.exclude 也默认排除 node_modules;点开头的目录同样跳过(.yoma 运行产物不该进候选)。 */
-const SEARCH_SKIP = new Set([...TREE_HIDDEN, "node_modules", ".venv", "target", "dist", "out", ".turbo", "__pycache__"])
+/**
+ * @提及这条链路上分隔符只有 `/` 一种(约定见 protocol.ts 的 file.search)。
+ *
+ * `path.relative` 在 Windows 上给的是 `packages\app\x.ts`,而 popover 的显示层
+ * (`util/path.ts` 的 `getDirectory`)无条件拼 `/`。不在这里归一化的话,用户照着屏幕上的
+ * `/` 打过去 `includes()` 一个都撞不上,得改打 `\` 才行 —— 2026-09-07 实测的报障就是这个。
+ */
+const toPosix = (input: string) => input.replaceAll("\\", "/")
 
 export async function listFiles(directory: string, relative?: string): Promise<FileEntry[]> {
   const root = path.resolve(directory)
@@ -98,14 +107,23 @@ export async function readFile(
 }
 
 /**
- * @提及用的文件搜索。
+ * @提及用的文件搜索。查询与结果的分隔符都是 `/`(见 `toPosix`)。
  *
  * 走一次广度优先遍历而不是 shell 出去调 fd/rg —— yoma 的工具集里没有移植 find/ls
  * (它的 index.ts 注释写着"尚未移植:find、ls"),而打包后的 app 不能假设机器上有 fd。
+ *
+ * `directories` 打开时目录也进候选,**以 `/` 结尾**——前端靠这个尾巴区分二者(popover 的
+ * 图标、Tab 下钻都看它)。从前这个开关不存在,`searchFilesAndDirectories` 于是是个空名字:
+ * 目录只被入队递归、从不产出。
  */
-export async function searchFiles(directory: string, query: string, limit = 50): Promise<string[]> {
+export async function searchFiles(
+  directory: string,
+  query: string,
+  limit = 50,
+  directories = false,
+): Promise<string[]> {
   const root = path.resolve(directory)
-  const needle = query.toLowerCase()
+  const needle = toPosix(query).toLowerCase()
   const out: string[] = []
   const queue: string[] = [root]
   let visited = 0
@@ -120,17 +138,16 @@ export async function searchFiles(directory: string, query: string, limit = 50):
     }
     for (const entry of entries) {
       visited += 1
-      if (SEARCH_SKIP.has(entry.name) || entry.name.startsWith(".")) continue
+      if (SEARCH_SKIP.has(entry.name)) continue
       const full = path.join(dir, entry.name)
-      if (entry.isDirectory()) {
-        queue.push(full)
-        continue
-      }
-      const rel = path.relative(root, full)
-      if (!needle || rel.toLowerCase().includes(needle)) {
-        out.push(rel)
-        if (out.length >= limit) break
-      }
+      const isDirectory = entry.isDirectory()
+      if (isDirectory) queue.push(full)
+      if (isDirectory && !directories) continue
+
+      const rel = toPosix(path.relative(root, full)) + (isDirectory ? "/" : "")
+      if (needle && !rel.toLowerCase().includes(needle)) continue
+      out.push(rel)
+      if (out.length >= limit) break
     }
   }
   // 路径越短越可能是用户想要的那个。

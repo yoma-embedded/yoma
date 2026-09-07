@@ -1,5 +1,39 @@
 import { describe, expect, test } from "bun:test"
-import { createTextFragment, getCursorPosition, getNodeLength, getTextLength, setCursorPosition } from "./editor-dom"
+import {
+  atMentionRange,
+  createTextFragment,
+  getCursorPosition,
+  getNodeLength,
+  getTextLength,
+  setCursorPosition,
+} from "./editor-dom"
+
+describe("atMentionRange", () => {
+  test("盖住的是 @ 本身到光标,不多不少 —— 选中候选之后替换的就是这一段", () => {
+    expect(atMentionRange("@", 1)).toEqual({ start: 0, end: 1 })
+    expect(atMentionRange("看 @packages/app", 15)).toEqual({ start: 2, end: 15 })
+  })
+
+  test("只认光标前那一个 @,光标后的文字不动", () => {
+    // "@a @b" 里光标停在 @a 之后:替换的是 @a,后面那个提及原样留着。
+    expect(atMentionRange("@a @b", 2)).toEqual({ start: 0, end: 2 })
+  })
+
+  test("没有可替换的 @ 时回 null —— 拖拽进来的附件走就地插入,不许动 range", () => {
+    expect(atMentionRange("hello", 5)).toBeNull()
+    // @ 与光标之间隔了空格:那一段提及已经结束了。
+    expect(atMentionRange("@a ", 3)).toBeNull()
+    expect(atMentionRange("", 0)).toBeNull()
+  })
+
+  test("目录下钻是拿它反复替换的,连着两层要收敛", () => {
+    const first = atMentionRange("@packages", 9)
+    expect(first).toEqual({ start: 0, end: 9 })
+    // 第一层换成 @packages/ 之后,第二层盖住的仍是从 @ 到光标的整段。
+    expect(atMentionRange("@packages/", 10)).toEqual({ start: 0, end: 10 })
+    expect(atMentionRange("@packages/app/", 14)).toEqual({ start: 0, end: 14 })
+  })
+})
 
 describe("prompt-input editor dom", () => {
   test("createTextFragment preserves newlines with consecutive br nodes", () => {

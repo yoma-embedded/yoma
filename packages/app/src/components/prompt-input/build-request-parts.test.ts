@@ -41,6 +41,26 @@ describe("buildRequestParts", () => {
     expect(result.optimisticParts.every((part) => part.sessionID === "ses_1" && part.messageID === "msg_1")).toBe(true)
   })
 
+  test("目录提及只留在正文里,不生成 file part", () => {
+    // 内核对 file:// 的提及件本来就只是丢掉,提及靠的是路径以文本留在正文里(pill 的 content
+    // 就是 @packages/)。给目录也造一条 file part 的话,transcript 会为它画一张文件附件卡。
+    const result = buildRequestParts({
+      prompt: [
+        { type: "file", path: "packages/app/", content: "@packages/app/", start: 0, end: 14 },
+        { type: "file", path: "src/foo.ts", content: "@src/foo.ts", start: 14, end: 25 },
+      ],
+      context: [],
+      images: [],
+      text: "@packages/app/ @src/foo.ts",
+      messageID: "msg_dir",
+      sessionID: "ses_dir",
+      sessionDirectory: "/repo",
+    })
+
+    expect(result.input.text).toContain("@packages/app/")
+    expect(result.input.files?.map((file) => file.url)).toEqual(["file:///repo/src/foo.ts"])
+  })
+
   test("keeps multiple uploaded attachments in order", () => {
     const result = buildRequestParts({
       prompt: [{ type: "text", content: "check these", start: 0, end: 11 }],

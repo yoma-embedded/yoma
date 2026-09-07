@@ -5,6 +5,7 @@
  * 碰内核的一切都在 `./host`,那半边只跑在 utilityProcess 里。
  */
 export * from "./types.ts"
+export * from "./file-filter.ts"
 export * from "./protocol.ts"
 export * from "./mailbox-view.ts"
 export * from "./client.ts"

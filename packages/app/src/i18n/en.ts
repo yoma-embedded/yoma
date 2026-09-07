@@ -152,6 +152,7 @@ export const dict = {
   "prompt.example.24": "Package a diagnostic script for the lab machine",
   "prompt.example.25": "How do I set up mailbox between the two machines?",
   "prompt.popover.emptyResults": "No matching results",
+  "prompt.popover.enterDirectory": "Open",
   "prompt.popover.emptyCommands": "No matching commands",
   "prompt.dropzone.label": "Drop images here (text files become @-mentions)",
   "prompt.dropzone.file.label": "Drop to @mention file",

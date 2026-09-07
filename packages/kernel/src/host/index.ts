@@ -141,7 +141,7 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     "file.read": ({ directory, path: file }) => readFile(directory, file),
     "la.view": (params) => laView(params),
     "la.captures": ({ directory }) => laCaptures(directory),
-    "file.search": ({ directory, query, limit }) => searchFiles(directory, query, limit),
+    "file.search": ({ directory, query, limit, directories }) => searchFiles(directory, query, limit, directories),
 
     // app 打开每个项目都会先问一次 vcs.info,是仓库就从这一刻起盯住它的目录。
     "vcs.info": async ({ directory }) => {

@@ -12,7 +12,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
-import { listFiles, parseStatus, readFile, vcsDiff, vcsInfo, vcsInit } from "./services.ts"
+import { listFiles, parseStatus, readFile, searchFiles, vcsDiff, vcsInfo, vcsInit } from "./services.ts"
 
 let root: string
 let outside: string
@@ -127,6 +127,78 @@ describe("listFiles(VS Code 的资源管理器规则)", () => {
     const top = await listFiles(root)
     expect(top.map((entry) => entry.name)).toEqual(["docs", "stop-all.ps1"])
     expect(top.every((entry) => entry.ignored === undefined)).toBe(true)
+  })
+})
+
+/**
+ * @提及搜索。这一族从前**一条测试都没有**,而它同时踩了两个坑:
+ *
+ * 1. Windows 上 `path.relative` 交的是 `packages\app\x.ts`,而候选框的显示层无条件拼 `/` ——
+ *    用户照着屏幕上的斜杠打过去一个都撞不上(2026-09-07 报障)。所以查询与结果都钉死 `/`。
+ * 2. `searchFilesAndDirectories` 曾经是个空名字:目录只被入队递归、从不产出。
+ *
+ * 这里刻意不建 git 仓 —— 搜索不看 gitignore,建了反而让"为什么它没出现"多一种解释。
+ */
+describe("searchFiles(@提及)", () => {
+  let tree: string
+
+  beforeAll(() => {
+    tree = mkdtempSync(path.join(tmpdir(), "yoma-services-search-"))
+    const write = (relative: string, content = "x\n") => {
+      const target = path.join(tree, relative)
+      mkdirSync(path.dirname(target), { recursive: true })
+      writeFileSync(target, content)
+    }
+    write("packages/app/src/prompt-input.tsx")
+    write("packages/app/src/index.ts")
+    write("packages/kernel/src/host/services.ts")
+    write("docs/readme.md")
+    write(".github/workflows/ci.yml")
+    write(".gitignore", "node_modules/\n")
+    write("node_modules/left-pad/index.js")
+    write(".yoma/gdb/session.mi")
+  })
+
+  afterAll(() => {
+    rmSync(tree, { recursive: true, force: true })
+  })
+
+  test("正斜杠与反斜杠两种写法都命中,交出来的一律是正斜杠", async () => {
+    const forward = await searchFiles(tree, "packages/app/src")
+    const backward = await searchFiles(tree, "packages\\app\\src")
+
+    expect(forward).toEqual(backward)
+    expect(forward).toContain("packages/app/src/index.ts")
+    expect(forward).toContain("packages/app/src/prompt-input.tsx")
+    expect(forward.some((hit) => hit.includes("\\"))).toBe(false)
+  })
+
+  test("默认只有文件;directories 打开时目录也进候选,以 / 结尾", async () => {
+    expect(await searchFiles(tree, "docs")).toEqual(["docs/readme.md"])
+
+    const both = await searchFiles(tree, "docs", 50, true)
+    expect(both).toContain("docs/")
+    expect(both).toContain("docs/readme.md")
+  })
+
+  test("排除名单挡住 node_modules 与 .yoma,连里面的文件一起", async () => {
+    expect(await searchFiles(tree, "left-pad", 50, true)).toEqual([])
+    expect(await searchFiles(tree, "session.mi", 50, true)).toEqual([])
+    expect(await searchFiles(tree, "", 50, true)).not.toContain("node_modules/")
+  })
+
+  test("点文件与点目录搜得到 —— 文件树显示它们,这里也得显示", async () => {
+    expect(await searchFiles(tree, "ci.yml")).toEqual([".github/workflows/ci.yml"])
+    expect(await searchFiles(tree, "gitignore")).toEqual([".gitignore"])
+    expect(await searchFiles(tree, "workflows", 50, true)).toContain(".github/workflows/")
+  })
+
+  test("空查询交出全部候选(按路径长度排),limit 封顶", async () => {
+    const all = await searchFiles(tree, "")
+    expect(all).toContain(".gitignore")
+    expect(all).toContain("packages/kernel/src/host/services.ts")
+    expect(all.length).toBeGreaterThan(2)
+    expect((await searchFiles(tree, "", 2)).length).toBe(2)
   })
 })
 

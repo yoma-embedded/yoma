@@ -117,6 +117,19 @@ export function setCursorPosition(parent: HTMLElement, position: number) {
   fallbackSelection?.addRange(fallbackRange)
 }
 
+/**
+ * 光标前那段 `@…` 在**纯文本偏移**里的起止;没有就是 null(调用方据此决定"就地插入"还是"替换")。
+ *
+ * 插 pill(选中一个文件)和目录下钻(把输入补成 `@dir/`)都要先把这一段选中再替换,
+ * 两处必须算得一模一样 —— 各写一份正则的后果是替换错位,表现成
+ * `@packages/@packages/app/` 这种半截拼接,而且只在某些光标位置出现。
+ */
+export function atMentionRange(rawText: string, cursor: number): { start: number; end: number } | null {
+  const match = rawText.substring(0, cursor).match(/@(\S*)$/)
+  if (!match) return null
+  return { start: match.index ?? cursor - match[0].length, end: cursor }
+}
+
 export function setRangeEdge(parent: HTMLElement, range: Range, edge: "start" | "end", offset: number) {
   let remaining = offset
   const nodes = Array.from(parent.childNodes)

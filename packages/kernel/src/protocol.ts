@@ -111,7 +111,18 @@ export interface KernelMethods {
   "file.list": { params: { directory: string; path?: string }; result: FileEntry[] }
   /** path 相对 directory(file.list 交出的就是这种);绝对路径也收,但必须落在 directory 之内,与 file.list 同一道越界保护。 */
   "file.read": { params: { directory: string; path: string }; result: { content: string; mime: string; truncated: boolean } }
-  "file.search": { params: { directory: string; query: string; limit?: number }; result: string[] }
+  /**
+   * @提及用的搜索。`directories` 打开时目录也进候选,以 `/` 结尾区分。
+   *
+   * **query 与 result 的分隔符一律是 `/`**,与 file.read 收正斜杠是同一条约定。这里不能
+   * 用平台原生分隔符:结果要显示给用户看、还要原样插进提示词正文,而显示层
+   * (`util/path.ts` 的 getDirectory)是强制拼 `/` 的 —— 两边不一致的后果是用户照着
+   * 屏幕上的 `/` 打,一个都匹配不上,得改打 `\` 才行(Windows 上实测)。
+   */
+  "file.search": {
+    params: { directory: string; query: string; limit?: number; directories?: boolean }
+    result: string[]
+  }
 
   "vcs.info": { params: { directory: string }; result: VcsInfo }
   /** 每一项都带全上下文 patch(审查面板靠它还原前后文本),未跟踪的新文件也列(status: added)。 */
