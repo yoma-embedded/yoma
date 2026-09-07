@@ -59,7 +59,12 @@ export default function ManualsPage() {
   const [ingestLog, setIngestLog] = createSignal<string[]>([])
   const [ingestRunning, setIngestRunning] = createSignal(false)
   const [indexBusy, setIndexBusy] = createSignal(false)
-  const [indexProgress, setIndexProgress] = createSignal<{ phase: string; bytes: number; total: number } | null>(null)
+  const [indexProgress, setIndexProgress] = createSignal<{
+    phase: string
+    bytes: number
+    total: number
+    note?: string
+  } | null>(null)
   const [indexMessage, setIndexMessage] = createSignal<{ text: string; error?: boolean } | null>(null)
   const dialog = useDialog()
 
@@ -104,7 +109,7 @@ export default function ManualsPage() {
       } else if (event.type === "download-end") {
         setProgress(`${event.chip}/${event.rev}`, event.ok ? undefined : { done: 0, total: 0, bytes: 0, error: event.error })
       } else if (event.type === "index-update-progress") {
-        setIndexProgress({ phase: event.phase, bytes: event.bytes, total: event.total })
+        setIndexProgress({ phase: event.phase, bytes: event.bytes, total: event.total, note: event.note })
       } else if (event.type === "ingest-log") {
         setIngestLog((lines) => [...lines.slice(-400), event.line])
       } else if (event.type === "ingest-end") {
@@ -147,7 +152,7 @@ export default function ManualsPage() {
     if (!indexBusy()) return "更新索引"
     const p = indexProgress()
     if (p?.phase === "download" && p.total > 0)
-      return `下载快照 ${(p.bytes / 1e6).toFixed(1)}/${(p.total / 1e6).toFixed(1)} MB`
+      return `下载快照 ${(p.bytes / 1e6).toFixed(1)}/${(p.total / 1e6).toFixed(1)} MB${p.note ? `(${p.note})` : ""}`
     if (p?.phase === "install") return "安装中…"
     return "检查中…"
   })

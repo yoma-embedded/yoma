@@ -11,23 +11,13 @@
 import { app, ipcMain } from "electron"
 import type { IpcMainInvokeEvent } from "electron"
 import { spawn, type ChildProcess } from "node:child_process"
-import { createHash } from "node:crypto"
-import { once } from "node:events"
-import {
-  createReadStream,
-  createWriteStream,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs"
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 // 叶子模块(只依赖 node 内建),不会把内核 inline 进 main 的 bundle —— 见该文件头。
 import { resolveDatasheetServer } from "@yoma/coding-agent/datasheet-server"
+import { describeError, fetchToFile, pruneStaleParts, sha256File } from "./download"
+import { write as logWrite } from "./logging"
 import type {
   IndexUpdateResult,
   IngestRequest,
@@ -96,6 +86,17 @@ function serverUrl(): string | null {
 const SERVER_OFF_MESSAGE = "手册服务器已关闭(YOMA_DATASHEET_SERVER=off)。在 ~/.yoma/.env 里改成服务器地址或删掉这一行即可"
 /** JSON 端点的超时;文件下载在 fetchToFile 里另有一档。 */
 const JSON_TIMEOUT_MS = 20_000
+/** 更新索引前先探一下 /api/info:服务器不在就直接说,不让人等到快照阶段才撞墙。 */
+const PROBE_TIMEOUT_MS = 8_000
+
+async function probeServer(base: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${base}/api/info`, { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) })
+    return res.ok ? null : `服务器返回 HTTP ${res.status}`
+  } catch (error) {
+    return describeError(error)
+  }
+}
 function ragRepo(): string | null {
   return envVar("YOMA_RAG_REPO") ?? null
 }
@@ -129,65 +130,10 @@ function readManifest(tier: ManualTier): ManifestEntry[] {
   return readManifestAt(path.join(indexRoot(), tier, "manifest.json"))
 }
 
-// --- streaming download helpers ----------------------------------------------------
-// 大文件(几十 MB 的 PDF / 快照 zip)不整块进内存:边下边写 .part 边算 sha256,
-// 校验不过删 .part 抛错;过了才 rename 到位,半截文件永远不会顶替完整文件。
-function sha256File(file: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const hash = createHash("sha256")
-    const stream = createReadStream(file)
-    stream.on("data", (chunk) => hash.update(chunk))
-    stream.on("error", reject)
-    stream.on("end", () => resolve(hash.digest("hex")))
-  })
-}
-
-async function fetchToFile(
-  url: string,
-  dest: string,
-  opts: { sha256?: string; onBytes?: (bytes: number) => void } = {},
-): Promise<{ bytes: number; sha256: string }> {
-  // 内置默认地址意味着每台机器都会去碰一台可能挂掉的服务器:响应头 60 s 内不到就放弃。
-  const res = await fetch(url, { signal: AbortSignal.timeout(60_000) })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  mkdirSync(path.dirname(dest), { recursive: true })
-  const tmp = dest + ".part"
-  const hash = createHash("sha256")
-  let bytes = 0
-  const sink = createWriteStream(tmp)
-  try {
-    if (res.body) {
-      for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
-        const buf = Buffer.from(chunk)
-        hash.update(buf)
-        bytes += buf.byteLength
-        opts.onBytes?.(bytes)
-        if (!sink.write(buf)) await once(sink, "drain")
-      }
-    } else {
-      const buf = Buffer.from(await res.arrayBuffer())
-      hash.update(buf)
-      bytes = buf.byteLength
-      opts.onBytes?.(bytes)
-      sink.write(buf)
-    }
-    await new Promise<void>((resolve, reject) => {
-      sink.once("error", reject)
-      sink.end(resolve)
-    })
-  } catch (error) {
-    sink.destroy()
-    rmSync(tmp, { force: true })
-    throw error
-  }
-  const digest = hash.digest("hex")
-  if (opts.sha256 && digest !== opts.sha256) {
-    rmSync(tmp, { force: true })
-    throw new Error("sha256 不匹配")
-  }
-  renameSync(tmp, dest)
-  return { bytes, sha256: digest }
-}
+// --- streaming download ----------------------------------------------------------
+// 大文件(几十 MB 的 PDF / 快照 zip)不整块进内存:边下边写 .part 边算 sha256,校验过了
+// 才 rename 到位;断了从 .part 续传、自动重试;响应头 60 s 内不到就放弃这一次。
+// 实现与单测在 ./download.ts。
 
 // --- catalog (virtual directory; shared tier only, distributed with the snapshot) --
 // <indexRoot>/shared/catalog.json = { version, folders: string[], placements: {"<chip>/<rev>": folder} }.
@@ -310,11 +256,14 @@ async function downloadManual(chip: string, rev: string) {
       } else {
         try {
           const rel = file.path.split("/").map(encodeURIComponent).join("/")
-          const result = await fetchToFile(`${base}/artifacts/${rel}`, dest, { sha256: file.sha256 })
+          const result = await fetchToFile(`${base}/artifacts/${rel}`, dest, {
+            sha256: file.sha256,
+            onRetry: (info) => logWrite("manuals", `artifact download retry ${file.path}`, info, "warn"),
+          })
           downloaded++
           bytes += result.bytes
         } catch (error: any) {
-          const message = String(error?.message ?? error)
+          const message = describeError(error)
           failures.push(
             `${file.path}: ${message === "sha256 不匹配" ? "sha256 不匹配(索引与服务器版本不一致?先更新索引再重试)" : message}`,
           )
@@ -328,7 +277,8 @@ async function downloadManual(chip: string, rev: string) {
     emit({ type: "changed" })
     return { ok, error, downloaded, skipped }
   } catch (error: any) {
-    const message = String(error?.message ?? error)
+    const message = describeError(error)
+    logWrite("manuals", `manual download failed ${key}`, { error: message }, "warn")
     emit({ type: "download-end", chip, rev, ok: false, error: message, downloaded: 0, skipped: 0 })
     return { ok: false, error: message, downloaded: 0, skipped: 0 }
   } finally {
@@ -431,6 +381,11 @@ async function updateIndex(): Promise<IndexUpdateResult> {
   if (!base) return { ok: false, error: SERVER_OFF_MESSAGE }
   indexUpdating = true
   try {
+    const unreachable = await probeServer(base)
+    if (unreachable) {
+      logWrite("manuals", "index update: server unreachable", { base, error: unreachable }, "warn")
+      return { ok: false, error: `服务器不可达(${base}):${unreachable}。可能是 yoma1 掉线了,稍后再试` }
+    }
     const res = await fetch(`${base}/api/index/latest.json`, { signal: AbortSignal.timeout(JSON_TIMEOUT_MS) })
     if (res.status === 404) return { ok: false, error: "服务器还没有发布过索引快照(先在管理台发布)" }
     if (!res.ok) return { ok: false, error: `服务器错误(HTTP ${res.status})` }
@@ -457,12 +412,14 @@ async function updateIndex(): Promise<IndexUpdateResult> {
       }
     }
 
+    // 别的版本留下的半截 zip 没用了;当前版本的 .part 留着,fetchToFile 会从它续传。
+    pruneStaleParts(root, latest.file, /^index-v\d+\.zip$/)
     const zipPath = path.join(root, latest.file)
     const staging = path.join(root, `.snapshot-staging-${latest.version}`)
     let lastEmit = 0
     emit({ type: "index-update-progress", phase: "download", bytes: 0, total: latest.bytes })
     try {
-      await fetchToFile(`${base}/api/index/${latest.file}`, zipPath, {
+      const result = await fetchToFile(`${base}/api/index/${latest.file}`, zipPath, {
         sha256: latest.sha256,
         onBytes: (bytes) => {
           const now = Date.now()
@@ -471,6 +428,22 @@ async function updateIndex(): Promise<IndexUpdateResult> {
             emit({ type: "index-update-progress", phase: "download", bytes, total: latest.bytes })
           }
         },
+        onRetry: (info) => {
+          logWrite("manuals", "snapshot download retry", { file: latest.file, ...info }, "warn")
+          emit({
+            type: "index-update-progress",
+            phase: "download",
+            bytes: info.resumeFrom,
+            total: latest.bytes,
+            note: `第 ${info.attempt} 次中断:${info.error};${Math.round(info.waitMs / 1000)} 秒后从 ${(info.resumeFrom / 1e6).toFixed(0)} MB 续传`,
+          })
+        },
+      })
+      logWrite("manuals", "snapshot downloaded", {
+        file: latest.file,
+        bytes: result.bytes,
+        attempts: result.attempts,
+        resumedFrom: result.resumedFrom,
       })
 
       emit({ type: "index-update-progress", phase: "install", bytes: latest.bytes, total: latest.bytes })
@@ -507,7 +480,8 @@ async function updateIndex(): Promise<IndexUpdateResult> {
     emit({ type: "changed" })
     return { ok: true, version: latest.version, numManuals: latest.num_manuals }
   } catch (error: any) {
-    const message = String(error?.message ?? error)
+    const message = describeError(error)
+    logWrite("manuals", "index update failed", { error: message }, "error")
     // Windows 上最常见的失败:检索刚用过索引,lance 文件句柄未释放
     if (/EBUSY|EPERM|EACCES/i.test(message)) {
       return { ok: false, error: `索引目录被占用(${message})——停止当前会话或重启桌面端后重试` }

@@ -55,7 +55,14 @@ export type IndexUpdateResult = {
 export type ManualsEvent =
   | { type: "download-progress"; chip: string; rev: string; done: number; total: number; bytes: number; file: string }
   | { type: "download-end"; chip: string; rev: string; ok: boolean; error?: string; downloaded: number; skipped: number }
-  | { type: "index-update-progress"; phase: "download" | "install"; bytes: number; total: number }
+  | {
+      type: "index-update-progress"
+      phase: "download" | "install"
+      bytes: number
+      total: number
+      /** 一句人话,例如"第 2 次中断:…;12 秒后从 830 MB 续传";没有就是正常传输中 */
+      note?: string
+    }
   | { type: "ingest-log"; line: string }
   | { type: "ingest-end"; chip: string; rev: string; ok: boolean; error?: string }
   | { type: "changed" }
