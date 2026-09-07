@@ -58,6 +58,7 @@ export async function loadContextFiles(
 	const globalFile = await contextFileOf(fs, options.globalDir);
 	if (globalFile) await add(globalFile);
 
+	//ancestors:祖先
 	const ancestors: ContextFile[] = [];
 	let dir = options.cwd;
 	while (true) {

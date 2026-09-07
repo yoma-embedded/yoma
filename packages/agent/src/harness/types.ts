@@ -139,7 +139,7 @@ export interface FileSystem {
 	fileInfo(path: string, abortSignal?: AbortSignal): Promise<Result<FileInfo, FileError>>;
 	/** List direct children of a directory without following symlinks. */
 	listDir(path: string, abortSignal?: AbortSignal): Promise<Result<FileInfo[], FileError>>;
-	/** Return the canonical path for an existing path, resolving symlinks where supported. */
+	/** canonical：规范的  Return the canonical path for an existing path, resolving symlinks where supported. */
 	canonicalPath(path: string, abortSignal?: AbortSignal): Promise<Result<string, FileError>>;
 	/** Return false for missing paths. Other errors, such as permission failures, return a {@link FileError}. */
 	exists(path: string, abortSignal?: AbortSignal): Promise<Result<boolean, FileError>>;
