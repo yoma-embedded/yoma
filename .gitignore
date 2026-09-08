@@ -37,9 +37,10 @@ engines/data/
 # Claude Code 的临时工作树(harness 生成,不属于本仓)
 .claude/worktrees/
 
-# 产品 agent 技能与内部施工/协议文档:只在本机保留,不入库(与公开发布保持一致)
+# 产品 agent 技能:只在本机保留,不入库(与公开发布保持一致)
+# docs/ 从前也在这一条里,2026-09-08 入库 —— CLAUDE.md 正文引用 docs/ 下的文档,
+# 挡在库外意味着新克隆/换机拿到的是一份带断链的仓库。
 /.agents/
-/docs/
 
 # Python 字节码缓存(harbor 适配器被 import 时生成)
 __pycache__/
