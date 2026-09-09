@@ -13,7 +13,7 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "tsgo --noEmit -p tsconfig.json && tsgo --noEmit -p tsconfig.test.json",
     "test": "bun test src",
     "bench": "bun ./src/cli.ts",
     "build:eval": "bun ./scripts/build-eval-entry.ts"

@@ -1,24 +1,28 @@
 {
+  "$schema": "https://json.schemastore.org/tsconfig",
   "extends": "../../tsconfig.yoma.json",
   "compilerOptions": {
-    "target": "ESNext",
-    "module": "ESNext",
-    "skipLibCheck": true,
-    "moduleResolution": "bundler",
-    "allowSyntheticDefaultImports": true,
-    "esModuleInterop": true,
-    "jsx": "preserve",
-    "jsxImportSource": "solid-js",
-    "allowJs": true,
-    "resolveJsonModule": true,
-    "strict": true,
-    "isolatedModules": true,
     "noEmit": true,
-    "emitDeclarationOnly": false,
-    "outDir": "node_modules/.ts-dist",
-    "types": ["vite/client", "node", "electron"]
+    "isolatedModules": true,
+    "allowJs": true,
+    "allowSyntheticDefaultImports": true,
+    "types": [
+      "node",
+      "electron",
+      "vite/client"
+    ]
   },
-  "references": [{ "path": "../app" }],
-  "include": ["src", "package.json"],
-  "exclude": ["src/**/*.test.ts"]
+  "references": [
+    {
+      "path": "../app"
+    }
+  ],
+  "include": [
+    "src/main",
+    "src/preload/types.ts",
+    "package.json"
+  ],
+  "exclude": [
+    "src/**/*.test.ts"
+  ]
 }

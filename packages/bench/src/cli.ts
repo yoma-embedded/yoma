@@ -48,7 +48,7 @@ function defaultSessionsRoot(): string {
 
 function defaultEnginesDir(): string | undefined {
   if (process.env.YOMA_ENGINES_DIR) return process.env.YOMA_ENGINES_DIR
-  return path.join(path.resolve(import.meta.dir, "..", "..", ".."), "engines")
+  return path.join(path.resolve(import.meta.dirname, "..", "..", ".."), "engines")
 }
 
 /** `deepseek/deepseek-v4-flash(思考 max)`。没钉模型时是「内核默认」。 */

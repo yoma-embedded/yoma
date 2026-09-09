@@ -1,4 +1,4 @@
-import { MainLogger } from "electron-log"
+import type { MainLogger } from "electron-log"
 import log from "electron-log/main.js"
 import { app, crashReporter, netLog, shell } from "electron"
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
