@@ -116,7 +116,7 @@ describe("resolveModel", () => {
 		expect(model.id).toBe(models.getModels("deepseek")[0]!.id);
 		// 注册 == 已配置:没凭证的家不注册,Zed 的模型下拉里也就不会出现选了必炸的项。
 		expect(models.getProviders().map((p) => p.id)).toEqual(["deepseek"]);
-		expect(models.getModel("moonshotai-cn", "kimi-k2.5")).toBeUndefined();
+		expect(models.getModel("moonshotai-cn", "kimi-k2.6")).toBeUndefined();
 	});
 
 	it("takes the catalog from pi-ai: all 40 builtin providers are registrable", async () => {
@@ -151,7 +151,7 @@ describe("resolveModel", () => {
 		for (const id of ["deepseek-v4-pro", "deepseek-v4-flash"]) {
 			expect(compatOf("deepseek", id)?.maxTokensField).toBe("max_tokens");
 		}
-		expect(compatOf("moonshotai-cn", "kimi-k2.5")?.maxTokensField).toBe("max_tokens");
+		expect(compatOf("moonshotai-cn", "kimi-k2.6")?.maxTokensField).toBe("max_tokens");
 	});
 
 	it("falls back to the provider's standard env var when auth.json is absent", async () => {
@@ -164,7 +164,7 @@ describe("resolveModel", () => {
 		// 两家都算配置好;默认落到目录序靠前的国际站。要国内站就写 settings.json 或 YOMA_PROVIDER。
 		expect(models.getProviders().map((p) => p.id)).toEqual(["moonshotai", "moonshotai-cn"]);
 		expect(model.provider).toBe("moonshotai");
-		const auth = await models.getAuth(models.getModel("moonshotai-cn", "kimi-k2.5")!);
+		const auth = await models.getAuth(models.getModel("moonshotai-cn", "kimi-k2.6")!);
 		expect(auth?.auth.apiKey).toBe("env-key");
 		expect(auth?.source).toBe("MOONSHOT_API_KEY");
 	});
@@ -196,12 +196,12 @@ describe("resolveModel", () => {
 		});
 		writeFileSync(
 			join(dir, "settings.json"),
-			JSON.stringify({ defaultProvider: "moonshotai-cn", defaultModel: "kimi-k2.5" }),
+			JSON.stringify({ defaultProvider: "moonshotai-cn", defaultModel: "kimi-k2.6" }),
 		);
 
 		const fromSettings = await resolveModel(dir, isolated);
 		expect(fromSettings.model.provider).toBe("moonshotai-cn");
-		expect(fromSettings.model.id).toBe("kimi-k2.5");
+		expect(fromSettings.model.id).toBe("kimi-k2.6");
 
 		process.env.YOMA_PROVIDER = "deepseek";
 		process.env.YOMA_MODEL = "deepseek-v4-flash";

@@ -19,6 +19,7 @@
     "build:eval": "bun ./scripts/build-eval-entry.ts"
   },
   "dependencies": {
+    "@earendil-works/pi-ai": "workspace:*",
     "@yoma-desktop/kernel": "workspace:*"
   },
   "devDependencies": {

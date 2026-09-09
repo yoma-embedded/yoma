@@ -1,0 +1,50 @@
+{
+  "name": "@earendil-works/chord",
+  "version": "0.85.1",
+  "private": true,
+  "description": "Application composition runtime for services, replicated state, RPC, and plugins",
+  "type": "module",
+  "license": "MIT",
+  "author": "Earendil Works",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/earendil-works/pi.git",
+    "directory": "packages/chord"
+  },
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./context": {
+      "source": "./src/context/index.ts",
+      "types": "./src/context/index.ts",
+      "import": "./src/context/index.ts"
+    },
+    "./delta": {
+      "source": "./src/delta/index.ts",
+      "types": "./src/delta/index.ts",
+      "import": "./src/delta/index.ts"
+    },
+    "./bundler": {
+      "source": "./src/bundler.ts",
+      "types": "./src/bundler.ts",
+      "import": "./src/bundler.ts"
+    },
+    "./node": {
+      "source": "./src/node.ts",
+      "types": "./src/node.ts",
+      "import": "./src/node.ts"
+    },
+    "./package.json": "./package.tson"
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "esbuild": "catalog:"
+  }
+}

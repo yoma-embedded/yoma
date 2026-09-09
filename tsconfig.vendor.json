@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "//": "从 pi 原样复制进来的上游包(ai / chord / telemetry)用这份配置,不要继承根 tsconfig。根配置是 Bun 风味(types:[\"bun\"]),而上游源码按 Node 类型环境编写并在 pi 与 yoma-core 里以此验证。两者混用会在 fetch 等全局类型上产生假错误。此文件对齐 yoma-core 的根 compilerOptions。",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "useDefineForClassFields": false
+  }
+}
