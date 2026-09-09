@@ -5,7 +5,6 @@
     "": {
       "name": "yoma-pi",
       "dependencies": {
-        "@earendil-works/pi-ai": "catalog:",
         "@yoma/agent": "workspace:*",
         "@yoma/coding-agent": "workspace:*",
       },
@@ -24,10 +23,27 @@
       "name": "@yoma/agent",
       "version": "0.1.0",
       "dependencies": {
-        "@earendil-works/pi-ai": "catalog:",
+        "@earendil-works/pi-ai": "workspace:*",
         "ignore": "7.0.5",
         "typebox": "catalog:",
         "yaml": "2.9.0",
+      },
+    },
+    "packages/ai": {
+      "name": "@earendil-works/pi-ai",
+      "version": "0.85.1",
+      "dependencies": {
+        "@anthropic-ai/sdk": "catalog:",
+        "@aws-sdk/client-bedrock-runtime": "catalog:",
+        "@earendil-works/pi-telemetry": "workspace:*",
+        "@google/genai": "catalog:",
+        "@smithy/node-http-handler": "catalog:",
+        "@smithy/types": "catalog:",
+        "http-proxy-agent": "catalog:",
+        "https-proxy-agent": "catalog:",
+        "openai": "catalog:",
+        "partial-json": "catalog:",
+        "typebox": "catalog:",
       },
     },
     "packages/app": {
@@ -100,6 +116,7 @@
         "yoma-bench": "./src/cli.ts",
       },
       "dependencies": {
+        "@earendil-works/pi-ai": "workspace:*",
         "@yoma-desktop/kernel": "workspace:*",
       },
       "devDependencies": {
@@ -110,15 +127,18 @@
         "typescript": "catalog:",
       },
     },
+    "packages/chord": {
+      "name": "@earendil-works/chord",
+      "version": "0.85.1",
+      "dependencies": {
+        "esbuild": "catalog:",
+      },
+    },
     "packages/coding-agent": {
       "name": "@yoma/coding-agent",
       "version": "0.1.0",
-      "bin": {
-        "yoma-acp": "./src/acp.ts",
-      },
       "dependencies": {
-        "@agentclientprotocol/sdk": "^1.3.0",
-        "@earendil-works/pi-ai": "catalog:",
+        "@earendil-works/pi-ai": "workspace:*",
         "@yoma/agent": "workspace:*",
         "@zip.js/zip.js": "catalog:",
         "diff": "8.0.4",
@@ -130,6 +150,7 @@
       "name": "@yoma-desktop/desktop",
       "version": "0.1.4",
       "dependencies": {
+        "@earendil-works/pi-ai": "workspace:*",
         "@zip.js/zip.js": "catalog:",
         "effect": "catalog:",
         "electron-context-menu": "4.1.2",
@@ -187,6 +208,9 @@
     "packages/kernel": {
       "name": "@yoma-desktop/kernel",
       "version": "0.0.0",
+      "dependencies": {
+        "@earendil-works/pi-ai": "workspace:*",
+      },
       "devDependencies": {
         "@tsconfig/bun": "catalog:",
         "@types/bun": "catalog:",
@@ -237,6 +261,10 @@
         "typescript": "catalog:",
         "vite": "catalog:",
       },
+    },
+    "packages/telemetry": {
+      "name": "@earendil-works/pi-telemetry",
+      "version": "0.85.1",
     },
     "packages/ui": {
       "name": "@yoma-desktop/ui",
@@ -312,15 +340,18 @@
     "effect@4.0.0-beta.83": "patches/effect@4.0.0-beta.83.patch",
   },
   "overrides": {
+    "@smithy/types": "4.14.2",
     "@types/bun": "catalog:",
     "@types/node": "catalog:",
   },
   "catalog": {
+    "@anthropic-ai/sdk": "0.123.0",
+    "@aws-sdk/client-bedrock-runtime": "3.1048.0",
     "@cloudflare/workers-types": "4.20251008.0",
-    "@earendil-works/pi-ai": "0.84.2",
     "@effect/opentelemetry": "4.0.0-beta.83",
     "@effect/platform-node": "4.0.0-beta.83",
     "@effect/sql-sqlite-bun": "4.0.0-beta.83",
+    "@google/genai": "1.52.0",
     "@hono/standard-validator": "0.2.0",
     "@hono/zod-validator": "0.4.2",
     "@kobalte/core": "0.13.11",
@@ -336,6 +367,8 @@
     "@sentry/solid": "10.36.0",
     "@sentry/vite-plugin": "4.6.0",
     "@shikijs/stream": "4.2.0",
+    "@smithy/node-http-handler": "4.7.3",
+    "@smithy/types": "4.14.2",
     "@solid-primitives/storage": "4.3.3",
     "@solidjs/meta": "0.29.4",
     "@solidjs/router": "0.15.4",
@@ -362,10 +395,14 @@
     "fuzzysort": "3.1.0",
     "hono": "4.10.7",
     "hono-openapi": "1.1.2",
+    "http-proxy-agent": "7.0.2",
+    "https-proxy-agent": "7.0.6",
     "luxon": "3.6.1",
     "marked": "17.0.1",
     "marked-shiki": "1.2.1",
+    "openai": "6.40.0",
     "opentui-spinner": "0.0.7",
+    "partial-json": "0.1.7",
     "remeda": "2.26.0",
     "remend": "1.3.0",
     "semver": "7.7.4",
@@ -395,11 +432,9 @@
 
     "@actions/io": ["@actions/io@1.1.3", "", {}, "sha512-wi9JjgKLYS7U/z8PPbco+PvTb/nRWjeoFlJ1Qer83k/3C5PHQi28hiVdeE2kHXmIL99mQFawx8qt/JPjZilJ8Q=="],
 
-    "@agentclientprotocol/sdk": ["@agentclientprotocol/sdk@1.3.0", "", { "peerDependencies": { "zod": "^3.25.0 || ^4.0.0" } }, "sha512-i3h/efaeuMUFAO1HSfo97QZQnnvMd7wWBYtBsdL6UMZg3a78sk3Ffya5Xu7C7tYsXomXoDXJBAzQF2PcFKAhIQ=="],
-
     "@ampproject/remapping": ["@ampproject/remapping@2.3.0", "", { "dependencies": { "@jridgewell/gen-mapping": "^0.3.5", "@jridgewell/trace-mapping": "^0.3.24" } }, "sha512-30iZtAPgz+LTIYoeivqYo853f02jBYSd5uGnGpkFV0M3xOt9aN73erkgYAmZU43x4VfqcnLxW9Kpg3R5LC4YYw=="],
 
-    "@anthropic-ai/sdk": ["@anthropic-ai/sdk@0.91.1", "", { "dependencies": { "json-schema-to-ts": "^3.1.1" }, "peerDependencies": { "zod": "^3.25.0 || ^4.0.0" }, "optionalPeers": ["zod"], "bin": { "anthropic-ai-sdk": "bin/cli" } }, "sha512-LAmu761tSN9r66ixvmciswUj/ZC+1Q4iAfpedTfSVLeswRwnY3n2Nb6Tsk+cLPP28aLOPWeMgIuTuCcMC6W/iw=="],
+    "@anthropic-ai/sdk": ["@anthropic-ai/sdk@0.123.0", "", { "dependencies": { "json-schema-to-ts": "^3.1.1", "standardwebhooks": "^1.0.0" }, "peerDependencies": { "zod": "^3.25.0 || ^4.0.0" }, "optionalPeers": ["zod"], "bin": { "anthropic-ai-sdk": "bin/cli" } }, "sha512-Y9oX9mPNGZClHQOFqrWRk43Srcu/UHuPq3rfxxOq7JgW0gi+lJA2MAOK4Ul3k/+AUrwRWFJvd0tK3oC0Pw25dw=="],
 
     "@aws-crypto/sha256-browser": ["@aws-crypto/sha256-browser@5.2.0", "", { "dependencies": { "@aws-crypto/sha256-js": "^5.2.0", "@aws-crypto/supports-web-crypto": "^5.2.0", "@aws-crypto/util": "^5.2.0", "@aws-sdk/types": "^3.222.0", "@aws-sdk/util-locate-window": "^3.0.0", "@smithy/util-utf8": "^2.0.0", "tslib": "^2.6.2" } }, "sha512-AXfN/lGotSQwu6HNcEsIASo7kWXZ5HYWvfOmSNKDsEqC4OashTp8alTmaz+F7TC2L083SFv5RdB+qU3Vs1kZqw=="],
 
@@ -537,9 +572,11 @@
 
     "@dnd-kit/state": ["@dnd-kit/state@0.5.0", "", { "dependencies": { "@preact/signals-core": "^1.10.0", "tslib": "^2.6.2" } }, "sha512-y7XbabQqjF58Lk8YmDQuR8l6QjN+Kh4qlGEjUvHuIeasLk1QP+9L5diXS98VMxQIivyMmUtX2//f+3N7qPJX4w=="],
 
-    "@earendil-works/pi-ai": ["@earendil-works/pi-ai@0.84.2", "", { "dependencies": { "@anthropic-ai/sdk": "0.91.1", "@aws-sdk/client-bedrock-runtime": "3.1048.0", "@earendil-works/pi-telemetry": "^0.84.2", "@google/genai": "1.52.0", "@opentelemetry/api": "1.9.0", "@smithy/node-http-handler": "4.7.3", "http-proxy-agent": "7.0.2", "https-proxy-agent": "7.0.6", "openai": "6.40.0", "partial-json": "0.1.7", "typebox": "1.3.7" }, "bin": { "pi-ai": "dist/cli.js" } }, "sha512-6MzsrYIYNVlE7SfpbL2yYb67Qo58p/7Q+xWG1RZvoX1P80aRCHSod2/13aFpxkow1lPO2LEh3c495J0Gwmyjig=="],
+    "@earendil-works/chord": ["@earendil-works/chord@workspace:packages/chord"],
 
-    "@earendil-works/pi-telemetry": ["@earendil-works/pi-telemetry@0.84.2", "", {}, "sha512-wg5caea7uIv1BHRBm2Y116RvFG4oSAiP5qk9tA2463PDGIr4K8M1Ceyyg5DOpF/shUUl0gk826yQJAeAcHYB9g=="],
+    "@earendil-works/pi-ai": ["@earendil-works/pi-ai@workspace:packages/ai"],
+
+    "@earendil-works/pi-telemetry": ["@earendil-works/pi-telemetry@workspace:packages/telemetry"],
 
     "@electron/asar": ["@electron/asar@3.4.1", "", { "dependencies": { "commander": "^5.0.0", "glob": "^7.1.6", "minimatch": "^3.0.4" }, "bin": { "asar": "bin/asar.js" } }, "sha512-i4/rNPRS84t0vSRa2HorerGRXWyF4vThfHesw0dmcWHp+cspK743UanA0suA5Q5y8kzY2y6YKrvbIUn69BCAiA=="],
 
@@ -723,7 +760,7 @@
 
     "@octokit/types": ["@octokit/types@13.10.0", "", { "dependencies": { "@octokit/openapi-types": "^24.2.0" } }, "sha512-ifLaO34EbbPj0Xgro4G5lP5asESjwHracYJvVaPIyXMuiuXLlhic3S47cBdTb+jfODkTE5YtGCLt3Ay3+J97sA=="],
 
-    "@opentelemetry/api": ["@opentelemetry/api@1.9.0", "", {}, "sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg=="],
+    "@opentelemetry/api": ["@opentelemetry/api@1.9.1", "", {}, "sha512-gLyJlPHPZYdAk1JENA9LeHejZe1Ti77/pTeFm/nMXmQH/HFZlcS/O2XJB+L8fkbrNSqhdtlvjBVjxwUYanNH5Q=="],
 
     "@oxlint/binding-android-arm-eabi": ["@oxlint/binding-android-arm-eabi@1.60.0", "", { "os": "android", "cpu": "arm" }, "sha512-YdeJKaZckDQL1qa62a1aKq/goyq48aX3yOxaaWqWb4sau4Ee4IiLbamftNLU3zbePky6QsDj6thnSSzHRBjDfA=="],
 
@@ -949,7 +986,7 @@
 
     "@smithy/signature-v4": ["@smithy/signature-v4@5.7.3", "", { "dependencies": { "@smithy/core": "^3.33.3", "@smithy/types": "^4.17.2", "tslib": "^2.6.2" } }, "sha512-7ImGm+FkHRLcBaRttIAMZ6bzJZWb2cJGoYjq46F2UjycujWzrL9GEN9h4w7eQyXJYnltrUhxbbieBAIRrdqpow=="],
 
-    "@smithy/types": ["@smithy/types@4.17.2", "", { "dependencies": { "tslib": "^2.6.2" } }, "sha512-FOKpVZob9MPTn2znRzGrnsMHv7BOsKVw3XiP/cOyYLDVZ9qKp4nifIiSCuUU/fIj5Vu0UOAxCFr+qRAtG0NUkA=="],
+    "@smithy/types": ["@smithy/types@4.14.2", "", { "dependencies": { "tslib": "^2.6.2" } }, "sha512-P+otAxbV4CqBybp7EkcJCrig63yE2E7PuNVOmilVMRcx/O+QDzGULTrKsq4DV13gSfak9ObPrWaHl/9bL5YcWw=="],
 
     "@smithy/util-buffer-from": ["@smithy/util-buffer-from@2.2.0", "", { "dependencies": { "@smithy/is-array-buffer": "^2.2.0", "tslib": "^2.6.2" } }, "sha512-IJdWBbTcMQ6DA0gdNhh/BwrLkDR+ADW5Kr1aZmd4k3DIF6ezMV4R2NIAmT08wQJ3yUK82thHWmC/TnK/wpMMIA=="],
 
@@ -1000,6 +1037,8 @@
     "@solidjs/meta": ["@solidjs/meta@0.29.4", "", { "peerDependencies": { "solid-js": ">=1.8.4" } }, "sha512-zdIWBGpR9zGx1p1bzIPqF5Gs+Ks/BH8R6fWhmUa/dcK1L2rUC8BAcZJzNRYBQv74kScf1TSOs0EY//Vd/I0V8g=="],
 
     "@solidjs/router": ["@solidjs/router@0.15.4", "", { "peerDependencies": { "solid-js": "^1.8.6" } }, "sha512-WOpgg9a9T638cR+5FGbFi/IV4l2FpmBs1GpIMSPa0Ce9vyJN7Wts+X2PqMf9IYn0zUj2MlSJtm1gp7/HI/n5TQ=="],
+
+    "@stablelib/base64": ["@stablelib/base64@1.0.1", "", {}, "sha512-1bnPQqSxSuc3Ii6MhBysoWCg58j97aUjuCSZrGSmDxNqtytIi0k8utUenAwTZN4V5mXXYGsVUI9zeBqy+jBOSQ=="],
 
     "@standard-schema/spec": ["@standard-schema/spec@1.1.0", "", {}, "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="],
 
@@ -1468,6 +1507,8 @@
     "fast-deep-equal": ["fast-deep-equal@3.1.3", "", {}, "sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q=="],
 
     "fast-fifo": ["fast-fifo@1.3.2", "", {}, "sha512-/d9sfos4yxzpwkDkuN7k2SqFKtYNmCTzgfEpz82x34IM9/zc8KGxQoXg1liNC/izpRM/MBdt44Nmx41ZWqk+FQ=="],
+
+    "fast-sha256": ["fast-sha256@1.3.0", "", {}, "sha512-n11RGP/lrWEFI/bWdygLxhI+pVeo1ZYIVwvvPkW7azl/rOy+F3HYRZ2K5zeE9mmkhQppyv9sQFx0JM9UabnpPQ=="],
 
     "fast-uri": ["fast-uri@3.1.5", "", {}, "sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw=="],
 
@@ -1969,6 +2010,8 @@
 
     "sprintf-js": ["sprintf-js@1.1.3", "", {}, "sha512-Oo+0REFV59/rz3gfJNKQiBlwfHaSESl1pcGyABQsnnIfWOFt6JNj5gCog2U6MLZ//IGYD+nA8nI+mTShREReaA=="],
 
+    "standardwebhooks": ["standardwebhooks@1.1.1", "", { "dependencies": { "@stablelib/base64": "^1.0.0", "fast-sha256": "^1.3.0" } }, "sha512-bCbX9ZEyFkWPsRz7Bl3NuQUJohmwGSev/yhr7vhaGPlc4AfIrspIRa6cPTBuI1ItmrTDJ4d/S2hCsfe4+vQGnQ=="],
+
     "stat-mode": ["stat-mode@1.0.0", "", {}, "sha512-jH9EhtKIjuXZ2cWxmXS8ZP80XyC3iasQxMDV8jzhNJpfDb7VbQLVW4Wvsxz9QZvzV+G4YoSfBUVKDOyxLzi/sg=="],
 
     "streamx": ["streamx@2.28.0", "", { "dependencies": { "events-universal": "^1.0.0", "fast-fifo": "^1.3.2", "text-decoder": "^1.1.0" } }, "sha512-1Yowhzjf0ivGMrTIkY9hav5TxobO9qIVqUE41fiCGMGgc3CLlf4MY+9AHmZqBWgDTue0fY9zWjYFVyf6Diuobw=="],
@@ -2196,8 +2239,6 @@
     "@azure/core-rest-pipeline/@azure/abort-controller": ["@azure/abort-controller@2.2.0", "", { "dependencies": { "tslib": "^2.6.2" } }, "sha512-fNAjWnA/nZ2jz31kxR/AqRaUT8ewHBw/WuBIosK0moMy1C9e5ValbDfFdIxJzVOOYaYkV/b2F1S4H/aHiqfVQg=="],
 
     "@azure/core-rest-pipeline/@azure/core-tracing": ["@azure/core-tracing@1.4.0", "", { "dependencies": { "tslib": "^2.6.2" } }, "sha512-eGwxD0AtncrxeBM4tG8R55Pc3rdX1hNW2WibJAgYpCVA6E93mvvVH+LcssoVjOBrSKWS55yEIHsk0X8ctHmfOQ=="],
-
-    "@azure/core-tracing/@opentelemetry/api": ["@opentelemetry/api@1.9.1", "", {}, "sha512-gLyJlPHPZYdAk1JENA9LeHejZe1Ti77/pTeFm/nMXmQH/HFZlcS/O2XJB+L8fkbrNSqhdtlvjBVjxwUYanNH5Q=="],
 
     "@azure/core-util/@azure/abort-controller": ["@azure/abort-controller@2.2.0", "", { "dependencies": { "tslib": "^2.6.2" } }, "sha512-fNAjWnA/nZ2jz31kxR/AqRaUT8ewHBw/WuBIosK0moMy1C9e5ValbDfFdIxJzVOOYaYkV/b2F1S4H/aHiqfVQg=="],
 

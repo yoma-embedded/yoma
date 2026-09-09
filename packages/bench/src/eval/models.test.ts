@@ -1,7 +1,8 @@
 /**
- * 评测模型注册表的两道闸门:
- *   1. 追加的 vision-exp 条目真的能被选中,且 input 含 image、单价非 0(否则 cost 列静默为 0);
- *   2. 漂移闸门:pi-ai 目录一旦自带该模型,这份补丁必须删 —— 测试红就是提醒。
+ * 评测模型注册表:vision-exp 真的能被选中,且 input 含 image、单价非 0(否则 cost 列静默为 0)。
+ *
+ * 2026-09 起该模型由 pi-ai 内建目录提供,不再走本地追加表;原来的漂移闸门已完成使命并删除。
+ * `withExtraModels` 的机制测试改用合成条目。
  */
 
 import { afterEach, describe, expect, test } from "bun:test"
@@ -12,7 +13,7 @@ import path from "node:path"
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all"
 import { NO_AMBIENT_AUTH } from "@yoma/coding-agent/models"
 
-import { EXTRA_MODELS, resolveEvalModels, withExtraModels } from "./models.ts"
+import { resolveEvalModels, withExtraModels } from "./models.ts"
 
 const VISION = "deepseek-v4-flash-vision-exp"
 
@@ -95,28 +96,17 @@ describe("withExtraModels", () => {
 
   test("追加保留原 provider 的 auth 与 baseUrl", () => {
     const deepseek = builtinProviders().find((p) => p.id === "deepseek")!
-    const patched = withExtraModels(deepseek, EXTRA_MODELS.deepseek!)
+    // 用合成条目而不是 EXTRA_MODELS:那张表现在是空的(上游已收编 vision-exp),
+    // 但机制本身仍要有测试守着,下次往表里加东西时才有保障。
+    const synthetic = { ...deepseek.getModels()[0]!, id: "synthetic-not-in-catalog" }
+    const patched = withExtraModels(deepseek, [synthetic])
     expect(patched).not.toBe(deepseek)
     expect(patched.id).toBe("deepseek")
     expect(patched.baseUrl).toBe(deepseek.baseUrl)
     expect(patched.auth).toBe(deepseek.auth)
-    expect(patched.getModels().map((m) => m.id)).toEqual([...deepseek.getModels().map((m) => m.id), VISION])
-  })
-})
-
-describe("漂移闸门", () => {
-  test("pi-ai 目录一旦自带 vision-exp,这份补丁必须删", () => {
-    const deepseek = builtinProviders().find((p) => p.id === "deepseek")!
-    const shipped = deepseek.getModels().some((m) => m.id === VISION)
-    // 红了就去掉 EXTRA_MODELS.deepseek 里的那条(并核对 pi-ai 给的 input/cost/thinkingLevelMap)。
-    expect(shipped).toBe(false)
-  })
-
-  test("追加条目的 cost 与 pi-ai 的 deepseek-v4-flash 同价(公告口径)", () => {
-    const deepseek = builtinProviders().find((p) => p.id === "deepseek")!
-    const flash = deepseek.getModels().find((m) => m.id === "deepseek-v4-flash")!
-    const vision = EXTRA_MODELS.deepseek!.find((m) => m.id === VISION)!
-    expect(vision.cost).toEqual(flash.cost)
-    expect(vision.compat).toEqual(flash.compat)
+    expect(patched.getModels().map((m) => m.id)).toEqual([
+      ...deepseek.getModels().map((m) => m.id),
+      "synthetic-not-in-catalog",
+    ])
   })
 })

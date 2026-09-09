@@ -16,7 +16,7 @@
 		"test": "bun test"
 	},
 	"dependencies": {
-		"@earendil-works/pi-ai": "catalog:",
+		"@earendil-works/pi-ai": "workspace:*",
 		"@yoma/agent": "workspace:*",
 		"@zip.js/zip.js": "catalog:",
 		"diff": "8.0.4",

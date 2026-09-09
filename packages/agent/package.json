@@ -16,7 +16,7 @@
 		"test": "bun test"
 	},
 	"dependencies": {
-		"@earendil-works/pi-ai": "catalog:",
+		"@earendil-works/pi-ai": "workspace:*",
 		"ignore": "7.0.5",
 		"typebox": "catalog:",
 		"yaml": "2.9.0"

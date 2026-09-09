@@ -1,11 +1,13 @@
 /**
  * 评测专用的模型注册表。
  *
- * 为什么不直接用 yoma 的 `resolveModel()`:它的不变式是"注册 == pi-ai 内建目录",而被测模型
- * `deepseek-v4-flash-vision-exp`(2026-08-21 发布)不在 pi-ai 0.84.x 的目录里 —— 指定它会抛
- * `Model … not found`。这里在内建目录之上追加 {@link EXTRA_MODELS},其余(凭据、按 checkAuth
- * 删无凭据的 provider)照 `resolveModel` 的做法,**不动产品代码**;pi-ai 一旦自带该模型,
- * `models.test.ts` 的漂移闸门会红,提示删掉这份补丁。
+ * 为什么不直接用 yoma 的 `resolveModel()`:它的不变式是"注册 == pi-ai 内建目录",而评测偶尔要跑
+ * 尚未进入目录的新模型 —— 指定它会抛 `Model … not found`。这里在内建目录之上追加
+ * {@link EXTRA_MODELS},其余(凭据、按 checkAuth 删无凭据的 provider)照 `resolveModel` 的做法,
+ * **不动产品代码**。
+ *
+ * 2026-09:`deepseek-v4-flash-vision-exp` 已随 pi-ai 0.85.1 进入内建目录(字段与本地补丁逐项一致),
+ * 补丁按原定的漂移闸门指示删除,追加表现在是空的。下次又要跑目录外的模型时往这里加。
  *
  * 追加条目的 `input` 必须含 `"image"`:pi-ai 的 openai-completions 在 `model.input.includes("image")`
  * 为假时**静默丢掉**工具结果里的图片(datasheet `view_figure`、la 预览就白发了)。
@@ -29,35 +31,11 @@ import { FileCredentialStore } from "@yoma/coding-agent/models"
 /**
  * 不在 pi-ai 目录里、但评测要用的模型。键是 provider id。
  *
- * `deepseek-v4-flash-vision-exp`:基于 V4-Flash-0731 的实验性多模态模型。公告说"与 V4-Flash 同价",
- * 所以 cost 抄 pi-ai 目录里 `deepseek-v4-flash` 的三项(USD / 百万 token);compat 同样抄它 ——
- * `thinkingFormat:"deepseek"` 是否对该模型生效**未验证**(公告没提推理模式),首跑要用一条真实
- * 请求核 `reasoning_content`,不通就把 thinkingLevelMap 全改成 null。
+ * 目前为空:上一条(`deepseek-v4-flash-vision-exp`)已被上游收编。保留这张表和
+ * {@link withExtraModels},下次遇到"模型已发布但 pi-ai 目录还没跟上"时直接往这里加,
+ * 并在 models.test.ts 里配一条漂移闸门,等上游收编时提醒删除。
  */
-export const EXTRA_MODELS: Record<string, Model<"openai-completions">[]> = {
-  deepseek: [
-    {
-      id: "deepseek-v4-flash-vision-exp",
-      name: "DeepSeek V4 Flash Vision (Exp)",
-      api: "openai-completions",
-      provider: "deepseek",
-      baseUrl: "https://api.deepseek.com",
-      reasoning: true,
-      input: ["text", "image"],
-      cost: { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0 },
-      contextWindow: 1_000_000,
-      maxTokens: 384_000,
-      compat: {
-        supportsStore: false,
-        supportsDeveloperRole: false,
-        maxTokensField: "max_tokens",
-        requiresReasoningContentOnAssistantMessages: true,
-        thinkingFormat: "deepseek",
-      },
-      thinkingLevelMap: { minimal: null, low: "low", medium: null, high: "high", max: "max" },
-    },
-  ],
-}
+export const EXTRA_MODELS: Record<string, Model<"openai-completions">[]> = {}
 
 /**
  * 把追加条目并进一家内建 provider。
