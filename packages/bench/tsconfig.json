@@ -13,7 +13,7 @@
       "@yoma/agent/node": ["../../packages/agent/src/node.ts"],
       "@yoma/coding-agent": ["../../packages/coding-agent/src/index.ts"],
       "@yoma/coding-agent/system-prompt": ["../../packages/coding-agent/src/core/system-prompt.ts"],
-      "@yoma/coding-agent/models": ["../../packages/coding-agent/src/acp/models.ts"],
+      "@yoma/coding-agent/models": ["../../packages/coding-agent/src/core/models.ts"],
       "@yoma/coding-agent/resources": ["../../packages/coding-agent/src/core/resources.ts"],
       "@yoma/coding-agent/datasheet-server": ["../../packages/coding-agent/src/core/datasheet-server.ts"]
     },

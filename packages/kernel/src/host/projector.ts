@@ -3,9 +3,9 @@
  *
  * ## 一个函数,两条路
  *
- * live(流式)和 replay(重开会话)**必须走同一份投影逻辑**。yoma 自己的 ACP 适配器把这
- * 拆成了 pipeHarnessToAcp 和 replayUpdatesOf 两条独立实现,代价是 datasheet 图片只在重放
- * 时可见(acp/session.ts:270 有注释承认)。这里 live 和 replay 都调 `applyMessage()`,
+ * live(流式)和 replay(重开会话)**必须走同一份投影逻辑**。已删除的 ACP 适配器曾把这
+ * 拆成两条独立实现(pipeHarnessToAcp 与 replayUpdatesOf),代价是 datasheet 图片只在重放
+ * 时可见。这个教训别再犯。这里 live 和 replay 都调 `applyMessage()`,
  * 流式 delta 只是叠在它上面的一层增量,快照永远由同一个函数产出。
  *
  * ## id 是自己铸的,而且必须确定

@@ -21,6 +21,7 @@
  * 注册好的前提下才不会在发请求时才炸。
  */
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
 	type AuthContext,
@@ -53,6 +54,14 @@ function coerceCredential(raw: unknown): { credential: Credential; healed: boole
 	if (entry.type === "api_key") return { credential: raw as Credential, healed: false };
 	return { credential: { ...entry, type: "api_key" } as Credential, healed: true };
 }
+
+/**
+ * yoma 的配置目录。原先定义在已删除的 ACP 适配器里,但它和协议无关 ——
+ * 凭据、会话、日志三个默认路径都挂在这棵树下,归属于配置模块。
+ */
+export const CONFIG_DIR = join(homedir(), ".yoma");
+export const SESSIONS_DIR = join(CONFIG_DIR, "sessions");
+export const LOGS_DIR = join(CONFIG_DIR, "logs");
 
 /** 文件版凭证仓库:<configDir>/auth.json,0600。每次 read 重读文件。 */
 export class FileCredentialStore implements CredentialStore {

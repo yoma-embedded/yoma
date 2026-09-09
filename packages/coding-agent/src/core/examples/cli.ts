@@ -19,7 +19,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 
-import { resolveModel } from "../../acp/models.ts";
+import { resolveModel } from "../models.ts";
 import { type EnrichCompletion, enrichCorpus } from "./enrich.ts";
 import { GENERIC_MAX_ENTRIES, type GenericIndexResult, indexGeneric, verifyProposal } from "./generic.ts";
 import { indexCorpus } from "./indexer.ts";

@@ -94,7 +94,7 @@ export const KERNEL_ALIASES: Record<string, string> = {
   "@yoma/agent/node": path.join(agent, "node.ts"),
   "@yoma/coding-agent": path.join(codingAgent, "index.ts"),
   "@yoma/coding-agent/system-prompt": path.join(codingAgent, "core/system-prompt.ts"),
-  "@yoma/coding-agent/models": path.join(codingAgent, "acp/models.ts"),
+  "@yoma/coding-agent/models": path.join(codingAgent, "core/models.ts"),
   // 数据手册服务器地址解析:叶子模块,desktop main 也要 import(手册库页),见该文件头。
   "@yoma/coding-agent/datasheet-server": path.join(codingAgent, "core/datasheet-server.ts"),
   "@yoma/coding-agent/resources": path.join(codingAgent, "core/resources.ts"),

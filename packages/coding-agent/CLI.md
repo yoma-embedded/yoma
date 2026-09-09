@@ -72,7 +72,7 @@ packages/coding-agent/src/cli.ts             进程入口
 ```
 
 CLI 只装配 `read / bash / edit / write`，复用现有工具、资源发现和系统提示词。
-模型解析暂时复用 `src/acp/models.ts`（只是共享模块放在这个目录，**不启动 ACP 适配器**）。
+模型解析复用 `src/core/models.ts`（凭据存储与模型选择的共享模块）。
 无 Electron、kernel host、UI、硬件引擎或工具链自动安装，也没有增加依赖。
 工具按本机用户权限运行，**这不是沙箱**；bash 仍然能运行机器上已有的命令。
 

@@ -24,7 +24,7 @@
         "../../packages/coding-agent/src/core/system-prompt.ts"
       ],
       "@yoma/coding-agent/models": [
-        "../../packages/coding-agent/src/acp/models.ts"
+        "../../packages/coding-agent/src/core/models.ts"
       ],
       "@yoma/coding-agent/resources": [
         "../../packages/coding-agent/src/core/resources.ts"

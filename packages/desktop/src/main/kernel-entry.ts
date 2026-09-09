@@ -2,7 +2,7 @@
  * 内核进程的入口。electron-vite 把它编成 out/main/kernel.js,作为 main 的第三个 rollup 入口。
  *
  * yoma 的源码在这一步被 esbuild 整个 inline 进来:它只发 raw `.ts`,而 Electron 的
- * strip-only 加载器既吃不下 TS 参数属性(gdb.ts:485、acp/agent.ts:209),也拒绝 strip
+ * strip-only 加载器既吃不下 TS 参数属性(gdb.ts:485),也拒绝 strip
  * node_modules 下的 `.ts`。打包一步同时解掉这两个,而 yoma 一个字节都不用改。
  *
  * 进程模型是刻意的单例 —— yoma 的 probe 租约和 gdb session 表是模块级全局,

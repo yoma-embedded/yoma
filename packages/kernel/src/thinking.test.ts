@@ -16,7 +16,7 @@ function model(reasoning: boolean, map?: Record<string, string | null>): Model<s
   return { id: "m", provider: "p", reasoning, thinkingLevelMap: map } as unknown as Model<string>
 }
 
-/** deepseek-v4-pro 的真实档位表(coding-agent/src/acp/models.ts)。 */
+/** deepseek-v4-pro 的真实档位表(coding-agent/src/core/models.ts)。 */
 const DEEPSEEK = { minimal: null, low: null, medium: null, high: "high", max: "max" }
 
 describe("pickThinkingLevel", () => {
