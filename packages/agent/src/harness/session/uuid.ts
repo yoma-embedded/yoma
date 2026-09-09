@@ -4,7 +4,7 @@
 let lastTimestamp = -Infinity;
 let sequence = 0;
 
-function fillRandomBytes(bytes: Uint8Array): void {
+function fillRandomBytes(bytes: Uint8Array<ArrayBuffer>): void {
 	const crypto = globalThis.crypto;
 	if (crypto?.getRandomValues) {
 		crypto.getRandomValues(bytes);

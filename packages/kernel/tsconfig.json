@@ -1,15 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/tsconfig",
-  "extends": [
-    "@tsconfig/bun/tsconfig.json",
-    "../../tsconfig.yoma.json"
-  ],
+  "extends": "../../tsconfig.yoma.json",
   "compilerOptions": {
-    "noEmit": true,
-    "strict": true,
-    "noUncheckedIndexedAccess": false,
-    "moduleResolution": "bundler",
-    "skipLibCheck": true,
     "paths": {
       "@yoma/agent": [
         "../../packages/agent/src/index.ts"
@@ -32,11 +24,13 @@
       "@yoma/coding-agent/datasheet-server": [
         "../../packages/coding-agent/src/core/datasheet-server.ts"
       ]
-    },
-    "allowImportingTsExtensions": true
+    }
   },
   "include": [
     "src",
     "kernel-alias.ts"
+  ],
+  "exclude": [
+    "src/**/*.test.ts"
   ]
 }

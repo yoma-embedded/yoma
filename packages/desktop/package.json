@@ -9,7 +9,7 @@
     "name": "Yoma"
   },
   "scripts": {
-    "typecheck": "tsgo -b",
+    "typecheck": "tsgo -b && tsgo -b tsconfig.preload.json && tsgo -b tsconfig.renderer.json",
     "test": "bun test src",
     "predev": "bun ./scripts/predev.ts",
     "dev": "electron-vite dev",

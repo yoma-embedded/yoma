@@ -1,5 +1,5 @@
 {
-  "extends": "../../tsconfig.vendor.json",
+  "extends": "../../tsconfig.node.json",
   "include": [
     "src/**/*.ts"
   ],
