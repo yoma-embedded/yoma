@@ -4,10 +4,10 @@
   "compilerOptions": {
     "paths": {
       "@yoma/agent": [
-        "../../packages/agent/src/index.ts"
+        "../../packages/agent-legacy/src/index.ts"
       ],
       "@yoma/agent/node": [
-        "../../packages/agent/src/node.ts"
+        "../../packages/agent-legacy/src/node.ts"
       ],
       "@yoma/coding-agent": [
         "../../packages/coding-agent/src/index.ts"
