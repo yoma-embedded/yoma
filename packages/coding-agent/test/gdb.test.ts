@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "@yoma/agent/node";
 import {
 	buildServerArgv,
@@ -43,8 +43,8 @@ afterEach(async () => {
 	for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-const REPO = join(import.meta.dir, "..", "..", "..");
-const FIXTURE_ELF = join(import.meta.dir, "fixtures", "gdb", "fixture.elf");
+const REPO = join(import.meta.dirname, "..", "..", "..");
+const FIXTURE_ELF = join(import.meta.dirname, "fixtures", "gdb", "fixture.elf");
 
 function findBin(name: string): string | undefined {
 	for (const dir of (process.env.PATH ?? "").split(":")) {
@@ -506,7 +506,7 @@ describe("gdb 工具 — 冷启动", () => {
 describe.skipIf(!HAS_E2E)("端到端(QEMU + 真 gdb)", () => {
 	// cwd 用夹具目录:真实用法就是在固件工程根目录里跑 agent,DWARF 的编译期路径
 	// 正好落在 cwd 底下,源码路径才会被相对化。会话产物写在这里,afterEach 清掉。
-	const FIXTURE_DIR = join(import.meta.dir, "fixtures", "gdb");
+	const FIXTURE_DIR = join(import.meta.dirname, "fixtures", "gdb");
 
 	afterEach(() => rmSync(join(FIXTURE_DIR, ".yoma"), { recursive: true, force: true }));
 

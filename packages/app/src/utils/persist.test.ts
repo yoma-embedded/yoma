@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, mock, test } from "bun:test"
+import { beforeAll, beforeEach, describe, expect, test, vi } from "vitest"
 import { ServerScope } from "./server-scope"
 
 type PersistTestingType = typeof import("./persist").PersistTesting
@@ -52,7 +52,7 @@ let Persist: PersistType
 let removePersisted: RemovePersistedType
 
 beforeAll(async () => {
-  mock.module("@/context/platform", () => ({
+  vi.doMock("@/context/platform", () => ({
     usePlatform: () => ({ platform: "web" }),
   }))
 
@@ -115,9 +115,9 @@ describe("persist localStorage resilience", () => {
   test("workspace storage sanitizes Windows filename characters", () => {
     const result = persistTesting.workspaceStorage("C:\\Users\\foo")
 
-    expect(result).toStartWith("yoma.workspace.")
-    expect(result.endsWith(".dat")).toBeTrue()
-    expect(/[:\\/]/.test(result)).toBeFalse()
+    expect(result.startsWith("yoma.workspace.")).toBe(true)
+    expect(result.endsWith(".dat")).toBe(true)
+    expect(/[:\\/]/.test(result)).toBe(false)
   })
 
   test("workspace target keeps raw path storage as legacy fallback", () => {

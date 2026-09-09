@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
-import { afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "@yoma/agent/node";
 import {
 	buildStm32ConfigArgs,
@@ -90,10 +90,10 @@ describe("engine path resolution", () => {
 		expect(() => engineBin("stm32kernel", { enginesDir: root })).toThrow(/reinstall Yoma/);
 	});
 
-	it("reports bun engines/build.ts when this is a source checkout", () => {
+	it("reports npm run engines:build when this is a source checkout", () => {
 		const root = makeEnginesDir();
 		writeFileSync(join(root, "build.ts"), "");
-		expect(() => engineBin("stm32kernel", { enginesDir: root })).toThrow(/bun engines\/build\.ts/);
+		expect(() => engineBin("stm32kernel", { enginesDir: root })).toThrow(/npm run engines:build/);
 	});
 
 	it("skips empty engines/ shells that have no bin/", () => {

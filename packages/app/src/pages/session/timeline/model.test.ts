@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import type { AssistantMessage, Message, UserMessage } from "@yoma-desktop/kernel"
 import { loadOlderTimeline, selectUserMessages } from "./model"
 

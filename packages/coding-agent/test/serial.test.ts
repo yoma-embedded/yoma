@@ -1,8 +1,8 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { chmodSync, closeSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "@yoma/agent/node";
 import {
 	buildSttyArgs,
@@ -68,7 +68,7 @@ for i in range(200):
 /** python3 不在就跳过 —— 这个用例要的是真 tty,没有替代品。 */
 function havePython(): boolean {
 	try {
-		return Bun.spawnSync(["python3", "-c", "import pty"]).exitCode === 0;
+		return spawnSync("python3", ["-c", "import pty"]).status === 0;
 	} catch {
 		// Windows 上找不到可执行文件时 spawnSync 直接抛,不是回非零退出码;那里也没有 pty 可用。
 		return false;
@@ -108,7 +108,7 @@ afterEach(async () => {
 		const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
 		child.kill("SIGKILL");
 		// 收尸只是为了让测试输出干净,不值得为它挂住 —— 已经退了的进程不会再发 'exit'。
-		await Promise.race([exited, Bun.sleep(500)]);
+		await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 500))]);
 	}
 	while (tempDirs.length > 0) rmSync(tempDirs.pop()!, { recursive: true, force: true });
 });

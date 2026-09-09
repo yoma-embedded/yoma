@@ -1,4 +1,3 @@
-#!/usr/bin/env bun
 /**
  * `yoma-bench` —— 信箱调试台的命令行入口。
  *

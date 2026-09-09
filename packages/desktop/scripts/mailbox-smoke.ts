@@ -1,4 +1,3 @@
-#!/usr/bin/env bun
 /**
  * 信箱调试台冒烟:对 **构建产物** 用 **产品运行时** 跑一次完整的本机演练。
  *
@@ -11,8 +10,8 @@
  * 不要 key、不要网络、不碰硬件。
  *
  * 用法:
- *   bun packages/desktop/scripts/mailbox-smoke.ts
- * 前置:先 `bun --cwd packages/desktop run build`(或单独 `bun scripts/build-mailbox.ts`)。
+ *   tsx packages/desktop/scripts/mailbox-smoke.ts
+ * 前置:先 `npm run build -w packages/desktop`(或单独 `tsx scripts/build-mailbox.ts`)。
  */
 
 import { execFileSync, spawn } from "node:child_process"
@@ -42,7 +41,7 @@ function electronBin(): string {
 }
 
 for (const bundle of [hostBundle, turnBundle]) {
-  if (!existsSync(bundle)) fail(`没有构建产物 ${bundle} —— 先跑 bun --cwd packages/desktop run build`)
+  if (!existsSync(bundle)) fail(`没有构建产物 ${bundle} —— 先跑 npm run build -w packages/desktop`)
 }
 
 // ---------------------------------------------------------------------------
@@ -166,7 +165,7 @@ child.stdout.on("data", (chunk: Buffer) => {
         if (inner.type === "hello") sawChildHello = true
         if (inner.type === "step")
           console.log(
-            `  [${String(event.role)}] step: ${JSON.stringify((inner as { outcome: unknown }).outcome).slice(0, 120)}`,
+            `  [${String(event.role)}] step: ${JSON.stringify((inner as { type: string; outcome?: unknown }).outcome).slice(0, 120)}`,
           )
       }
       if (event.type === "done") done = event as unknown as DoneEvent

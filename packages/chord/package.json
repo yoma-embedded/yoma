@@ -45,6 +45,6 @@
     "typecheck": "tsgo --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "esbuild": "catalog:"
+    "esbuild": "0.28.1"
   }
 }

@@ -1,6 +1,5 @@
-#!/usr/bin/env bun
 // 把 DSView(DreamSourceLab,GPLv3)里我们需要的那几个子树拷进 vendor/,钉住提交。
-//   bun engines/logic-analyzer/vendor.ts --from D:\toy\DSView
+//   tsx engines/logic-analyzer/vendor.ts --from D:\toy\DSView
 //
 // 拷的是**子集**,不是整棵树:采集库 libsigrok4DSL、解码库 libsigrokdecode4DSL(含 150 个
 // Python 解码器)、它们共用的 common/(minizip + xlog)、固件与 FPGA 位流 res/(MIT,见
@@ -20,7 +19,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { $ } from "bun";
+import { $ } from "../../scripts/shell.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const vendor = path.join(here, "vendor");
@@ -28,7 +27,7 @@ const vendor = path.join(here, "vendor");
 const fromAt = process.argv.indexOf("--from");
 const from = fromAt >= 0 && process.argv[fromAt + 1] ? path.resolve(process.argv[fromAt + 1]!) : "";
 if (!from || !existsSync(path.join(from, "libsigrok4DSL", "libsigrok.h"))) {
-	console.error("用法: bun engines/logic-analyzer/vendor.ts --from <DSView 检出目录>");
+	console.error("用法: tsx engines/logic-analyzer/vendor.ts --from <DSView 检出目录>");
 	process.exit(2);
 }
 

@@ -8,7 +8,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "@yoma/agent/node";
 import { type ScopeToolDetails, createScopeToolDefinition } from "../src/index.ts";
 import { FakeSds, SCREEN_PNG } from "./fixtures/scope/fake-sds.ts";

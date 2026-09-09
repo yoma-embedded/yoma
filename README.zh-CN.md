@@ -77,19 +77,19 @@ powershell -File engines/stm32-config-kernel/tools/fetch-fw.ps1 -Families STM32F
 ```bash
 git clone https://github.com/yoma-embedded/yoma.git yoma
 cd yoma
-bun install
-bun engines/build.ts    # 网表解析 / STM32 工具。STM32 配置需要本机已装 CubeMX：build 会解析器件库生成 irpack
-bun dev:desktop         # 改内核要重启这条命令
+npm install
+npm run engines:build    # 网表解析 / STM32 工具。STM32 配置需要本机已装 CubeMX：build 会解析器件库生成 irpack
+npm run dev:desktop         # 改内核要重启这条命令
 ```
 
 ### 独立内核 CLI（实验性）
 
-不需要 Electron，也不用先构建引擎。`bun install` 后直接运行：
+不需要 Electron，也不用先构建引擎。`npm install` 后直接运行：
 
 ```bash
-bun run cli --cwd /path/to/project
-bun run cli --cwd /path/to/project --continue
-bun run cli --cwd /path/to/project -p "读一下 AGENTS.md，说明这个工程如何验证"
+npm run cli -- --cwd /path/to/project
+npm run cli -- --cwd /path/to/project --continue
+npm run cli -- --cwd /path/to/project -p "读一下 AGENTS.md，说明这个工程如何验证"
 ```
 
 直接连接当前 Harness，只有 **read / bash / edit / write** 四工具，支持流式回答、
@@ -97,7 +97,7 @@ Ctrl+C 停止和会话保存/恢复。凭据复用 `~/.yoma/auth.json`；CLI 会
 `~/.yoma/cli/sessions`。新会话默认请求 `max` 思考档位，按模型能力钳制，启动时显示实际值；
 用 `--model provider/id`、`--thinking off` 显式选择。压缩/重试是**手动**的，
 恢复历史不会自动重跑中断工具；这不是 pi 新运行时，也不是沙箱。
-详见 `bun run cli --help` 和 [CLI 使用与多机开发说明](packages/coding-agent/CLI.md)。
+详见 `npm run cli -- --help` 和 [CLI 使用与多机开发说明](packages/coding-agent/CLI.md)。
 
 ## 许可
 

@@ -7,7 +7,7 @@
  *    快照进 status → 停止时孙进程一并死掉(SIGTERM 链)。
  * 3. 锁冲突(退出码 3)必须translated成人话,不进重启循环。
  *
- * 用法:bun run e2e:mailbox(先 bun run build 产出 kernel.js)。
+ * 用法:npm run e2e:mailbox(先 npm run build 产出 kernel.js)。
  */
 
 import { app, MessageChannelMain, utilityProcess } from "electron"

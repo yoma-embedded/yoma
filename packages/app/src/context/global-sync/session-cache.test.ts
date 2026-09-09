@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import type { Message, Part, SessionStatus } from "@yoma-desktop/kernel"
 import { dropSessionCaches, pickSessionCacheEvictions } from "./session-cache"
 

@@ -25,6 +25,7 @@
 import { spawn, type ChildProcess } from "node:child_process"
 import { writeFileSync } from "node:fs"
 import path from "node:path"
+import { sourceChildEnv } from "../node-source.ts"
 
 import type { FauxScript } from "../faux.ts"
 import { fauxResolveModels } from "../faux.ts"
@@ -61,7 +62,7 @@ export interface MailboxHostConfig {
   projectDir?: string
   /** 工位端一次性工作目录的根。缺省是克隆的兄弟目录(见 MailboxRunnerOptions.workRoot)。 */
   workRoot?: string
-  /** 打包态 turn 子进程入口(mailbox-turn-entry.mjs 绝对路径)。非 bun 运行时必填。 */
+  /** 打包态 turn 子进程入口(mailbox-turn-entry.mjs 绝对路径)。打包态必填。 */
   turnEntry?: string
   /** sim 自我 spawn 的宿主入口。缺省 process.argv[1](host-entry 场景天然正确)。 */
   hostEntry?: string
@@ -262,7 +263,7 @@ function selfSpawn(config: MailboxHostConfig) {
     return spawn(process.execPath, [hostEntry, file], {
       stdio: ["ignore", "pipe", "pipe"],
       cwd: context.root,
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+      env: sourceChildEnv({ ...process.env, ELECTRON_RUN_AS_NODE: "1" }),
     })
   }
 }

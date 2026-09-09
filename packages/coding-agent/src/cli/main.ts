@@ -9,7 +9,7 @@ export async function runCli(args: string[], io: CliIO, dependencies: CliSession
     io.output.write(CLI_HELP)
     return 0
   }
-  if (!options.print && !io.terminal) throw new Error('非交互输入请使用 -p，例如：bun run cli -p "检查工程"')
+  if (!options.print && !io.terminal) throw new Error('非交互输入请使用 -p，例如：npm run cli -p "检查工程"')
   let prompt = options.prompt
   if (options.print && !io.terminal) {
     // 一次解码完整 stdin，不能逐 Buffer.toString() 劈断中文字符。

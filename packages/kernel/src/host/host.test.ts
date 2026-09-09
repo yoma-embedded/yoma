@@ -5,7 +5,7 @@
  * 但走的是完整的真实链路:AgentHarness → subscribe → 投影器 → StreamSink → handler 表。
  * 这一条如果绿,说明"能聊天"这件事在数据面上已经成立,剩下的只是前端接线。
  */
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "vitest"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"

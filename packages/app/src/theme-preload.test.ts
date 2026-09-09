@@ -1,6 +1,8 @@
-import { beforeEach, describe, expect, test } from "bun:test"
+import { beforeEach, describe, expect, test } from "vitest"
+import { readFile } from "node:fs/promises"
+import { join } from "node:path"
 
-const src = await Bun.file(new URL("../public/oc-theme-preload.js", import.meta.url)).text()
+const src = await readFile(join(import.meta.dirname, "..", "public", "oc-theme-preload.js"), "utf8")
 
 const run = () => Function(src)()
 

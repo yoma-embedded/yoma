@@ -1,5 +1,5 @@
 // 种子:从 fixture 语料拷进临时目录,验证排除规则、出处文件、拒绝覆盖。
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,7 +11,7 @@ import {
 	shouldCopy,
 } from "../src/core/examples/index.ts";
 
-const ESP_ROOT = join(import.meta.dir, "fixtures", "examples", "esp-idf-mini");
+const ESP_ROOT = join(import.meta.dirname, "fixtures", "examples", "esp-idf-mini");
 
 let work: string;
 

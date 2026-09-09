@@ -2,7 +2,7 @@
  * 文件监视器:改了文件要推 vcs.updated,而自己刷新时写的 .git/index 不能把自己再触发一遍。
  */
 
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import { execFileSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"

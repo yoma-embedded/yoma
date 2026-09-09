@@ -1,7 +1,7 @@
 // 富化(enrich-schema / store 富化层 / enrich 管线)验收:净化的宽收与拒收、
 // 逐行容错与 commit 陈旧跳过、假模型注入下的跑批/续跑/失败不落盘,以及检索接入。
 // 模型调用全程注入,零网络零 key —— 管线的正确性与哪家模型无关。
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,7 +28,7 @@ import {
 	upsertSource,
 } from "../src/core/examples/index.ts";
 
-const ESP_ROOT = join(import.meta.dir, "fixtures", "examples", "esp-idf-mini");
+const ESP_ROOT = join(import.meta.dirname, "fixtures", "examples", "esp-idf-mini");
 const CORPUS_ID = "esp-idf@fixture";
 const MQTT_ID = `${CORPUS_ID}/examples/protocols/mqtt/tcp`;
 

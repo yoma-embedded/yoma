@@ -12,7 +12,7 @@ import {
 	type ToolResultMessage,
 	type UserMessage,
 } from "@earendil-works/pi-ai"; // pi-minimal: compat removed; registerFauxProvider/getModel have no compat-free equivalent, use fauxProvider() + createModels()
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { Agent, type AgentEvent } from "../src/index.ts";
 import { calculateTool } from "./utils/calculate.ts";
 

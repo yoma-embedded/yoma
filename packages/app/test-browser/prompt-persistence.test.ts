@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, mock, test } from "bun:test"
+import { beforeAll, describe, expect, test, vi } from "vitest"
 import type { AsyncStorage } from "@solid-primitives/storage"
 import { createEffect, createRoot } from "solid-js"
 import { ServerScope } from "@/utils/server-scope"
@@ -17,19 +17,19 @@ const storage: AsyncStorage = {
 }
 
 beforeAll(async () => {
-  mock.module("@solidjs/router", () => ({
+  vi.doMock("@solidjs/router", () => ({
     useParams: () => ({}),
     useSearchParams: () => [{}],
     useLocation: () => ({ pathname: "", query: {} }),
     useNavigate: () => () => undefined,
   }))
-  mock.module("@yoma-desktop/ui/context", () => ({
+  vi.doMock("@yoma-desktop/ui/context", () => ({
     createSimpleContext: () => ({
       use: () => undefined,
       provider: () => undefined,
     }),
   }))
-  mock.module("@/context/platform", () => ({
+  vi.doMock("@/context/platform", () => ({
     usePlatform: () => ({ platform: "desktop", storage: () => storage }),
   }))
 

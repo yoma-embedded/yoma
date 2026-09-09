@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { expect, test } from "vitest"
 import { FileTree, type FileTreeDirectoryHandle } from "@pierre/trees"
 
 test("reports directory expansion changes", () => {

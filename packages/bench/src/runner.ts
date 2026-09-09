@@ -12,6 +12,7 @@ import { spawn } from "node:child_process"
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { runningFromSource, sourceChildEnv } from "./node-source.ts"
 
 import { lineDecoder } from "./lines.ts"
 
@@ -160,18 +161,18 @@ export async function runTurnInChildProcess(
   // 本次子进程崩溃没写输出时,父进程会把**上次的结果**当本轮结果回填 —— 静默错账。
   await rm(outputFile, { force: true })
 
-  // 双态入口:显式传入的打包产物优先;bun 运行时可退到直跑源码。两者都不满足是
+  // 双态入口:显式传入的打包产物优先;源码态可退到直跑源码。两者都不满足是
   // 配置错误(exe 里 execPath 是 Electron 本体,盲目 spawn 会把整个 app 再起一遍)。
   const entry =
     input.turnEntry ??
-    (process.versions.bun ? path.join(path.dirname(fileURLToPath(import.meta.url)), "turn-entry.ts") : undefined)
-  if (!entry) throw new Error("非 bun 运行时必须显式传 TurnInput.turnEntry(esbuild 打包的子进程入口)")
+    (runningFromSource ? path.join(path.dirname(fileURLToPath(import.meta.url)), "turn-entry.ts") : undefined)
+  if (!entry) throw new Error("打包态必须显式传 TurnInput.turnEntry(esbuild 打包的子进程入口)")
   installTurnSignalHandlers()
   const child = spawn(process.execPath, [entry, inputFile, outputFile], {
     cwd: input.workspace,
     stdio: ["ignore", "pipe", "inherit"],
-    // Electron 看到它就以纯 node 面目运行;bun 与真 node 无视它,统一设不分叉。
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+    // Electron 看到它就以纯 node 面目运行;真 node 无视它,统一设不分叉。
+    env: sourceChildEnv({ ...process.env, ELECTRON_RUN_AS_NODE: "1" }),
   })
   activeTurnChildren.add(child)
   child.on("close", () => activeTurnChildren.delete(child))

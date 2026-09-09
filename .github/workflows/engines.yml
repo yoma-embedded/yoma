@@ -6,7 +6,7 @@
 # 产出的是**自包含**产物:三个 Python 程序经 PyInstaller 冻结(开发期它们是 venv 的
 # console script,第一行写死构建机路径,拷到别人电脑必坏);两个 Rust 二进制直接拷;
 # yoma-la(C,GPL)带着 MinGW DLL、固件、150 个解码器和裁过的 Python 标准库(仅 Windows)。
-# `bun engines/build.ts --dist` 末尾会自检这一点,不通过就红。
+# `npm run engines:build -- --dist` 末尾会自检这一点,不通过就红。
 #
 # fw/(ST 官方 HAL,1.1GB)**不在产物里** —— 只有 stm32kernel generate 用得到,
 # 而那条命令本来就收 --fw-dir。见 engines/build.ts 文件头。
@@ -62,9 +62,10 @@ jobs:
       # --dist 会在本机有 CubeMX(或 STM32CK_CUBEMX_DB)时解析生成。没有 CubeMX 会红。
       - uses: actions/checkout@v4
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
         with:
-          bun-version: "1.3.14"
+          node-version: "24"
+          cache: npm
 
       # build.ts 从 @yoma/coding-agent 取 engineBin/exe(路径解析和运行时同一套,
       # 报告才不会和真实行为漂移)。那是 workspace 包,不装就是
@@ -74,7 +75,7 @@ jobs:
       # 试过用 --filter 收窄到内核三包,实测**并没有真的收窄**(dry-run 里桌面端的包
       # 照样在列),所以不留这个未经验证的优化 —— CI 刚修好,不值得拿它冒险。
       - name: 安装依赖
-        run: bun install --frozen-lockfile
+        run: npm ci
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -107,7 +108,7 @@ jobs:
         # setup-msys2 装在 ${runner.temp}\msys64;build.ts 按 YOMA_LA_MSYS2 找 ucrt64(默认 C:\msys64)。
         env:
           YOMA_LA_MSYS2: ${{ runner.os == 'Windows' && format('{0}\msys64', runner.temp) || '' }}
-        run: bun engines/build.ts --dist --out dist
+        run: npm run engines:build -- --dist --out dist
 
       - name: 打包
         shell: bash

@@ -6,7 +6,7 @@
  * 文件树列得出来,点开全是 ENOENT。这里的临时目录刻意不是 cwd,相对路径读得通才算数。
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, test } from "vitest"
 import { execFileSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"

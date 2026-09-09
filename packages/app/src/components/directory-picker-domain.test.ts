@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { expect, test } from "vitest"
 import {
   absoluteTreePath,
   activeTreeNavigation,
@@ -58,7 +58,7 @@ test("includes files in file autocomplete while preserving directory navigation"
 
 test("centralizes file and directory selection policy", () => {
   const file = pickerMode("file", "/repo")
-  expect(file.includeFiles).toBeTrue()
+  expect(file.includeFiles).toBe(true)
   expect(file.selection("/repo/src", "index.ts")).toBe("src/index.ts")
   expect(file.selection("/repo", "src/")).toBeUndefined()
   expect(file.result("/repo", "src/index.ts")).toBe("src/index.ts")
@@ -67,7 +67,7 @@ test("centralizes file and directory selection policy", () => {
   expect(file.navigation("/tmp")).toBeUndefined()
 
   const directory = pickerMode("directory")
-  expect(directory.includeFiles).toBeFalse()
+  expect(directory.includeFiles).toBe(false)
   expect(directory.selection("/repo", "src/")).toBe("/repo/src")
   expect(directory.selection("C:/Users/luke", "repos/")).toBe("C:\\Users\\luke\\repos")
   expect(directory.selection("//Server/Share", "repo/")).toBe("\\\\Server\\Share\\repo")
@@ -79,17 +79,17 @@ test("centralizes file and directory selection policy", () => {
 })
 
 test("accepts mutations only from the active navigation", () => {
-  expect(activeTreeNavigation(3, 3)).toBeTrue()
-  expect(activeTreeNavigation(2, 3)).toBeFalse()
+  expect(activeTreeNavigation(3, 3)).toBe(true)
+  expect(activeTreeNavigation(2, 3)).toBe(false)
 })
 
 test("preserves POSIX case while matching Windows drives case-insensitively", () => {
-  expect(treePathWithin("/repo", "/Repo")).toBeFalse()
-  expect(treePathWithin("C:/Repo", "c:/repo/src")).toBeTrue()
-  expect(treePathWithin("//Server/Share/Repo", "//server/share/repo/src")).toBeTrue()
+  expect(treePathWithin("/repo", "/Repo")).toBe(false)
+  expect(treePathWithin("C:/Repo", "c:/repo/src")).toBe(true)
+  expect(treePathWithin("//Server/Share/Repo", "//server/share/repo/src")).toBe(true)
   expect(pickerMode("file", "//Server/Share/Repo").selection("//server/share/repo/src", "file.ts")).toBe("src/file.ts")
-  expect(treePathWithin("/repo", "/repo/../tmp")).toBeFalse()
-  expect(treePathWithin("/", "/src")).toBeTrue()
+  expect(treePathWithin("/repo", "/repo/../tmp")).toBe(false)
+  expect(treePathWithin("/", "/src")).toBe(true)
   expect(pickerMode("file", "C:/Repo").selection("c:/repo/src", "file.ts")).toBe("src/file.ts")
   expect(pickerMode("file", "C:/").selection("C:/", "file.ts")).toBe("file.ts")
 })
@@ -165,9 +165,9 @@ test("identifies the next directory level to preload", () => {
 
 test("advances preloading once for every expanded directory", () => {
   const advanced = new Set<string>()
-  expect(advanceTreePreload(advanced, "")).toBeTrue()
-  expect(advanceTreePreload(advanced, "")).toBeFalse()
-  expect(advanceTreePreload(advanced, "repos/")).toBeTrue()
+  expect(advanceTreePreload(advanced, "")).toBe(true)
+  expect(advanceTreePreload(advanced, "")).toBe(false)
+  expect(advanceTreePreload(advanced, "repos/")).toBe(true)
 })
 
 test("limits background tasks and prioritizes newly requested work", async () => {

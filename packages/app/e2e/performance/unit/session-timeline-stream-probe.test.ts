@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { expect, test } from "vitest"
 import { streamChunk } from "../timeline/stream-chunk"
 import { streamProgress } from "../timeline/session-timeline-stream-probe"
 

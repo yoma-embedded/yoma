@@ -1,17 +1,17 @@
-import { beforeAll, describe, expect, mock, test } from "bun:test"
+import { beforeAll, describe, expect, test, vi } from "vitest"
 
 let shouldListRoot: typeof import("./file-tree").shouldListRoot
 let shouldListExpanded: typeof import("./file-tree").shouldListExpanded
 let dirsToExpand: typeof import("./file-tree").dirsToExpand
 
 beforeAll(async () => {
-  mock.module("@solidjs/router", () => ({
+  vi.doMock("@solidjs/router", () => ({
     useNavigate: () => () => undefined,
     useParams: () => ({}),
     useLocation: () => ({}),
     useSearchParams: () => [{}, () => undefined],
   }))
-  mock.module("@/context/file", () => ({
+  vi.doMock("@/context/file", () => ({
     useFile: () => ({
       tree: {
         state: () => undefined,
@@ -22,15 +22,15 @@ beforeAll(async () => {
       },
     }),
   }))
-  mock.module("@yoma-desktop/ui/collapsible", () => ({
+  vi.doMock("@yoma-desktop/ui/collapsible", () => ({
     Collapsible: {
       Trigger: (props: { children?: unknown }) => props.children,
       Content: (props: { children?: unknown }) => props.children,
     },
   }))
-  mock.module("@yoma-desktop/ui/file-icon", () => ({ FileIcon: () => null }))
-  mock.module("@yoma-desktop/ui/icon", () => ({ Icon: () => null }))
-  mock.module("@yoma-desktop/ui/tooltip", () => ({ Tooltip: (props: { children?: unknown }) => props.children }))
+  vi.doMock("@yoma-desktop/ui/file-icon", () => ({ FileIcon: () => null }))
+  vi.doMock("@yoma-desktop/ui/icon", () => ({ Icon: () => null }))
+  vi.doMock("@yoma-desktop/ui/tooltip", () => ({ Tooltip: (props: { children?: unknown }) => props.children }))
   const mod = await import("./file-tree")
   shouldListRoot = mod.shouldListRoot
   shouldListExpanded = mod.shouldListExpanded

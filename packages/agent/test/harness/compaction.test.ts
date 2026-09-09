@@ -11,7 +11,7 @@ import {
 	type Model,
 	type Usage,
 } from "@earendil-works/pi-ai";
-import { beforeEach, describe, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
 	calculateContextTokens,
 	compact,

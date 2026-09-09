@@ -8,7 +8,7 @@
 import { mkdirSync, rmSync, statSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AuthContext, Model } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { configurableProviders, FileCredentialStore, NO_AMBIENT_AUTH, resolveModel } from "../src/core/models.ts";

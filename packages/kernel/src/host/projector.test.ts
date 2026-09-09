@@ -4,7 +4,7 @@
  * 这里测的每一条,出错时在 UI 上都是 **静默** 的:顺序错乱不报错、孤儿 part 被默默丢弃、
  * 流式文本先截断再长回来看起来像"网络抖动"。所以必须在这一层钉死。
  */
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import type { AssistantMessage, AssistantMessageEvent, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai"
 import type { AgentMessage } from "@yoma/agent"
 

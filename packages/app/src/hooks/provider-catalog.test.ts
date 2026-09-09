@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { expect, test } from "vitest"
 import type { NormalizedProviderListResponse } from "@yoma-desktop/session-ui/context"
 import { selectProviderCatalog } from "./provider-catalog"
 

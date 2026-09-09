@@ -24,7 +24,7 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
 
 ## 内核接缝:为什么还留着 alias
 
-内核现在就是本仓的 workspace 包,裸说明符已经能靠 bun 解析。但**打包期仍然要显式别名**:
+内核现在就是本仓的 workspace 包,裸说明符已经能靠 node 解析。但**打包期仍然要显式别名**:
 
 - electron-vite 默认外部化 node_modules 里的东西,而内核必须被 **inline**:
   它只发 raw TypeScript(`exports` 指向 `src/*.ts`,内部大量 `./x.ts` 后缀说明符),
@@ -42,12 +42,12 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
 | 位置 | 谁用 |
 |---|---|
 | `tsconfig.yoma.json` 的 `paths` | typecheck(tsgo),被 kernel/desktop 继承 —— **位置的真源** |
-| `packages/kernel/tsconfig.json` 里 **内联** 的同一份 | `bun test` —— bun 不跟随数组形式的 `extends` |
+| `packages/kernel/tsconfig.json` 里 **内联** 的同一份 | tsx 直跑源码时(coding-agent / bench 的 CLI)按最近的 tsconfig 解析 |
 | `packages/bench/tsconfig.json` 里同样的内联副本 | bench 直接跑源码,同理 |
 | `packages/kernel/kernel-alias.ts` 的 `KERNEL_ALIASES` | 打包期(electron-vite / esbuild),根目录从第一份反推 |
 
 两个细节:paths 的值必须是**相对路径**(`./packages/...`),写成 `packages/...` 会
-`TS5090`;pi-ai 的 path 必须指向 **`dist/index.js` 而不是 `.d.ts`**,bun 会照着它真去加载。
+`TS5090`;pi-ai 的 path 必须指向 **`dist/index.js` 而不是 `.d.ts`**,tsx 会照着它真去加载。
 
 ## 仓库结构
 
@@ -80,19 +80,19 @@ Bun workspace,`packages/` 下 7 个包:
 
 | 命令 | 作用 |
 |---|---|
-| `bun dev:desktop` | 开发模式(renderer 有 HMR;**内核进程没有**) |
-| `bun build:desktop` | 生产构建 → `packages/desktop/out/` |
-| `bun package:mac` / `:win` / `:linux` | electron-builder 安装包 |
-| `bun typecheck` | turbo 跑全部 7 个包 —— **必须常绿 7/7** |
-| `bun lint` | oxlint |
-| `bun run test` | 全量单测(根 `package.json` 逐包列出)—— **根上唯一入口**;裸 `bun test` 会误扫 vitest/DOM/平台文件 |
-| `bun --cwd packages/desktop smoke` | 内核冒烟:对 **构建产物** 验证 14 个工具(`TOOL_NAMES` 减退役)+ 4 个引擎二进制 |
-| `bun --cwd packages/desktop e2e:ipc` | 生产路径:真 utilityProcess + 真 MessagePort + 真协议帧(不开窗口) |
-| `bun --cwd packages/desktop e2e:renderer` | 最后一跳:真窗口 + 真 preload + **真 contextBridge**(含 mailbox 桥三条) |
-| `bun --cwd packages/desktop smoke:mailbox` | 调试台冒烟:Electron RUN_AS_NODE 对打包产物跑完整**本机演练**(假模型,零 key 零硬件) |
-| `bun --cwd packages/desktop e2e:mailbox` | main 托管端到端:真 kernel.js 的 `mailbox.setActive` 往返 + 假守护喂 `@@event` + 停止杀树 + 锁冲突人话 |
-| `bun packages/bench/src/cli.ts check <job.json>` | 校验任务书 + 本机内核装配 |
-| `bun packages/bench/src/cli.ts mailbox sim <job.json> --project <工程目录>` | 信箱闭环单机模拟(`init`/`runner`/`mother`/`status` 是生产形态的四个子命令;工程目录是本机事实,任务书里没有) |
+| `npm run dev:desktop` | 开发模式(renderer 有 HMR;**内核进程没有**) |
+| `npm run build:desktop` | 生产构建 → `packages/desktop/out/` |
+| `npm run package:mac` / `:win` / `:linux` | electron-builder 安装包 |
+| `npm run typecheck` | turbo 跑全部 7 个包 —— **必须常绿 7/7** |
+| `npm run lint` | oxlint |
+| `npm test` | 全量单测:`vitest run`,项目清单在根 `vitest.config.ts`(每个包一份 `vitest.config.ts`,app 另有 browser / perf 两份)|
+| `npm run smoke -w packages/desktop` | 内核冒烟:对 **构建产物** 验证 14 个工具(`TOOL_NAMES` 减退役)+ 4 个引擎二进制 |
+| `npm run e2e:ipc -w packages/desktop` | 生产路径:真 utilityProcess + 真 MessagePort + 真协议帧(不开窗口) |
+| `npm run e2e:renderer -w packages/desktop` | 最后一跳:真窗口 + 真 preload + **真 contextBridge**(含 mailbox 桥三条) |
+| `npm run smoke:mailbox -w packages/desktop` | 调试台冒烟:Electron RUN_AS_NODE 对打包产物跑完整**本机演练**(假模型,零 key 零硬件) |
+| `npm run e2e:mailbox -w packages/desktop` | main 托管端到端:真 kernel.js 的 `mailbox.setActive` 往返 + 假守护喂 `@@event` + 停止杀树 + 锁冲突人话 |
+| `tsx packages/bench/src/cli.ts check <job.json>` | 校验任务书 + 本机内核装配 |
+| `tsx packages/bench/src/cli.ts mailbox sim <job.json> --project <工程目录>` | 信箱闭环单机模拟(`init`/`runner`/`mother`/`status` 是生产形态的四个子命令;工程目录是本机事实,任务书里没有) |
 
 `smoke` / `e2e:ipc` / `e2e:renderer` 是 CI(Windows 岗)里挡住"yoma 一次重构悄悄搞死桌面端"的东西 —— 我们是把它整个 inline
 进 bundle 的,内核的改动可以在我们这边零编译错误地把 app 弄坏,直到用户点下去才发现。
@@ -103,10 +103,10 @@ typecheck 全绿、单测全绿、`e2e:ipc` 全绿,照样可以在这一跳把�
 
 ### 测试
 
-- **根上唯一入口:** `bun run test`(不是裸 `bun test`)
-- `bun --cwd packages/app test src`(bunfig 自动 preload happydom)
-- `bun --cwd packages/kernel test` —— 投影器不变式、事件流、权限门、自动压缩、端到端 host
-- `bun --cwd packages/session-ui test src`、`bun --cwd packages/ui test src`
+- 测试跑在 Node 上(vitest),不再用 `bun test`;`bun:test` 的 import 已全部换成 `vitest`
+- 全量:根目录 `npm test`;单包:`npx vitest run --project kernel`(项目名 = 包名;app 的浏览器条件用例是 `app-browser`)
+- 也可以进包目录直接 `vitest run`,用的是该包自己的 `vitest.config.ts`
+- `packages/kernel`:投影器不变式、事件流、权限门、自动压缩、端到端 host
 
 ## 架构
 
@@ -415,9 +415,9 @@ text part,不过滤的话提示词会原样出现在终报的"根因分析"里)�
   抓不到**。
 - **engines 目录必须显式传**,别依赖 yoma 的 `enginesDir()` 向上查找 —— 它只认
   "名字叫 engines 且存在",会高高兴兴找到一个没有 `bin/` 的空壳,然后报
-  "去跑 `bun engines/build.ts`",让你以为是没编译。合库后 `engines/` 就是仓内真目录
+  "去跑 `npm run engines:build`",让你以为是没编译。合库后 `engines/` 就是仓内真目录
   (引擎源码 + build.ts;2026-08-17 起两个引擎仓已整个吸收进本仓,不再是 submodule
-  —— `data/*.irpack` 是 CubeMX 解析出的构建产物,不入库;`bun engines/build.ts`
+  —— `data/*.irpack` 是 CubeMX 解析出的构建产物,不入库;`npm run engines:build`
   本机有 CubeMX 时会导入。`data/fw/` 这 1.1GB 的 HAL/CMSIS 除外,要跑
   stm32-config-kernel 的编译门禁测试先 `tools/fetch-fw.ps1`)。
 - **探针栈不在引擎里**(2026-08-17 起,probe-rs 整体移除):烧录命令由模型自带
@@ -429,7 +429,7 @@ text part,不过滤的话提示词会原样出现在终报的"根因分析"里)�
   J-Link 软件或 OpenOCD,声明走 `toolchain.json`(J-Link 的 well-known/注册表探测
   已内建);首跑预检的"探针在不在"横幅一并移除(它就是 `probe-rs list`)。
 - **engines 有两个来源,`scripts/stage-engines.ts` 按目标平台自动选**:本地
-  `engines/`(跑过 `bun engines/build.ts` 之后,仅当它满足目标平台)或**预编译 Release
+  `engines/`(跑过 `npm run engines:build` 之后,仅当它满足目标平台)或**预编译 Release
   产物**(按 `packages/desktop/engines.lock.json` 钉住的 tag,用 `gh` 下载)。
   后者让"在 Mac 上打 Windows 包"第一次真正成立 —— 以前只能靠
   `YOMA_ALLOW_FOREIGN_ENGINES=1` 打出一个引擎全坏的包。
@@ -442,7 +442,7 @@ text part,不过滤的话提示词会原样出现在终报的"根因分析"里)�
   `manifest.json` 逐个核 sha256(挡住"文件在但内容被截断")。
 - **Python 三件套的 shebang 曾经是分发的死穴**:board_ir/connections/controller_map
   在开发期是 venv console script,第一行写死构建机绝对路径,拷到别人电脑必坏,
-  而且报"找不到解释器",看起来像没编译。已由 yoma 的 `bun engines/build.ts --dist`
+  而且报"找不到解释器",看起来像没编译。已由 yoma 的 `npm run engines:build -- --dist`
   用 PyInstaller 冻结解决(那边的 CI 产出的就是冻结版);本地开发跑普通 `build.ts`
   仍是 console script,所以 stage-engines 的那条警告要留着。
 - **逐 chunk `Buffer.toString()` 会劈断多字节 UTF-8**。守护的一条 `@@event` 行可以
@@ -494,7 +494,7 @@ text part,不过滤的话提示词会原样出现在终报的"根因分析"里)�
   结果是数据落真实位置、钥匙串却"找不到",Chromium 初始化 safeStorage 时弹系统级
   "找不到钥匙串"对话框,app 几秒后安静退出。两边语义相反,假 HOME 两头都不干净。
   验证打包产物就用真实 HOME;无 key 首跑路径由 `host/auth.test.ts` 的子进程 e2e 覆盖。
-- **内核没有 HMR。** 改了 yoma 之后必须重启 `bun dev:desktop`。
+- **内核没有 HMR。** 改了 yoma 之后必须重启 `npm run dev:desktop`。
 - **这是一个 fork**:2026-08 起运行时身份已统一为 Yoma(`app.setName("Yoma")`、
   运行时 appId = bundle id = `com.yoma.desktop`、深链 `yoma://`),旧的
   `ai.opencode.desktop*` userData 弃在原地(当时明确决定旧数据不要,顺带消灭了
@@ -508,7 +508,7 @@ text part,不过滤的话提示词会原样出现在终报的"根因分析"里)�
 ## 已知的未完成项
 
 - **信箱调试台:2026-08-10 大幅简化之后还没上过真板子。** 这一版删掉了判据层、
-  权限层与工位端的项目检出(见"信箱闭环"),`bun --cwd packages/desktop smoke:mailbox`
+  权限层与工位端的项目检出(见"信箱闭环"),`npm run smoke:mailbox -w packages/desktop`
   与单机 `mailbox sim` 都过了,但**双机真跑一次是必须的**:研发端能不能把上下文
   写够、工位端在只有附件的目录里能不能干活,只有真跑才知道。同时补 Windows 侧
   (打包冒烟 + taskkill 杀树)。仓里已有 Windows 出包 CI

@@ -1,12 +1,10 @@
-import { $ } from "bun"
-import { resolveChannel } from "./utils"
+import { cpSync, rmSync } from "node:fs"
+import type { Channel } from "./utils"
 
-const arg = process.argv[2]
-const channel = arg === "dev" || arg === "beta" || arg === "prod" ? arg : resolveChannel()
-
-const src = `./icons/${channel}`
-const dest = "resources/icons"
-
-await $`rm -rf ${dest}`
-await $`cp -R ${src} ${dest}`
-console.log(`Copied ${channel} icons from ${src} to ${dest}`)
+export function copyIcons(channel: Channel): void {
+  const src = `./icons/${channel}`
+  const dest = "resources/icons"
+  rmSync(dest, { recursive: true, force: true })
+  cpSync(src, dest, { recursive: true })
+  console.log(`Copied ${channel} icons from ${src} to ${dest}`)
+}

@@ -11,7 +11,7 @@
  * probe 全程注入(platform "linux" + 空 PATH):statusAfterInstall 会真的跑一遍机器级
  * 核账,不注入的话开发机上真装了什么会悄悄决定断言(toolchain.test.ts 同一条纪律)。
  */
-import { afterEach, beforeEach, describe, expect, it } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"

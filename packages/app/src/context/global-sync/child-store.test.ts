@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, mock, test } from "bun:test"
+import { beforeAll, describe, expect, test, vi } from "vitest"
 import { createRoot, getOwner, type Owner } from "solid-js"
 import { createStore } from "solid-js/store"
 import type { NormalizedProviderListResponse } from "@yoma-desktop/session-ui/context"
@@ -43,7 +43,7 @@ beforeAll(async () => {
   // mock.module 是进程级的,会漏进同一次 `bun test` 里的其它文件 —— 所以只覆盖 useQuery,
   // 其余导出(queryOptions/QueryClient…)原样透传,否则 bootstrap.test.ts 会加载失败。
   const actual = await import("@tanstack/solid-query")
-  mock.module("@tanstack/solid-query", () => ({
+  vi.doMock("@tanstack/solid-query", () => ({
     ...actual,
     useQuery: (options: () => { queryKey?: unknown[]; enabled?: boolean }) => {
       querySingles.push(options)

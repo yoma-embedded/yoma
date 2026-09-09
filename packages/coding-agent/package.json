@@ -12,15 +12,15 @@
 		"./package.json": "./package.json"
 	},
 	"scripts": {
-		"typecheck": "tsgo --noEmit -p tsconfig.json && tsgo --noEmit -p tsconfig.test.json",
-		"test": "bun test"
+		"typecheck": "tsgo --noEmit -p tsconfig.json",
+		"test": "vitest run"
 	},
 	"dependencies": {
-		"@earendil-works/pi-ai": "workspace:*",
-		"@yoma/agent": "workspace:*",
-		"@zip.js/zip.js": "catalog:",
+		"@earendil-works/pi-ai": "*",
+		"@yoma/agent": "*",
+		"@zip.js/zip.js": "2.7.62",
 		"diff": "8.0.4",
-		"typebox": "catalog:",
-		"usb": "catalog:"
+		"typebox": "1.3.7",
+		"usb": "3.1.0"
 	}
 }

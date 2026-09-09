@@ -1,4 +1,3 @@
-#!/usr/bin/env bun
 /**
  * 内核冒烟:对 **构建产物** 跑,不对源码跑。
  *
@@ -8,8 +7,8 @@
  * 这个脚本是唯一能在 CI 里挡住那种情况的东西。
  *
  * 用法:
- *   bun packages/desktop/scripts/kernel-smoke.ts
- * 前置:先 `bun --cwd packages/desktop run build`。
+ *   tsx packages/desktop/scripts/kernel-smoke.ts
+ * 前置:先 `npm run build -w packages/desktop`。
  */
 
 import { execFileSync } from "node:child_process"
@@ -34,7 +33,7 @@ function exe(name: string): string {
   return process.platform === "win32" ? `${name}.exe` : name
 }
 
-if (!existsSync(bundle)) fail(`没有构建产物 ${bundle} —— 先跑 bun --cwd packages/desktop run build`)
+if (!existsSync(bundle)) fail(`没有构建产物 ${bundle} —— 先跑 npm run build -w packages/desktop`)
 
 let electron: string
 try {
@@ -98,7 +97,7 @@ const stm32Data = join(enginesDir, "data", "stm32")
 const REQUIRED_BINS = ["stm32kernel", "controller_map", "board_ir", "connections"].map(exe)
 
 if (!existsSync(bin)) {
-  fail(`${bin} 不存在 —— 跑 \`bun engines/build.ts\`(在仓库根)。\n` + `注意:yoma 的 enginesDir() 是向上查找 + existsSync,会"找到"一个没有 bin/ 的空壳然后报"去跑 build.ts",别被那条信息带偏。`)
+  fail(`${bin} 不存在 —— 跑 \`npm run engines:build\`(在仓库根)。\n` + `注意:yoma 的 enginesDir() 是向上查找 + existsSync,会"找到"一个没有 bin/ 的空壳然后报"去跑 build.ts",别被那条信息带偏。`)
 }
 const present = readdirSync(bin)
 const missingBins = REQUIRED_BINS.filter((name) => !present.includes(name))

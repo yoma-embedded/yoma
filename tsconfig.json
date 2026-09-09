@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": "./tsconfig.yoma.json",
+  "include": [
+    "scripts/**/*.ts",
+    "engines/**/*.ts",
+    "packages/*/scripts/**/*.ts",
+    "packages/ui/script/**/*.ts",
+    "vitest.config.ts",
+    "packages/*/vitest*.config.ts"
+  ],
+  "exclude": ["node_modules", "engines/**/vendor/**", "engines/**/dist/**"]
+}

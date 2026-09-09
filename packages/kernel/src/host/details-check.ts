@@ -12,7 +12,7 @@
  * 工具名 **集合** 的钉法在 2026-08 之后换到了运行时:yoma 的装配面精简把 ToolName
  * 导出和 grep 工具一并删了,编译期无从比对名集合。现在由 `tool-names.test.ts` 真装配
  * 一遍工具再对 TOOL_NAMES − RETIRED_TOOL_NAMES 逐个核对 —— yoma 增删改名照样会响,
- * 只是响在 `bun test` 而不是 typecheck。grep 的 details 副本仍留在 types.ts
+ * 只是响在 vitest 而不是 typecheck。grep 的 details 副本仍留在 types.ts
  * (旧会话重放要认得),但不再钉 yoma。
  *
  * 本文件只有类型,没有运行时产物。加进 src/host/index.ts 的 import 只为了让它进编译单元。

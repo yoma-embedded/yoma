@@ -77,19 +77,19 @@ If CubeMX is already installed, the sources are copied from its installation dir
 ```bash
 git clone https://github.com/yoma-embedded/yoma.git yoma
 cd yoma
-bun install
-bun engines/build.ts    # netlist parsing / STM32 tools. STM32 configuration needs CubeMX installed locally: build parses the device database to generate irpacks
-bun dev:desktop         # restart this command after changing the kernel
+npm install
+npm run engines:build    # netlist parsing / STM32 tools. STM32 configuration needs CubeMX installed locally: build parses the device database to generate irpacks
+npm run dev:desktop         # restart this command after changing the kernel
 ```
 
 ### Standalone core CLI (experimental)
 
-No Electron or engine build is needed for this entry point. After `bun install`:
+No Electron or engine build is needed for this entry point. After `npm install`:
 
 ```bash
-bun run cli --cwd /path/to/project
-bun run cli --cwd /path/to/project --continue
-bun run cli --cwd /path/to/project -p "Read AGENTS.md and explain how to verify this project"
+npm run cli -- --cwd /path/to/project
+npm run cli -- --cwd /path/to/project --continue
+npm run cli -- --cwd /path/to/project -p "Read AGENTS.md and explain how to verify this project"
 ```
 
 Uses the existing Harness directly with **read / bash / edit / write**, streaming output,
@@ -98,7 +98,7 @@ are separate under `~/.yoma/cli/sessions`. New sessions request `max` thinking, 
 model support; the actual model and level are displayed. Use `--model provider/id` and
 `--thinking off` to override. Compaction and retries are **manual**, and restoring history
 does not automatically replay interrupted tools. This is not the new pi runtime or a sandbox.
-See `bun run cli --help` and [the CLI/development guide (Chinese)](packages/coding-agent/CLI.md).
+See `npm run cli -- --help` and [the CLI/development guide (Chinese)](packages/coding-agent/CLI.md).
 
 ## License
 

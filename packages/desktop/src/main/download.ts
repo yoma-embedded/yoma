@@ -1,6 +1,6 @@
 // 可续传、会重试、sha256 校验的文件下载。手册库的快照 zip(1.8 GB)和每本手册的产物都走这里。
 //
-// 为什么单独成模块:manuals.ts 依赖 electron,bun test 跑不了;这里只用 node 内建,
+// 为什么单独成模块:manuals.ts 依赖 electron,vitest 跑不了;这里只用 node 内建,
 // 把"断了从哪接上、什么时候放弃、什么错不该重试"这些最容易出错的判断放进单测。
 //
 // 与 rag_yoma server deliver() 的契约:

@@ -1,6 +1,6 @@
 // 例程索引的形状层:序列化往返、容错解析(坏行跳过、标签不对当没有)、账本解析。
 // 全部纯函数,零 IO。
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
 import {
 	corpusSlug,

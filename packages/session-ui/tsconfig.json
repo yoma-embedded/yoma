@@ -15,7 +15,7 @@
     "noEmit": true,
     "lib": ["es2023", "dom", "dom.iterable"],
     "strict": true,
-    "types": ["vite/client", "bun"]
+    "types": ["vite/client"]
   },
   "exclude": ["**/*.stories.*", "**/*.mdx"]
 }

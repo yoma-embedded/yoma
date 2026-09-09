@@ -3,15 +3,15 @@
  * codelib job)。检索/查看只是索引的只读视图,方便不进会话先验质量;sync 把服务器
  * 上已发布的语料落到本机(索引 MB 级,--code 连语料树 GB 级)。
  *
- *   bun packages/coding-agent/src/core/examples/cli.ts index  --ecosystem esp-idf|stm32cube --root <目录> [--corpus <id>] [--config-dir <目录>]
- *   bun packages/coding-agent/src/core/examples/cli.ts index  --ecosystem generic --root <目录> --corpus <id> --proposal <file> [--tier seed|lib] [--indexer provided|agent]
- *   bun packages/coding-agent/src/core/examples/cli.ts enrich [--corpus <id>]... [--model <provider/model>] [--concurrency <n>] [--limit <n>]
- *   bun packages/coding-agent/src/core/examples/cli.ts sync   [--server <url>] [--config-dir <目录>]        # 远端清单 × 本地状态
- *   bun packages/coding-agent/src/core/examples/cli.ts sync   <语料id>... [--server <url>] [--code] [--config-dir <目录>]
- *   bun packages/coding-agent/src/core/examples/cli.ts search [--ecosystem <e>] [--target <t>] [--board <b>] [--peripheral <p> ...] [--keyword <k> ...] [--buildable] [--tier <t>] [--kind <k> ...] [--corpus <id> ...] [--json] [--limit <n>]
- *   bun packages/coding-agent/src/core/examples/cli.ts show   <条目 id>
- *   bun packages/coding-agent/src/core/examples/cli.ts preflight <底盘id> <供体id>...
- *   bun packages/coding-agent/src/core/examples/cli.ts list
+ *   tsx packages/coding-agent/src/core/examples/cli.ts index  --ecosystem esp-idf|stm32cube --root <目录> [--corpus <id>] [--config-dir <目录>]
+ *   tsx packages/coding-agent/src/core/examples/cli.ts index  --ecosystem generic --root <目录> --corpus <id> --proposal <file> [--tier seed|lib] [--indexer provided|agent]
+ *   tsx packages/coding-agent/src/core/examples/cli.ts enrich [--corpus <id>]... [--model <provider/model>] [--concurrency <n>] [--limit <n>]
+ *   tsx packages/coding-agent/src/core/examples/cli.ts sync   [--server <url>] [--config-dir <目录>]        # 远端清单 × 本地状态
+ *   tsx packages/coding-agent/src/core/examples/cli.ts sync   <语料id>... [--server <url>] [--code] [--config-dir <目录>]
+ *   tsx packages/coding-agent/src/core/examples/cli.ts search [--ecosystem <e>] [--target <t>] [--board <b>] [--peripheral <p> ...] [--keyword <k> ...] [--buildable] [--tier <t>] [--kind <k> ...] [--corpus <id> ...] [--json] [--limit <n>]
+ *   tsx packages/coding-agent/src/core/examples/cli.ts show   <条目 id>
+ *   tsx packages/coding-agent/src/core/examples/cli.ts preflight <底盘id> <供体id>...
+ *   tsx packages/coding-agent/src/core/examples/cli.ts list
  */
 
 import { readFileSync } from "node:fs";
@@ -499,7 +499,7 @@ function commandSearch(argv: string[]): void {
 	const enrichment = enrichmentMapForAll(indexes, values["config-dir"]);
 	const hits = searchIndex(entries, query, enrichment);
 	// --json 是给**服务器端检索**用的(rag_yoma 的 POST /api/codelibs/search):服务器
-	// 不重写一份检索实现,而是拿 bun 跑这里,拿到的就必然与客户端 searchIndex 严格
+	// 不重写一份检索实现,而是拿 tsx 跑这里,拿到的就必然与客户端 searchIndex 严格
 	// 同语义 ——「两份实现必然漂移」在 search.ts 那份副本上已经吃过一次亏了。
 	if (values.json) {
 		console.log(JSON.stringify({

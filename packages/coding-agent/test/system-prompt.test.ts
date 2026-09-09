@@ -1,7 +1,7 @@
 // 系统提示词构建的测试。移植自 pi coding-agent/test/system-prompt.test.ts,
 // 去掉 pi 文档区块相关的两条(yoma 不发布文档),补上身份行、
 // collectToolPromptData 和技能区块的覆盖。
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "@yoma/agent/node";
 import { buildSystemPrompt, collectToolPromptData } from "../src/core/system-prompt.ts";
 import { createCodingToolDefinitions, createEmbeddedToolDefinitions } from "../src/core/tools/index.ts";

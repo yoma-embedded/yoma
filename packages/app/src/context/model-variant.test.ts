@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import { cycleModelVariant, getConfiguredAgentVariant, resolveModelVariant, resolveThinkingVariant } from "./model-variant"
 
 describe("model variant", () => {

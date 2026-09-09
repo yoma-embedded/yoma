@@ -2,7 +2,7 @@
 // 去掉 loadSourcedSkills 用例(未移植该封装),补 ignore 规则与"目录缺席静默跳过"。
 import { symlink } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import { loadSkills } from "../../src/harness/skills.ts";
 import { createTempDir } from "./session-test-utils.ts";

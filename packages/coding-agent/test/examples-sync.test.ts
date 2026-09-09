@@ -1,7 +1,7 @@
 // 远程语料:三态解析(store)与两级落地(sync)。sync 的测试用 node:http 起真服务器
 // + 真 tar.gz(生成走系统 tar,与 syncCorpus 解压同一条路),sha 不符拒收、幂等
 // 跳过、锁互斥各钉一条。configDir 一律 mkdtemp(与 examples-store.test.ts 同一纪律)。
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

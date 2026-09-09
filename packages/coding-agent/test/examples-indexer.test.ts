@@ -1,5 +1,5 @@
 // 索引器:fixture 语料 → 盖戳 → 落盘 + 记账,一条龙。configDir 一律 mkdtemp 隔离。
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,8 +11,8 @@ import {
 	readIndexFile,
 } from "../src/core/examples/index.ts";
 
-const ESP_ROOT = join(import.meta.dir, "fixtures", "examples", "esp-idf-mini");
-const CUBE_ROOT = join(import.meta.dir, "fixtures", "examples", "cube-mini");
+const ESP_ROOT = join(import.meta.dirname, "fixtures", "examples", "esp-idf-mini");
+const CUBE_ROOT = join(import.meta.dirname, "fixtures", "examples", "cube-mini");
 
 let configDir: string;
 

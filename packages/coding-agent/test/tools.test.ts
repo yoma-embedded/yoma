@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "vitest";
 import { getOrThrow, NodeExecutionEnv } from "@yoma/agent/node";
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "../src/index.ts";
 

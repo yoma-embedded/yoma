@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import type { Message, ProviderInfo } from "@yoma-desktop/kernel"
 import { getSessionContext, getSessionTokenTotal } from "./session-context-metrics"
 

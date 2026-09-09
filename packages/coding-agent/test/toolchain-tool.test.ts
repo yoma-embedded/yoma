@@ -9,7 +9,7 @@
 // 不碰真实 ~/.yoma(根 CLAUDE.md 与 ledger.ts 头部注释反复强调的纪律)。假工具
 // 沿用 toolchain-resolve.test.ts 的写法:Windows 是 .bat、其它平台是 #!/bin/sh,
 // 忽略 argv 直接 echo 固定文本。
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

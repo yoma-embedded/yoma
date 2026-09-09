@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import { createRoot } from "solid-js"
 import { createPromptAttachmentsCore } from "@/components/prompt-input/attachments"
 import { createPromptState } from "@/context/prompt"

@@ -8,18 +8,18 @@
 在仓库根目录执行（需要 Bun；Windows 上 bash 工具还需要 Git Bash）：
 
 ```bash
-bun install --frozen-lockfile
-bun run cli --cwd /path/to/project
-bun run cli --cwd /path/to/project --continue
-bun run cli --cwd /path/to/project --session <启动时显示的会话ID>
-bun run cli --cwd /path/to/project -p "读一下 AGENTS.md，说明这个工程如何验证"
-bun run cli --help
+npm ci
+npm run cli -- --cwd /path/to/project
+npm run cli -- --cwd /path/to/project --continue
+npm run cli -- --cwd /path/to/project --session <启动时显示的会话ID>
+npm run cli -- --cwd /path/to/project -p "读一下 AGENTS.md，说明这个工程如何验证"
+npm run cli -- --help
 ```
 
 Windows 将工程路径换成自己的路径，如 `--cwd "C:\work\firmware"`。
 一次性模式 `-p` 支持 stdin；stdout 只有助手正文，工具进度与状态写 stderr。
-例如 `git diff | bun run cli -p "审查这份差异"`（必须在 Yoma 仓库运行；
-其他工程可用 `bun /path/to/yoma/packages/coding-agent/src/cli.ts`）。
+例如 `git diff | npm run cli -- -p "审查这份差异"`（必须在 Yoma 仓库运行；
+其他工程可用 `npx tsx /path/to/yoma/packages/coding-agent/src/cli.ts`）。
 一次性执行成功返回 0，模型失败返回 1，Ctrl+C 停止返回 130，SIGTERM 返回 143。
 
 凭据复用 `~/.yoma/auth.json`，已在桌面/ACP 配置过 API key 就不用再配。
@@ -27,7 +27,7 @@ Windows 将工程路径换成自己的路径，如 `--cwd "C:\work\firmware"`。
 不在命令行参数里传 key，也不要把凭据提交进 Git。
 
 ```bash
-bun run cli --cwd /path/to/project --model deepseek/deepseek-v4-flash --thinking max
+npm run cli -- --cwd /path/to/project --model deepseek/deepseek-v4-flash --thinking max
 ```
 
 - 模型选择优先级：显式 `--model` → 恢复会话保存的模型 → `YOMA_PROVIDER/YOMA_MODEL`
@@ -83,8 +83,8 @@ CLI 只装配 `read / bash / edit / write`，复用现有工具、资源发现�
 离线测试（假模型 + 真 Harness + 真文件/进程工具，不使用 key 或硬件）：
 
 ```bash
-bun test --cwd packages/coding-agent test/cli.test.ts test/models.test.ts
-bun run typecheck --force
+npx vitest run --project coding-agent test/cli.test.ts test/models.test.ts
+npm run typecheck -- --force
 ```
 
 ## 多台电脑开发
@@ -105,8 +105,8 @@ git push -u origin feature/core-cli
 git fetch origin
 git switch --track origin/feature/core-cli  # 首次
 # 已有本地分支则 git switch feature/core-cli && git pull --ff-only
-bun install --frozen-lockfile
-bun run cli --help
+npm ci
+npm run cli -- --help
 ```
 
 不要两台机器同时改完直接盲目 push；切换机器前先提交/推送，另一台先拉取。

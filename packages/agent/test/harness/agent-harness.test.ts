@@ -10,7 +10,7 @@ import {
 	fauxToolCall,
 	type RegisterFauxProviderOptions,
 } from "@earendil-works/pi-ai";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { AgentHarness } from "../../src/harness/agent-harness.ts";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import { InMemorySessionStorage } from "../../src/harness/session/memory-storage.ts";

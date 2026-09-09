@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { expect, test } from "vitest"
 import { summarizeFirstNavigation } from "../timeline/first-navigation-metrics"
 
 test("reports blank frames before first destination and stable paint", () => {

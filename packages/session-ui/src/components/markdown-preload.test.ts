@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { expect, test } from "vitest"
 import { preloadMarkdown } from "./markdown-cache"
 
 test("preloads completed markdown into the render cache", async () => {

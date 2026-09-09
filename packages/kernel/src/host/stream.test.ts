@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import { StreamSink } from "./stream.ts"
 import type { KernelEvent } from "../protocol.ts"
 import type { Part } from "../types.ts"

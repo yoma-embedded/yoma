@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import { formatKeybind, matchKeybind, parseKeybind } from "./command"
 
 describe("command keybind helpers", () => {

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import { normalize, resolveFileDiff, text } from "./session-diff"
 
 describe("session diff", () => {

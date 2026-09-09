@@ -1,8 +1,7 @@
-import { resolveChannel } from "./utils"
+import { writeFileSync } from "node:fs"
+import type { Channel } from "./utils"
 
-const arg = process.argv[2]
-const channel = arg === "dev" || arg === "beta" || arg === "prod" ? arg : resolveChannel()
-
+export function writeMetainfo(channel: Channel): void {
 const appId = channel === "prod" ? "com.yoma.desktop" : `com.yoma.desktop.${channel}`
 const productName = channel === "prod" ? "Yoma" : `Yoma ${channel.charAt(0).toUpperCase() + channel.slice(1)}`
 const summary = `Embedded debugging agent${channel !== "prod" ? ` (${channel})` : ""}`
@@ -35,5 +34,6 @@ const xml = `<?xml version="1.0" encoding="UTF-8"?>
 </component>
 `
 
-await Bun.write(`resources/${appId}.metainfo.xml`, xml)
+writeFileSync(`resources/${appId}.metainfo.xml`, xml)
 console.log(`Generated metainfo for ${channel} at resources/${appId}.metainfo.xml`)
+}

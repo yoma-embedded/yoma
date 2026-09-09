@@ -10,7 +10,7 @@
 // 不会响的闸门"反模式,findOnPath 本身也没有 platform 参数,只能靠 env 里有没有
 // PATHEXT 这个键来切换,见 locations.ts 的注释)。全程用 mkdtemp 建的临时目录,
 // 不碰真实 PATH 上的任何东西。
-import { describe, expect, it, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { tmpdir } from "node:os";

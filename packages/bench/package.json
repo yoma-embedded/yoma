@@ -13,20 +13,18 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "typecheck": "tsgo --noEmit -p tsconfig.json && tsgo --noEmit -p tsconfig.test.json",
-    "test": "bun test src",
-    "bench": "bun ./src/cli.ts",
-    "build:eval": "bun ./scripts/build-eval-entry.ts"
+    "typecheck": "tsgo --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "bench": "tsx ./src/cli.ts",
+    "build:eval": "tsx ./scripts/build-eval-entry.ts"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "workspace:*",
-    "@yoma-desktop/kernel": "workspace:*"
+    "@earendil-works/pi-ai": "*",
+    "@yoma-desktop/kernel": "*"
   },
   "devDependencies": {
-    "@tsconfig/bun": "catalog:",
-    "@types/bun": "catalog:",
-    "@typescript/native-preview": "catalog:",
-    "esbuild": "catalog:",
-    "typescript": "catalog:"
+    "@typescript/native-preview": "7.0.0-dev.20251207.1",
+    "esbuild": "0.28.1",
+    "typescript": "5.8.2"
   }
 }

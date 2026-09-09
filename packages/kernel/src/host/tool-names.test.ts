@@ -7,7 +7,7 @@
  * 权限规则表和 types.ts 的 details 副本。
  */
 
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 
 import { NodeExecutionEnv } from "@yoma/agent/node"
 import { createCodingToolDefinitions } from "@yoma/coding-agent"

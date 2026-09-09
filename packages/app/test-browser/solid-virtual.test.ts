@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { expect, test } from "vitest"
 import { createVirtualizer, defaultRangeExtractor } from "@tanstack/solid-virtual"
 import { createRoot, createSignal } from "solid-js"
 import { filterVirtualIndexes } from "@/pages/session/timeline/virtual-items"

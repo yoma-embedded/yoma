@@ -20,7 +20,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
 	asciiPlot,
 	envelope,
@@ -72,7 +72,7 @@ import { FakeSds, PREAMBLE_RESPONSE, SCREEN_PNG, SCREEN_PNG_FILE, defaultSquare,
 
 // ─── 脚手架 ──────────────────────────────────────────────────────────────────
 
-const FIXTURES = join(import.meta.dir, "fixtures", "scope");
+const FIXTURES = join(import.meta.dirname, "fixtures", "scope");
 const enc = (s: string) => new TextEncoder().encode(s);
 
 const tempDirs: string[] = [];

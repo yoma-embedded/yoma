@@ -3,7 +3,7 @@
 // 唯一的例外是读 fixtures/toolchain/bk64.jsonc —— 那是数据,不是被测代码本身。
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import {
 	installHint,
 	LOCAL_RELATIVE,
@@ -13,7 +13,7 @@ import {
 	type ToolchainManifest,
 } from "../src/core/toolchain/schema.ts";
 
-const FIXTURE_PATH = join(import.meta.dir, "fixtures", "toolchain", "bk64.jsonc");
+const FIXTURE_PATH = join(import.meta.dirname, "fixtures", "toolchain", "bk64.jsonc");
 
 function readFixture(): string {
 	return readFileSync(FIXTURE_PATH, "utf8");

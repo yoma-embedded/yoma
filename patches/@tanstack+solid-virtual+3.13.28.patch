@@ -1,7 +1,7 @@
-diff --git a/dist/cjs/index.cjs b/dist/cjs/index.cjs
-index 7e97823ea769398ccd9cf449b178c77675ed252c..d75183f11421af0e20e4e8a996af99c300ad936d 100644
---- a/dist/cjs/index.cjs
-+++ b/dist/cjs/index.cjs
+diff --git a/node_modules/@tanstack/solid-virtual/dist/cjs/index.cjs b/node_modules/@tanstack/solid-virtual/dist/cjs/index.cjs
+index 7e97823..d75183f 100644
+--- a/node_modules/@tanstack/solid-virtual/dist/cjs/index.cjs
++++ b/node_modules/@tanstack/solid-virtual/dist/cjs/index.cjs
 @@ -39,7 +39,9 @@ function createVirtualizerBase(options) {
          (_a = options.onChange) == null ? void 0 : _a.call(options, instance2, sync);
        }
@@ -13,10 +13,10 @@ index 7e97823ea769398ccd9cf449b178c77675ed252c..d75183f11421af0e20e4e8a996af99c3
    });
    return virtualizer;
  }
-diff --git a/dist/esm/index.js b/dist/esm/index.js
-index 1d525463775fef3e8ece6ab191061ef9d0a36d73..14c680a2088c49a33959d8118cf32ee599ab83c2 100644
---- a/dist/esm/index.js
-+++ b/dist/esm/index.js
+diff --git a/node_modules/@tanstack/solid-virtual/dist/esm/index.js b/node_modules/@tanstack/solid-virtual/dist/esm/index.js
+index 1d52546..14c680a 100644
+--- a/node_modules/@tanstack/solid-virtual/dist/esm/index.js
++++ b/node_modules/@tanstack/solid-virtual/dist/esm/index.js
 @@ -38,7 +38,9 @@ function createVirtualizerBase(options) {
          (_a = options.onChange) == null ? void 0 : _a.call(options, instance2, sync);
        }
@@ -28,10 +28,10 @@ index 1d525463775fef3e8ece6ab191061ef9d0a36d73..14c680a2088c49a33959d8118cf32ee5
    });
    return virtualizer;
  }
-diff --git a/src/index.tsx b/src/index.tsx
-index 69ac34fd70753b9bd00683c2540be7f62630f8f2..9f16672aa0f4a044aa2b35754d385d7d8031f743 100644
---- a/src/index.tsx
-+++ b/src/index.tsx
+diff --git a/node_modules/@tanstack/solid-virtual/src/index.tsx b/node_modules/@tanstack/solid-virtual/src/index.tsx
+index 69ac34f..9f16672 100644
+--- a/node_modules/@tanstack/solid-virtual/src/index.tsx
++++ b/node_modules/@tanstack/solid-virtual/src/index.tsx
 @@ -81,7 +81,9 @@ function createVirtualizerBase<
          },
        }),
@@ -41,5 +41,5 @@ index 69ac34fd70753b9bd00683c2540be7f62630f8f2..9f16672aa0f4a044aa2b35754d385d7d
 +    setVirtualItems(reconcile(instance.getVirtualItems(), { key: 'index' }))
 +    setTotalSize(instance.getTotalSize())
    })
-
+ 
    return virtualizer

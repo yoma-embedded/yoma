@@ -14,6 +14,7 @@ import { spawn, type ChildProcess } from "node:child_process"
 import { mkdir, rm, stat, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { runningFromSource, sourceChildEnv } from "../node-source.ts"
 
 import { fileExists } from "../fsx.ts"
 import { lineDecoder } from "../lines.ts"
@@ -141,12 +142,12 @@ export async function runSim(options: SimOptions): Promise<SimResult> {
   const spawnDefault = (role: "runner" | "mother", clone: string): ChildProcess => {
     // 缺省路径依赖 bun(直跑 TS 源码 + import.meta.dir)。打包态没有这两样,
     // 必须由宿主注入 spawnRole —— 静默走缺省会 spawn 出一个必死的进程。
-    if (!process.versions.bun) throw new Error("非 bun 运行时跑 sim 必须注入 spawnRole(打包态由 mailbox-host 自我 spawn)")
+    if (!runningFromSource) throw new Error("打包态跑 sim 必须注入 spawnRole(由 mailbox-host 自我 spawn)")
     const cliEntry = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "cli.ts")
     const argv = [cliEntry, "mailbox", role, clone, "--interval", String(pollSeconds), "--branch", branch]
     // 工程目录只给研发端 —— 工位端没有检出,这是生产形态的事实,演练要一致。
     if (role === "mother") argv.push("--project", workspace)
-    return spawn(process.execPath, argv, { stdio: ["ignore", "pipe", "pipe"], cwd: root })
+    return spawn(process.execPath, argv, { stdio: ["ignore", "pipe", "pipe"], cwd: root, env: sourceChildEnv() })
   }
   const spawnRole = (role: "runner" | "mother", clone: string): ChildProcess => {
     const child = options.spawnRole

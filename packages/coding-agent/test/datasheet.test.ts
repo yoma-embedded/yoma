@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "vitest";
+import { serveFetch } from "./fixtures/fetch-server.ts";
 import { NodeExecutionEnv } from "@yoma/agent/node";
 import { clampChars, clampTopK, createDatasheetToolDefinition, encodeRel, formatCitation, type SearchHit } from "../src/index.ts";
 import {
@@ -111,7 +112,7 @@ describe("datasheet section helpers", () => {
 	it("findPhrase returns the LAST occurrence (skipping the ToC entry)", () => {
 		const raw = "Contents: Clocks and startup ... body ... ## Clocks and startup\nreal text";
 		const at = findPhrase(raw, "clocks and startup");
-		expect(raw.slice(at)).toStartWith("Clocks and startup\nreal text");
+		expect(raw.slice(at).startsWith("Clocks and startup\nreal text")).toBe(true);
 	});
 
 	it("caps long text with a note", () => {
@@ -149,7 +150,7 @@ describe("datasheet citations + clamps", () => {
 	});
 
 	it("plain datasheet hits carry no tags", () => {
-		expect(formatCitation(hit({}), 1)).toStartWith("[#2] RM0008");
+		expect(formatCitation(hit({}), 1).startsWith("[#2] RM0008")).toBe(true);
 	});
 
 	it("page 0 (page-less formats: md/docx/txt) is not shown as p.0", () => {
@@ -280,7 +281,7 @@ const MANIFEST: ManifestEntry[] = [
  * search **按 chip 过滤**,匹配不到就只回 GENERAL —— 与真服务器同解。
  * searchStatus 可换成 404/500;manifestStatus 模拟没有 /api/manifest 的旧服务器。
  */
-function fakeServer(options?: { searchStatus?: number; manifestStatus?: number }) {
+async function fakeServer(options?: { searchStatus?: number; manifestStatus?: number }) {
 	const requests: { method: string; path: string; body?: any }[] = [];
 	const hitsFor = (chip: string, rev?: string): SearchHit[] => {
 		const pool = chip === "STM32F1" ? [SAMPLE_HIT] : chip === "AT32F" ? [AT32_HIT] : [];
@@ -289,9 +290,7 @@ function fakeServer(options?: { searchStatus?: number; manifestStatus?: number }
 		if (rev) return pool.filter((h) => h.rev === rev);
 		return pool.length ? pool : [GENERAL_HIT];
 	};
-	const server = Bun.serve({
-		port: 0,
-		fetch: async (req) => {
+	const server = await serveFetch(async (req) => {
 			const { pathname } = new URL(req.url);
 			const entry: (typeof requests)[number] = { method: req.method, path: pathname };
 			if (req.method === "POST") entry.body = await req.json().catch(() => undefined);
@@ -309,7 +308,6 @@ function fakeServer(options?: { searchStatus?: number; manifestStatus?: number }
 			if (pathname === `/artifacts/${encodeRel(FIGURE_REL)}`)
 				return new Response(Buffer.from(PNG_BASE64, "base64"), { headers: { "Content-Type": "image/png" } });
 			return new Response("nope", { status: 404 });
-		},
 	});
 	process.env.YOMA_DATASHEET_SERVER = `http://localhost:${server.port}`;
 	return { server, requests };
@@ -347,8 +345,8 @@ describe("datasheet server resolution", () => {
 });
 
 /** 接了连接就再也不回包的服务器 —— 复现"默认地址那台机器挂了"的最坏形态。 */
-function deadServer() {
-	const server = Bun.serve({ port: 0, fetch: () => new Promise<Response>(() => {}) });
+async function deadServer() {
+	const server = await serveFetch(() => new Promise<Response>(() => {}));
 	return { server, url: `http://127.0.0.1:${server.port}` };
 }
 
@@ -377,7 +375,7 @@ describe("datasheet tool", () => {
 
 	it("search posts to /api/search and formats citations", async () => {
 		isolate();
-		const { server, requests } = fakeServer();
+		const { server, requests } = await fakeServer();
 		try {
 			const result = await makeTool().execute("c1", { action: "search", query: "usart baud", chip: "STM32F1", topK: 3 });
 			const text = textOf(result);
@@ -391,7 +389,7 @@ describe("datasheet tool", () => {
 				body: { query: "usart baud", chip: "STM32F1", top_k: 3 },
 			});
 		} finally {
-			server.stop(true);
+			server.stop();
 		}
 	});
 
@@ -399,7 +397,7 @@ describe("datasheet tool", () => {
 
 	it("search resolves a part number to its indexed family and re-runs the query", async () => {
 		isolate();
-		const { server, requests } = fakeServer();
+		const { server, requests } = await fakeServer();
 		try {
 			const result = await makeTool().execute("c1", {
 				action: "search",
@@ -415,36 +413,36 @@ describe("datasheet tool", () => {
 			expect(requests.map((r) => r.path)).toEqual(["/api/search", "/api/manifest", "/api/search"]);
 			expect(requests[2].body.chip).toBe("AT32F");
 		} finally {
-			server.stop(true);
+			server.stop();
 		}
 	});
 
 	it("search does not pay for the manifest when the chip was right", async () => {
 		isolate();
-		const { server, requests } = fakeServer();
+		const { server, requests } = await fakeServer();
 		try {
 			await makeTool().execute("c1", { action: "search", query: "usart baud", chip: "STM32F1" });
 			expect(requests.map((r) => r.path)).toEqual(["/api/search"]);
 		} finally {
-			server.stop(true);
+			server.stop();
 		}
 	});
 
 	it("search caches the chip index across calls", async () => {
 		isolate();
-		const { server, requests } = fakeServer();
+		const { server, requests } = await fakeServer();
 		try {
 			await makeTool().execute("c1", { action: "search", query: "q", chip: "AT32F421" });
 			await makeTool().execute("c2", { action: "search", query: "q", chip: "AT32F403" });
 			expect(requests.filter((r) => r.path === "/api/manifest")).toHaveLength(1);
 		} finally {
-			server.stop(true);
+			server.stop();
 		}
 	});
 
 	it("search refuses to answer from GENERAL prose when the chip is not indexed at all", async () => {
 		isolate();
-		const { server, requests } = fakeServer();
+		const { server, requests } = await fakeServer();
 		try {
 			const result = await makeTool().execute("c1", { action: "search", query: "touch threshold", chip: "TTP233" });
 			const text = textOf(result);
@@ -454,13 +452,13 @@ describe("datasheet tool", () => {
 			// 解析不出来就不再多打一枪。
 			expect(requests.filter((r) => r.path === "/api/search")).toHaveLength(1);
 		} finally {
-			server.stop(true);
+			server.stop();
 		}
 	});
 
 	it("search says so when the chip IS indexed but nothing in it matched", async () => {
 		isolate();
-		const { server } = fakeServer();
+		const { server } = await fakeServer();
 		try {
 			const result = await makeTool().execute("c1", { action: "search", query: "q", chip: "AT32WB" });
 			const text = textOf(result);
@@ -468,13 +466,13 @@ describe("datasheet tool", () => {
 			expect(text).toContain("cross-chip GENERAL corpus");
 			expect(text).toContain('rev "AT32WB415_DS"');
 		} finally {
-			server.stop(true);
+			server.stop();
 		}
 	});
 
 	it("search flags a rev that does not exist for the family", async () => {
 		isolate();
-		const { server } = fakeServer();
+		const { server } = await fakeServer();
 		try {
 			const result = await makeTool().execute("c1", {
 				action: "search",
@@ -484,25 +482,25 @@ describe("datasheet tool", () => {
 			});
 			expect(textOf(result)).toContain('no manual with rev "RM_AT32F421" exists for chip "AT32F"');
 		} finally {
-			server.stop(true);
+			server.stop();
 		}
 	});
 
 	it("search keeps working against a server with no /api/manifest", async () => {
 		isolate();
-		const { server } = fakeServer({ manifestStatus: 404 });
+		const { server } = await fakeServer({ manifestStatus: 404 });
 		try {
 			const result = await makeTool().execute("c1", { action: "search", query: "q", chip: "AT32F421" });
 			expect(textOf(result)).toContain("PM0214_CortexM4"); // 老行为:命中原样返回
 			expect(result.details.resolvedChip).toBeUndefined();
 		} finally {
-			server.stop(true);
+			server.stop();
 		}
 	});
 
 	it("chips lists the indexed families, and one family's manuals with their revs", async () => {
 		isolate();
-		const { server } = fakeServer();
+		const { server } = await fakeServer();
 		try {
 			const all = await makeTool().execute("c1", { action: "chips" });
 			expect(textOf(all)).toContain("AT32F (2)");
@@ -516,32 +514,32 @@ describe("datasheet tool", () => {
 			expect(text).toContain('rev "AT32F421_DS" [datasheet]');
 			expect(one.details.manuals).toBe(2);
 		} finally {
-			server.stop(true);
+			server.stop();
 		}
 	});
 
 	it("search explains the missing endpoint when the server has no /api/search yet", async () => {
 		isolate();
-		const { server } = fakeServer({ searchStatus: 404 });
+		const { server } = await fakeServer({ searchStatus: 404 });
 		try {
 			const result = await makeTool().execute("c1", { action: "search", query: "q", chip: "STM32F1" });
 			const text = textOf(result);
 			expect(text).toContain("does not expose POST /api/search yet");
 			expect(text).toContain("read_section and view_figure still work");
 		} finally {
-			server.stop(true);
+			server.stop();
 		}
 	});
 
 	it("search degrades instead of throwing on a real server error", async () => {
 		isolate();
-		const { server } = fakeServer({ searchStatus: 500 });
+		const { server } = await fakeServer({ searchStatus: 500 });
 		try {
 			const result = await makeTool().execute("c1", { action: "search", query: "q", chip: "STM32F1" });
 			expect(textOf(result)).toContain("DATASHEET LOOKUP UNAVAILABLE");
 			expect(textOf(result)).toContain("HTTP 500");
 		} finally {
-			server.stop(true);
+			server.stop();
 		}
 	});
 
@@ -555,32 +553,32 @@ describe("datasheet tool", () => {
 
 	it("search requires query and chip", async () => {
 		isolate();
-		const { server } = fakeServer();
+		const { server } = await fakeServer();
 		try {
 			await expect(makeTool().execute("c1", { action: "search", chip: "STM32F1" })).rejects.toThrow(
 				/search requires query/,
 			);
 			await expect(makeTool().execute("c1", { action: "search", query: "q" })).rejects.toThrow(/search requires chip/);
 		} finally {
-			server.stop(true);
+			server.stop();
 		}
 	});
 
 	it("read_section fetches the parsed manual and returns the whole file when it fits", async () => {
 		isolate();
-		const { server } = fakeServer();
+		const { server } = await fakeServer();
 		try {
 			const result = await makeTool().execute("c1", { action: "read_section", parsedPath: PARSED_REL });
 			expect(textOf(result)).toBe(MANUAL);
 			expect(result.details.mode).toBe("full");
 		} finally {
-			server.stop(true);
+			server.stop();
 		}
 	});
 
 	it("read_section extracts one section by breadcrumb", async () => {
 		isolate();
-		const { server } = fakeServer();
+		const { server } = await fakeServer();
 		try {
 			const result = await makeTool().execute("c1", {
 				action: "read_section",
@@ -590,13 +588,13 @@ describe("datasheet tool", () => {
 			expect(textOf(result)).toBe("## 1.2 Clocks and startup\nclock body");
 			expect(result.details.mode).toBe("section");
 		} finally {
-			server.stop(true);
+			server.stop();
 		}
 	});
 
 	it("read_section falls back to a text window, then to the ToC", async () => {
 		isolate();
-		const { server } = fakeServer();
+		const { server } = await fakeServer();
 		try {
 			const window = await makeTool().execute("c1", { action: "read_section", parsedPath: PARSED_REL, heading: "clock body" });
 			expect(window.details.mode).toBe("window");
@@ -604,24 +602,24 @@ describe("datasheet tool", () => {
 			expect(toc.details.mode).toBe("toc");
 			expect(textOf(toc)).toContain("## 1.2 Clocks and startup");
 		} finally {
-			server.stop(true);
+			server.stop();
 		}
 	});
 
 	it("read_section reports a manual missing from the server as guidance, not an error", async () => {
 		isolate();
-		const { server } = fakeServer();
+		const { server } = await fakeServer();
 		try {
 			const result = await makeTool().execute("c1", { action: "read_section", parsedPath: "parsed/NOPE/X.md" });
 			expect(textOf(result)).toContain("Parsed manual not on the server");
 		} finally {
-			server.stop(true);
+			server.stop();
 		}
 	});
 
 	it("view_figure returns the caption text plus the image content block", async () => {
 		isolate();
-		const { server } = fakeServer();
+		const { server } = await fakeServer();
 		try {
 			const result = await makeTool().execute("c1", { action: "view_figure", imagePath: FIGURE_REL, caption: "Figure 2." });
 			expect(textOf(result)).toContain("Figure (attached below): Figure 2.");
@@ -630,30 +628,30 @@ describe("datasheet tool", () => {
 			expect(image.data).toBe(PNG_BASE64);
 			expect(result.details.bytes).toBeGreaterThan(0);
 		} finally {
-			server.stop(true);
+			server.stop();
 		}
 	});
 
 	it("view_figure rejects unsupported extensions without touching the server", async () => {
 		isolate();
-		const { server, requests } = fakeServer();
+		const { server, requests } = await fakeServer();
 		try {
 			const result = await makeTool().execute("c1", { action: "view_figure", imagePath: "figures/F1/RM0008/f1.svg" });
 			expect(textOf(result)).toContain("Not a supported figure image path");
 			expect(requests).toHaveLength(0);
 		} finally {
-			server.stop(true);
+			server.stop();
 		}
 	});
 
 	it("view_figure reports a figure missing from the server as guidance", async () => {
 		isolate();
-		const { server } = fakeServer();
+		const { server } = await fakeServer();
 		try {
 			const result = await makeTool().execute("c1", { action: "view_figure", imagePath: "figures/NOPE/X/f.png" });
 			expect(textOf(result)).toContain("Figure not on the server");
 		} finally {
-			server.stop(true);
+			server.stop();
 		}
 	});
 
@@ -662,7 +660,7 @@ describe("datasheet tool", () => {
 
 	it("a server that accepts the connection but never answers times out instead of hanging the turn", async () => {
 		isolate();
-		const { server, url } = deadServer();
+		const { server, url } = await deadServer();
 		try {
 			const started = Date.now();
 			const result = await makeTool({ server: url, timeoutMs: 300 }).execute("c1", {
@@ -675,13 +673,13 @@ describe("datasheet tool", () => {
 			expect(text).toContain("timed out");
 			expect(Date.now() - started).toBeLessThan(2000);
 		} finally {
-			server.stop(true);
+			server.stop();
 		}
 	});
 
 	it("the tool-call AbortSignal still cancels a request waiting on that timeout", async () => {
 		isolate();
-		const { server, url } = deadServer();
+		const { server, url } = await deadServer();
 		const controller = new AbortController();
 		const timer = setTimeout(() => controller.abort(), 50);
 		try {
@@ -694,13 +692,13 @@ describe("datasheet tool", () => {
 			).rejects.toThrow();
 		} finally {
 			clearTimeout(timer);
-			server.stop(true);
+			server.stop();
 		}
 	});
 
 	it("read_section and view_figure are bounded by artifactTimeoutMs, not the API timeout", async () => {
 		isolate();
-		const { server, url } = deadServer();
+		const { server, url } = await deadServer();
 		try {
 			const tool = makeTool({ server: url, timeoutMs: 30_000, artifactTimeoutMs: 300 });
 			const started = Date.now();
@@ -708,7 +706,7 @@ describe("datasheet tool", () => {
 			expect(textOf(await tool.execute("c2", { action: "view_figure", imagePath: FIGURE_REL }))).toContain("timed out");
 			expect(Date.now() - started).toBeLessThan(3000);
 		} finally {
-			server.stop(true);
+			server.stop();
 		}
 	});
 });
