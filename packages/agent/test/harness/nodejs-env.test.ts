@@ -6,7 +6,7 @@
 //   vitest 每个文件独立进程,这么做没问题;bun 全仓共享一个模块图与进程,改全局会污染其他测试文件
 //   (session-uuid 那次就是栽在这上面)。isLegacyWslBashPath 的分支改为纯函数单测覆盖。
 import { basename, join } from "node:path";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import { getOrThrow } from "../../src/harness/types.ts";
 import { executeShellWithCapture } from "../../src/harness/utils/shell-output.ts";

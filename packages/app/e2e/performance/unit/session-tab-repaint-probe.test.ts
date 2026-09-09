@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { expect, test } from "vitest"
 import { compressCachedRepaintTrace, layoutShiftSample } from "../timeline/session-tab-repaint-probe"
 
 test("compresses repeated repaint states without losing frame samples", () => {

@@ -1,4 +1,4 @@
-// yoma-la 的构建与安装,被 engines/build.ts 调用(也可单跑:bun engines/logic-analyzer/build.ts [--dist --out DIR]).
+// yoma-la 的构建与安装,被 engines/build.ts 调用(也可单跑:tsx engines/logic-analyzer/build.ts [--dist --out DIR]).
 //
 // 它和别的引擎不一样的地方,决定了这个文件为什么单独存在:
 //   1. C 工程(CMake + glib/libusb/python3),Windows 上只能 MSYS2/ucrt64。没装工具链的机器
@@ -12,7 +12,7 @@
 // 布局(与 engines/ 其余部分同一套):
 //   engines/bin/yoma-la.exe (+ *.dll)        engines/data/la/{res,decoders,demo[,python]}
 
-import { $ } from "bun";
+import { $, which } from "../../scripts/shell.ts";
 import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,9 +43,9 @@ export function findLaToolchain(): { tc: LaToolchain | null; why: string } {
 		if (!existsSync(cc)) return { tc: null, why: `没有 MSYS2 ucrt64(${cc} 不存在;设 YOMA_LA_MSYS2 指向 msys64 根目录)` };
 		const pkgConfig = path.join(bin, "pkg-config.exe");
 		if (!existsSync(pkgConfig)) return { tc: null, why: "MSYS2 里缺 pkgconf:pacman -S mingw-w64-ucrt-x86_64-pkgconf" };
-		const cmake = existsSync(path.join(bin, "cmake.exe")) ? path.join(bin, "cmake.exe") : Bun.which("cmake");
+		const cmake = existsSync(path.join(bin, "cmake.exe")) ? path.join(bin, "cmake.exe") : which("cmake");
 		if (!cmake) return { tc: null, why: "没有 cmake(winget install Kitware.CMake 或 pacman -S mingw-w64-ucrt-x86_64-cmake)" };
-		const ninja = existsSync(path.join(bin, "ninja.exe")) ? path.join(bin, "ninja.exe") : Bun.which("ninja");
+		const ninja = existsSync(path.join(bin, "ninja.exe")) ? path.join(bin, "ninja.exe") : which("ninja");
 		const pyLibs = existsSync(path.join(root, "ucrt64", "lib")) ? readdirSync(path.join(root, "ucrt64", "lib")).filter((d) => /^python3\.\d+$/.test(d)) : [];
 		return {
 			tc: {
@@ -57,9 +57,9 @@ export function findLaToolchain(): { tc: LaToolchain | null; why: string } {
 			why: "",
 		};
 	}
-	const cmake = Bun.which("cmake"), pkgConfig = Bun.which("pkg-config"), cc = Bun.which("cc") ?? Bun.which("gcc") ?? Bun.which("clang");
+	const cmake = which("cmake"), pkgConfig = which("pkg-config"), cc = which("cc") ?? which("gcc") ?? which("clang");
 	if (!cmake || !pkgConfig || !cc) return { tc: null, why: "需要 cmake + pkg-config + C 编译器(以及 glib-2.0 / libusb-1.0 / zlib / python3-embed 的开发包)" };
-	return { tc: { cmake, ninja: Bun.which("ninja") ?? undefined, cc, pkgConfig, objdump: Bun.which("objdump") ?? undefined, msysBin: undefined, pythonLib: undefined }, why: "" };
+	return { tc: { cmake, ninja: which("ninja") ?? undefined, cc, pkgConfig, objdump: which("objdump") ?? undefined, msysBin: undefined, pythonLib: undefined }, why: "" };
 }
 
 /** cmake configure + build,返回 exe 路径。 */

@@ -12,7 +12,7 @@
  * 这个失效是运行时的序列化行为:typecheck 全绿、单测全绿、e2e-kernel-ipc 全绿,只有真的
  * 起一个窗口、让值真的穿过 contextBridge 才看得见。所以有了这个脚本。
  *
- * 用法:bun --cwd packages/desktop e2e:renderer
+ * 用法:npm run e2e:renderer -w packages/desktop
  */
 
 import { app, BrowserWindow, ipcMain, MessageChannelMain, utilityProcess } from "electron"
@@ -183,7 +183,7 @@ app.whenReady().then(async () => {
         `typeof window.api?.updater?.getAutoCheck === "function" && typeof window.api?.updater?.setAutoCheck === "function"`,
       ),
     )
-    let autoCheckStore = true
+    let autoCheckStore: boolean = true
     ipcMain.handle("updater-get-auto-check", () => autoCheckStore)
     ipcMain.handle("updater-set-auto-check", (_event, value: boolean) => {
       autoCheckStore = Boolean(value)
@@ -191,7 +191,7 @@ app.whenReady().then(async () => {
     const autoCheckThrough = await win.webContents.executeJavaScript(`
       window.api.updater.setAutoCheck(false).then(() => window.api.updater.getAutoCheck())
     `)
-    check("updater.setAutoCheck/getAutoCheck 往返", autoCheckThrough === false && autoCheckStore === false, JSON.stringify(autoCheckThrough))
+    check("updater.setAutoCheck/getAutoCheck 往返", autoCheckThrough === false && !autoCheckStore, JSON.stringify(autoCheckThrough))
   } catch (error) {
     check("renderer 端到端", false, (error as Error).message)
   }

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import { createRoot, createSignal } from "solid-js"
 import { createSessionOwnership } from "@/pages/session/session-ownership"
 

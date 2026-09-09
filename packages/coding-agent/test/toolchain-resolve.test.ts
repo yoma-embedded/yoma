@@ -19,7 +19,7 @@
 // 本测试文件"的范围)。ambiguous 的渲染逻辑本身在 promptSectionFor 的测试里用手
 // 造的 ResolvedTool 覆盖了,决策逻辑(resolveTool 内部 good/bad 分桶)按文件头注释
 // 的规则实现,但这一分支没有端到端测试——如实记录,不假装测到了。
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";

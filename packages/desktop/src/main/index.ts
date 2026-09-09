@@ -72,7 +72,7 @@ const pendingDeepLinks: string[] = []
  *
  * 必须显式传给工具工厂,**不能** 依赖 yoma 的 enginesDir() 向上查找:那个查找只认
  * "名字叫 engines 且存在"的目录,会高高兴兴地找到一个没有 bin/ 的空壳,然后报
- * "去跑 bun engines/build.ts",让人以为是没编译。
+ * "去跑 npm run engines:build",让人以为是没编译。
  */
 /**
  * 把窗口接到内核上。

@@ -9,7 +9,7 @@
  * env 全程显式注入(PATH 空字符串起步)—— 不注入的话这台开发机上真装了什么会悄悄
  * 影响 missing 判定(coding-agent 那几个测试文件同一条纪律)。
  */
-import { afterEach, beforeEach, describe, expect, it } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"

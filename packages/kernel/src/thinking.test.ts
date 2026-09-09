@@ -6,7 +6,7 @@
  * 那就必须有一道闸门盯着两份实现不许分叉。这里直接拿真的 pi-ai 来对答案。
  */
 
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import { clampThinkingLevel, getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai"
 
 import { DEFAULT_THINKING_LEVEL, THINKING_LEVELS, pickThinkingLevel } from "./thinking.ts"

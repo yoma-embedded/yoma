@@ -1,14 +1,13 @@
-#!/usr/bin/env bun
 /**
  * 把评测无头入口打成一个纯 node 产物:`packages/bench/dist/yoma-eval-entry.mjs`。
  *
  * 用途:被 Harbor 这类跑批器上传进任务容器,`node yoma-eval-entry.mjs …` 跑一轮 agent。
- * 容器里只有 node、没有 bun、没有本仓检出,所以内核必须整个 inline —— 与
+ * 容器里只有 node、没有 tsx、没有本仓检出,所以内核必须整个 inline —— 与
  * `packages/desktop/scripts/build-mailbox.ts` 同一个道理、同一份别名表(`KERNEL_ALIASES`,
  * 不新增第五份映射)、同一个 createRequire banner(被 inline 的 CJS 依赖会动态 require
  * node 内置模块)。
  *
- *   bun --cwd packages/bench build:eval
+ *   npm run build:eval -w packages/bench
  *   node packages/bench/dist/yoma-eval-entry.mjs --help
  */
 
@@ -19,7 +18,7 @@ import { build } from "esbuild"
 
 import { KERNEL_ALIASES } from "../../kernel/kernel-alias.ts"
 
-const benchDir = path.resolve(import.meta.dir, "..")
+const benchDir = path.resolve(import.meta.dirname, "..")
 const entry = path.join(benchDir, "src", "eval", "entry.ts")
 const outfile = path.join(benchDir, "dist", "yoma-eval-entry.mjs")
 

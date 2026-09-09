@@ -1,4 +1,3 @@
-#!/usr/bin/env bun
 /**
  * 打包信箱守护的两个纯 node 产物(施工指南 P1):
  *
@@ -9,15 +8,15 @@
  * TS 参数属性,见根 CLAUDE.md"内核接缝"),别名走 KERNEL_ALIASES 同一份 —— 不新增
  * 第五份映射。
  *
- * 走 esbuild 的 **JS API** 而不是 `bunx esbuild`:这条脚本进的是**发布产物管线**
- * (`bun run build` → CI 打包),bunx 每次按 npm latest 解析,既不可复现(esbuild
+ * 走 esbuild 的 **JS API** 而不是 `npx esbuild`:这条脚本进的是**发布产物管线**
+ * (`npm run build` → CI 打包),npx 每次按 npm latest 解析,既不可复现(esbuild
  * 的 0.x minor 会做行为变更,而下面正好依赖 alias 解析与 CJS interop 两处),
  * 离线打包机上还会因为冷缓存直接联网失败。版本钉在根 workspaces.catalog。
  *
  * 产物是 .mjs:desktop 的 package.json 没有 "type":"module",.js 会被 node 当 CJS,
  * 而两个入口都有顶层 await。
  *
- * 挂在 `bun run build` 的 electron-vite 之后跑 —— electron-vite 会清 out/,
+ * 挂在 `npm run build` 的 electron-vite 之后跑 —— electron-vite 会清 out/,
  * 先跑就被清掉。
  */
 
@@ -26,7 +25,7 @@ import path from "node:path"
 
 import { KERNEL_ALIASES } from "../../kernel/kernel-alias.ts"
 
-const desktopDir = path.resolve(import.meta.dir, "..")
+const desktopDir = path.resolve(import.meta.dirname, "..")
 const benchSrc = path.resolve(desktopDir, "..", "bench", "src")
 
 // 只别名 @yoma/* 裸源码树(它们没有 package exports,非别名不可达)。

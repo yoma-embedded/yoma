@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 /**
  * 内核不发结构化错误对象 —— 会话找不到就是一个普通 Error。夹具保留 opencode 的形状,
  * 是因为 isSessionNotFoundError() 仍按 `_tag` 匹配(它要对付历史数据和任何仍这样报错的

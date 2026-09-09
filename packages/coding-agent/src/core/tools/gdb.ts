@@ -324,7 +324,7 @@ export function elfMachine(head: Uint8Array): number | undefined {
 }
 
 /**
- * 按 ELF 的架构挑 gdb。**绝不走 engineBin**:那会抛"跑 `bun engines/build.ts`",
+ * 按 ELF 的架构挑 gdb。**绝不走 engineBin**:那会抛"跑 `npm run engines:build`",
  * 而 build.ts 不该编译交叉工具链 —— 模型会照做、成功、再撞同一个错。
  */
 export function preferredGdbNames(machine: number | undefined): string[] {
@@ -1159,7 +1159,7 @@ export function resolveGdbPath(machine: number | undefined, override?: string): 
 	}
 	throw new Error(
 		`no usable gdb found (tried ${tried.join(", ")} on PATH). Install the Arm GNU Toolchain ` +
-			"(brew install --cask gcc-arm-embedded) or pass gdbPath. Do NOT run `bun engines/build.ts` — gdb is a toolchain binary, not an engine.",
+			"(brew install --cask gcc-arm-embedded) or pass gdbPath. Do NOT run `npm run engines:build` — gdb is a toolchain binary, not an engine.",
 	);
 }
 

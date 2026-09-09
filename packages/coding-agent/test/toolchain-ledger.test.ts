@@ -2,7 +2,7 @@
 // configDir/projectDir 注入确实生效。全程用 mkdtemp 建的临时目录,一次都不碰
 // 真实 ~/.yoma —— 见 ledger.ts 文件头那条硬纪律(Bun 的 os.homedir() 在进程
 // 启动时定死,运行时改 HOME 不管用,注入参数是唯一能隔离测试的办法)。
-import { describe, expect, it, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";

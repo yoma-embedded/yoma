@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import type { FilePart } from "@yoma-desktop/kernel"
 import { attached, kind } from "./message-file"
 

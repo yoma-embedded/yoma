@@ -13,7 +13,7 @@
 // 5. **provides 的每个 id 都要在 families.ts 里有定义**:装完之后 install.ts 要按
 //    findFamilyTool(id) 拿声明的可执行名去记账,查不到就退化成包级 bins,而设置页那
 //    一行压根不会出现 —— 用户装了一个自己看不见的东西。
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 
 import {
 	type CatalogArtifact,

@@ -800,7 +800,7 @@ export const dict = {
   "preflight.auth.missing": "还没配 API key。先在设置里连接一家模型厂商（DeepSeek、Kimi、OpenAI、Anthropic 等）。",
   "preflight.auth.error": "凭据读不出来：{{detail}}",
   "preflight.engines.missingDir": "找不到调试引擎目录。",
-  "preflight.engines.emptyShell": "调试引擎目录是空壳（没有 bin/）。安装包请重装 Yoma；源码请在仓库根跑 bun engines/build.ts。",
+  "preflight.engines.emptyShell": "调试引擎目录是空壳（没有 bin/）。安装包请重装 Yoma；源码请在仓库根跑 npm run engines:build。",
   "preflight.engines.missingBin": "调试引擎缺：{{missing}}。安装包请重装 Yoma。",
   "preflight.toolchain.title": "上手提示",
   "preflight.toolchain.unconfigured": "本机工具链还没配置。按芯片平台一次配好，之后所有会话都直接认得。",

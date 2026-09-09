@@ -5,7 +5,8 @@
  * 的证据。
  */
 
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "vitest"
+import { readFile } from "node:fs/promises"
 import { writeFileSync } from "node:fs"
 import path from "node:path"
 
@@ -118,14 +119,14 @@ describe("mailbox 闭环", () => {
 
     // 产物真的穿过了信箱,并落到工位端的一次性工作目录里。
     expect(snapshot.rounds[1]!.instruction?.artifacts?.[0]?.name).toBe("fw.elf")
-    expect(await Bun.file(path.join(verify, "rounds", "002", "artifacts", "fw.elf")).text()).toBe("NEW-ELF")
+    expect(await readFile(path.join(verify, "rounds", "002", "artifacts", "fw.elf"), "utf8")).toBe("NEW-ELF")
     expect(snapshot.rounds[1]!.result?.incoming).toEqual(["fw.elf"])
-    expect(await Bun.file(path.join(benchWorkspace, "fw.elf")).text()).toBe("NEW-ELF")
+    expect(await readFile(path.join(benchWorkspace, "fw.elf"), "utf8")).toBe("NEW-ELF")
 
     // 代码改动是**研发端**做的,提交在 agent 分支上,补丁随轮 2 的指令走。
     expect(snapshot.rounds[1]!.decision?.git).toBeUndefined() // 终局那一裁不下发下一轮,不带改动
     expect(snapshot.rounds[0]!.decision?.git?.changedFiles.join()).toContain("usart.c")
-    expect(await Bun.file(path.join(verify, "rounds", "002", "patch.diff")).text()).toContain("usart.c")
+    expect(await readFile(path.join(verify, "rounds", "002", "patch.diff"), "utf8")).toContain("usart.c")
     expect((await runGitReal(["rev-parse", "--abbrev-ref", "HEAD"], target)).stdout).toBe("agent/m-1")
 
     // 轮 2 的提示词确实是"附件清单 + 研发端指令"。
@@ -133,7 +134,7 @@ describe("mailbox 闭环", () => {
     expect(runnerPrompts[1]).toContain("弄上板")
 
     // 终报讲的是决策链,两个会话都可回放。
-    const report = await Bun.file(path.join(verify, "report.md")).text()
+    const report = await readFile(path.join(verify, "report.md"), "utf8")
     expect(report).toContain("决策链")
     expect(report).toContain("ses-debug")
     expect(report).toContain("ses-mother")

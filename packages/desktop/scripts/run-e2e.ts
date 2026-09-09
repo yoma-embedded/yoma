@@ -1,13 +1,12 @@
-#!/usr/bin/env bun
 /**
  * 跨平台启动 e2e:* —— package.json 里不能再写死 macOS 的 Electron.app 路径,
  * 也不能依赖 Unix 的 `$PWD` 环境变量展开(Windows CI 上两者都会静默跑错)。
  *
- *   bun ./scripts/run-e2e.ts ipc
- *   bun ./scripts/run-e2e.ts renderer
- *   bun ./scripts/run-e2e.ts mailbox
+ *   tsx ./scripts/run-e2e.ts ipc
+ *   tsx ./scripts/run-e2e.ts renderer
+ *   tsx ./scripts/run-e2e.ts mailbox
  *
- * 前置:bun --cwd packages/desktop run build
+ * 前置:npm run build -w packages/desktop
  */
 import { spawnSync } from "node:child_process"
 import { existsSync, mkdirSync } from "node:fs"
@@ -24,7 +23,7 @@ const KIND = {
 
 const kind = process.argv[2]
 if (kind !== "ipc" && kind !== "renderer" && kind !== "mailbox") {
-  console.error("用法: bun ./scripts/run-e2e.ts <ipc|renderer|mailbox>")
+  console.error("用法: tsx ./scripts/run-e2e.ts <ipc|renderer|mailbox>")
   process.exit(2)
 }
 
@@ -32,7 +31,7 @@ const here = dirname(fileURLToPath(import.meta.url))
 const desktop = join(here, "..")
 const kernel = join(desktop, "out", "main", "kernel.js")
 if (!existsSync(kernel)) {
-  console.error(`没有构建产物 ${kernel} —— 先跑 bun --cwd packages/desktop run build`)
+  console.error(`没有构建产物 ${kernel} —— 先跑 npm run build -w packages/desktop`)
   process.exit(1)
 }
 

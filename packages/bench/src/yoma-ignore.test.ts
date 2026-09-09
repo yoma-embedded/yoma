@@ -9,7 +9,7 @@
  * 用真 git 的 check-ignore 来钉,因为这条规则的唯一裁判就是 git 自己。
  */
 
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "vitest"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import { tmpdir } from "node:os"

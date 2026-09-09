@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, test } from "bun:test"
-import { mkdirSync, writeFileSync } from "node:fs"
+import { afterEach, describe, expect, test } from "vitest"
+import { readFile } from "node:fs/promises"
+import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import path from "node:path"
 
 import { runGitReal } from "../git.ts"
@@ -86,12 +87,12 @@ describe("mailbox runner", () => {
     expect(prompts[0]).toContain("先复现:上电看日志")
 
     const verify = await freshClone(temp, mailbox.bare)
-    const result = (await Bun.file(path.join(verify, "rounds", "001", "result.json")).json()) as RoundResultFile
+    const result = (JSON.parse(await readFile(path.join(verify, "rounds", "001", "result.json"), "utf8"))) as RoundResultFile
     expect(result.round).toBe(1)
     expect(result.spentTokens).toBe(300)
     expect(result.turn?.text).toBe("我看了一圈")
 
-    const session = (await Bun.file(path.join(workRoot, "m-1", "session.json")).json()) as { sessionID: string }
+    const session = (JSON.parse(await readFile(path.join(workRoot, "m-1", "session.json"), "utf8"))) as { sessionID: string }
     expect(session.sessionID).toBe("ses-1")
   })
 
@@ -122,13 +123,13 @@ describe("mailbox runner", () => {
     expect(outcome.kind).toBe("ran")
 
     // 文件真的躺在工作目录里,而且提示词里给的是那个名字。
-    expect(await Bun.file(path.join(workspaceOf(workRoot), "fw.elf")).text()).toBe("NEW-ELF")
+    expect(await readFile(path.join(workspaceOf(workRoot), "fw.elf"), "utf8")).toBe("NEW-ELF")
     expect(prompts[0]).toContain("fw.elf")
     // 怎么上板不由协议规定 —— 提示词只说"怎么用由你判断"。
     expect(prompts[0]).toContain("怎么用由你判断")
 
     const verify = await freshClone(temp, mailbox.bare)
-    const result = (await Bun.file(path.join(verify, "rounds", "001", "result.json")).json()) as RoundResultFile
+    const result = (JSON.parse(await readFile(path.join(verify, "rounds", "001", "result.json"), "utf8"))) as RoundResultFile
     expect(result.incoming).toEqual(["fw.elf"])
   })
 
@@ -151,17 +152,17 @@ describe("mailbox runner", () => {
     expect(outcome.kind).toBe("ran")
 
     const verify = await freshClone(temp, mailbox.bare)
-    expect(await Bun.file(path.join(verify, "rounds", "001", "back", "capture", "ch2.csv")).text()).toContain("t,iq")
-    const result = (await Bun.file(path.join(verify, "rounds", "001", "result.json")).json()) as RoundResultFile
+    expect(await readFile(path.join(verify, "rounds", "001", "back", "capture", "ch2.csv"), "utf8")).toContain("t,iq")
+    const result = (JSON.parse(await readFile(path.join(verify, "rounds", "001", "result.json"), "utf8"))) as RoundResultFile
     expect(result.back?.map((item) => item.name)).toEqual(["capture/ch2.csv"])
     // 自述全文另存一份:提示词里只进节选,细节让研发端自己去读。
-    expect(await Bun.file(path.join(verify, "rounds", "001", "bench-report.md")).text()).toContain("采完了")
+    expect(await readFile(path.join(verify, "rounds", "001", "bench-report.md"), "utf8")).toContain("采完了")
 
     // 收过的移进 .sent(工位机留底),投递目录里不再有 —— 下一轮扫的是空目录,
     // 同一份采集不会被传第二次。
     const workspace = workspaceOf(workRoot)
-    expect(await Bun.file(path.join(workspace, "outbox", "capture", "ch2.csv")).exists()).toBe(false)
-    expect(await Bun.file(path.join(workspace, "outbox", ".sent", "001", "capture", "ch2.csv")).exists()).toBe(true)
+    expect(existsSync(path.join(workspace, "outbox", "capture", "ch2.csv"))).toBe(false)
+    expect(existsSync(path.join(workspace, "outbox", ".sent", "001", "capture", "ch2.csv"))).toBe(true)
   })
 
   test("推送失败时投递目录原封不动 —— 下一轮还能把同一份采集送出去", async () => {
@@ -187,8 +188,8 @@ describe("mailbox runner", () => {
     // 归档发生在推送成功之后 —— 否则下一次 pullReset 的 clean -fd 会把没提交的
     // back/ 抹掉,而投递目录已经空了:那一轮的采集就永远回不去研发端。
     const workspace = workspaceOf(workRoot)
-    expect(await Bun.file(path.join(workspace, "outbox", "ch2.csv")).exists()).toBe(true)
-    expect(await Bun.file(path.join(workspace, "outbox", ".sent", "001", "ch2.csv")).exists()).toBe(false)
+    expect(existsSync(path.join(workspace, "outbox", "ch2.csv"))).toBe(true)
+    expect(existsSync(path.join(workspace, "outbox", ".sent", "001", "ch2.csv"))).toBe(false)
   })
 
   test("ASK-HUMAN.txt 抬成人工请求,不当附件传", async () => {
@@ -208,11 +209,11 @@ describe("mailbox runner", () => {
     )
 
     const verify = await freshClone(temp, mailbox.bare)
-    const result = (await Bun.file(path.join(verify, "rounds", "001", "result.json")).json()) as RoundResultFile
+    const result = (JSON.parse(await readFile(path.join(verify, "rounds", "001", "result.json"), "utf8"))) as RoundResultFile
     expect(result.needsHuman).toContain("24V")
     // 它是"这轮卡在人身上"的信号,不是一件要送给研发端的资料。
     expect(result.back).toBeUndefined()
-    expect(await Bun.file(path.join(verify, "rounds", "001", "back", "ASK-HUMAN.txt")).exists()).toBe(false)
+    expect(existsSync(path.join(verify, "rounds", "001", "back", "ASK-HUMAN.txt"))).toBe(false)
   })
 
   test("挂起等人时工位端空转:不跑轮、把请求原样报给宿主", async () => {
@@ -318,7 +319,7 @@ describe("mailbox runner", () => {
 
     await runnerStep(opts) // 轮 2:300 + 300
     const verify = await freshClone(temp, mailbox.bare)
-    const result = (await Bun.file(path.join(verify, "rounds", "002", "result.json")).json()) as RoundResultFile
+    const result = (JSON.parse(await readFile(path.join(verify, "rounds", "002", "result.json"), "utf8"))) as RoundResultFile
     expect(result.spentTokens).toBe(600)
   })
 
@@ -347,7 +348,7 @@ describe("mailbox runner", () => {
     await runnerStep(opts) // 轮 2:带旧 sessionID 失败 → 如实回填 + 丢掉指针
 
     const verify = await freshClone(temp, mailbox.bare)
-    const failed = (await Bun.file(path.join(verify, "rounds", "002", "result.json")).json()) as RoundResultFile
+    const failed = (JSON.parse(await readFile(path.join(verify, "rounds", "002", "result.json"), "utf8"))) as RoundResultFile
     expect(failed.error).toContain("agent 轮执行失败")
 
     await writeDecision(mailbox.motherClone, {

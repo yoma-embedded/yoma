@@ -16,7 +16,7 @@
  *    (账本 by:"user")前置进同一条 PATH,by:"auto" 的不前置;装完 refreshMachineEnv()
  *    让**已经开着的**会话下一条命令就看得见,不用重开。
  */
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "vitest"
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"

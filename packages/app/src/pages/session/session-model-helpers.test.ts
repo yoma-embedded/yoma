@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import type { UserMessage } from "@yoma-desktop/kernel"
 import { resetSessionModel, syncSessionModel } from "./session-model-helpers"
 

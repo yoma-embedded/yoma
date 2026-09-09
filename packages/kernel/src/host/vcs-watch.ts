@@ -22,7 +22,7 @@ import { vcsInfo } from "./services.ts"
 
 export interface VcsWatchOptions {
   emit(directory: string, info: VcsInfo): void
-  /** 去抖窗口。一次保存、一次 bun install 都是一串事件,只刷一次。 */
+  /** 去抖窗口。一次保存、一次 npm install 都是一串事件,只刷一次。 */
   debounceMs?: number
   /** 最多同时盯几个目录;超过按最久没用过的关掉。 */
   maxWatchers?: number

@@ -1,6 +1,6 @@
 // 合并预检(preflight.ts + renderPreflightReport)验收:每类重叠一个用例、
 // 归一规则、同条目内部重复不算、盲区与纪律提醒、跨生态早退。全部纯函数,零 IO。
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 
 import {
 	checkMergeConflicts,

@@ -1,11 +1,11 @@
-#!/usr/bin/env bun
-
-import { $ } from "bun"
+import { readFileSync, writeFileSync } from "node:fs"
 import { rm } from "node:fs/promises"
 import path from "node:path"
+import { pathToFileURL } from "node:url"
+import { $ } from "../../../scripts/shell.ts"
 
 export async function pack() {
-  const original = await Bun.file("package.json").text()
+  const original = readFileSync("package.json", "utf8")
   const pkg = JSON.parse(original) as {
     name: string
     version: string
@@ -13,7 +13,7 @@ export async function pack() {
   }
   const tarball = path.resolve(`${pkg.name.replace("@", "").replace("/", "-")}-${pkg.version}.tgz`)
 
-  await $`bun run build`
+  await $`npm run build`
   pkg.exports = Object.fromEntries(
     Object.entries(pkg.exports).map(([key, value]) => {
       if (typeof value !== "string" || (!value.endsWith(".ts") && !value.endsWith(".tsx"))) return [key, value]
@@ -28,13 +28,13 @@ export async function pack() {
   )
 
   await rm(tarball, { force: true })
-  await Bun.write("package.json", JSON.stringify(pkg, null, 2) + "\n")
+  writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n")
   try {
-    await $`bun pm pack`
+    await $`npm pack`
     return tarball
   } finally {
-    await Bun.write("package.json", original)
+    writeFileSync("package.json", original)
   }
 }
 
-if (import.meta.main) console.log(await pack())
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) console.log(await pack())

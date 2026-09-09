@@ -1,4 +1,6 @@
-import { expect, test } from "bun:test"
+import { expect, test } from "vitest"
+import { readFile } from "node:fs/promises"
+import { join } from "node:path"
 import type { Configuration } from "electron-builder"
 
 const legacyDesktopEntry = "resources/linux/opencode-desktop.desktop"
@@ -14,7 +16,7 @@ for (const channel of channels) {
     const previous = process.env.YOMA_CHANNEL
     process.env.YOMA_CHANNEL = channel.channel
 
-    const module = await import(`./electron-builder.config.ts?channel=${channel.channel}`)
+    const module = await import(/* @vite-ignore */ (`./electron-builder.config.ts?channel=${channel.channel}` as string))
     const config = module.default as Configuration
 
     if (previous === undefined) delete process.env.YOMA_CHANNEL
@@ -37,7 +39,7 @@ test("没有 Apple 公证凭据时降级为不公证、dmg 不签名,而不是�
   delete process.env.APPLE_APP_SPECIFIC_PASSWORD
   delete process.env.APPLE_KEYCHAIN_PROFILE
 
-  const module = await import("./electron-builder.config.ts?nocreds=1")
+  const module = await import(/* @vite-ignore */ ("./electron-builder.config.ts?nocreds=1" as string))
   const config = module.default as Configuration
 
   for (const [key, value] of Object.entries(saved)) {
@@ -53,16 +55,16 @@ test("keeps a hidden prod launcher for old Linux pins", async () => {
   const previous = process.env.YOMA_CHANNEL
   process.env.YOMA_CHANNEL = "prod"
 
-  const module = await import("./electron-builder.config.ts?compat=prod")
+  const module = await import(/* @vite-ignore */ ("./electron-builder.config.ts?compat=prod" as string))
   const config = module.default as Configuration
 
   if (previous === undefined) delete process.env.YOMA_CHANNEL
   else process.env.YOMA_CHANNEL = previous
 
-  expect(config.deb?.fpm?.[0]).toEndWith(`${legacyDesktopEntry}=/usr/share/applications/opencode-desktop.desktop`)
-  expect(config.rpm?.fpm?.[0]).toEndWith(`${legacyDesktopEntry}=/usr/share/applications/opencode-desktop.desktop`)
+  expect(config.deb?.fpm?.[0].endsWith(`${legacyDesktopEntry}=/usr/share/applications/opencode-desktop.desktop`)).toBe(true)
+  expect(config.rpm?.fpm?.[0].endsWith(`${legacyDesktopEntry}=/usr/share/applications/opencode-desktop.desktop`)).toBe(true)
 
-  const desktop = await Bun.file(legacyDesktopEntry).text()
+  const desktop = await readFile(join(import.meta.dirname, legacyDesktopEntry), "utf8")
   expect(desktop).toContain("Exec=/opt/OpenCode/ai.opencode.desktop %U")
   expect(desktop).toContain("Icon=ai.opencode.desktop")
   expect(desktop).toContain("StartupWMClass=ai.opencode.desktop")

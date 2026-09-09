@@ -5,7 +5,7 @@
  * 末尾 —— 一次五轮的任务里每一轮都超限,第一轮丢掉 44%,丢的正好是结论那半。
  */
 
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 
 import { motherFollowUpPrompt, type MotherPromptInput } from "./prompts.ts"
 import { parseMailboxJob } from "./spec.ts"

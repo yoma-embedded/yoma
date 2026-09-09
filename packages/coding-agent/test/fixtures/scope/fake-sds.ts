@@ -23,7 +23,7 @@ import { readFileSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
 
-const FIXTURE_DIR = import.meta.dir;
+const FIXTURE_DIR = import.meta.dirname;
 
 /** `:WAVeform:PREamble?` 的真机响应(块头 + 346 字节 WAVEDESC + 换行),原样回。 */
 export const PREAMBLE_RESPONSE = new Uint8Array(readFileSync(join(FIXTURE_DIR, "preamble.bin")));

@@ -832,7 +832,7 @@ export const dict = {
   "preflight.auth.missing": "No API key. Connect a provider (DeepSeek, Kimi, OpenAI, Anthropic, …) in Settings first.",
   "preflight.auth.error": "Credentials unreadable: {{detail}}",
   "preflight.engines.missingDir": "Debug engines folder is missing.",
-  "preflight.engines.emptyShell": "Debug engines folder has no binaries. Reinstall Yoma (or run bun engines/build.ts in a source checkout).",
+  "preflight.engines.emptyShell": "Debug engines folder has no binaries. Reinstall Yoma (or run npm run engines:build in a source checkout).",
   "preflight.engines.missingBin": "Debug engines missing: {{missing}}. Reinstall Yoma.",
   "preflight.toolchain.title": "Getting set up",
   "preflight.toolchain.unconfigured":

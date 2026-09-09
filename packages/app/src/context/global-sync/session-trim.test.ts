@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import type { Session } from "@yoma-desktop/kernel"
 import { trimSessions } from "./session-trim"
 

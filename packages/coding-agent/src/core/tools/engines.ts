@@ -11,7 +11,7 @@
  * 带 shell 初始化和面向交互的输出截断;引擎调用需要 argv 精确传参、JSON 原样收集。
  *
  * 布局只有一种:engines/bin/ 放全部可执行文件,engines/data/<name>/ 放数据。
- * `bun engines/build.ts` 构建后用符号链接填充;打包时由 desktop 的
+ * `npm run engines:build` 构建后用符号链接填充;打包时由 desktop 的
  * `scripts/stage-engines.ts` 把同样的 bin/ + data/ 布局实体化(dereference)到
  * `.engines-stage/` 再进 extraResources,这里的代码不变(electron-builder 对
  * extraResources 里的软链原样保留,所以必须实体化)。测试用假引擎时通过 options
@@ -69,7 +69,7 @@ export function findEnginesDir(start: string): string {
 			throw new Error(
 				"engines/ directory not found." +
 					skipNote +
-					" Run `bun engines/build.ts` to build and install.",
+					" Run `npm run engines:build` to build and install.",
 			);
 		}
 		dir = parent;
@@ -83,9 +83,9 @@ export function enginesDir(): string {
 function engineMissingMessage(name: string, file: string, root: string): string {
 	const isSourceCheckout = existsSync(path.join(root, "build.ts"));
 	if (isSourceCheckout) {
-		return `\`${name}\` not found at ${file}. This is the repo engines directory — run \`bun engines/build.ts\` from the repository root.`;
+		return `\`${name}\` not found at ${file}. This is the repo engines directory — run \`npm run engines:build\` from the repository root.`;
 	}
-	return `\`${name}\` not found at ${file}. The packaged debug engines are missing — reinstall Yoma. This is not a source checkout, so \`bun engines/build.ts\` will not help.`;
+	return `\`${name}\` not found at ${file}. The packaged debug engines are missing — reinstall Yoma. This is not a source checkout, so \`npm run engines:build\` will not help.`;
 }
 
 /** engines/bin/ 下的可执行文件,如 engineBin("stm32kernel")。缺席时给修复指引。 */
@@ -106,7 +106,7 @@ export function engineBin(name: string, options?: EnginePathOptions): string {
 export function engineDataDir(name: string, options?: EnginePathOptions): string {
 	const dir = path.join(options?.enginesDir ?? enginesDir(), "data", name);
 	if (!existsSync(dir)) {
-		throw new Error(`engine data \`${name}\` not found at ${dir}. Run \`bun engines/build.ts\` to install it.`);
+		throw new Error(`engine data \`${name}\` not found at ${dir}. Run \`npm run engines:build\` to install it.`);
 	}
 	return dir;
 }

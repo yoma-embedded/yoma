@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { expect, test } from "vitest"
 import { createRoot, createSignal } from "solid-js"
 import { createPromptInputTransientState } from "@/components/prompt-input/transient-state"
 

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import type { AssistantMessage, Message, Part, Session, VcsInfo } from "@yoma-desktop/kernel"
 import { createStore } from "solid-js/store"
 import type { State } from "./types"

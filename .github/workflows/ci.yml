@@ -9,9 +9,8 @@ permissions:
   contents: read
 
 # 干净克隆后的闸门分两半,入口必须和本地同一条:
-#   check    —— Ubuntu: typecheck + `bun run test`(根上唯一全量单测入口,不是裸 bun test)
+#   check    —— Ubuntu: typecheck + `npm test`(vitest 全量)
 #   desktop  —— Windows(主支持平台): 进程树清理回归 + 生产构建 + 引擎 + smoke + 关键 Electron E2E
-# 裸 `bun test` 会扫到 vitest / DOM / 平台专用文件,红一片是跑法不对。
 
 jobs:
   check:
@@ -19,35 +18,28 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
         with:
-          bun-version: "1.3.14"
+          node-version: "24"
+          cache: npm
       - name: 安装依赖
-        run: bun install --frozen-lockfile
+        run: npm ci
       - name: 类型检查
-        run: bun typecheck
+        run: npm run typecheck
       - name: 单测
-        run: bun run test
+        run: npm test
 
   desktop:
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
         with:
-          bun-version: "1.3.14"
-      # bun 在 Windows runner 上偶发 "EBUSY: failed to link binaries for package: …"(2026-09-06 撞过一次,
-      # 同一提交重跑即绿):刚写下的文件被 Defender 扫描攥着句柄。重试一次比整轮红了再手点重跑便宜。
+          node-version: "24"
+          cache: npm
       - name: 安装依赖
-        shell: pwsh
-        run: |
-          bun install --frozen-lockfile
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "::warning::bun install 失败(多半是 Windows 上的 EBUSY 抖动),重试一次"
-            bun install --frozen-lockfile
-          }
-          if ($LASTEXITCODE -ne 0) { exit 1 }
+        run: npm ci
       # Windows 是主支持平台。agent(185)与 kernel(94)一直在这里跑;coding-agent 从前有 46 个用例的夹具
       # 写死 /bin/echo 与 .sh 脚本,2026-09-06 把夹具改成 JS + 按平台启动器(test/fixtures/fake-exe.ts)
       # 之后整包在 Windows 上全绿(854 过 / 44 跳过),加进来 —— 这是唯一能抓住"只在 Windows 上卡死"
@@ -55,7 +47,7 @@ jobs:
       # bench 还有 5 个依赖 POSIX shell 的 mailbox 用例(路径断言、autocrlf、5 s 超时),先不加。
       # desktop 的单测(更新器状态机、信箱控制器等)是纯 Node 逻辑,Windows 上照跑。
       - name: 内核单测(agent + kernel + coding-agent + desktop,Windows 岗)
-        run: bun test packages/agent && bun --cwd packages/kernel test && bun --cwd packages/coding-agent test && bun --cwd packages/desktop test
+        run: npx vitest run --project agent --project kernel --project coding-agent --project desktop
       - name: 下载 Electron 二进制
         shell: pwsh
         run: |
@@ -64,7 +56,7 @@ jobs:
           } elseif (Test-Path node_modules/electron/install.js) {
             node node_modules/electron/install.js
           } else {
-            throw "electron install.js not found after bun install"
+            throw "electron install.js not found after npm ci"
           }
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -75,12 +67,12 @@ jobs:
       # irpack 是 CubeMX 解析产物,不进 git。没 CubeMX 的 runner 上 build.ts 跳过导入,
       # smoke 跳过 STM32 配置闸门;网表引擎和内核其它工具照验。
       - name: 构建引擎
-        run: bun engines/build.ts
+        run: npm run engines:build
       - name: 生产构建
-        run: bun build:desktop
+        run: npm run build:desktop
       - name: 内核冒烟
-        run: bun --cwd packages/desktop smoke
+        run: npm run smoke -w packages/desktop
       - name: 内核 IPC 端到端
-        run: bun --cwd packages/desktop e2e:ipc
+        run: npm run e2e:ipc -w packages/desktop
       - name: renderer contextBridge 端到端
-        run: bun --cwd packages/desktop e2e:renderer
+        run: npm run e2e:renderer -w packages/desktop

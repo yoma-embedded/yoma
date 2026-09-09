@@ -215,7 +215,7 @@ const PROMPT_GUIDELINES = [
 	'Read the scoring reasons on every examples hit; never use an entry whose targets exclude your chip, and treat empty targets as "verify yourself", not "supported".',
 ];
 
-const CLI = "bun packages/coding-agent/src/core/examples/cli.ts";
+const CLI = "tsx packages/coding-agent/src/core/examples/cli.ts";
 
 function requireId(params: ExamplesToolInput): string {
 	if (!params.id || params.id.trim() === "") {

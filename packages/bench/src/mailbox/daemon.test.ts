@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "vitest"
+import { readFile } from "node:fs/promises"
 import { writeFileSync } from "node:fs"
 import path from "node:path"
 
@@ -70,7 +71,7 @@ describe("daemon 护具", () => {
   test("锁目录自带 .gitignore(pullReset 的 clean 不会把锁清掉)", async () => {
     const clone = temp.dir("lock-")
     await acquireRoleLock(clone, "runner")
-    expect(await Bun.file(path.join(clone, ".yoma-lock", ".gitignore")).text()).toContain("*")
+    expect(await readFile(path.join(clone, ".yoma-lock", ".gitignore"), "utf8")).toContain("*")
   })
 
   test("blocked 退避指数上升并封顶;恢复即回到轮询间隔", () => {

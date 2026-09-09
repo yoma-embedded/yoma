@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import type { AgentMessage } from "@yoma/agent"
 import { overflowAction, shouldAutoCompact } from "./compaction.ts"
 import type { AssistantMessage } from "@earendil-works/pi-ai"

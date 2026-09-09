@@ -7,7 +7,7 @@
 import { basename, delimiter, join } from "node:path";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseVersion, probeVersion, PROBE_TIMEOUT_MS, satisfies } from "../src/core/toolchain/version.ts";
 
 let dir: string;

@@ -1,7 +1,0 @@
-# 注意:这里**没有** [test] root。
-#
-# 合库之前 yoma 根上有 `[test] root = "packages/agent"`;合库之后那条会把桌面端
-# 6 个包的测试一起劫走,所以删掉。
-#
-# 全量测试用 `bun run test`(根 package.json 里逐包显式列出),
-# 单包用 `bun --cwd packages/<name> test`。裸 `bun test` 在根上不是入口。

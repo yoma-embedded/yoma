@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import { Cause, Deferred, Effect, Exit, Fiber } from "effect"
 import { forwardInitializationFailure } from "./initialization"
 

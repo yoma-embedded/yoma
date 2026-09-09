@@ -3,7 +3,7 @@
  * 守护 spawn / 杀树的真行为在 e2e-mailbox-ipc 里钉,这里不重复。
  */
 
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "vitest"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
@@ -53,12 +53,12 @@ describe("composeJob", () => {
     )
 
     const main = makeMain()
-    const composed = await main.composeJob({ templatePath, description: "修 CAN 掉帧", tier: "quick" })
+    const composed = await main.composeJob({ templatePath, description: "修 CAN 掉帧" })
     expect(composed.ok).toBe(true)
 
     const job = JSON.parse(readFileSync(composed.jobFile!, "utf8")) as Record<string, unknown>
     expect(job.task).toBe("修 CAN 掉帧")
-    expect(String(job.id)).toStartWith("foc-")
+    expect(String(job.id).startsWith("foc-")).toBe(true)
     // 任务书要在另一台机器上被读:绝对路径一律不进去,工程根只回给本机。
     expect((job.repo as { directory?: string }).directory).toBeUndefined()
     expect((job.repo as { name: string }).name).toBe("foc")
@@ -72,7 +72,7 @@ describe("composeJob", () => {
     const templatePath = path.join(project, "t.json")
     writeFileSync(templatePath, JSON.stringify({ task: "1. 绝不能让电机转动。", success: { checks: [] } }))
     const main = makeMain()
-    const composed = await main.composeJob({ templatePath, description: "修 CAN 掉帧", tier: "quick" })
+    const composed = await main.composeJob({ templatePath, description: "修 CAN 掉帧" })
     const job = JSON.parse(readFileSync(composed.jobFile!, "utf8")) as { task: string }
     expect(job.task).toContain("绝不能让电机转动")
     expect(job.task).toContain("修 CAN 掉帧")
@@ -86,7 +86,7 @@ describe("composeJob", () => {
       JSON.stringify({ repo: { directory: "D:\\work\\fw", branch: "agent/foc" }, success: { checks: [] } }),
     )
     const main = makeMain()
-    const composed = await main.composeJob({ templatePath, description: "x", tier: "standard" })
+    const composed = await main.composeJob({ templatePath, description: "x" })
     const job = JSON.parse(readFileSync(composed.jobFile!, "utf8")) as { repo: { directory?: string; branch: string } }
     expect(job.repo.directory).toBeUndefined()
     // 模板声明的路径比推导更可信 —— 但它是**本机事实**,只能走 projectDir 这条路。
@@ -100,7 +100,6 @@ describe("composeJob", () => {
     const bad = await main.composeJob({
       templatePath: path.join(tempDir("x-"), "missing.json"),
       description: "x",
-      tier: "quick",
     })
     expect(bad.ok).toBe(false)
     expect(bad.message).toContain("模板读不出来")
@@ -108,7 +107,7 @@ describe("composeJob", () => {
     const project = tempDir("proj-")
     const templatePath = path.join(project, "t.json")
     writeFileSync(templatePath, "{}")
-    const empty = await main.composeJob({ templatePath, description: "   ", tier: "quick" })
+    const empty = await main.composeJob({ templatePath, description: "   " })
     expect(empty.ok).toBe(false)
   })
 })

@@ -18,7 +18,7 @@ import { join } from "node:path";
  */
 export function writeFakeExe(dir: string, name: string, js: string): string {
 	mkdirSync(dir, { recursive: true });
-	const script = join(dir, `${name}.js`);
+	const script = join(dir, `${name}.mjs`);
 	writeFileSync(script, js);
 	const launcher = join(dir, fakeExeName(name));
 	if (process.platform === "win32") {

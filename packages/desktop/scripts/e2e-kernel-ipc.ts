@@ -7,7 +7,7 @@
  *
  * 刻意不开窗口:验证接线不需要 GUI,也就不会去动任何正在跑的 dev 会话。
  *
- * 用法:bun --cwd packages/desktop e2e:ipc(先 bun --cwd packages/desktop run build)
+ * 用法:npm run e2e:ipc -w packages/desktop(先 npm run build -w packages/desktop)
  */
 
 import { app, MessageChannelMain, utilityProcess } from "electron"

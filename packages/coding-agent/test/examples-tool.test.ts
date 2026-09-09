@@ -2,7 +2,7 @@
 // seed 的拒绝路径 + generic 语料(零命中提示、单文件 seed、下一步文案)+ sync 清单。
 // 检索/抽取的行为在 core/examples 各测试里已经覆盖,这里只验"参数 -> core 调用 ->
 // 渲染/details"这条工具层。configDir 全程 mkdtemp 注入;sync 用本地假服务器,零网络。
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
@@ -23,7 +23,7 @@ import {
 } from "../src/core/examples/index.ts";
 import { createExamplesToolDefinition } from "../src/core/tools/examples.ts";
 
-const ESP_ROOT = join(import.meta.dir, "fixtures", "examples", "esp-idf-mini");
+const ESP_ROOT = join(import.meta.dirname, "fixtures", "examples", "esp-idf-mini");
 const CORPUS_ID = "esp-idf@fixture";
 const MQTT_ID = `${CORPUS_ID}/examples/protocols/mqtt/tcp`;
 

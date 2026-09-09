@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import type { ContentPart } from "@/context/prompt"
 import { createPromptAttachmentsCore } from "./attachments"
 import { attachmentMime, pickAttachmentFiles } from "./files"

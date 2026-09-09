@@ -49,7 +49,7 @@ export function parseCliArgs(args: string[]) {
 
 export const CLI_HELP = `Yoma CLI — 当前 Harness 的独立终端入口
 
-用法：bun run cli [选项] [提示词]
+用法：npm run cli [选项] [提示词]
   --cwd <目录>              工程目录，默认当前目录
   -p, --print               执行一次后退出；非终端 stdin 也作为提示词
   -c, --continue            恢复该工程最近修改的 CLI 会话

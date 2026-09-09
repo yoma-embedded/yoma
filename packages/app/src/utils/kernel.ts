@@ -10,7 +10,7 @@
  * 1. **模块级 const 单例**,不是工厂。调用点写 `kernel.session.list({ directory })`,
  *    和原来的 `sdk.session.list(...)` 只差一个 import 说明符。
  * 2. **传输是懒解析的**。`createKernelClient` 本身不碰 transport(只是闭包),但
- *    `window.api` 在 web host 和 bun 单测里根本不存在;如果在模块求值时就去读它,
+ *    `window.api` 在 web host 和 vitest 单测里根本不存在;如果在模块求值时就去读它,
  *    任何间接 import 到本文件的测试都会在 import 阶段炸掉。所以这里包一层转发,
  *    真正取 `window.api.kernel` 推迟到第一次 request/subscribe。
  */

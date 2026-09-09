@@ -4,7 +4,7 @@
 #   推送 tag `v*`               → 当场编引擎、构建 prod、验收安装包、创建正式 Release。
 #
 # 引擎来源:
-#   tag `v*` 和 engines=build —— 当场 `bun engines/build.ts --dist`
+#   tag `v*` 和 engines=build —— 当场 `npm run engines:build -- --dist`
 #                               (cargo + PyInstaller + MSYS2 编 yoma-la)。
 #                               不依赖另一份 engines-v* Release。
 #   engines=prebuilt(仅手动触发的默认)—— 按 packages/desktop/engines.lock.json 下载。
@@ -62,21 +62,13 @@ jobs:
             throw "tag $tag 与 packages/desktop/package.json 的版本 $version 不一致"
           }
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
         with:
-          bun-version: "1.3.14"
+          node-version: "24"
+          cache: npm
 
-      # bun 在 Windows runner 上偶发 "EBUSY: failed to link binaries for package: …"(2026-09-06 ci 的 Windows 岗
-      # 撞过一次,同一提交重跑即绿):刚写下的文件被 Defender 扫描攥着句柄。重试一次比整轮红了再手点重跑便宜。
       - name: 安装依赖
-        shell: pwsh
-        run: |
-          bun install --frozen-lockfile
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "::warning::bun install 失败(多半是 Windows 上的 EBUSY 抖动),重试一次"
-            bun install --frozen-lockfile
-          }
-          if ($LASTEXITCODE -ne 0) { exit 1 }
+        run: npm ci
 
       - name: 下载 Electron 二进制
         shell: pwsh
@@ -86,7 +78,7 @@ jobs:
           } elseif (Test-Path node_modules/electron/install.js) {
             node node_modules/electron/install.js
           } else {
-            throw "electron install.js not found after bun install"
+            throw "electron install.js not found after npm ci"
           }
 
       - uses: dtolnay/rust-toolchain@stable
@@ -122,13 +114,13 @@ jobs:
         if: env.BUILD_ENGINES == 'true'
         env:
           YOMA_LA_MSYS2: ${{ format('{0}\msys64', runner.temp) }}
-        run: bun engines/build.ts --dist --allow-missing-irpacks --out engines-dist
+        run: npm run engines:build -- --dist --allow-missing-irpacks --out engines-dist
 
       - name: 构建 renderer / main / preload
         env:
           # tag 没有 workflow_dispatch inputs,正式发布固定走 prod。
           YOMA_CHANNEL: ${{ inputs.channel || 'prod' }}
-        run: bun build:desktop
+        run: npm run build:desktop
 
       # 当场编过就指那份 dist;否则 stage-engines 按 engines.lock.json 下载预编译产物。
       - name: 出安装包
@@ -136,7 +128,7 @@ jobs:
           YOMA_CHANNEL: ${{ inputs.channel || 'prod' }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           YOMA_ENGINES_DIR: ${{ env.BUILD_ENGINES == 'true' && format('{0}/engines-dist', github.workspace) || '' }}
-        run: bun --cwd packages/desktop package:win
+        run: npm run package:win -w packages/desktop
 
       - name: 检查产物里的引擎确实是 Windows 二进制
         shell: bash
@@ -188,7 +180,7 @@ jobs:
           "YOMA_ENGINES_DIR=$enginesDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: 安装产物首次会话验收
-        run: bun --cwd packages/desktop e2e:renderer
+        run: npm run e2e:renderer -w packages/desktop
 
       - name: 生成 Release 校验和
         if: startsWith(github.ref, 'refs/tags/v')

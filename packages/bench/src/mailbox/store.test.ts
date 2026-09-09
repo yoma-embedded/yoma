@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "vitest"
+import { readFile } from "node:fs/promises"
 import { mkdirSync, writeFileSync } from "node:fs"
 import path from "node:path"
 
@@ -111,7 +112,7 @@ describe("mailbox store", () => {
     expect(collected.skipped.map((item) => item.name)).toEqual(["capture/huge.npz", "missing.bin"])
     expect(collected.skipped[0]!.reason).toContain("上限")
     // 收下的是真拷过去了(子目录也保得住形状)。
-    expect(await Bun.file(path.join(roundBackDir(root, 1), "small.csv")).text()).toContain("t,iq")
+    expect(await readFile(path.join(roundBackDir(root, 1), "small.csv"), "utf8")).toContain("t,iq")
   })
 
   test("状态永远看最大的轮 —— 下发第 2 轮后回到 awaiting-runner", async () => {
@@ -162,11 +163,11 @@ describe("mailbox store", () => {
       { round: 2, prompt: "烧进去", issuedBy: "mother", at: new Date(0).toISOString() },
       { patch: "diff --git a/x b/x" },
     )
-    expect(await Bun.file(path.join(roundDir(root, 2), "patch.diff")).text()).toContain("diff --git")
-    expect(await Bun.file(path.join(roundArtifactsDir(root, 2), "fw.elf")).text()).toBe("ELF-BYTES")
+    expect(await readFile(path.join(roundDir(root, 2), "patch.diff"), "utf8")).toContain("diff --git")
+    expect(await readFile(path.join(roundArtifactsDir(root, 2), "fw.elf"), "utf8")).toBe("ELF-BYTES")
 
     await writeRoundResult(root, result(2))
-    expect(((await Bun.file(path.join(roundDir(root, 2), "result.json")).json()) as RoundResultFile).round).toBe(2)
+    expect(((JSON.parse(await readFile(path.join(roundDir(root, 2), "result.json"), "utf8"))) as RoundResultFile).round).toBe(2)
   })
 
   test("附件超上限直接拒 —— 信箱是个 git 仓,塞进去就永远瘦不回来", async () => {
@@ -253,7 +254,7 @@ describe("mailbox store", () => {
     test("落点是信箱根的 toolchain.json,不是某一轮下面", async () => {
       const root = temp.dir("store-")
       await syncToolchainManifest(root, workspaceWithManifest(temp, "{}"))
-      expect(await Bun.file(path.join(root, TOOLCHAIN_FILE)).text()).toBe("{}")
+      expect(await readFile(path.join(root, TOOLCHAIN_FILE), "utf8")).toBe("{}")
     })
   })
 })

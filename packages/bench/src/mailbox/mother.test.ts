@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, test } from "bun:test"
-import { mkdirSync, writeFileSync } from "node:fs"
+import { afterEach, describe, expect, test } from "vitest"
+import { readFile } from "node:fs/promises"
+import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import path from "node:path"
 
 import { DEFAULT_THINKING_LEVEL } from "@yoma-desktop/kernel"
@@ -169,12 +170,12 @@ describe("mailbox mother · 开局", () => {
     expect(prompts[0]).toContain("信箱里还没有任何轮次")
 
     const verify = await freshClone(temp, mailbox.bare)
-    const instruction = (await Bun.file(path.join(verify, "rounds", "001", "instruction.json")).json()) as RoundInstruction
+    const instruction = (JSON.parse(await readFile(path.join(verify, "rounds", "001", "instruction.json"), "utf8"))) as RoundInstruction
     expect(instruction.prompt).toContain("新固件在附件里")
     expect(instruction.artifacts).toEqual([{ name: "fw.elf", bytes: 3, from: "fw.elf" }])
-    expect(await Bun.file(path.join(verify, "rounds", "001", "artifacts", "fw.elf")).text()).toBe("ELF")
+    expect(await readFile(path.join(verify, "rounds", "001", "artifacts", "fw.elf"), "utf8")).toBe("ELF")
     // 代码改动在研发端自己的仓里提交掉了,补丁随指令走。
-    expect(await Bun.file(path.join(verify, "rounds", "001", "patch.diff")).text()).toContain("fix.c")
+    expect(await readFile(path.join(verify, "rounds", "001", "patch.diff"), "utf8")).toContain("fix.c")
     expect((await runGitReal(["rev-parse", "--abbrev-ref", "HEAD"], target)).stdout).toBe("agent/m-1")
     expect((await runGitReal(["status", "--porcelain"], target)).stdout).toBe("")
     expect((await scanMailbox(verify)).state.kind).toBe("awaiting-runner")
@@ -223,12 +224,12 @@ describe("mailbox mother · 开局", () => {
 
     const verify = await freshClone(temp, mailbox.bare)
     expect((await scanMailbox(verify)).state.kind).toBe("done")
-    const decision = (await Bun.file(path.join(verify, "rounds", "000", "decision.json")).json()) as RoundDecision
+    const decision = (JSON.parse(await readFile(path.join(verify, "rounds", "000", "decision.json"), "utf8"))) as RoundDecision
     expect(decision).toMatchObject({ round: 0, by: "mother", decision: "done" })
     // 终局那一步就把终报写出来,和 verdict 同一次提交。
-    expect(await Bun.file(path.join(verify, "report.md")).text()).toContain("任务书描述的现象")
+    expect(await readFile(path.join(verify, "report.md"), "utf8")).toContain("任务书描述的现象")
     // 开局就终止 = 从没下发过指令。
-    expect(await Bun.file(path.join(verify, "rounds", "001", "instruction.json")).exists()).toBe(false)
+    expect(existsSync(path.join(verify, "rounds", "001", "instruction.json"))).toBe(false)
   })
 
   test("开局的决定 JSON 重试后仍读不出来:终局 fail,裁决者记 policy(那不是裁决)", async () => {
@@ -257,7 +258,7 @@ describe("mailbox mother · 开局", () => {
     expect(outcome.verdict.reason).toContain("开局未能给出合法决定")
 
     const verify = await freshClone(temp, mailbox.bare)
-    const decision = (await Bun.file(path.join(verify, "rounds", "000", "decision.json")).json()) as RoundDecision
+    const decision = (JSON.parse(await readFile(path.join(verify, "rounds", "000", "decision.json"), "utf8"))) as RoundDecision
     expect(decision).toMatchObject({ round: 0, by: "policy", decision: "fail" })
   })
 
@@ -288,10 +289,10 @@ describe("mailbox mother", () => {
     }
 
     const verify = await freshClone(temp, mailbox.bare)
-    const decision = (await Bun.file(path.join(verify, "rounds", "001", "decision.json")).json()) as RoundDecision
+    const decision = (JSON.parse(await readFile(path.join(verify, "rounds", "001", "decision.json"), "utf8"))) as RoundDecision
     expect(decision.by).toBe("mother")
     expect(decision.decision).toBe("done")
-    expect(await Bun.file(path.join(verify, "report.md")).text()).toContain("决策链")
+    expect(await readFile(path.join(verify, "report.md"), "utf8")).toContain("决策链")
   })
 
   test("通过后由研发端交付分支 —— 代码在它那儿,push 也归它", async () => {
@@ -346,13 +347,11 @@ describe("mailbox mother", () => {
     expect(prompts[0]).toContain("工位端的自述")
 
     const verify = await freshClone(temp, mailbox.bare)
-    const decision = (await Bun.file(path.join(verify, "rounds", "001", "decision.json")).json()) as RoundDecision
+    const decision = (JSON.parse(await readFile(path.join(verify, "rounds", "001", "decision.json"), "utf8"))) as RoundDecision
     expect(decision.by).toBe("mother")
     expect(decision.motherSessionID).toBe("ses-mother")
     expect(decision.usage?.tokens.input).toBe(2000)
-    const instruction = (await Bun.file(
-      path.join(verify, "rounds", "002", "instruction.json"),
-    ).json()) as RoundInstruction
+    const instruction = JSON.parse(await readFile(path.join(verify, "rounds", "002", "instruction.json"), "utf8")) as RoundInstruction
     expect(instruction.issuedBy).toBe("mother")
     expect(instruction.prompt).toContain("先清 ORE")
 
@@ -384,7 +383,7 @@ describe("mailbox mother", () => {
     expect(outcome.kind).toBe("decided")
 
     const pushed = await freshClone(temp, mailbox.bare)
-    const manifest = await Bun.file(path.join(pushed, TOOLCHAIN_FILE)).text()
+    const manifest = await readFile(path.join(pushed, TOOLCHAIN_FILE), "utf8")
     expect(JSON.parse(manifest).tools[0].id).toBe("jlink")
   })
 
@@ -407,7 +406,7 @@ describe("mailbox mother", () => {
       expect(outcome.verdict.reason).toContain("研发端未能给出合法决定")
     }
     const verify = await freshClone(temp, mailbox.bare)
-    const decision = (await Bun.file(path.join(verify, "rounds", "001", "decision.json")).json()) as RoundDecision
+    const decision = (JSON.parse(await readFile(path.join(verify, "rounds", "001", "decision.json"), "utf8"))) as RoundDecision
     expect(decision.by).toBe("policy")
     // 两次白跑的花费必须入账 —— 烧掉的钱不因为没产出就消失。
     expect(decision.usage?.tokens.input).toBe(200)
@@ -459,7 +458,7 @@ describe("mailbox mother", () => {
       if (parked.kind === "awaiting-human") expect(parked.ask).toContain("24V")
 
       // 回传件落在工程里,提示词给的是可以直接打开的相对路径(不是"它说它采了一段")。
-      expect(await Bun.file(path.join(target, ".yoma", "back", "001", "vbus.csv")).text()).toContain("t,vbus")
+      expect(await readFile(path.join(target, ".yoma", "back", "001", "vbus.csv"), "utf8")).toContain("t,vbus")
       expect(parkPrompts[0]).toContain(".yoma/back/001/vbus.csv")
       expect(parkPrompts[0]).toContain(".yoma/back/001/bench-report.md")
       expect(parkPrompts[0]).toContain("需要人动手")
@@ -479,7 +478,7 @@ describe("mailbox mother", () => {
 
       // 挂起不下发新轮 —— 第 2 轮的指令这时候不该存在。
       const midway = await freshClone(temp, mailbox.bare)
-      expect(await Bun.file(path.join(midway, "rounds", "002", "instruction.json")).exists()).toBe(false)
+      expect(existsSync(path.join(midway, "rounds", "002", "instruction.json"))).toBe(false)
 
       // 人回了执:同一轮重新裁决,回执原话进提示词。
       await writeHumanAck(mailbox.motherClone, 1, {
@@ -507,11 +506,11 @@ describe("mailbox mother", () => {
       expect(resumePrompts[0]).toContain("人已经做完了")
 
       const verify = await freshClone(temp, mailbox.bare)
-      const decision = (await Bun.file(path.join(verify, "rounds", "001", "decision.json")).json()) as RoundDecision
+      const decision = (JSON.parse(await readFile(path.join(verify, "rounds", "001", "decision.json"), "utf8"))) as RoundDecision
       expect(decision.decision).toBe("continue")
       // 挂起那一次分析也是真花的钱:重裁覆盖同一个 decision.json,不结转就凭空消失。
       expect(decision.usage?.tokens.input).toBe(800)
-      expect(await Bun.file(path.join(verify, "rounds", "002", "instruction.json")).exists()).toBe(true)
+      expect(existsSync(path.join(verify, "rounds", "002", "instruction.json"))).toBe(true)
     },
     30_000,
   )
@@ -544,7 +543,7 @@ describe("mailbox init 恢复", () => {
     expect(second.initialized).toBe(true)
 
     const verify = await freshClone(temp, mailbox.bare)
-    expect(await Bun.file(path.join(verify, "job.json")).exists()).toBe(true)
+    expect(existsSync(path.join(verify, "job.json"))).toBe(true)
     // init 只放任务书,第一轮归研发端 —— 所以这时信箱是 kickoff。
     expect((await scanMailbox(verify)).state.kind).toBe("kickoff")
   })

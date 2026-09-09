@@ -10,7 +10,7 @@
  * 进程环境全程存/还原并清空这两个变量:开发机上真配了 YOMA_DATASHEET_SERVER 的话
  * 它压过 `<configDir>/.env`,断言就成了看跑测试的人怎么配的。
  */
-import { afterEach, beforeEach, describe, expect, it } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"

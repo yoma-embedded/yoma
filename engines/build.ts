@@ -1,10 +1,9 @@
-#!/usr/bin/env bun
 // Build every capability engine, install the products into the single runtime
 // layout (engines/bin + engines/data), then report what the tools resolve.
-//   bun engines/build.ts           # build + install + doctor
-//   bun engines/build.ts --check   # doctor only
-//   bun engines/build.ts --dist    # 产出可分发的自包含产物到 engines/dist/
-//   bun engines/build.ts --dist --allow-missing-irpacks
+//   tsx engines/build.ts           # build + install + doctor
+//   tsx engines/build.ts --check   # doctor only
+//   tsx engines/build.ts --dist    # 产出可分发的自包含产物到 engines/dist/
+//   tsx engines/build.ts --dist --allow-missing-irpacks
 //     # 没 CubeMX 时仍冻结网表引擎;STM32 配置不进产物(CI 出 Windows 包用)
 // Needs cargo (stm32-config-kernel) and uv (controller_map). logic-analyzer (yoma-la, C/CMake,
 // Windows 上要 MSYS2 ucrt64)没有工具链时跳过 —— 像没有 CubeMX 时跳过 irpack 一样,但 manifest 里会写明。
@@ -28,7 +27,7 @@
 //     它只有 `stm32kernel generate` 用得到,而那条命令本来就收 --fw-dir,
 //     所以按族按需取(STM32G4 压缩后才 4MB)远比让每个人下 1.1GB 合理。
 
-import { $ } from "bun";
+import { $, which } from "../scripts/shell.ts";
 import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -55,7 +54,7 @@ const PY_ENTRIES: Array<[string, string]> = [
 ];
 
 async function need(cmd: string, hint: string) {
-	if (!Bun.which(cmd)) throw new Error(`\`${cmd}\` not found on PATH — ${hint}`);
+	if (!which(cmd)) throw new Error(`\`${cmd}\` not found on PATH — ${hint}`);
 }
 
 /** 链接优先(重构建即时生效),失败(如 Windows 无权限)退回复制。 */
@@ -195,7 +194,7 @@ async function ensureRipgrep(binDir: string): Promise<void> {
 		console.log(`  · rg 从 $YOMA_RIPGREP_ARCHIVE 解出(${fromEnv})`);
 		return;
 	}
-	const onPath = Bun.which("rg");
+	const onPath = which("rg");
 	if (onPath) {
 		copyFileSync(onPath, dest);
 		console.log(`  · rg 从系统 PATH 复制(${onPath},版本不受钉)`);
@@ -338,7 +337,7 @@ if (dist) {
 	if (irpacks < MIN_IRPACKS) {
 		const detail =
 			`只收到 ${irpacks} 个 irpack(期望 ≥${MIN_IRPACKS})—— CubeMX 解析没跑完。` +
-			`装 STM32CubeMX 或设 STM32CK_CUBEMX_DB,再跑 \`bun engines/build.ts --dist\`。`;
+			`装 STM32CubeMX 或设 STM32CK_CUBEMX_DB,再跑 \`tsx engines/build.ts --dist\`。`;
 		if (allowMissingIrpacks) {
 			notes.push(detail + "已显式允许缺 irpack:安装包里没有 STM32 配置数据。");
 		} else {
@@ -452,6 +451,6 @@ if (bad === 0) {
 		console.log("\nAll good — netlist engines ready. STM32 config skipped (no CubeMX / irpack).");
 	}
 } else {
-	console.log(`\n${bad} item(s) missing — run \`bun engines/build.ts\` to build and install.`);
+	console.log(`\n${bad} item(s) missing — run \`tsx engines/build.ts\` to build and install.`);
 	process.exit(1);
 }

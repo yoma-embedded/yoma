@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import { newTabTooltipKeybind, reviewTooltipKeybind } from "./command-tooltip-keybind"
 
 describe("command tooltip keybinds", () => {

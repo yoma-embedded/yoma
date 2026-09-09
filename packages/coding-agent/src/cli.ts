@@ -1,4 +1,3 @@
-#!/usr/bin/env bun
 import { runCli } from "./cli/main.ts"
 import { terminalText } from "./cli/terminal.ts"
 

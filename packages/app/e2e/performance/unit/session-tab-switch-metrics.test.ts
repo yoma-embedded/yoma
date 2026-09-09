@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { expect, test } from "vitest"
 import { classifySessionSwitch } from "../timeline/session-tab-switch-metrics"
 
 test("counts source and blank samples before the destination is observed", () => {

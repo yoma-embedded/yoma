@@ -6,7 +6,7 @@
  * **不要退回 `example/99-headless-run.ts`**:那是裸 harness,没有压缩与重试,思考档位缺省 `off`
  * (对 reasoning 模型等于把最强的一档默认关掉,且没有任何地方提示)。
  *
- * 与 CLI 壳(`entry.ts`)分开是为了能被 `bun test` 直接调:壳只做 argv 解析、写文件、退出码。
+ * 与 CLI 壳(`entry.ts`)分开是为了能被 vitest 直接调:壳只做 argv 解析、写文件、退出码。
  * 同一条纪律见 `turn.ts` ↔ `turn-entry.ts`。
  */
 

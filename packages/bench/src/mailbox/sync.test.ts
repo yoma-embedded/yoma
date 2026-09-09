@@ -4,11 +4,11 @@
  * commitPush 在对方先说话时 rebase 后重推、空信箱的首推能建出分支。
  */
 
-import { afterEach, describe, expect, test } from "bun:test"
-import { mkdirSync, writeFileSync } from "node:fs"
+import { afterEach, describe, expect, test } from "vitest"
+import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import path from "node:path"
 
-import { mkdir, writeFile } from "node:fs/promises"
+import { mkdir, readFile, writeFile } from "node:fs/promises"
 
 import { fileExists } from "../fsx.ts"
 import {
@@ -39,10 +39,10 @@ describe("mailbox sync", () => {
     expect(pushed.pushed).toBe(true)
 
     await pullReset(ctx(runnerClone))
-    expect(await Bun.file(path.join(runnerClone, "job.json")).exists()).toBe(true)
+    expect(existsSync(path.join(runnerClone, "job.json"))).toBe(true)
 
     const verify = await freshClone(temp, bare)
-    expect(await Bun.file(path.join(verify, "job.json")).exists()).toBe(true)
+    expect(existsSync(path.join(verify, "job.json"))).toBe(true)
   })
 
   test("对方先推了别的路径:commitPush rebase 后重推,两边内容都在", async () => {
@@ -62,8 +62,8 @@ describe("mailbox sync", () => {
     expect((await commitPush(ctx(runnerClone), "round 1 result")).pushed).toBe(true)
 
     const verify = await freshClone(temp, bare)
-    expect(await Bun.file(path.join(verify, "rounds", "001", "result.json")).exists()).toBe(true)
-    expect(await Bun.file(path.join(verify, "rounds", "002", "instruction.json")).exists()).toBe(true)
+    expect(existsSync(path.join(verify, "rounds", "001", "result.json"))).toBe(true)
+    expect(existsSync(path.join(verify, "rounds", "002", "instruction.json"))).toBe(true)
   })
 
   test("pullReset 清掉崩溃残渣,但被 .gitignore 的本地状态幸存", async () => {
@@ -80,8 +80,8 @@ describe("mailbox sync", () => {
     writeFileSync(path.join(motherClone, ".mother", "state.json"), `{"sessionID":"ses-9"}\n`)
 
     await pullReset(ctx(motherClone))
-    expect(await Bun.file(path.join(motherClone, "rounds", "001", "result.json")).exists()).toBe(false)
-    expect(await Bun.file(path.join(motherClone, ".mother", "state.json")).exists()).toBe(true)
+    expect(existsSync(path.join(motherClone, "rounds", "001", "result.json"))).toBe(false)
+    expect(existsSync(path.join(motherClone, ".mother", "state.json"))).toBe(true)
   })
 
   test("没有改动就不提交不推送", async () => {
@@ -114,7 +114,7 @@ describe("mailbox sync", () => {
     // 网络恢复后的第一次同步:欠账先推走,而不是被 reset 丢掉。
     await flushThenPullReset(ctx(runnerClone))
     const verify = await freshClone(temp, bare)
-    expect(await Bun.file(path.join(verify, "rounds", "001", "result.json")).exists()).toBe(true)
+    expect(existsSync(path.join(verify, "rounds", "001", "result.json"))).toBe(true)
   })
 
   test("欠账与远端同路径冲突(这步已被替代)时不硬推,照协议清场", async () => {
@@ -141,7 +141,7 @@ describe("mailbox sync", () => {
 
     await flushThenPullReset(ctx(runnerClone))
     // 远端版本获胜,欠账被照协议丢弃(不硬推、不留 rebase 残局)。
-    expect(await Bun.file(path.join(runnerClone, "rounds", "001", "result.json")).text()).toContain("fresh")
+    expect(await readFile(path.join(runnerClone, "rounds", "001", "result.json"), "utf8")).toContain("fresh")
     expect((await runGitReal(["status", "--porcelain"], runnerClone)).stdout).toBe("")
   })
 })

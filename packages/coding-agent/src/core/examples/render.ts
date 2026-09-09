@@ -51,8 +51,8 @@ export function renderNoIndexHelp(): string {
 	return [
 		"本机还没有任何例程索引。",
 		"索引由 CLI 离线生成(语料在哪台机器,索引就在哪台机器跑):",
-		"  bun packages/coding-agent/src/core/examples/cli.ts index --ecosystem esp-idf --root <esp-idf 检出目录>",
-		"  bun packages/coding-agent/src/core/examples/cli.ts index --ecosystem stm32cube --root <STM32Cube 固件包目录>",
+		"  tsx packages/coding-agent/src/core/examples/cli.ts index --ecosystem esp-idf --root <esp-idf 检出目录>",
+		"  tsx packages/coding-agent/src/core/examples/cli.ts index --ecosystem stm32cube --root <STM32Cube 固件包目录>",
 		"生成后重试本次检索。",
 	].join("\n");
 }

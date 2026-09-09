@@ -1,5 +1,5 @@
 import { type AssistantMessage, type AssistantMessageEvent, EventStream, fauxProvider } from "@earendil-works/pi-ai";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { Type } from "typebox";
 import { Agent, type AgentEvent, type AgentTool, type AgentToolUpdateCallback } from "../src/index.ts";
 

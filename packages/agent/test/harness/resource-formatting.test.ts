@@ -1,5 +1,5 @@
 // M7 Step 1 验收:两个资源格式化函数。
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { formatPromptTemplateInvocation } from "../../src/harness/prompt-templates.ts";
 import { formatSkillInvocation } from "../../src/harness/skills.ts";
 

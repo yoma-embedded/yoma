@@ -1,6 +1,6 @@
 // 检索:硬过滤的对抗用例是这个子系统的存在理由 —— esp32 查询返回 STM32 条目
 // 就是"语义完美、物理不可用"那个失败模式,任何改动打破它都必须在这里响。
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
 import { type ExampleEntry, searchIndex, targetMatches } from "../src/core/examples/index.ts";
 

@@ -15,7 +15,7 @@
 // - **同一个包同时只能装一个**:两个进程同时往一个目录解压,产出的树是两次解压交错
 //   的结果,而且不报错。
 // - **zip-slip**:压缩包是从网上下的,一个 `../` 条目就能写到包目录外面去。
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -50,6 +50,7 @@ import {
 import type { Ledger } from "../src/core/toolchain/ledger.ts";
 import { readLedger } from "../src/core/toolchain/ledger.ts";
 import { writeFakeExe } from "./fixtures/fake-exe.ts";
+import { type FetchServer, serveFetch } from "./fixtures/fetch-server.ts";
 
 // zip.js 默认起 web worker 做压缩;测试进程里没必要,而且退出时容易留下悬挂的 worker。
 configure({ useWebWorkers: false });
@@ -147,7 +148,7 @@ function fakeCatalog(artifact: Partial<CatalogArtifact> & Pick<CatalogArtifact, 
 
 type Handler = (request: Request, url: URL) => Response | Promise<Response>;
 
-let server: ReturnType<typeof Bun.serve> | undefined;
+let server: FetchServer | undefined;
 let baseUrl: string;
 let configDir: string;
 /** 路径 → 字节。测试直接往里放产物;没放的路径返回 404。 */
@@ -162,27 +163,21 @@ function serveBucket(url: URL): Response {
 	return new Response(body, { headers: { "content-type": "application/octet-stream", "content-length": String(body.byteLength) } });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
 	bucket.clear();
 	requests = [];
 	handler = (_request, url) => serveBucket(url);
 	configDir = mkdtempSync(join(tmpdir(), "yoma-toolchain-install-config-"));
-	server = Bun.serve({
-		port: 0,
-		// 并发那条用例故意把一个请求按住不放;默认 10 秒的空闲超时会替我们把连接掐掉,
-		// 于是"第二次安装被拒"变成"第一次安装网络出错",症状与要测的事完全无关。
-		idleTimeout: 0,
-		fetch: (request) => {
-			const url = new URL(request.url);
-			requests.push(url.pathname);
-			return handler(request, url);
-		},
+	server = await serveFetch((request) => {
+		const url = new URL(request.url);
+		requests.push(url.pathname);
+		return handler(request, url);
 	});
 	baseUrl = `http://127.0.0.1:${server.port}`;
 });
 
 afterEach(() => {
-	server?.stop(true);
+	server?.stop();
 	server = undefined;
 	// maxRetries/retryDelay:configDir 里躺着刚被 probeVersion spawn 过的假 exe,
 	// Windows 上句柄释放偶尔慢一拍(根 CLAUDE.md 与 toolchain-resolve.test.ts 同一条)。
@@ -508,7 +503,7 @@ describe("中止", () => {
 				const body = new ReadableStream<Uint8Array>({
 					async start(controller) {
 						controller.enqueue(new Uint8Array(zip.subarray(0, 16)));
-						await Bun.sleep(3000);
+						await new Promise((resolve) => setTimeout(resolve, 3000));
 						controller.enqueue(new Uint8Array(zip.subarray(16)));
 						controller.close();
 					},
@@ -600,7 +595,7 @@ describe("并发", () => {
 
 			// 第二次必须**立刻**被拒(锁在下载之前就该拿);拖着不返回本身就是失败 ——
 			// 那意味着它正跟着第一次一起往同一个目录里解压。
-			const outcome = await Promise.race([second, Bun.sleep(2000).then(() => "still-running" as const)]);
+			const outcome = await Promise.race([second, new Promise((resolve) => setTimeout(resolve, 2000)).then(() => "still-running" as const)]);
 			release();
 			const firstOutcome = await first;
 			await second;

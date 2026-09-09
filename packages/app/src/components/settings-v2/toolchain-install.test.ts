@@ -24,7 +24,7 @@
  * 下面这个函数是那条进度文案唯一的算法来源(卡片与面板共用一份读法,同"逻辑分析仪"的纪律)。
  */
 
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 
 type InstallProgressPercent = (progress: { bytes?: number; total?: number }) => number | undefined
 

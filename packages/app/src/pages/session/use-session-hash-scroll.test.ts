@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import { messageIdFromHash } from "./message-id-from-hash"
 
 describe("messageIdFromHash", () => {

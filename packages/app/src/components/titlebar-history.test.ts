@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import { applyPath, backPath, forwardPath, type TitlebarHistory } from "./titlebar-history"
 
 function history(): TitlebarHistory {

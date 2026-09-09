@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, mock, test } from "bun:test"
+import { beforeAll, beforeEach, describe, expect, test, vi } from "vitest"
 import type { Prompt } from "@/context/prompt"
 
 let createPromptSubmit: typeof import("./submit").createPromptSubmit
@@ -71,23 +71,23 @@ const kernelClient = {
 }
 
 beforeAll(async () => {
-  mock.module("@solidjs/router", () => ({
+  vi.doMock("@solidjs/router", () => ({
     useNavigate: () => () => undefined,
     useParams: () => params,
     useLocation: () => ({}),
     useSearchParams: () => [search, () => undefined],
   }))
 
-  mock.module("@yoma-desktop/ui/toast", () => ({
+  vi.doMock("@yoma-desktop/ui/toast", () => ({
     Toast: { Region: () => null },
     showToast: () => 0,
   }))
 
-  mock.module("@yoma-desktop/util/encode", () => ({
+  vi.doMock("@yoma-desktop/util/encode", () => ({
     base64Encode: (value: string) => value,
   }))
 
-  mock.module("@/context/local", () => ({
+  vi.doMock("@/context/local", () => ({
     useLocal: () => ({
       model: {
         current: () => ({ id: "model", provider: { id: "provider" } }),
@@ -103,11 +103,11 @@ beforeAll(async () => {
     }),
   }))
 
-  mock.module("@/context/server", () => ({
+  vi.doMock("@/context/server", () => ({
     useServer: () => ({ key: "server-key" }),
   }))
 
-  mock.module("@/context/tabs", () => ({
+  vi.doMock("@/context/tabs", () => ({
     useTabs: () => ({
       draft: () => ({ server: "project-server" }),
       promoteDraft: (draftID: string, session: { server: string; sessionId: string }) => {
@@ -116,11 +116,11 @@ beforeAll(async () => {
     }),
   }))
 
-  mock.module("@/context/prompt", () => ({
+  vi.doMock("@/context/prompt", () => ({
     usePrompt: () => prompt,
   }))
 
-  mock.module("@/context/layout", () => ({
+  vi.doMock("@/context/layout", () => ({
     useLayout: () => ({
       handoff: {
         setTabs: () => undefined,
@@ -128,7 +128,7 @@ beforeAll(async () => {
     }),
   }))
 
-  mock.module("@/context/sdk", () => ({
+  vi.doMock("@/context/sdk", () => ({
     useSDK: () => {
       const sdk = {
         scope: "local",
@@ -143,7 +143,7 @@ beforeAll(async () => {
     },
   }))
 
-  mock.module("@/context/sync", () => ({
+  vi.doMock("@/context/sync", () => ({
     useSync: () => () => ({
       data: {},
       session: {
@@ -167,7 +167,7 @@ beforeAll(async () => {
     }),
   }))
 
-  mock.module("@/context/server-sync", () => ({
+  vi.doMock("@/context/server-sync", () => ({
     useServerSync: () => () => ({
       session: {
         remember: () => undefined,
@@ -194,13 +194,13 @@ beforeAll(async () => {
     }),
   }))
 
-  mock.module("@/context/platform", () => ({
+  vi.doMock("@/context/platform", () => ({
     usePlatform: () => ({
       fetch: fetch,
     }),
   }))
 
-  mock.module("@/context/language", () => ({
+  vi.doMock("@/context/language", () => ({
     useLanguage: () => ({
       t: (key: string) => key,
     }),

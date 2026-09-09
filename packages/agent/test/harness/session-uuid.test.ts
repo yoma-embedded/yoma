@@ -1,6 +1,6 @@
 // 参考 pi-minimal 同名测试。适配:vitest 的 vi.stubGlobal/vi.fn/vi.spyOn
 // 改为 bun:test 的 Object.defineProperty + mock + spyOn。
-import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { uuidv7 } from "../../src/harness/session/uuid.ts";
 
 const UUID_V7_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -26,12 +26,12 @@ describe("uuidv7", () => {
 			new Uint8Array(16),
 			new Uint8Array(16),
 		];
-		const getRandomValues = mock((bytes: Uint8Array) => {
+		const getRandomValues = vi.fn((bytes: Uint8Array) => {
 			bytes.set(randomValues.shift() ?? new Uint8Array(bytes.length));
 			return bytes;
 		});
 		Object.defineProperty(globalThis, "crypto", { value: { getRandomValues }, configurable: true });
-		const dateNow = spyOn(Date, "now").mockReturnValue(TIMESTAMP);
+		const dateNow = vi.spyOn(Date, "now").mockReturnValue(TIMESTAMP);
 
 		try {
 			const first = uuidv7();

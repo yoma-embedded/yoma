@@ -14,7 +14,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "@yoma/agent/node";
 import {
 	type AnnDecoder,
@@ -40,7 +40,7 @@ import { type LaToolDetails, createLaToolDefinition, exe } from "../src/index.ts
 
 // ─── 脚手架 ──────────────────────────────────────────────────────────────────
 
-const REPO = join(import.meta.dir, "..", "..", "..");
+const REPO = join(import.meta.dirname, "..", "..", "..");
 const ENGINES = join(REPO, "engines");
 const LA_BIN = join(ENGINES, "bin", exe("yoma-la"));
 const DEMO = join(ENGINES, "logic-analyzer", "vendor", "demo", "logic", "protocol.demo");

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import { createRoot } from "solid-js"
 import { createRefCountMap } from "./refcount"
 import { pathKey } from "./path-key"

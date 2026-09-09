@@ -29,8 +29,5 @@
   "include": [
     "src",
     "kernel-alias.ts"
-  ],
-  "exclude": [
-    "src/**/*.test.ts"
   ]
 }

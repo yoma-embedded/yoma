@@ -1,8 +1,7 @@
-#!/usr/bin/env bun
 /**
  * agent 轮的子进程入口。
  *
- * `bun turn-entry.ts <input.json> <output.json>`
+ * `tsx turn-entry.ts <input.json> <output.json>`
  *
  * 一轮一个进程是刻意的:yoma 的探针租约、gdb 会话表、log 采集器都是模块级全局并挂着
  * 进程退出钩子,进程边界因此是免费且可靠的清理 —— 轮次结束时探针一定被放开,
@@ -23,7 +22,7 @@ import { runTurn, type TurnResult } from "./turn.ts"
 
 const [inputFile, outputFile] = process.argv.slice(2)
 if (!inputFile || !outputFile) {
-  console.error("用法: bun turn-entry.ts <input.json> <output.json>")
+  console.error("用法: tsx turn-entry.ts <input.json> <output.json>")
   process.exit(2)
 }
 

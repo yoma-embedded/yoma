@@ -20,9 +20,7 @@
   "include": [
     "src/main",
     "src/preload/types.ts",
-    "package.json"
-  ],
-  "exclude": [
-    "src/**/*.test.ts"
+    "package.json",
+    "electron-builder.config.test.ts"
   ]
 }

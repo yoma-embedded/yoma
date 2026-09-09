@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { expect, test } from "vitest"
 import { layoutShiftValue, removeVisibleRow } from "../timeline/session-timeline-stream-probe"
 
 test("excludes layout shifts before the probe window and recent input", () => {

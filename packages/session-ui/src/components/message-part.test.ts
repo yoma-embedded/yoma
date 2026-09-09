@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import { readPartText } from "./message-part-text"
 
 describe("readPartText", () => {

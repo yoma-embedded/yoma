@@ -7,7 +7,7 @@
  * 出去**(下面原样 re-export 内核那几个),于是消费方 import 一个模块就够了。
  *
  * 单独一个模块而不是塞进 `la-tool.tsx`,有两个理由:
- *  - 卡片要 import `Markdown`,而那条链上有 vite 的 `?worker&url` 说明符 —— `bun test`
+ *  - 卡片要 import `Markdown`,而那条链上有 vite 的 `?worker&url` 说明符 —— vitest
  *    解不开它,于是任何 import 卡片的测试都只会得到一个模块加载错误。
  *  - 这里没有一个模块级可变状态(除了一张按对象身份索引的 WeakMap 缓存):画布是
  *    (数据, 尺寸, 颜色) → 像素的纯函数,虚拟列表随时卸载/重挂都能原样重画。

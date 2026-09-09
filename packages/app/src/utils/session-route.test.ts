@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import { ServerConnection } from "@/context/server"
 import {
   legacySessionHref,

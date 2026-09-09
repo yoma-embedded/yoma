@@ -1,7 +1,7 @@
 // 两个抽取器对着 fixtures/examples/ 的微型语料做字段级断言。fixture 里埋了两个
 // "必须被跳过"的陷阱:esp-idf 的 common_components(共享代码不是例程)与 Cube 的
 // Demonstrations(板专属大杂烩)。
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { join } from "node:path";
 
 import {
@@ -11,8 +11,8 @@ import {
 	parseSupportedTargets,
 } from "../src/core/examples/index.ts";
 
-const ESP_ROOT = join(import.meta.dir, "fixtures", "examples", "esp-idf-mini");
-const CUBE_ROOT = join(import.meta.dir, "fixtures", "examples", "cube-mini");
+const ESP_ROOT = join(import.meta.dirname, "fixtures", "examples", "esp-idf-mini");
+const CUBE_ROOT = join(import.meta.dirname, "fixtures", "examples", "cube-mini");
 
 describe("esp-idf 抽取器", () => {
 	const entries = extractEspIdfExamples(ESP_ROOT);

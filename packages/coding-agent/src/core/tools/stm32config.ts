@@ -96,7 +96,7 @@ function describeCoverage(options?: Stm32ConfigToolOptions): string {
 	try {
 		const families = stm32Families(options);
 		if (families.length === 0) {
-			return "no device data packs are installed — run `bun engines/build.ts` (needs a local STM32CubeMX install to parse the device db)";
+			return "no device data packs are installed — run `npm run engines:build` (needs a local STM32CubeMX install to parse the device db)";
 		}
 		return `covers ${families.length} families: ${families.join(", ")}`;
 	} catch {

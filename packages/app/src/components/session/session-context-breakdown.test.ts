@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import type { Message, Part } from "@yoma-desktop/kernel"
 import { estimateSessionContextBreakdown } from "./session-context-breakdown"
 
@@ -54,6 +54,6 @@ describe("estimateSessionContextBreakdown", () => {
 
     const total = output.reduce((sum, segment) => sum + segment.tokens, 0)
     expect(total).toBeLessThanOrEqual(10)
-    expect(output.every((segment) => segment.width <= 100)).toBeTrue()
+    expect(output.every((segment) => segment.width <= 100)).toBe(true)
   })
 })

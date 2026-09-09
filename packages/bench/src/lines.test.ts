@@ -1,7 +1,7 @@
 // 流式分行的两个坑各钉一条。两条都是**静默**失败,而且从前 sim.ts 那份逐 chunk
 // toString().split("\n") 的写法两条全中 —— 所以这里必须按字节喂,不能"跑个打中文的
 // 例子看花不花"(那种写法在任何一台 UTF-8 开发机上都会通过,是个不会响的闸门)。
-import { describe, expect, it } from "bun:test"
+import { describe, expect, it } from "vitest"
 
 import { lineDecoder } from "./lines.ts"
 

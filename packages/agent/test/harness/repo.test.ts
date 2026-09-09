@@ -1,6 +1,6 @@
 // SessionRepo 家族的测试。移植自 pi test/harness/repo.test.ts(vitest → bun:test)。
 import { existsSync } from "node:fs";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import { JsonlSessionRepo } from "../../src/harness/session/jsonl-repo.ts";
 import { InMemorySessionRepo } from "../../src/harness/session/memory-repo.ts";

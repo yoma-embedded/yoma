@@ -1,11 +1,10 @@
-#!/usr/bin/env bun
 /**
  * 打包前的 engines 校验 + 实体化 —— 把三种"静默出坏包"的方式变成响亮的失败/警告。
  *
  * 背景:仓库根的 `engines` 是指向 ../yoma/engines 的软链,bin/ 和 data/ 里又全是
  * 指向各引擎构建产物的软链。三个坑:
  *
- *   1. **没在 yoma 跑过 `bun engines/build.ts`** → 软链悬空 → 这里直接失败。
+ *   1. **没在 yoma 跑过 `npm run engines:build`** → 软链悬空 → 这里直接失败。
  *   2. **electron-builder 对 extraResources 里的软链是原样保留,不 dereference**
  *      (实测:打出来的 Yoma.app 里 engines/bin/board_ir 还是一条指向
  *      ../controller_map/.venv/bin/board_ir 的断链,签名阶段 stat ENOENT)。
@@ -16,6 +15,8 @@
  *      我们不改内核 → 响亮警告并列出受影响的工具。
  */
 
+import { spawnSync } from "node:child_process"
+import { which } from "../../../scripts/shell.ts"
 import { createHash } from "node:crypto"
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs"
 import path from "node:path"
@@ -68,7 +69,7 @@ function detectFormat(head: Buffer): BinFormat {
  * hint 可覆盖:默认那句"去 yoma 跑 build.ts"只适用于"本地产物缺失/悬空",
  * 拿它去回答"校验和不符"会把人引向完全错误的方向(实测自己就差点被自己误导)。
  */
-function fail(message: string, hint = "先跑 `bun engines/build.ts`(为目标平台),再回来打包。"): never {
+function fail(message: string, hint = "先跑 `npm run engines:build`(为目标平台),再回来打包。"): never {
   console.error(`\n[stage-engines] ${message}`)
   console.error(`[stage-engines] ${hint}\n`)
   process.exit(1)
@@ -96,11 +97,12 @@ function bundleName(target: string, arch: string): string {
 }
 
 function run(cmd: string[], cwd?: string): { ok: boolean; out: string } {
-  // Bun.spawnSync 在可执行文件不存在时直接抛 ENOENT,不会给 exitCode ——
+  // 可执行文件不存在时 spawnSync 只给 error 不给 status,这里把它转成异常 ——
   // Windows 上没有 unzip 时,必须吞掉这个异常才能落到 tar 回退(Win11 bsdtar 能读 zip)。
   try {
-    const proc = Bun.spawnSync({ cmd, cwd, stdout: "pipe", stderr: "pipe" })
-    return { ok: proc.exitCode === 0, out: `${proc.stdout.toString()}${proc.stderr.toString()}` }
+    const proc = spawnSync(cmd[0]!, cmd.slice(1), { cwd, encoding: "utf8" })
+    if (proc.error) throw proc.error
+    return { ok: proc.status === 0, out: `${proc.stdout ?? ""}${proc.stderr ?? ""}` }
   } catch (err) {
     return { ok: false, out: err instanceof Error ? err.message : String(err) }
   }
@@ -197,7 +199,7 @@ function resolveEnginesDir(): string {
   } else {
     mkdirSync(path.dirname(archive), { recursive: true })
     // 公开 Release 用 gh 下载即可;没有 gh 就明确告诉人装它,别在这儿造第二套鉴权。
-    if (!Bun.which("gh")) {
+    if (!which("gh")) {
       fail(
         `需要下载预编译引擎,但没装 gh CLI。\n` +
           `[stage-engines] 装 gh(https://cli.github.com),\n` +

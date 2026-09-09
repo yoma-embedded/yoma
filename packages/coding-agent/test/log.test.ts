@@ -1,8 +1,9 @@
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "@yoma/agent/node";
 import {
 	createLogToolDefinition,
@@ -79,7 +80,7 @@ async function waitForLines(tool: ReturnType<typeof makeTool>["tool"], count: nu
 	while (Date.now() < deadline) {
 		const status = await tool.execute("poll", { action: "status" });
 		if (detailsOf(status).totalLines >= count) return;
-		await Bun.sleep(20);
+		await new Promise((resolve) => setTimeout(resolve, 20));
 	}
 	throw new Error(`timed out waiting for ${count} lines`);
 }
@@ -88,7 +89,7 @@ async function waitFor(predicate: () => boolean, timeoutMs = 4000): Promise<void
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
 		if (predicate()) return;
-		await Bun.sleep(20);
+		await new Promise((resolve) => setTimeout(resolve, 20));
 	}
 	throw new Error("timed out waiting for condition");
 }
@@ -389,7 +390,7 @@ describe("LogCapture", () => {
 
 		await capture.stop();
 		const settled = capture.totalLines;
-		await Bun.sleep(200);
+		await new Promise((resolve) => setTimeout(resolve, 200));
 		expect(capture.totalLines).toBe(settled);
 	});
 
@@ -400,14 +401,17 @@ describe("LogCapture", () => {
 		const script = join(dir, "pin-check.ts");
 		writeFileSync(
 			script,
-			`import { LogCapture } from ${JSON.stringify(join(import.meta.dir, "..", "src", "index.ts"))};
+			`import { LogCapture } from ${JSON.stringify(join(import.meta.dirname, "..", "src", "index.ts"))};
 const capture = new LogCapture({ kind: "child", argv: [${JSON.stringify(source)}] }, "forever", ${JSON.stringify(join(dir, "pin.log"))}, ${JSON.stringify(dir)});
 await capture.start();
 // 故意不 stop:进程必须靠自己退出(退出钩子会把子进程收掉)。
 `,
 		);
-		const child = Bun.spawn([process.execPath, script], { stdout: "ignore", stderr: "ignore" });
-		const exited = await Promise.race([child.exited, Bun.sleep(6000).then(() => "timeout" as const)]);
+		const child = spawn(process.execPath, ["--import", "tsx", script], { stdio: "ignore" });
+		const exited = await Promise.race([
+			new Promise<number | null>((resolve) => child.once("exit", resolve)),
+			new Promise((resolve) => setTimeout(resolve, 6000)).then(() => "timeout" as const),
+		]);
 		if (exited === "timeout") child.kill("SIGKILL");
 		expect(exited).not.toBe("timeout");
 	}, 15000);
@@ -467,7 +471,7 @@ describe("LogCapture tcp source", () => {
 			await waitFor(() => capture.totalLines >= 2);
 			await capture.stop();
 			const settled = capture.totalLines;
-			await Bun.sleep(100);
+			await new Promise((resolve) => setTimeout(resolve, 100));
 			expect(capture.totalLines).toBe(settled);
 		} finally {
 			for (const socket of sockets) socket.destroy();

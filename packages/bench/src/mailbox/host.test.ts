@@ -7,7 +7,7 @@
  * 运行时;这里绿了而冒烟红了,问题必然在打包管线而不是引擎。
  */
 
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "vitest"
 import { spawn } from "node:child_process"
 import { readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
@@ -15,6 +15,7 @@ import path from "node:path"
 import type { FauxScript } from "../faux.ts"
 import { runGitReal } from "../git.ts"
 import type { TurnResult } from "../turn.ts"
+import { sourceChildEnv } from "../node-source.ts"
 import { runMailboxHost, type MailboxHostEvent } from "./host.ts"
 import { readVerdict } from "./store.ts"
 import { makeMailbox, makeTargetRepo, rawMailboxJob, Temp } from "./testkit.ts"
@@ -85,8 +86,8 @@ describe("faux 脚本穿过真 turn-entry 子进程", () => {
     const outputFile = inputFile.replace("in.json", "out.json")
     await writeFile(inputFile, JSON.stringify(input))
 
-    const entry = path.join(import.meta.dir, "..", "turn-entry.ts")
-    const child = spawn(process.execPath, [entry, inputFile, outputFile], { stdio: ["ignore", "ignore", "inherit"] })
+    const entry = path.join(import.meta.dirname, "..", "turn-entry.ts")
+    const child = spawn(process.execPath, [entry, inputFile, outputFile], { stdio: ["ignore", "ignore", "inherit"], env: sourceChildEnv() })
     const code = await new Promise<number | null>((resolve) => child.on("close", resolve))
     expect(code).toBe(0)
 
@@ -116,7 +117,7 @@ describe("sim 自我 spawn:假模型全闭环", () => {
         timeoutMin: 3,
         sessionsRoot: temp.dir("sessions-"),
         configDir: temp.dir("config-"),
-        hostEntry: path.join(import.meta.dir, "host-entry.ts"),
+        hostEntry: path.join(import.meta.dirname, "host-entry.ts"),
         faux: {
           // 工位端只观察、只汇报 —— 它没有项目检出,手上只有附件。
           turns: [

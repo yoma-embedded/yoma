@@ -3,7 +3,7 @@
  * spawn/杀树/广播全是假的 —— 真进程与杀树语义由 e2e-mailbox-ipc 在真 Electron 里钉。
  */
 
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 
 import type { MailboxHostConfig } from "@yoma-desktop/bench"
 import {

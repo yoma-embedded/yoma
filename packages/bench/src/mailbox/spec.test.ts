@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 
 import { JobSpecError } from "../job.ts"
 import { parseMailboxJob, DEFAULT_MAX_ARTIFACT_BYTES, DEFAULT_MAX_BACK_BYTES, DEFAULT_POLL_SECONDS } from "./spec.ts"
