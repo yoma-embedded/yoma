@@ -29,7 +29,7 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
 - electron-vite 默认外部化 node_modules 里的东西,而内核必须被 **inline**:
   它只发 raw TypeScript(`exports` 指向 `src/*.ts`,内部大量 `./x.ts` 后缀说明符),
   外部化后 Node 的 strip-only 加载器报 `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`,
-  **无 flag 可关**;还有 TS 参数属性(`gdb.ts`、`acp/agent.ts`)会直接
+  **无 flag 可关**;还有 TS 参数属性(`gdb.ts`)会直接
   `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`。inline 时这两样一起消失。
 - 别名指的是**真实路径**而不是 node_modules 里的软链,这是有意的:走软链时
   TypeScript 会把同一个 `ProviderStreams` 当成两个类型(private 字段让它们名义上
@@ -177,9 +177,9 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
   刚压完不重压(否则一路压到没东西可压)。
 - **轮级自动重试**(`host/retry.ts`)。内核把 provider 失败当**数据**(stopReason:"error"
   的 assistant 消息),重不重试是应用层的事;`harness.retryLastTurn()` 是机制。
-  3 次 / 2s 起指数退避,与 yoma 的 ACP 适配器同一组参数 —— 那边有自己的一份,
-  我们不 import 它(会把整个 ACP 与 `@agentclientprotocol/sdk` 拖进 bundle),
-  但**数值必须抄一致**,否则会变成"Zed 里能自愈、桌面端不能"这种极难归因的差异。
+  3 次 / 2s 起指数退避。ACP 适配器已于 2026-09 删除,这里是**唯一实现** ——
+  以后新增消费方一律 import `host/retry.ts`,不要再抄一份:两份实现分叉过一次,
+  代价是"这边能自愈、那边不能"这种极难归因的差异。
   重试期间 **idle 必须压住**(`entry.retryPending`):退避窗口里漏出 idle,bench 会
   当真去跑判据,而 agent 正要重试,两边同时动板子。
 - **模型目录**(`SessionManager.providers()`)。`thinkingLevels` 必须走 pi-ai 的

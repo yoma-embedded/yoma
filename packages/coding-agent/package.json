@@ -11,15 +11,11 @@
 		"./datasheet-server": "./src/core/datasheet-server.ts",
 		"./package.json": "./package.json"
 	},
-	"bin": {
-		"yoma-acp": "./src/acp.ts"
-	},
 	"scripts": {
 		"typecheck": "tsgo --noEmit -p tsconfig.json",
 		"test": "bun test"
 	},
 	"dependencies": {
-		"@agentclientprotocol/sdk": "^1.3.0",
 		"@earendil-works/pi-ai": "catalog:",
 		"@yoma/agent": "workspace:*",
 		"@zip.js/zip.js": "catalog:",

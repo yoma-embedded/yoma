@@ -4,7 +4,7 @@ import { join, resolve } from "node:path"
 import { clampThinkingLevel, type AssistantMessage } from "@earendil-works/pi-ai"
 import { AgentHarness, JsonlSessionRepo, type AgentHarnessEvent, type ThinkingLevel } from "@yoma/agent"
 import { NodeExecutionEnv } from "@yoma/agent/node"
-import { resolveModel } from "../acp/models.ts"
+import { resolveModel } from "../core/models.ts"
 import { discoverSkills, loadContextFiles } from "../core/resources.ts"
 import { buildSystemPrompt, collectToolPromptData } from "../core/system-prompt.ts"
 // 不经过包根的聚合出口：不加载 ACP 适配器、USB 或硬件工具。

@@ -554,7 +554,7 @@ export class SessionManager {
 
     // 工具定义必须过 wrapToolDefinitions 才能交给 harness;系统提示词由工具集反推
     // (collectToolPromptData 会把每个工具的使用指导拼进去)。这两步照抄 yoma 自己的
-    // ACP 适配器 acp/agent.ts:351-359 —— 系统提示词编码了嵌入式工具的用法,自己重写
+    // 系统提示词编码了嵌入式工具的用法,自己重写
     // 等于产品行为分叉。
     const toolDefinitions = [
       // toolchain 工具必须拿到和 resolveToolchainSafe 同一组答案(configDir / side /

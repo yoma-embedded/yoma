@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { AuthContext, Model } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
-import { configurableProviders, FileCredentialStore, NO_AMBIENT_AUTH, resolveModel } from "../src/acp/models.ts";
+import { configurableProviders, FileCredentialStore, NO_AMBIENT_AUTH, resolveModel } from "../src/core/models.ts";
 
 const tempDirs: string[] = [];
 

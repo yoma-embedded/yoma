@@ -27,7 +27,7 @@ import path from "node:path"
 
 import { FileCredentialStore } from "@yoma/coding-agent/models"
 
-/** 和 yoma 的 ACP 适配器同一个默认目录(acp/agent.ts 的 CONFIG_DIR)。 */
+/** yoma 的默认凭据目录。 */
 export function yomaConfigDir(): string {
   return path.join(homedir(), ".yoma")
 }
