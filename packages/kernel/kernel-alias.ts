@@ -75,7 +75,7 @@ function resolveKernelDir(): string {
 
 export const KERNEL_DIR = resolveKernelDir()
 
-const agent = path.join(KERNEL_DIR, "packages/agent/src")
+const agent = path.join(KERNEL_DIR, "packages/agent-legacy/src")
 const codingAgent = path.join(KERNEL_DIR, "packages/coding-agent/src")
 
 /**
