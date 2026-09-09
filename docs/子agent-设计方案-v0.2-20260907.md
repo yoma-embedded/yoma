@@ -1,6 +1,6 @@
 # 子 agent 设计方案 v0.2(照 Claude Code 形态,并行优先;2026-09-07)
 
-取代 v0.1(2026-09-06)。v0.1 的"现状分析"(§1)仍然成立,这里只压缩保留;设计部分整体重写:
+v0.1(2026-09-06)已删,现状分析压缩进 §1;设计部分按 Claude Code 形态重写:
 **目标从"能委派"改成"和 Claude Code 一样:主 agent 一条消息派十几个子 agent 分头干,前台/后台都行,后台完成自动叫醒主 agent"。**
 
 参照物:`D:\MyCode\claude-code-sourcemap\restored-src\src\`(Claude Code 2.1.88 还原源码)+
