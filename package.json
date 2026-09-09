@@ -17,6 +17,9 @@
     "typecheck": "turbo typecheck && tsgo --noEmit -p tsconfig.json",
     "lint": "oxlint",
     "test": "vitest run",
+    "upstream:check": "tsx scripts/check-upstream.ts",
+    "upstream:diff": "tsx scripts/sync-upstream.ts",
+    "upstream:update": "tsx scripts/sync-upstream.ts --apply",
     "postinstall": "patch-package && install-electron"
   },
   "workspaces": [

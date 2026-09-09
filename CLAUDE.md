@@ -59,8 +59,16 @@ coding-agent 的 `AgentSession`),2026-08-04 上游把它掏空成 v2 空壳、8-
 
 ## 仓库结构
 
-Bun workspace,`packages/` 下 9 个包 —— 内核两包(`agent` / `coding-agent`,见上)
-加桌面端这 7 个:
+npm workspace,`packages/` 下 12 个包 —— 四个 pi 上游包、两个内核包、七个桌面端包。
+
+pi 上游包(`ai` / `agent` / `chord` / `telemetry`,包名保留 `@earendil-works/*`)由根目录的 `upstream-lock.json` +
+`npm run upstream:check|diff|update` 逐文件哈希锁定,**源码一个字都不改**,见 `UPSTREAM.md`。其中 `agent`
+(`@earendil-works/pi-agent-core`,pi `b2602be77` 的新 AgentHarness)2026-09-09 刚搬进来,kernel 还没切过去。
+
+内核两包:`agent-legacy`(`@yoma/agent`,2025 年从 pi `f8f75544b` 派生、自行维护的旧 harness,kernel 当前接的就是它,
+切到新 core 后删除)和 `coding-agent`(见上)。
+
+桌面端这 7 个:
 
 | 包 | 名字 | 职责 |
 |---|---|---|

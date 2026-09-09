@@ -1,0 +1,7 @@
+packages/agent/
+packages/ai/src/
+packages/chord/src/
+packages/telemetry/src/
+engines/
+**/out/
+**/dist/

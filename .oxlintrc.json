@@ -3,6 +3,7 @@
   "ignorePatterns": [
     "engines/**",
     "**/out/**",
-    "**/dist/**"
+    "**/dist/**",
+    "packages/agent/docs/**"
   ]
 }

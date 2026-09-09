@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.node.json",
+  "include": [
+    "src/**/*.ts",
+    "test/harness/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}
