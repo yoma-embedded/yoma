@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { NodeExecutionEnv } from "@yoma/agent/node";
+import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { discoverSkills, loadContextFiles, skillDirsOf } from "../src/core/resources.ts";
 
 const tempDirs: string[] = [];

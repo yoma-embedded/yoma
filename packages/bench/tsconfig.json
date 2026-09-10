@@ -3,12 +3,6 @@
   "extends": "../../tsconfig.yoma.json",
   "compilerOptions": {
     "paths": {
-      "@yoma/agent": [
-        "../../packages/agent-legacy/src/index.ts"
-      ],
-      "@yoma/agent/node": [
-        "../../packages/agent-legacy/src/node.ts"
-      ],
       "@yoma/coding-agent": [
         "../../packages/coding-agent/src/index.ts"
       ],

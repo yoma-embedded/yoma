@@ -3,24 +3,22 @@
  *
  * ## 为什么嵌 createKernelHost() 而不是自己装配 harness
  *
- * 裸装配(example/99-headless-run.ts 那条路)省下的只是几十行代码,要重建的却是
- * 投影器、自动压缩、工具装配、事件协议这一整层。而 `KernelHostOptions` 的
- * sessionsRoot / stateDir / enginesDir / onEvents 全是注入位 —— 它本来就是为
- * "第二个宿主"准备的形状。附带白得一件事:sessionsRoot 指向 desktop 的会话目录时,
- * desktop 打开就能回放整个调试过程。
+ * 裸装配省下的只是几十行代码,要重建的却是投影器、工具装配、资源发现、事件协议这一整层。
+ * 而 `KernelHostOptions` 的 sessionsRoot / stateDir / enginesDir / onEvents 全是注入位 ——
+ * 它本来就是为"第二个宿主"准备的形状。附带白得一件事:sessionsRoot 指向 desktop 的会话
+ * 目录时,desktop 打开就能回放整个调试过程。
  *
  * ## 为什么一轮一个子进程(调用方 spawn turn-entry)
  *
- * yoma 的探针租约、gdb 会话表、log 采集器都是**模块级全局**,还挂着 process 退出钩子。
- * 进程边界 = 免费且可靠的清理:agent 轮结束时探针、串口、gdb server 一定被收干净,
- * 下一轮不会撞上"探针被上一轮占着"。崩溃也不会留下孤儿。会话是落盘的 JSONL,
+ * 进程边界 = 免费且可靠的清理:agent 起的子进程(串口、调试器、脚本)在轮结束时一定
+ * 被收干净,崩溃也不会留下孤儿,而会话文件的独占也随进程一起归还。会话是落盘的 JSONL,
  * 下一轮换个进程接着跑,历史一条不丢。
  *
  * ## 一轮"跑完了"怎么判定
  *
- * `session.prompt` 立刻返回,轮次结束只能看事件。状态机是 busy → idle,但自动压缩
- * 会在 idle 之后再来一次 compacting → idle。所以判据是 **idle 静默一小段时间**,
- * 而不是"第一个 idle"。
+ * `session.prompt` 立刻返回,轮次结束只能看事件。状态机是 busy →(中间可能夹几段
+ * compacting)→ idle:重试与阈值/溢出压缩都留在同一段 busy 里。判据是 **idle 静默
+ * 一小段时间**,而不是"第一个 idle" —— 状态只要回跳一次,就说明这一轮还没完。
  */
 
 import { createKernelHost, type KernelHost } from "@yoma-desktop/kernel/host"
@@ -190,7 +188,7 @@ export async function runTurn(options: TurnOptions): Promise<TurnResult> {
       }
       case "message.part.updated": {
         const part = event.part
-        // synthetic 是"不是模型说的"(bash 回显、压缩摘要),同样不该进根因分析。
+        // synthetic 是"不是模型直接说的"(压缩 / 分支摘要),同样不该进根因分析。
         if (part.type === "text" && assistantMessages.has(part.messageID) && !part.synthetic) {
           textByPart.set(part.id, part.text)
         }

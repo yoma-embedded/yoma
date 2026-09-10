@@ -5,7 +5,7 @@
  * 但走的是完整的真实链路:AgentHarness → subscribe → 投影器 → StreamSink → handler 表。
  * 这一条如果绿,说明"能聊天"这件事在数据面上已经成立,剩下的只是前端接线。
  */
-import { afterEach, describe, expect, test } from "vitest"
+import { afterEach, describe, expect, test, vi } from "vitest"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
@@ -17,10 +17,12 @@ import {
   fauxToolCall,
   type Model,
 } from "@earendil-works/pi-ai"
+import { AgentHarness } from "@earendil-works/pi-agent-core"
+import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node"
 
-import { createKernelHost } from "./index.ts"
+import { createKernelHost, SessionManager } from "./index.ts"
 import type { KernelEvent } from "../protocol.ts"
-import type { AssistantMessage, Part, Session, ToolPart } from "../types.ts"
+import type { AssistantMessage, CompactionPart, Part, Session, ToolPart } from "../types.ts"
 
 const roots: string[] = []
 afterEach(() => {
@@ -80,6 +82,64 @@ function makeHost(
   return { host, events, workspace }
 }
 
+/**
+ * 直接开一个 SessionManager。
+ *
+ * 并发、销毁、执行环境回收这几条只能从这一层看:它们全在 RPC 表下面,而且要能在
+ * 同一个实例上 disposeAll 完再把同一个会话重新打开(host 的 dispose 是一次性的)。
+ */
+function makeManager(steps: unknown[]) {
+  const events: KernelEvent[] = []
+  currentFauxProvider = `faux-${++fauxCount}`
+  const manager = new SessionManager({
+    sessionsRoot: tempDir("yoma-sessions-"),
+    // 隔离开发机真实的 ~/.yoma —— 和 makeHost 同一条理由。
+    configDir: tempDir("yoma-config-"),
+    emit: (batch) => events.push(...batch),
+    resolveModels: async () => harnessWith(steps),
+  })
+  return { manager, events, workspace: tempDir("yoma-ws-") }
+}
+
+/**
+ * 数 harness 建了几个,并抓住 prompt() 真正递给 lane.drive 的选项。
+ *
+ * 为什么要数:同一个会话并发打开两次,表现不是报错而是两套 harness / 两条 lane 压在
+ * 一个 entry 上,事件从此只走其中一条。为什么要看 drive 选项:pollDeferred 漏掉的话
+ * deferred 操作会让 drive 提前带着 kind:"waiting" 回来,run_end 永远不来,状态永久 busy。
+ */
+function spyHarness() {
+  const original = AgentHarness.create
+  const created: unknown[] = []
+  const driveOptions: Array<Record<string, unknown>> = []
+  AgentHarness.create = (async (options: never, context: never) => {
+    const result = await original(options, context)
+    created.push(result.harness)
+    const lane = result.harness.lane.bind(result.harness)
+    ;(result.harness as { lane: unknown }).lane = async (name: never, laneContext: never) => {
+      const got = await lane(name, laneContext)
+      const drive = got.drive.bind(got)
+      ;(got as { drive: unknown }).drive = (driven: Record<string, unknown>, driveContext: never) => {
+        driveOptions.push(driven)
+        return drive(driven as never, driveContext)
+      }
+      return got
+    }
+    return result
+  }) as typeof AgentHarness.create
+  return {
+    count: () => created.length,
+    driveOptions,
+    reset: () => {
+      created.length = 0
+      driveOptions.length = 0
+    },
+    restore: () => {
+      AgentHarness.create = original
+    },
+  }
+}
+
 /** 手搓一条可重试的失败响应 —— faux 的 step 可以直接是一条 AssistantMessage。 */
 function fauxRetryableError(errorMessage = "503 Service Unavailable") {
   return {
@@ -100,6 +160,13 @@ function fauxRetryableError(errorMessage = "503 Service Unavailable") {
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     },
   }
+}
+
+/** transcript 里那条压缩分隔线(手动/自动的唯一可观测面)。 */
+function compactionPartOf(page: { items: Array<{ parts: Part[] }> }): CompactionPart | undefined {
+  return page.items.flatMap((item) => item.parts.filter((part) => part.type === "compaction"))[0] as
+    | CompactionPart
+    | undefined
 }
 
 /** 会话状态的时间序列。重试测试靠它断言"中间不能出现 idle"。 */
@@ -206,6 +273,72 @@ describe("内核宿主端到端", () => {
     expect(info.version).toBe("test")
     await host.dispose()
   })
+})
+
+/**
+ * 手动压缩与"改上一条重发"。
+ *
+ * 两条都是**只有内核的结构性操作能做到**的事(compaction entry / 挪会话树的 tip),
+ * 而它们的状态与 transcript 都只经事件流到前端 —— 所以端到端钉住,不测内部字段。
+ */
+describe("结构性操作", () => {
+  test("手动压缩:状态走 compacting → idle,transcript 上留下压缩分隔线", async () => {
+    const { host, events, workspace } = makeHost([
+      fauxAssistantMessage([fauxText("一")]),
+      fauxAssistantMessage([fauxText("## 摘要\n前面聊过一")]),
+    ])
+    const session = (await host.handle("session.create", { directory: workspace })) as Session
+    await host.handle("session.prompt", { sessionID: session.id, input: { text: "第一轮" } })
+    await waitFor(() => statusesOf(events).at(-1) === "idle")
+    events.length = 0
+
+    await host.handle("session.compact", { sessionID: session.id })
+    await waitFor(() => statusesOf(events).at(-1) === "idle")
+    expect(statusesOf(events)).toEqual(["compacting", "idle"])
+
+    const page = (await host.handle("session.messages", { sessionID: session.id })) as {
+      items: Array<{ info: AssistantMessage; parts: Part[] }>
+    }
+    expect(page.items.flatMap((item) => item.parts.map((part) => part.type))).toContain("compaction")
+    await host.dispose()
+  }, 20_000)
+
+  test("navigate:原文交还输入框,被抛下那半条 transcript 不再回来", async () => {
+    const { host, events, workspace } = makeHost([
+      fauxAssistantMessage([fauxText("回答一")]),
+      fauxAssistantMessage([fauxText("回答二")]),
+    ])
+    const session = (await host.handle("session.create", { directory: workspace })) as Session
+    await host.handle("session.prompt", { sessionID: session.id, input: { text: "问题一" } })
+    await waitFor(() => statusesOf(events).at(-1) === "idle")
+    await host.handle("session.prompt", { sessionID: session.id, input: { text: "问题二" } })
+    await waitFor(
+      () => events.some((e) => e.type === "message.part.updated" && e.part.type === "text" && e.part.text === "回答二"),
+      10_000,
+    )
+    await waitFor(() => statusesOf(events).at(-1) === "idle")
+
+    const before = (await host.handle("session.messages", { sessionID: session.id })) as {
+      items: Array<{ info: AssistantMessage; parts: Part[] }>
+    }
+    const second = before.items.find((item) =>
+      item.parts.some((part) => part.type === "text" && part.text === "问题二"),
+    )!
+    const result = (await host.handle("session.navigate", {
+      sessionID: session.id,
+      messageID: second.info.id,
+    })) as { editorText: string }
+    expect(result.editorText).toBe("问题二")
+
+    const after = (await host.handle("session.messages", { sessionID: session.id })) as {
+      items: Array<{ info: AssistantMessage; parts: Part[] }>
+    }
+    expect(after.items.flatMap((item) => item.parts.map((part) => (part.type === "text" ? part.text : "")))).toEqual([
+      "问题一",
+      "回答一",
+    ])
+    await host.dispose()
+  }, 20_000)
 })
 
 describe("会话不存在", () => {
@@ -440,4 +573,272 @@ describe("思考档位", () => {
     expect(capture.seen().reasoning).toBeUndefined()
     await host.dispose()
   })
+})
+
+/**
+ * 会话装配与销毁的并发。
+ *
+ * 这一组全是**静默**的故障:并发打开要么炸在内核的 `Session is already open`(前端看到
+ * 一个英文异常),要么交出一个 projection 还没装好的会话(messages/navigate TypeError,
+ * prompt 整轮事件丢光)。所以只能在这一层钉住。
+ */
+describe("并发装配与生命周期", () => {
+  test("同一 tick 两次 messages():只开一个 harness,两边都拿得到投影", async () => {
+    const spy = spyHarness()
+    try {
+      const { manager, events, workspace } = makeManager([fauxAssistantMessage([fauxText("好")])])
+      const session = await manager.create(workspace)
+      await manager.messages(session.id)
+      // 让会话彻底变冷:下一次 ensureOpen 必须重新走 repo.open —— 那正是
+      // 并发装配会撞上 `Session is already open` 的地方。
+      await manager.disposeAll()
+      spy.reset()
+
+      const [first, second] = await Promise.all([manager.messages(session.id), manager.messages(session.id)])
+      expect(spy.count()).toBe(1)
+      expect(first.items).toEqual(second.items)
+
+      // 装配真的完整:紧接着一轮对话,事件与 transcript 都只有一份。
+      await manager.prompt(session.id, { text: "你好" })
+      await waitFor(() => statusesOf(events).at(-1) === "idle")
+      const page = await manager.messages(session.id)
+      const ids = page.items.map((item) => item.info.id)
+      expect(new Set(ids).size).toBe(ids.length)
+      expect(page.items.map((item) => item.info.role)).toEqual(["user", "assistant"])
+
+      await manager.disposeAll()
+    } finally {
+      spy.restore()
+    }
+  }, 20_000)
+
+  test("dispose 还在收尾时 messages():等它关完再重开,拿不到半关的会话", async () => {
+    const { manager, workspace } = makeManager([
+      fauxAssistantMessage([fauxText("一")]),
+      fauxAssistantMessage([fauxText("二")]),
+    ])
+    const session = await manager.create(workspace)
+    // 一轮还在飞的时候销毁:dispose 要先中断它,这段时间足够让下一个调用挤进来。
+    await manager.prompt(session.id, { text: "第一轮" })
+
+    const order: string[] = []
+    const closing = manager.disposeAll().then(() => order.push("closed"))
+    const page = await manager.messages(session.id).then((value) => {
+      order.push("reopened")
+      return value
+    })
+    await closing
+
+    // 关完才重开 —— 反过来的话交出去的 entry 订阅已经摘了、lane 马上被清空。
+    expect(order).toEqual(["closed", "reopened"])
+    expect(page.items.some((item) => item.info.role === "user")).toBe(true)
+    // 重开之后照样能接着聊。
+    await manager.prompt(session.id, { text: "第二轮" })
+    await manager.disposeAll()
+  }, 20_000)
+
+  test("refreshMachineEnv 换下来的执行环境也会被 cleanup —— 装工具链之前起的子进程不许活过会话", async () => {
+    const cleanup = vi.spyOn(NodeExecutionEnv.prototype, "cleanup")
+    try {
+      const { manager, events, workspace } = makeManager([
+        fauxAssistantMessage([fauxToolCall("bash", { command: "echo 一" })]),
+        fauxAssistantMessage([fauxText("好")]),
+        fauxAssistantMessage([fauxToolCall("bash", { command: "echo 二" })]),
+        fauxAssistantMessage([fauxText("好")]),
+      ])
+      const session = await manager.create(workspace)
+      await manager.prompt(session.id, { text: "第一次" })
+      await waitFor(() => statusesOf(events).at(-1) === "idle", 15_000)
+
+      cleanup.mockClear()
+      await manager.refreshMachineEnv()
+      // 换过环境之后再跑一轮:这一轮用的是新造的那个 env。
+      await manager.prompt(session.id, { text: "第二次" })
+      await waitFor(() => statusesOf(events).filter((status) => status === "idle").length >= 2, 15_000)
+
+      await manager.disposeAll()
+      // 退役那个 + 当前那个,两个都要收。只收当前那个的话,刷新之前起的子进程会活下来。
+      expect(cleanup.mock.calls.length).toBeGreaterThanOrEqual(2)
+    } finally {
+      cleanup.mockRestore()
+    }
+  }, 30_000)
+})
+
+describe("状态机不被旁路事件带偏", () => {
+  test("监听器抛异常只报 kernel.error —— 不许把还在跑的这一轮说成 idle", async () => {
+    // 真实形态:renderer 侧某个 reducer 抛了,内核回一条 handler_error。它对这一轮
+    // 什么都没说,可这里曾经拿它当失败处理 → 状态硬改 idle,下一条 prompt 撞 LaneBusy。
+    const events: KernelEvent[] = []
+    let thrown = false
+    currentFauxProvider = `faux-${++fauxCount}`
+    const manager = new SessionManager({
+      sessionsRoot: tempDir("yoma-sessions-"),
+      configDir: tempDir("yoma-config-"),
+      emit: (batch) => {
+        events.push(...batch)
+        if (!thrown && batch.some((event) => event.type === "message.part.updated" && event.part.type === "tool")) {
+          thrown = true
+          throw new Error("renderer 的 reducer 挂了")
+        }
+      },
+      resolveModels: async () =>
+        harnessWith([
+          fauxAssistantMessage([fauxToolCall("read", { path: "README.md" })]),
+          fauxAssistantMessage([fauxText("读完了")]),
+          fauxAssistantMessage([fauxText("第二轮")]),
+        ]),
+    })
+    const workspace = tempDir("yoma-ws-")
+    const session = await manager.create(workspace)
+
+    await manager.prompt(session.id, { text: "读一下 README" })
+    await waitFor(() => statusesOf(events).at(-1) === "idle", 15_000)
+
+    expect(thrown).toBe(true)
+    expect(events.some((event) => event.type === "kernel.error" && event.message.includes("事件处理失败"))).toBe(true)
+    // idle 只能在这一轮真的说完之后出现。
+    const idleAt = events.findIndex((event) => event.type === "session.status" && event.status.type === "idle")
+    const doneAt = events.findIndex(
+      (event) => event.type === "message.part.updated" && event.part.type === "text" && event.part.text.includes("读完了"),
+    )
+    expect(doneAt).toBeGreaterThanOrEqual(0)
+    expect(idleAt).toBeGreaterThan(doneAt)
+    expect(statusesOf(events)).toEqual(["busy", "idle"])
+
+    // 最关键的一条:状态没被说谎,所以下一轮还发得出去。
+    await manager.prompt(session.id, { text: "再来一轮" })
+    await waitFor(() => statusesOf(events).filter((status) => status === "idle").length >= 2, 15_000)
+    await manager.disposeAll()
+  }, 30_000)
+
+  test("prompt 的 drive 同时带 waitForRetry 与 pollDeferred;idle 上 abort 立刻返回", async () => {
+    const spy = spyHarness()
+    try {
+      const { manager, events, workspace } = makeManager([fauxAssistantMessage([fauxText("好")])])
+      const session = await manager.create(workspace)
+      await manager.messages(session.id)
+      // 空闲的 lane 上中断:requestAbort 之后没有在飞操作,waitForIdle 必须立刻回来。
+      await manager.abort(session.id)
+
+      await manager.prompt(session.id, { text: "你好" })
+      await waitFor(() => statusesOf(events).at(-1) === "idle")
+      expect(spy.driveOptions[0]).toMatchObject({ waitForRetry: true, pollDeferred: true })
+      await manager.disposeAll()
+    } finally {
+      spy.restore()
+    }
+  }, 20_000)
+
+  test("一轮跑着的时候 abort:回得来,状态落 idle", async () => {
+    const { manager, events, workspace } = makeManager([
+      fauxRetryableError("503 Service Unavailable"),
+      fauxAssistantMessage([fauxText("这次成了")]),
+    ])
+    const session = await manager.create(workspace)
+    await manager.prompt(session.id, { text: "你好" })
+    await waitFor(() => statusesOf(events).at(-1) === "busy")
+
+    await manager.abort(session.id)
+    expect(manager.status(session.id)).toEqual({ type: "idle" })
+    await manager.disposeAll()
+  }, 20_000)
+})
+
+describe("压缩", () => {
+  test("手动压缩的 auto 标记要落盘 —— live 与重放必须给出同一条分隔线", async () => {
+    // CompactionEntry 没有"为什么压缩"这个字段,所以 host 自己补一条 yoma/compaction
+    // entry。不补的话 live 是手动、重放变自动,同一个 part 两副面孔。
+    const { manager, events, workspace } = makeManager([
+      fauxAssistantMessage([fauxText("一")]),
+      fauxAssistantMessage([fauxText("## 摘要\n前面聊过一")]),
+    ])
+    const session = await manager.create(workspace)
+    await manager.prompt(session.id, { text: "第一轮" })
+    await waitFor(() => statusesOf(events).at(-1) === "idle")
+
+    await manager.compact(session.id)
+    await waitFor(() => statusesOf(events).at(-1) === "idle")
+    const live = compactionPartOf(await manager.messages(session.id))
+    expect(live?.auto).toBe(false)
+
+    // 重开一次 —— 整条历史按重放那条路再投影一遍。
+    await manager.disposeAll()
+    const replayed = compactionPartOf(await manager.messages(session.id))
+    expect(replayed?.auto).toBe(false)
+    expect({ ...replayed, id: "", messageID: "" }).toEqual({ ...live, id: "", messageID: "" })
+    await manager.disposeAll()
+  }, 30_000)
+
+  test("没东西可压时报的是中文 —— 内核的英文错误不许直接摆给用户", async () => {
+    const { manager, workspace } = makeManager([])
+    const session = await manager.create(workspace)
+    await expect(manager.compact(session.id)).rejects.toThrow(/当前没有可压缩的内容/)
+    await manager.disposeAll()
+  }, 20_000)
+
+  test("忙着的时候压缩:先中断这一轮再压,不是甩一个 LaneBusy 出来", async () => {
+    const { manager, events, workspace } = makeManager([
+      fauxAssistantMessage([fauxText("一")]),
+      fauxRetryableError("503 Service Unavailable"),
+      fauxAssistantMessage([fauxText("## 摘要\n前面聊过一")]),
+    ])
+    const session = await manager.create(workspace)
+    await manager.prompt(session.id, { text: "第一轮" })
+    await waitFor(() => statusesOf(events).at(-1) === "idle")
+
+    // 第二轮进退避(waitForRetry 把它留在一段连续的 busy 里),这时候点压缩。
+    await manager.prompt(session.id, { text: "第二轮" })
+    await waitFor(() => statusesOf(events).at(-1) === "busy")
+    await manager.compact(session.id)
+    await waitFor(() => statusesOf(events).at(-1) === "idle", 20_000)
+
+    expect(compactionPartOf(await manager.messages(session.id))?.auto).toBe(false)
+    expect(manager.status(session.id)).toEqual({ type: "idle" })
+    await manager.disposeAll()
+  }, 30_000)
+})
+
+describe("navigate 的 removed 事件", () => {
+  test("被抛下那条分支逐条发 message.removed,而且排在 session.updated 之前", async () => {
+    // 前端的消息集合只增不减(按 id 二分维护)。只发 session.updated 的话 renderer
+    // 不会重拉,被抛下那半条 transcript 会一直留在屏幕上。
+    const { host, events, workspace } = makeHost([
+      fauxAssistantMessage([fauxText("回答一")]),
+      fauxAssistantMessage([fauxText("回答二")]),
+    ])
+    const session = (await host.handle("session.create", { directory: workspace })) as Session
+    await host.handle("session.prompt", { sessionID: session.id, input: { text: "问题一" } })
+    await waitFor(() => statusesOf(events).at(-1) === "idle")
+    await host.handle("session.prompt", { sessionID: session.id, input: { text: "问题二" } })
+    await waitFor(
+      () => events.some((e) => e.type === "message.part.updated" && e.part.type === "text" && e.part.text === "回答二"),
+      10_000,
+    )
+    await waitFor(() => statusesOf(events).at(-1) === "idle")
+
+    const before = (await host.handle("session.messages", { sessionID: session.id })) as {
+      items: Array<{ info: AssistantMessage; parts: Part[] }>
+    }
+    const second = before.items.find((item) => item.parts.some((part) => part.type === "text" && part.text === "问题二"))!
+    const dropped = before.items.slice(before.items.indexOf(second)).map((item) => item.info.id)
+    expect(dropped.length).toBe(2)
+
+    events.length = 0
+    await host.handle("session.navigate", { sessionID: session.id, messageID: second.info.id })
+    // 事件走 StreamSink,按帧成批推 —— 等那一批真的到了再断言。
+    await waitFor(() => events.some((event) => event.type === "session.updated"))
+
+    const removed = events.flatMap((event) => (event.type === "message.removed" ? [event.messageID] : []))
+    expect(removed.sort()).toEqual([...dropped].sort())
+    const updatedAt = events.findIndex((event) => event.type === "session.updated")
+    const lastRemovedAt = events.findLastIndex((event) => event.type === "message.removed")
+    expect(updatedAt).toBeGreaterThan(lastRemovedAt)
+
+    const after = (await host.handle("session.messages", { sessionID: session.id })) as {
+      items: Array<{ info: AssistantMessage; parts: Part[] }>
+    }
+    expect(after.items.map((item) => item.info.id)).toEqual(before.items.slice(0, 2).map((item) => item.info.id))
+    await host.dispose()
+  }, 30_000)
 })

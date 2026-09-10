@@ -5,7 +5,7 @@
  *   2. `tsconfig.yoma.json` 的 paths —— typecheck 期(tsgo)用,被 desktop/app 继承;
  *   3. `packages/kernel/tsconfig.json` 里 **内联** 的同一份 paths —— `bun test` 用。
  *      bun 不跟随数组形式的 extends,所以这份必须就地展开,否则单测直接
- *      "Cannot find module '@yoma/agent'"。
+ *      "Cannot find module '@yoma/coding-agent'"。
  *   4. `packages/bench/tsconfig.json` 的内联副本 —— 同理:bench 直接跑源码(不打包),
  *      `bun test` 和 CLI 都靠它解析 yoma。
  *

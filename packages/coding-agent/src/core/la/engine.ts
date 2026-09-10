@@ -11,7 +11,7 @@
 import { existsSync } from "node:fs";
 import { open } from "node:fs/promises";
 import path from "node:path";
-import { type EnginePathOptions, type EngineRunResult, assertEngineSettled, engineBin, engineDataDir, runEngine } from "../tools/engines.ts";
+import { type EnginePathOptions, type EngineRunResult, assertEngineSettled, engineBin, engineDataDir, runEngine } from "../engines.ts";
 
 export interface LaEngineContext extends EnginePathOptions {
 	cwd?: string;

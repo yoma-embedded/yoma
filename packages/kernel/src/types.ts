@@ -8,10 +8,10 @@
  *
  * 相对 opencode 删掉的 Part 变体,以及原因:
  *   step-start / step-finish  yoma 的每轮状态是 turn_start/turn_end 事件,不落 transcript
- *   snapshot / patch          yoma 没有文件快照 —— 它的回滚是 Session.moveTo() 挪 leaf 指针
+ *   snapshot / patch          没有文件快照 —— "回滚"只是 navigateTree() 把会话树的 tip 挪回去
  *   subtask                   没有子代理
  *   agent                     只有一个系统提示词,没有 persona,也没有 @agent 提及的偏移量
- *   retry                     内核对 provider 失败不重试,失败就是一条带 error 的 assistant 消息
+ *   retry                     重试在内核里(retry_* 事件),不落 transcript —— 失败仍是一条带 error 的 assistant 消息
  *
  * 本文件必须保持 **浏览器安全**:不 import yoma、不 import node:*。
  */
@@ -144,8 +144,8 @@ export interface CompactionPart extends PartBase {
 export interface ToolPart extends PartBase {
   type: "tool"
   /**
-   * yoma 的 ToolCall.id。工具调用和结果 **必须按它配对,绝不按到达顺序** ——
-   * 并行工具时 tool_execution_end 按完成序发,而 transcript 是源序。
+   * 内核的 ToolCall.id。工具调用和结果 **必须按它配对,绝不按到达顺序** ——
+   * 并行工具时 tool_end 按完成序发,而 transcript 是源序。
    */
   callID: string
   tool: ToolName | (string & {})
@@ -183,7 +183,7 @@ export interface ToolStateCompleted {
   /** 工具的结构化结果。UI 不解释它。 */
   metadata: ToolDetails
   time: { start: number; end: number }
-  /** 工具返回的图片(datasheet view_figure)。 */
+  /** 工具结果里的图片(read 读一张图就是这条路)。 */
   attachments?: FilePart[]
 }
 
@@ -201,30 +201,13 @@ export type ToolState = ToolStatePending | ToolStateRunning | ToolStateCompleted
 // 工具名与工具链 / la 的 RPC 视图模型
 // ---------------------------------------------------------------------------
 
-export const TOOL_NAMES = [
-  "read",
-  "bash",
-  "edit",
-  "write",
-  "toolchain",
-  "examples",
-  "grep",
-  "stm32config",
-  "netlist",
-  "flash",
-  "datasheet",
-  "log",
-  "gdb",
-  "la",
-  "scope",
-] as const
-
 /**
- * 已从内核退役、但必须留在视图词汇表里的工具:旧会话的 JSONL 里还有它们的 part,
- * 重放时 session-ui 要认得。grep 于 yoma 2026-08 的装配面精简中删除(依赖外部 ripgrep)。
- * 活工具集 = TOOL_NAMES − RETIRED_TOOL_NAMES,由 host/tool-names.test.ts 钉住 yoma 装配面。
+ * host 真正装配出来的工具名,逐字相同(host/tool-names.test.ts 钉住)。
+ *
+ * 嵌入式那一套(flash/gdb/la/scope/…)已于 2026-09-10 归零,只剩内核自带的四件套。
+ * 退役的名字**不必**留在这里:界面按任意工具名走万能卡,旧会话重放照样画得出来。
  */
-export const RETIRED_TOOL_NAMES = ["grep"] as const
+export const TOOL_NAMES = ["read", "bash", "edit", "write"] as const
 
 export type ToolName = (typeof TOOL_NAMES)[number]
 

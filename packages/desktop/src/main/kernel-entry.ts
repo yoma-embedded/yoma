@@ -1,22 +1,16 @@
 /**
  * 内核进程的入口。electron-vite 把它编成 out/main/kernel.js,作为 main 的第三个 rollup 入口。
  *
- * yoma 的源码在这一步被 esbuild 整个 inline 进来:它只发 raw `.ts`,而 Electron 的
- * strip-only 加载器既吃不下 TS 参数属性(gdb.ts:485),也拒绝 strip
- * node_modules 下的 `.ts`。打包一步同时解掉这两个,而 yoma 一个字节都不用改。
+ * 内核源码在这一步被 esbuild 整个 inline 进来:它只发 raw `.ts`,而 Electron 的
+ * strip-only 加载器拒绝 strip node_modules 下的 `.ts`。打包一步解掉这个,
+ * 而内核一个字节都不用改。
  *
- * 进程模型是刻意的单例 —— yoma 的 probe 租约和 gdb session 表是模块级全局,
- * 分片 fork 会让两个进程各自以为独占探针。所以整个 app 只 fork 这一个。
+ * 进程模型是刻意的单例 —— 会话的 JSONL 由一个进程独占(同一个会话开两次直接抛),
+ * 分片 fork 会让两个进程各自以为自己在写同一条历史。所以整个 app 只 fork 这一个。
  */
 
 import { createKernelHost, kernelSelfCheck, type KernelHost } from "@yoma-desktop/kernel/host"
-import {
-  DEFAULT_THINKING_LEVEL,
-  RETIRED_TOOL_NAMES,
-  TOOL_NAMES,
-  type KernelEvent,
-  type KernelFrame,
-} from "@yoma-desktop/kernel"
+import { DEFAULT_THINKING_LEVEL, TOOL_NAMES, type KernelEvent, type KernelFrame } from "@yoma-desktop/kernel"
 import { ensureDatasheetServerEnv } from "./datasheet-server.ts"
 
 // 把解析出的数据手册服务器地址(环境变量 > ~/.yoma/.env > 内置默认)喂进 process.env,
@@ -148,9 +142,9 @@ if (parentPort) {
 if (process.env.YOMA_KERNEL_SELFCHECK === "1") {
   const report = kernelSelfCheck({ enginesDir: process.env.YOMA_ENGINES_DIR })
   console.log(JSON.stringify(report, null, 2))
-  // 期望值**从工具名词汇表推**,不写魔数:内核 2026-08 让 grep 退役之后,这里的
-  // 硬编码 11 就一直是错的,而它只有跑 smoke 才暴露 —— 单测和 typecheck 都碰不到。
-  const expected = TOOL_NAMES.length - RETIRED_TOOL_NAMES.length
+  // 期望值**从工具名词汇表推**,不写魔数:写死过一个数字,内核改了工具集之后它就一直
+  // 是错的,而且只有跑 smoke 才暴露 —— 单测和 typecheck 都碰不到。
+  const expected = TOOL_NAMES.length
   if (report.tools.length !== expected) {
     console.error(`自检:装配出 ${report.tools.length} 个工具,期望 ${expected} 个`)
   }

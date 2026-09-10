@@ -265,6 +265,11 @@ function writeLedger(configDir: string, entries: Record<string, unknown>): void 
 }
 
 /** 每个工具调用的最终输出,按发生顺序(同一个 part 的多条快照只留完成那条)。 */
+/** 会话状态的时间序列 —— 发下一轮之前必须等它落回 idle。 */
+function statusesOf(events: KernelEvent[]): string[] {
+  return events.flatMap((event) => (event.type === "session.status" ? [event.status.type] : []))
+}
+
 function completedOutputs(events: KernelEvent[]): string[] {
   const byId = new Map<string, string>()
   for (const part of toolPartsOf(events)) {
@@ -337,6 +342,9 @@ describe("机器级目录进会话 PATH", () => {
     await manager.prompt(session.id, { text: "第一次" })
     await waitFor(() => completedOutputs(events).length >= 1)
     expect(completedOutputs(events)[0]).not.toContain("yoma-test-second-pkg")
+    // 工具跑完 ≠ 这一轮跑完(后面还有一条 assistant 消息)。不等到 idle 就发下一轮,
+    // prompt() 会先去中断这一轮,两边抢同一条 lane —— 机器一忙就超时。
+    await waitFor(() => statusesOf(events).at(-1) === "idle")
 
     // 安装发生在会话开着的时候。
     writeManagedInstall(configDir, "yoma-test-second-pkg", "2.0.0", ["widget"])

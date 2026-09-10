@@ -7,10 +7,20 @@
  *
  * 失败语义:发现过程绝不抛错 —— 读不到的文件直接跳过,技能问题以 diagnostics
  * 返回。资源是锦上添花,不能因为一个坏文件让 session/new 失败。
+ *
+ * 内核的文件系统接口每个调用都要一个 Context(取消 / 遥测的载体)。资源发现没有
+ * 外部取消点,统一传 BACKGROUND_CONTEXT。
  */
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { type FileSystem, loadSkills, type Skill, type SkillDiagnostic } from "@yoma/agent";
+import {
+	BACKGROUND_CONTEXT,
+	type ExecutionEnv,
+	type FileSystem,
+	loadSkills,
+	type Skill,
+	type SkillDiagnostic,
+} from "@earendil-works/pi-agent-core";
 
 /** 每个目录里按此顺序找第一个存在的上下文文件,override 优先(语义同 pi)。 */
 const CONTEXT_FILE_CANDIDATES = ["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"];
@@ -24,7 +34,7 @@ async function contextFileOf(fs: FileSystem, dir: string): Promise<ContextFile |
 	for (const name of CONTEXT_FILE_CANDIDATES) {
 		const path = join(dir, name);
 		// 只试着读:目录/不存在/无权限都表现为读失败,统一跳过。
-		const content = await fs.readTextFile(path);
+		const content = await fs.readTextFile(path, BACKGROUND_CONTEXT);
 		if (content.ok) return { path, content: content.value };
 	}
 	return undefined;
@@ -47,7 +57,7 @@ export async function loadContextFiles(
 	const seenContent = new Set<string>();
 
 	const add = async (file: ContextFile): Promise<void> => {
-		const canonical = await fs.canonicalPath(file.path);
+		const canonical = await fs.canonicalPath(file.path, BACKGROUND_CONTEXT);
 		const pathKey = canonical.ok ? canonical.value : file.path;
 		if (seenPaths.has(pathKey) || seenContent.has(file.content)) return;
 		seenPaths.add(pathKey);
@@ -92,10 +102,10 @@ export function skillDirsOf(options: { cwd: string; globalDir: string; homeDir?:
 
 /** 发现技能并按名字去重(后加载的覆盖先加载的)。诊断原样透出,由调用方决定怎么展示。 */
 export async function discoverSkills(
-	fs: FileSystem,
+	env: ExecutionEnv,
 	options: { cwd: string; globalDir: string; homeDir?: string },
 ): Promise<{ skills: Skill[]; diagnostics: SkillDiagnostic[] }> {
-	const { skills, diagnostics } = await loadSkills(fs, skillDirsOf(options));
+	const { skills, diagnostics } = await loadSkills(env, skillDirsOf(options), BACKGROUND_CONTEXT);
 	const byName = new Map<string, Skill>();
 	for (const skill of skills) byName.set(skill.name, skill);
 	return { skills: [...byName.values()], diagnostics };

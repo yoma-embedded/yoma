@@ -1,14 +1,13 @@
 /**
- * 内核源码的解析位置 —— 全仓唯一的一份。
+ * 应用层(`@yoma/coding-agent`)源码的解析位置 —— 全仓唯一的一份。
  *
  * ## 为什么还需要这个文件(合库之后)
  *
- * 内核(packages/{agent,coding-agent})现在和桌面端在同一棵树上,裸说明符
- * `@yoma/agent` 已经能靠 bun workspace 解析。但**打包期仍然要显式别名**:
- * electron-vite 默认会把 node_modules 里的东西外部化,而内核必须被 **inline 进
- * `out/main/kernel.js`** —— 它只有 raw TypeScript(`exports` 指向 `src/*.ts`,
- * 内部大量 `./x.ts` 后缀说明符),外部化之后 Electron 的 strip-only 加载器直接报
- * ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING,无 flag 可关。
+ * 它现在和桌面端在同一棵树上,裸说明符靠 workspace 就能解析。但**打包期仍然要
+ * 显式别名**:electron-vite 默认会把 node_modules 里的东西外部化,而这些包必须被
+ * **inline 进 `out/main/kernel.js`** —— 它们只有 raw TypeScript(`exports` 指向
+ * `src/*.ts`,内部大量 `./x.ts` 后缀说明符),外部化之后 Electron 的 strip-only
+ * 加载器直接报 ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING,无 flag 可关。
  *
  * 而且别名指的是**真实路径**而不是 node_modules 里的软链,这一点是有意的:
  * 走软链时 TypeScript 会把同一个 `ProviderStreams` 当成两个类型(private 字段让
@@ -30,7 +29,7 @@ import path from "node:path"
 const MARKER = "packages/agent/src/index.ts"
 const SHARED_TSCONFIG = "tsconfig.yoma.json"
 
-/** 从 tsconfig.yoma.json 的 `@yoma/agent` 条目反推仓库根目录。 */
+/** 从 tsconfig.yoma.json 的 `@yoma/coding-agent` 条目反推仓库根目录。 */
 function fromSharedTsconfig(start: string): string | undefined {
   let dir = start
   for (let depth = 0; depth < 8; depth += 1) {
@@ -38,8 +37,8 @@ function fromSharedTsconfig(start: string): string | undefined {
     if (existsSync(file)) {
       const raw = readFileSync(file, "utf8").replace(/^\s*\/\/.*$/gm, "")
       const entry = (JSON.parse(raw) as { compilerOptions?: { paths?: Record<string, string[]> } }).compilerOptions
-        ?.paths?.["@yoma/agent"]?.[0]
-      // 条目形如 <root>/packages/agent/src/index.ts,上溯四级就是 <root>。
+        ?.paths?.["@yoma/coding-agent"]?.[0]
+      // 条目形如 <root>/packages/coding-agent/src/index.ts,上溯四级就是 <root>。
       if (entry) return path.resolve(dir, entry, "..", "..", "..", "..")
       return undefined
     }
@@ -75,23 +74,20 @@ function resolveKernelDir(): string {
 
 export const KERNEL_DIR = resolveKernelDir()
 
-const agent = path.join(KERNEL_DIR, "packages/agent-legacy/src")
 const codingAgent = path.join(KERNEL_DIR, "packages/coding-agent/src")
 
 /**
  * 打包器用的精确别名表(键是完整说明符,不做前缀匹配)。
  *
- * 深引用的三条(`/system-prompt`、`/models`、`/resources`)故意绕过 yoma 的 exports map ——
+ * 深引用的三条(`/system-prompt`、`/models`、`/resources`)故意绕过 coding-agent 的 exports map ——
  * `buildSystemPrompt`、`resolveModel`、`discoverSkills` 都不在里面,但系统提示词编码了
- * 嵌入式工具的使用指导、资源发现编码了"技能与 AGENTS.md 从哪些目录找"这条产品决定,
+ * yoma 的身份与证据规则、资源发现编码了"技能与 AGENTS.md 从哪些目录找"这条产品决定,
  * 重写等于产品行为分叉。走别名既拿到真实现,又保住 typecheck 可见性。
  *
- * `@earendil-works/pi-ai` 不在表里:它是 npm 真包(dist + exports),交给 node 解析;
- * 不在 desktop 的 dependencies 里,所以 electron-vite 不会外部化它,照样 inline。
+ * `@earendil-works/*`(pi-agent-core / pi-ai)不在表里:它们的 exports map 已经把每个
+ * 入口指到 `src/*.ts`,裸说明符经 workspace 软链就能解析,不需要别名补位。
  */
 export const KERNEL_ALIASES: Record<string, string> = {
-  "@yoma/agent": path.join(agent, "index.ts"),
-  "@yoma/agent/node": path.join(agent, "node.ts"),
   "@yoma/coding-agent": path.join(codingAgent, "index.ts"),
   "@yoma/coding-agent/system-prompt": path.join(codingAgent, "core/system-prompt.ts"),
   "@yoma/coding-agent/models": path.join(codingAgent, "core/models.ts"),

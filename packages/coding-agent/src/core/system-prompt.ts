@@ -3,22 +3,18 @@
  *
  * 与 pi 的差异:
  * 1. 去掉了 pi 文档区块(readmePath / docsPath / examplesPath)—— yoma 不随包发布文档;
- * 2. 技能区块直接用内核的 formatSkillsForSystemPrompt,不维护 coding-agent 分叉版;
- * 3. 加了 collectToolPromptData:pi 在 AgentSession 的装配代码里收集工具提示词元数据,
- *    yoma 没有 AgentSession,就近放在这里。
+ * 2. 技能区块直接用内核的 formatSkillsForSystemPrompt,不维护 coding-agent 分叉版。
+ *
+ * 2026-09-10 工具归零:工具的单行摘要与使用守则从前由 collectToolPromptData 从工具
+ * 定义里收集,工具没了这条路也一起删 —— 现在只收 selectedTools 这一份名字清单。
  */
-import { formatSkillsForSystemPrompt, type Skill } from "@yoma/agent";
-import type { ToolDefinition } from "./tools/types.ts";
+import { formatSkillsForSystemPrompt, type Skill } from "@earendil-works/pi-agent-core";
 
 export interface BuildSystemPromptOptions {
 	/** Custom system prompt (replaces default). */
 	customPrompt?: string;
 	/** Tools to include in prompt. Default: [read, bash, edit, write] */
 	selectedTools?: string[];
-	/** Optional one-line tool snippets keyed by tool name. */
-	toolSnippets?: Record<string, string>;
-	/** Additional guideline bullets appended to the default system prompt guidelines. */
-	promptGuidelines?: string[];
 	/** Text to append to system prompt. */
 	appendSystemPrompt?: string;
 	/** Working directory. */
@@ -29,30 +25,11 @@ export interface BuildSystemPromptOptions {
 	skills?: Skill[];
 }
 
-/** 从工具定义收集 buildSystemPrompt 要的三样:名字清单、单行摘要、使用守则。 */
-export function collectToolPromptData(
-	definitions: ToolDefinition<any, any>[],
-): Pick<BuildSystemPromptOptions, "selectedTools" | "toolSnippets" | "promptGuidelines"> {
-	const selectedTools: string[] = [];
-	const toolSnippets: Record<string, string> = {};
-	const promptGuidelines: string[] = [];
-	for (const definition of definitions) {
-		selectedTools.push(definition.name);
-		if (definition.promptSnippet) {
-			toolSnippets[definition.name] = definition.promptSnippet;
-		}
-		promptGuidelines.push(...(definition.promptGuidelines ?? []));
-	}
-	return { selectedTools, toolSnippets, promptGuidelines };
-}
-
 /** Build the system prompt with tools, guidelines, and context */
 export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	const {
 		customPrompt,
 		selectedTools,
-		toolSnippets,
-		promptGuidelines,
 		appendSystemPrompt,
 		cwd,
 		contextFiles: providedContextFiles,
@@ -77,10 +54,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	if (customPrompt) {
 		prompt = customPrompt;
 	} else {
-		const toolsList =
-			tools.length > 0
-				? tools.map((name) => (toolSnippets?.[name] ? `- ${name}: ${toolSnippets[name]}` : `- ${name}`)).join("\n")
-				: "(none)";
+		const toolsList = tools.length > 0 ? tools.map((name) => `- ${name}`).join("\n") : "(none)";
 
 		// Build guidelines based on which tools are actually available.
 		// Set 保插入顺序,于是"去重且保序"不用自己再维护一个数组。
@@ -93,13 +67,6 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 		const hasLs = tools.includes("ls");
 		if (hasBash && !hasGrep && !hasFind && !hasLs) {
 			guidelinesSet.add("Use bash for file operations like ls, rg, find");
-		}
-
-		for (const guideline of promptGuidelines ?? []) {
-			const normalized = guideline.trim();
-			if (normalized.length > 0) {
-				guidelinesSet.add(normalized);
-			}
 		}
 
 		// Always include these

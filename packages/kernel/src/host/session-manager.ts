@@ -1,39 +1,44 @@
 /**
- * 会话管理:一个 sessionID ↔ 一个 AgentHarness ↔ 一个投影器。
+ * 会话管理:一个 sessionID ↔ 一个 AgentHarness ↔ 一条 lane ↔ 一个投影器。
  *
  * ## 为什么整个 app 只能有一个内核进程
  *
- * yoma 的 probe 租约(claimProbe/releaseProbe)、gdb session 表、log capture 都是
- * **模块级全局**(coding-agent/src/core/tools/engines.ts:63-113),还挂了进程退出的
- * SIGKILL 钩子。所以绝不能按窗口或按目录分片 fork 内核 —— 否则两个进程会各自以为
- * 自己独占探针。这个类是进程内单例。
+ * JsonlSessionRepo 假定**一个进程独占一个会话文件**(repo.open 对已打开的会话直接抛)。
+ * 按窗口或按目录分片 fork 内核,两个进程就会各自以为自己在写同一条 JSONL。
+ * 这个类是进程内单例。
  *
- * ## harness 的三个必须知道的行为
+ * ## 内核的三个必须知道的行为
  *
- * 1. 一个 harness = 一个 session = 一个在飞轮次。phase 非 idle 时 `prompt()` **同步抛**
- *    AgentHarnessError("busy"),它不排队。
- * 2. `abort()` 之后 phase 不会立刻清,必须 `await abort(); await waitForIdle()`。
- * 3. `prompt()` 在 abort 之后是 **resolve 而不是 reject**(中断是数据不是异常),
- *    所以要区分"取消"和"正常完成"只能自己拿 AbortController。
+ * 1. 一条 lane 同时只有一个操作。有在飞操作时 `accept()` 返回 `LaneBusy`(不抛、不排队),
+ *    所以"发新一轮"前要先 requestAbort + waitForIdle。
+ * 2. 失败、重试、自动压缩都在内核里:`drive({ waitForRetry: true })` 把整段退避留在
+ *    这一次调用里,于是整段重试对外是**一个连续的 busy**。
+ * 3. `accept()` 只落盘不执行,`drive()` 才真的跑。两者分开正是"RPC 立刻返回、
+ *    结果走事件流"的接缝:accept 的事件(run_start + 用户消息)在它 resolve 前就送达了。
  */
 
-import { homedir } from "node:os"
 import { existsSync } from "node:fs"
 import path from "node:path"
 
-import { AgentHarness, JsonlSessionRepo, type AgentMessage, type Session as PiSession } from "@yoma/agent"
-import type { AgentHarnessEvent, JsonlSessionMetadata } from "@yoma/agent"
-import { NodeExecutionEnv } from "@yoma/agent/node"
 import {
-  createCodingToolDefinitions,
-  createDatasheetToolDefinition,
-  createFlashToolDefinition,
-  createGdbToolDefinition,
-  createLaToolDefinition,
-  createLogToolDefinition,
-  createNetlistToolDefinition,
-  createScopeToolDefinition,
-  createStm32ConfigToolDefinition,
+  AgentHarness,
+  BACKGROUND_CONTEXT,
+  JsonlSessionRepo,
+  createBashTool,
+  createEditTool,
+  createReadTool,
+  createWriteTool,
+  type AgentHarnessTool,
+  type AgentLane,
+  type Context,
+  type ExecutionToolContext,
+  type JsonlSessionMetadata,
+  type OperationRequest,
+  type Session as PiSession,
+  type ThinkingLevel,
+} from "@earendil-works/pi-agent-core"
+import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node"
+import {
   findEnvKey,
   machinePathDirs,
   promptSectionFor,
@@ -41,68 +46,101 @@ import {
   resolveToolchain,
   shellEnvFor,
   withMachineOnPath,
-  wrapToolDefinitions,
   type ToolchainResolution,
-  type ToolDef,
 } from "@yoma/coding-agent"
-import { buildSystemPrompt, collectToolPromptData } from "@yoma/coding-agent/system-prompt"
+import { buildSystemPrompt } from "@yoma/coding-agent/system-prompt"
 import { configurableProviders, resolveModel } from "@yoma/coding-agent/models"
 import { discoverSkills, loadContextFiles } from "@yoma/coding-agent/resources"
 import {
   clampThinkingLevel,
   getSupportedThinkingLevels,
-  type AssistantMessage,
   type AuthContext,
+  type ImageContent,
   type Model,
   type Models,
 } from "@earendil-works/pi-ai"
 
 import type { KernelEvent, PromptInput } from "../protocol.ts"
-import type {
-  ProviderInfo,
-  Session as ViewSession,
-  SessionStatus,
-} from "../types.ts"
+import type { ProviderInfo, Session as ViewSession, SessionStatus } from "../types.ts"
 import { Identifier } from "../ids.ts"
 import { pickThinkingLevel } from "../thinking.ts"
 import { sessionNotFound } from "../types.ts"
-import { SessionProjection } from "./projector.ts"
-import { overflowAction, shouldAutoCompact } from "./compaction.ts"
-import { retryDelayMs, retrySleep, shouldAutoRetry } from "./retry.ts"
+import { MANUAL_COMPACTION_ENTRY, removalEvents, SessionProjection } from "./projector.ts"
 import { migrateLegacyPiAuth, yomaConfigDir, removeAuthKey, writeAuthKey } from "./auth.ts"
-import { installProgressEvent } from "./toolchain.ts"
 
-/** 同时活着的 harness 上限。淘汰只是丢弃内存态,重开就是 repo.open + buildContext,很便宜。 */
+/** 同时活着的 harness 上限。淘汰只是丢弃内存态,重开就是 repo.open + 重放,很便宜。 */
 const MAX_LIVE_SESSIONS = 8
 
 /**
- * 嵌入式工具组的显式装配,顺序照抄 yoma 的流水线(netlist → datasheet → stm32config
- * → flash → log → gdb → la → scope)。yoma 2026-08 的精简删掉了聚合 Options 的工厂参数
- * (createEmbeddedToolDefinitions 只收 env),而 enginesDir 必须显式传
- * (它的向上查找会认下一个没有 bin/ 的空壳)—— 所以按"单工具工厂 + options"自行装配,
- * yoma 的 tools/index.ts 注释明说这是特殊装配的预期用法。
+ * 内核 Result 错误的 _tag → 一句中文。
+ *
+ * 内核的错误消息是英文的(`Lane "main" has nothing to compact`),而这些错误会原样
+ * 跨进程摆到用户眼前。原文用破折号接在后面 —— 用户看得懂前半句,排错的人还留着后半句。
  */
-export function createEmbeddedTools(
-  env: NodeExecutionEnv,
-  enginesDir?: string,
-  options?: { configDir?: string },
-): ToolDef[] {
-  const engines = enginesDir ? { enginesDir } : undefined
+const LANE_ERROR_TEXT: Record<string, string> = {
+  LaneBusy: "这个会话还有一轮没跑完",
+  NothingToCompact: "当前没有可压缩的内容",
+  NothingToResume: "没有可恢复的操作",
+  OperationMismatch: "这一轮已经结束了",
+  NoActiveOperation: "没有正在进行的操作",
+  NoActiveRun: "没有正在进行的轮次",
+  InvalidMessage: "消息内容内核不接受",
+  InvalidNavigation: "不能回到这个位置",
+  InvalidLane: "会话通道名不合法",
+  UnknownSkill: "没有这个技能",
+  UnknownTemplate: "没有这个提示词模板",
+  UnknownTarget: "目标消息不在这个会话的历史里",
+  Closed: "会话已经关闭,请重新打开",
+  HarnessClosed: "会话已经关闭,请重新打开",
+  HarnessFault: "内核故障,请重新打开这个会话",
+}
+
+function laneErrorMessage(error: { _tag?: string; name?: string; message?: string }): string {
+  const text = LANE_ERROR_TEXT[error._tag ?? error.name ?? ""]
+  // 认不出的就原样交出去 —— 硬翻成"内核操作失败"只会把唯一一条线索盖掉。
+  if (!text) return error.message ?? "内核操作失败"
+  return error.message ? `${text} —— ${error.message}` : text
+}
+
+function laneError(error: { _tag?: string; name?: string; message?: string }): Error {
+  return new Error(laneErrorMessage(error))
+}
+
+/** drive 带着 waiting 回来时报给用户的话。两个 poll 开关都开了还 waiting 就是真跑不下去了。 */
+const WAITING_TEXT: Record<"retry" | "deferred", string> = {
+  retry: "这一轮停在等待重试上,没能跑完",
+  deferred: "这一轮停在等待 provider 异步出结果上,没能跑完",
+}
+
+/**
+ * 这个 entry 现在能直接用吗。
+ *
+ * `lane` 有值还不够:dispose 一启动(closing)这条 lane 就在被拆,交出去只会让调用方
+ * 撞上 HarnessClosed。所有"开没开"的判断都走这里。
+ */
+function isOpen(entry: Entry): boolean {
+  return Boolean(entry.lane) && !entry.closing
+}
+
+/**
+ * 装配面的真源:内核自带的四件套,别的一个都不加。
+ *
+ * 嵌入式那一套(flash/gdb/la/scope/…)已于 2026-09-10 归零,旧实现留在
+ * coding-agent/attic/tools 作重写参考。`TOOL_NAMES` 与 host 自检都按这里核对。
+ */
+export function createAgentTools(): AgentHarnessTool<ExecutionToolContext>[] {
   return [
-    createNetlistToolDefinition(env, engines),
-    // datasheet 的服务器地址按 显式 > 环境变量 > <configDir>/.env > 内置默认 解析;
-    // configDir 必须传,不然 bench / 测试读的是真实 ~/.yoma/.env。
-    createDatasheetToolDefinition(env, { configDir: options?.configDir }),
-    createStm32ConfigToolDefinition(env, engines),
-    // flash/log/gdb 自 2026-08 起不吃 enginesDir:烧录命令模型自带,RTT 走 TCP,
-    // gdb server 从 PATH 起 —— 引擎目录只剩上面两个还要。
-    createFlashToolDefinition(env),
-    createLogToolDefinition(env),
-    createGdbToolDefinition(env),
-    // la 吃 enginesDir:yoma-la 在 engines/bin,数据(固件/解码器)在 engines/data/la。
-    createLaToolDefinition(env, engines),
-    // scope 是纯 TypeScript(USBTMC / TCP-SCPI 直连),没有引擎二进制。
-    createScopeToolDefinition(env),
+    createReadTool(),
+    // 内核的 bash 不管 Python 的编码:Windows 的 GBK 控制台会把例程脚本的 UTF-8 输出
+    // 变成乱码,而乱码到了模型眼里就是"脚本坏了"。每条命令都前置这两个变量。
+    createBashTool({
+      prepare: (execution) => {
+        execution.env.PYTHONIOENCODING = "utf-8"
+        execution.env.PYTHONUTF8 = "1"
+      },
+    }),
+    createEditTool(),
+    createWriteTool(),
   ]
 }
 
@@ -145,29 +183,40 @@ interface Entry {
   updatedAt: number
   meta: JsonlSessionMetadata
   session?: PiSession<JsonlSessionMetadata>
-  harness?: AgentHarness
+  harness?: AgentHarness<ExecutionToolContext>
+  lane?: AgentLane
   projection?: SessionProjection
-  unsubscribe?: () => void
-  /** harness 的执行环境 —— refreshMachineEnv 在会话中途换它的 shellEnv。 */
+  unsubscribes?: Array<() => void>
+  /**
+   * 正在打开。**每个调用方都 await 这同一个 Promise** —— 两个并发的 ensureOpen 各自
+   * 去 repo.open 的话,其中一个必然撞上内核的 `Session is already open`,而另一种时序
+   * 下第二个调用方会拿到 projection 还没装好的 entry(messages/navigate 直接 TypeError,
+   * prompt 静默丢事件)。
+   */
+  opening?: Promise<Entry>
+  /** 正在关闭。设了就算"没开",ensureOpen 必须等它收完再干净地重开。 */
+  closing?: Promise<void>
+  /** 本会话 bash 的基础环境。refreshMachineEnv 换掉它,下一轮的 env 按新的造。 */
+  shellEnv?: NodeJS.ProcessEnv
+  /** 当前的执行环境(工具每轮取一次)。dispose 时 cleanup 收掉遗留子进程。 */
   env?: NodeExecutionEnv
+  /**
+   * 被 refreshMachineEnv 换下来的执行环境。**硬件安全**:它们可能还拖着子进程(一条
+   * 正在跑的烧录命令),必须等这一轮结束 / 会话销毁时 cleanup,不能直接丢引用。
+   */
+  retiredEnvs?: NodeExecutionEnv[]
   /** 开会话时的工具链解析结果;刷新 PATH 时重算。 */
   toolchain?: ToolchainResolution
   status: SessionStatus
   /** 上一次被使用的时刻,LRU 用。 */
   touched: number
-  /** 本轮的 AbortController —— harness.prompt() 在 abort 后 resolve,靠它区分取消。 */
-  aborter?: AbortController
+  /** 在飞操作的 operationId —— requestAbort 要按它 fence。 */
+  operationId?: string
+  /** run 是否在飞。压缩结束后回 busy 还是 idle 看它(轮内压缩是 run 的一段)。 */
+  running?: boolean
   model?: { providerID: string; modelID: string; thinking?: string }
-  /** 正在自动压缩。防止 turn_end 连发时重入。 */
-  compacting?: boolean
-  /** 这一轮以可重试的错误收场,idle 要压住 —— 见 project() 与 maybeAutoRetry()。 */
-  retryPending?: boolean
-  /** 本次 prompt 已经重试过几次。prompt() 开始时清零。 */
-  retryAttempt?: number
-  /** 本轮最后一条 assistant 消息,溢出判定用。 */
-  lastAssistant?: AssistantMessage
-  /** 本次 prompt 已经做过一次"压缩后重试"。prompt() 开始时清零。 */
-  overflowRecovered?: boolean
+  /** renderer 乐观插入用户消息时铸的 id,等用户消息落盘时复用。 */
+  pendingUserID?: string
 }
 
 export interface SessionManagerOptions {
@@ -175,9 +224,7 @@ export interface SessionManagerOptions {
   enginesDir?: string
   emit(events: KernelEvent[]): void
   /**
-   * 上下文文件与技能的全局目录,默认 `~/.yoma` —— 与 yoma 的 ACP 适配器同一份,
-   * 于是同一份技能在 Zed 和桌面端都生效。测试用它隔离开发机上的真实目录
-   * (**注意** bun 的 homedir() 在进程启动时定死,改 process.env.HOME 无效)。
+   * 上下文文件与技能的全局目录,默认 `~/.yoma`。测试用它隔离开发机上的真实目录。
    */
   configDir?: string
   /**
@@ -193,7 +240,7 @@ export interface SessionManagerOptions {
    */
   authContext?: AuthContext
   /**
-   * 没人选档时用哪一档。不传则 harness 落到 `"off"`。
+   * 没人选档时用哪一档。不传则内核落到 `"off"`。
    * 桌面端与 bench 都传 `max`;`setModel` 的显式选择压过它。
    */
   defaultThinkingLevel?: string
@@ -225,8 +272,13 @@ export class SessionManager {
   private readonly repo: JsonlSessionRepo
   private readonly entries = new Map<string, Entry>()
   private readonly options: SessionManagerOptions
-  /** 凭据、技能、上下文文件共用的一个目录,与 yoma ACP 的 CONFIG_DIR 同义。 */
+  /** 凭据、技能、上下文文件共用的一个目录。 */
   private readonly configDir: string
+  /**
+   * 所有内核调用的 Context。宿主没有"取消一次 RPC"这回事 —— 轮次的取消走
+   * lane.requestAbort(那是**落盘的**取消事实),不靠 signal。
+   */
+  private readonly context: Context = BACKGROUND_CONTEXT
 
   private models?: Models
   private defaultModel?: Model<string>
@@ -236,7 +288,7 @@ export class SessionManager {
     this.options = options
     this.configDir = options.configDir ?? yomaConfigDir()
     this.env = new NodeExecutionEnv({ cwd: process.cwd() })
-    this.repo = new JsonlSessionRepo({ fs: this.env, sessionsRoot: options.sessionsRoot })
+    this.repo = new JsonlSessionRepo({ fileSystem: this.env, sessionsRoot: options.sessionsRoot })
   }
 
   // -------------------------------------------------------------------------
@@ -341,10 +393,10 @@ export class SessionManager {
    *
    * 写完必须丢弃已解析的模型目录:resolveModel() 只注册写入当时有 key 的 provider,
    * 不重解析的话新 key 要等重启进程才生效。注意 **已经开着的会话拿的还是旧注册表**
-   * (AgentHarness.models 是 readonly,建好之后换不掉),新开/重开的会话才能用新 provider ——
+   * (harness 的 models 建好之后换不掉),新开/重开的会话才能用新 provider ——
    * 首跑场景(一个会话都没有)不受影响。
    *
-   * key 本身不做网络验证:yoma 注册 provider 时不发请求,错 key 的暴露点是第一次
+   * key 本身不做网络验证:注册 provider 时不发请求,错 key 的暴露点是第一次
    * prompt 的 API 401,那条错误会走正常的会话错误通道显示出来。
    */
   async setAuth(providerID: string, apiKey: string): Promise<ProviderInfo[]> {
@@ -374,28 +426,25 @@ export class SessionManager {
   /**
    * 换模型 / 换 thinking 档位。
    *
-   * 跨 provider 切换只有在所有 provider 都提前注册好的前提下才成立 ——
-   * AgentHarness.models 是 readonly,建好之后换不掉,而 ModelsImpl.requireProvider
-   * 对未注册的 provider 会等到真正发请求时才抛 Unknown provider。resolveModel() 已经把
-   * auth.json 里每个有 key 的 provider 都注册了,所以这里安全。
+   * 跨 provider 切换只有在所有 provider 都提前注册好的前提下才成立 —— harness 的
+   * models 建好之后换不掉,而未注册的 provider 要等真正发请求时才报错。
+   * resolveModel() 已经把 auth.json 里每个有 key 的 provider 都注册了,所以这里安全。
    */
   async setModel(sessionID: string, providerID: string, modelID: string, thinking?: string): Promise<ViewSession> {
     const entry = await this.ensureOpen(sessionID)
+    const lane = entry.lane!
     const { models } = await this.ensureModels()
     const model = models.getModel(providerID, modelID)
     if (!model) throw new Error(`未知模型 ${providerID}/${modelID}`)
 
-    await entry.harness!.setModel(model)
+    await lane.setModel({ provider: providerID, modelId: modelID }, this.context)
     // 钳一下:模型不支持的档位直接设进去会等到发请求时才炸。
     //
-    // 没给 thinking 时也要钳 —— 当前这一档是按**换之前那个模型**的支持表定的
-    // (构造期用的是 ensureModels 的默认模型,而调用方这一刻正要换成别的)。
+    // 没给 thinking 时也要钳 —— 当前这一档是按**换之前那个模型**的支持表定的。
     // 不重钳就会拿着旧模型的档位去发新模型的请求。对桌面端这是恒等变换:
     // 它没选过档位时当前值就是 "off",clamp("off") 在任何模型上都还是 "off"。
-    const level = thinking ?? entry.harness!.getThinkingLevel()
-    await entry.harness!.setThinkingLevel(clampThinkingLevel(model, level as never))
-    entry.model = { providerID, modelID, thinking }
-    entry.projection?.setModel(providerID, modelID)
+    const level = thinking ?? (await lane.getThinkingLevel(this.context))
+    await lane.setThinkingLevel(clampThinkingLevel(model, level as never), this.context)
     entry.updatedAt = Date.now()
     const view = toView(entry)
     this.options.emit([{ type: "session.updated", session: view }])
@@ -407,7 +456,7 @@ export class SessionManager {
   // -------------------------------------------------------------------------
 
   async list(directory?: string): Promise<ViewSession[]> {
-    const metas = await this.repo.list(directory ? { cwd: directory } : {})
+    const metas = await this.repo.list(directory ? { cwd: directory } : {}, this.context)
     const out: ViewSession[] = []
     for (const meta of metas) {
       const existing = this.entries.get(meta.id)
@@ -415,15 +464,14 @@ export class SessionManager {
         out.push(toView(existing))
         continue
       }
-      const createdAt = toMillis(meta.createdAt)
       const entry: Entry = {
         id: meta.id,
         cwd: meta.cwd,
-        // 标题懒加载:repo.list() 只读 JSONL 的头一行,拿不到 appendSessionName 写进去的名字。
+        // 标题懒加载:repo.list() 只读 JSONL 的头一行,拿不到后来写进去的会话名。
         // 真名在 open() 时补上,列表先用占位,避免为了画一个列表把每个会话文件全读一遍。
         title: "",
-        createdAt,
-        updatedAt: createdAt,
+        createdAt: meta.createdAt,
+        updatedAt: meta.modifiedAt,
         meta,
         status: { type: "idle" },
         touched: 0,
@@ -435,13 +483,13 @@ export class SessionManager {
   }
 
   async create(directory: string, title?: string): Promise<ViewSession> {
-    const session = await this.repo.create({ cwd: directory })
-    const meta = await session.getMetadata()
+    const session = await this.repo.create({ cwd: directory }, this.context)
+    const meta = session.metadata
     const entry: Entry = {
       id: meta.id,
-      cwd: directory,
+      cwd: meta.cwd,
       title: title ?? "",
-      createdAt: toMillis(meta.createdAt),
+      createdAt: meta.createdAt,
       updatedAt: Date.now(),
       meta,
       session,
@@ -449,7 +497,7 @@ export class SessionManager {
       touched: Date.now(),
     }
     this.entries.set(entry.id, entry)
-    if (title) await session.appendSessionName(title)
+    if (title) await session.setName(title, this.context)
     const view = toView(entry)
     this.options.emit([{ type: "session.created", session: view }])
     return view
@@ -459,15 +507,15 @@ export class SessionManager {
     const entry = this.entries.get(sessionID)
     if (!entry) return
     await this.dispose(entry)
-    await this.repo.delete(entry.meta)
+    await this.repo.delete(entry.meta, this.context)
     this.entries.delete(sessionID)
     this.options.emit([{ type: "session.deleted", sessionID }])
   }
 
-  /** 标题写回 JSONL(appendSessionName 是内核的公开 API),不是只存在内存里。 */
+  /** 标题写回 JSONL(会话名是内核的绑定值),不是只存在内存里。 */
   async rename(sessionID: string, title: string): Promise<ViewSession> {
     const entry = await this.ensureOpen(sessionID)
-    await entry.session!.appendSessionName(title)
+    await entry.harness!.setName(title, this.context)
     entry.title = title
     entry.updatedAt = Date.now()
     const view = toView(entry)
@@ -489,139 +537,214 @@ export class SessionManager {
   // 打开 / 重放
   // -------------------------------------------------------------------------
 
+  /**
+   * 打开(或复用)一个会话。
+   *
+   * 三条纪律,每条都对应过一次真实故障:
+   *
+   * 1. **同一个会话同时只装配一次**。两个并发调用各自去 repo.open,其中一个必然撞上内核的
+   *    `Session is already open`;所以装配过程记在 entry.opening 上,后来的调用方都等它。
+   * 2. **装配完成是一个原子时刻**。lane/projection/订阅在最后一起挂上去,中间全用局部变量。
+   *    否则第二个调用方可能拿到一个 lane 有了、projection 还没有的 entry —— messages()
+   *    和 navigate() 直接 TypeError,prompt() 则静默丢掉整轮事件。
+   * 3. **半路失败要关干净**。harness/session 不关掉的话 entry 会永远带着一条死 lane,
+   *    而 repo 也不让这个会话再开第二次。
+   */
   private async ensureOpen(sessionID: string): Promise<Entry> {
-    let entry = this.entries.get(sessionID)
-    if (!entry) {
+    let found = this.entries.get(sessionID)
+    if (!found) {
       await this.list()
-      entry = this.entries.get(sessionID)
+      found = this.entries.get(sessionID)
     }
-    if (!entry) throw sessionNotFound(sessionID)
+    if (!found) throw sessionNotFound(sessionID)
+    // 闭包(toolContext)要一个确定非空的引用,所以先定住。
+    const entry = found
     entry.touched = Date.now()
-    if (entry.harness) return entry
+    // 正在销毁:它会把 lane/projection 逐个清掉,这中间交出去的 entry 是半关的。
+    if (entry.closing) await entry.closing.catch(() => {})
+    if (isOpen(entry)) return entry
+    entry.opening ??= this.openEntry(entry).finally(() => {
+      entry.opening = undefined
+    })
+    return entry.opening
+  }
 
-    // 工具链解析必须在 `new NodeExecutionEnv` **之前**拿到结果:shellEnv 只能通过
-    // 构造参数一次性灌进去(私有字段,建好之后没有 setter),而 bun 的 spawn 省略
-    // env 参数时认的是进程启动那一刻的 PATH——运行时再对着已经造好的 env 补 PATH
-    // 不会生效(根 CLAUDE.md「会咬人的地方」第一条,coding-agent/src/core/tools/
-    // serial.ts:176 是同一道疤)。
+  private async openEntry(entry: Entry): Promise<Entry> {
+    // 工具链解析必须在造 NodeExecutionEnv **之前**拿到结果:shellEnv 只能通过构造参数
+    // 一次性灌进去(私有字段,没有 setter),而子进程认的是造 env 那一刻的环境 ——
+    // 运行时再对着已经造好的 env 补 PATH 不会生效(根 CLAUDE.md「会咬人的地方」第一条)。
     //
-    // 不能像 loadContextFiles/discoverSkills 那样并进它们那个 Promise.all——那两个
+    // 不能像 loadContextFiles/discoverSkills 那样并进它们那个 Promise.all —— 那两个
     // 的入参正是 env,而 env 本身要等这次解析完才能造出来,凑一起就是循环依赖。
     // 真正同类(不依赖 env、建会话时只读一次的快照)又能安全并发的是 ensureModels()。
     const [{ models, model }, toolchain] = await Promise.all([this.ensureModels(), this.resolveToolchainSafe(entry)])
 
-    const session = entry.session ?? (await this.repo.open(entry.meta))
+    const session = entry.session ?? (await this.repo.open(entry.meta, this.context))
     entry.session = session
-    entry.title = (await session.getSessionName()) ?? entry.title
-
-    // engines/bin 前置进 PATH:agent 的 bash 工具里要有 rg(在例程语料里 grep 全靠
-    // 它,Windows 没有内置 grep)。放 shellEnvFor 之后、env 构造之前,和工具链目录
-    // 同一条规则(前置不替换,去重,写回原键)。机器级目录(Yoma 装的 + 用户手指的)
-    // 夹在中间:项目清单解析到的赢过它们,它们赢过 process.env 里原有的。
-    const env = new NodeExecutionEnv({ cwd: entry.cwd, shellEnv: await this.sessionShellEnv(toolchain) })
-    entry.env = env
     entry.toolchain = toolchain
-
-    // 资源发现:项目的 AGENTS.md/CLAUDE.md(全局 + 祖先链)与技能(全局 + .agents/skills)。
-    // 走 yoma 自己的 resources.ts,不重写:"从哪些目录找"是内核那边定的产品决策,
-    // 抄一份的结果会是"Zed 读得到项目上下文、桌面端读不到"这种极难归因的差异。
-    // 全局目录与 ACP 一致(~/.yoma),于是同一份技能在 Zed 和桌面端都生效。
-    // 快照式:会话创建时读一次,改了技能文件重开会话即生效,不做热重载。
-    const [contextFiles, discovered] = await Promise.all([
-      loadContextFiles(env, { cwd: entry.cwd, globalDir: this.configDir }),
-      discoverSkills(env, { cwd: entry.cwd, globalDir: this.configDir }),
-    ])
-    for (const diagnostic of discovered.diagnostics) {
-      this.options.emit([
-        {
-          type: "kernel.error",
-          sessionID: entry.id,
-          message: `技能 ${diagnostic.code} ${diagnostic.path}:${diagnostic.message}`,
-        },
+    // engines/bin 前置进 PATH:bash 工具里要有 rg(在例程语料里 grep 全靠它,Windows
+    // 没有内置 grep)。机器级目录(Yoma 装的 + 用户手指的)夹在中间:项目清单解析到的
+    // 赢过它们,它们赢过 process.env 里原有的。
+    entry.shellEnv = await this.sessionShellEnv(toolchain)
+    const env = this.toolEnv(entry)
+    let harness: AgentHarness<ExecutionToolContext> | undefined
+    try {
+      // 资源发现:项目的 AGENTS.md/CLAUDE.md(全局 + 祖先链)与技能(全局 + .agents/skills)。
+      // 走 coding-agent 的 resources.ts,不重写:"从哪些目录找"是产品决策,抄一份的结果
+      // 会是"某一端读得到项目上下文、另一端读不到"这种极难归因的差异。
+      // 快照式:会话创建时读一次,改了技能文件重开会话即生效,不做热重载。
+      const [contextFiles, discovered] = await Promise.all([
+        loadContextFiles(env, { cwd: entry.cwd, globalDir: this.configDir }),
+        discoverSkills(env, { cwd: entry.cwd, globalDir: this.configDir }),
       ])
-    }
+      for (const diagnostic of discovered.diagnostics) {
+        this.options.emit([
+          {
+            type: "kernel.error",
+            sessionID: entry.id,
+            message: `技能 ${diagnostic.code} ${diagnostic.path}:${diagnostic.message}`,
+          },
+        ])
+      }
 
-    // 工具链状态并进系统提示词:追加一条 contextFiles,不新增专门字段——
-    // BuildSystemPromptOptions 定义在 packages/coding-agent(yoma 那侧),这次改动
-    // 范围只有 packages/kernel,加字段等于越界改别的包。path 给一个不会真实存在的
-    // 假名,模型才看得出这不是一份项目文件。promptSectionFor 对"没有清单"和"清单
-    // 存在但全部 ok(没有需要留意的工具)"都返回 undefined,所以绝大多数项目(没有
-    // .yoma/toolchain.json)不追加任何东西,系统提示词字节不变。
-    const toolchainSection = promptSectionFor(toolchain)
-    const contextFilesWithToolchain = toolchainSection
-      ? [...contextFiles, { path: "<toolchain>", content: toolchainSection }]
-      : contextFiles
+      // 工具链状态并进系统提示词:追加一条 contextFiles,不新增专门字段 ——
+      // BuildSystemPromptOptions 定义在 packages/coding-agent,加字段等于越界改别的包。
+      // path 给一个不会真实存在的假名,模型才看得出这不是一份项目文件。promptSectionFor
+      // 对"没有清单"和"清单存在但全部 ok"都返回 undefined,所以绝大多数项目不追加任何
+      // 东西,系统提示词字节不变。
+      const toolchainSection = promptSectionFor(toolchain)
+      const contextFilesWithToolchain = toolchainSection
+        ? [...contextFiles, { path: "<toolchain>", content: toolchainSection }]
+        : contextFiles
 
-    // 工具定义必须过 wrapToolDefinitions 才能交给 harness;系统提示词由工具集反推
-    // (collectToolPromptData 会把每个工具的使用指导拼进去)。这两步照抄 yoma 自己的
-    // 系统提示词编码了嵌入式工具的用法,自己重写
-    // 等于产品行为分叉。
-    const toolDefinitions = [
-      // toolchain 工具必须拿到和 resolveToolchainSafe 同一组答案(configDir / side /
-      // manifestText),否则系统提示词与 agent 自己跑 toolchain check 会自相矛盾 ——
-      // 工位端(没有项目检出,清单经信箱注入)那侧 check 会直接报"没有清单"。
-      ...createCodingToolDefinitions(env, {
-        toolchain: {
-          configDir: this.configDir,
-          side: this.options.toolchainSide,
-          manifestText: this.options.toolchainManifestText,
-          // agent 自己跑 install:进度同样走 toolchain.install 事件(设置页看得见),
-          // 装完刷新在飞会话与内核进程的 PATH —— 否则工具嘴上说"已在 PATH"而下一条命令照样找不到。
-          onInstallProgress: (progress) => this.options.emit([installProgressEvent(progress)]),
-          onInstalled: () => this.refreshMachineEnv(),
+      const tools = createAgentTools()
+      const created = await AgentHarness.create<ExecutionToolContext>(
+        {
+          session,
+          models,
+          model,
+          // 不传则内核落到 "off"。setModel 的显式选择压过这里。注意这只是**新 lane 的种子**:
+          // 重开一个旧会话时用的是它自己存下来的那一档。
+          ...(this.options.defaultThinkingLevel
+            ? {
+                thinkingLevel: pickThinkingLevel(
+                  getSupportedThinkingLevels(model) as string[],
+                  this.options.defaultThinkingLevel,
+                ) as ThinkingLevel,
+              }
+            : {}),
+          tools,
+          activeToolNames: tools.map((tool) => tool.name),
+          // 函数形态:每轮重新解析一次,于是 refreshMachineEnv 换掉 shellEnv 之后
+          // 下一条 bash 命令就看得见新 PATH,不用重开会话。
+          toolContext: () => ({ env: this.toolEnv(entry) }),
+          systemPrompt: buildSystemPrompt({
+            cwd: entry.cwd,
+            selectedTools: tools.map((tool) => tool.name),
+            contextFiles: contextFilesWithToolchain,
+            skills: discovered.skills,
+          }),
+          // lane.skill() 从这里查技能。
+          resources: { skills: discovered.skills },
         },
-      }),
-      ...createEmbeddedTools(env, this.options.enginesDir, { configDir: this.configDir }),
-    ]
-    const harness = new AgentHarness({
-      env,
-      session,
-      models,
-      model,
-      // 不传则 harness 落到 "off"。setModel 的显式选择压过这里。
-      thinkingLevel: this.options.defaultThinkingLevel
-        ? (pickThinkingLevel(getSupportedThinkingLevels(model) as string[], this.options.defaultThinkingLevel) as never)
-        : undefined,
-      tools: wrapToolDefinitions(toolDefinitions),
-      systemPrompt: buildSystemPrompt({
-        cwd: entry.cwd,
-        ...collectToolPromptData(toolDefinitions),
-        contextFiles: contextFilesWithToolchain,
-        skills: discovered.skills,
-      }),
-      // harness.skill() 从 turn 快照的 resources 里查技能。
-      resources: { skills: discovered.skills },
-    })
-    entry.harness = harness
+        this.context,
+      )
+      harness = created.harness
+      const lane = await harness.lane("main", this.context)
 
-    const projection = new SessionProjection({
-      sessionID: entry.id,
-      providerID: model.provider,
-      modelID: model.id,
-    })
-    entry.projection = projection
+      // **硬件安全**:上个进程没跑完的操作绝不自动续跑(那可能是一条烧录或 gdb 命令)。
+      // 先把它落成 aborted,再把会话交给前端。订阅在这之后装,所以这一串收尾事件
+      // 不会冒到 UI 上,重放会如实显示那一轮被中断了。
+      if (created.open.some((operation) => operation.lane === lane.name)) {
+        const aborted = await lane.abort(this.context)
+        if (!aborted.ok && aborted.error._tag !== "NoActiveOperation") {
+          this.options.emit([
+            {
+              type: "kernel.error",
+              sessionID: entry.id,
+              message: `收尾上次未完成的操作失败:${laneErrorMessage(aborted.error)}`,
+            },
+          ])
+        }
+      }
+      entry.title = (await harness.getName(this.context)) ?? entry.title
 
-    entry.unsubscribe = harness.subscribe((event) => {
-      this.options.emit(this.project(entry!, event))
-    })
+      // 模型与档位是 lane 存下来的(上面那组种子只给新 lane 用)。但存下来的那个可能已经
+      // 不在注册表里了(用户撤了 key、或者注入的目录换了一套)—— getModel 这时返回
+      // undefined,而内核要等到真的发请求才报"配置错误",于是每一轮都在同一处失败、
+      // 用户无从下手。这里静默落回本次解析出的默认模型,与换内核之前一致(那时模型不落盘)。
+      if (!(await lane.getModel(this.context))) {
+        await lane.setModel({ provider: model.provider, modelId: model.id }, this.context)
+        await lane.setThinkingLevel(clampThinkingLevel(model, await lane.getThinkingLevel(this.context)), this.context)
+      }
+      const configured = (await lane.inspectExecution(this.context)).configuredModel
+      entry.model = {
+        providerID: configured.provider,
+        modelID: configured.modelId,
+        thinking: await lane.getThinkingLevel(this.context),
+      }
 
-    // 重放历史。走的是和 live 完全相同的 applyMessage(),所以 id 与事件序列可复现。
-    const context = await session.buildContext()
-    for (const message of context.messages as AgentMessage[]) projection.applyMessage(message)
+      // 重放历史。走的是和 live 完全相同的 applyMessage(),所以 id 与事件序列可复现。
+      // 在挂上去之前放完:挂上去那一刻 entry 就算"开着的",交出去的投影必须是完整的。
+      const projection = this.newProjection(entry)
+      await this.replay(lane, projection)
+
+      // 这几行之间**不能有 await** —— 它们一起构成"这个会话开好了"这一个事实。
+      entry.harness = harness
+      entry.projection = projection
+      entry.unsubscribes = this.subscribe(entry, harness)
+      entry.lane = lane
+    } catch (error) {
+      // 关干净再把错抛出去:留着半开的 harness,repo 不让这个会话再开第二次,
+      // 于是这个会话在这个进程里就永久打不开了。
+      entry.lane = undefined
+      entry.projection = undefined
+      for (const unsubscribe of entry.unsubscribes ?? []) unsubscribe()
+      entry.unsubscribes = undefined
+      await env.cleanup(this.context).catch(() => {})
+      if (harness) await harness.close(this.context).catch(() => {})
+      else await session.close(this.context).catch(() => {})
+      entry.harness = undefined
+      entry.session = undefined
+      entry.env = undefined
+      entry.shellEnv = undefined
+      entry.toolchain = undefined
+      throw error
+    }
 
     this.evictIdle()
     return entry
   }
 
   /**
-   * 工具链清单解析失败(清单文件在,但内容坏了——`schema` 不对/JSON 损坏/写了绝对
-   * 路径等,见 coding-agent 的 parseManifest)绝不能让会话开不起来:会话开不起来
-   * 比工具链没配好严重得多。resolveToolchain() 本身对"项目根本没有清单文件"已经是
-   * 静默返回一个空结果(tools: [], manifest: undefined);这里只是把"清单存在但解析
-   * 炸了"这一种情况也吞掉异常、发一条 kernel.error 诊断,折叠回同一种空结果——调用方
-   * (shellEnvFor / promptSectionFor)因此不用关心"没有清单"和"清单解析失败"是两回事,
-   * 统一按"当作没有清单"处理。
+   * 新投影器。`previous` 给的是"重建"而不是"新开":活下来的消息沿用它已经铸过的 id,
+   * 否则 navigate 之后整条 transcript 在前端看来是全删了一遍(见 ProjectionOptions.reuseIDs)。
    */
+  private newProjection(entry: Entry, previous?: SessionProjection): SessionProjection {
+    return new SessionProjection({
+      sessionID: entry.id,
+      providerID: entry.model?.providerID,
+      modelID: entry.model?.modelID,
+      ...(previous ? { reuseIDs: previous.knownIDs() } : {}),
+    })
+  }
+
+  /**
+   * 把一条 lane 的整条历史投影进一个投影器(不发事件 —— 前端用 session.messages 取快照)。
+   *
+   * 收的是 lane 与 projection 而不是 entry:openEntry 要在**挂上去之前**把历史放完,
+   * 那时候 entry 上还什么都没有。
+   */
+  private async replay(lane: AgentLane, projection: SessionProjection): Promise<void> {
+    for (const item of await lane.findEntries({ order: "oldestFirst" }, this.context)) {
+      if (item.type === "message") projection.applyMessage(item.message, { entryId: item.id })
+      else if (item.type === "compaction" || item.type === "branch_summary") projection.applySummary(item)
+      // 自定义 entry(现在只有 yoma/compaction)必须和 live 走同一条路,否则手动压缩
+      // 重放出来就变成自动压缩。
+      else if (item.type === "custom") projection.applyCustomEntry(item)
+    }
+  }
+
   /**
    * 机器级目录:Yoma 装进 `<configDir>/toolchains/` 的 + 用户在设置页手指的(账本
    * by:"user"),见 coding-agent install.ts 的 machinePathDirs。每次都重新扫 —— 这是
@@ -634,8 +757,8 @@ export class SessionManager {
 
   /**
    * 一个会话的 bash 基础环境:engines/bin ⊕ 项目清单解析到的目录 ⊕ 机器级目录 ⊕ process.env。
-   * 顺带把机器级目录也前置进内核进程自己的 PATH —— gdb / flash 这些工具起 openocd、
-   * JLinkGDBServer 时用的是 process.env,不是会话的 shellEnv。
+   * 顺带把机器级目录也前置进内核进程自己的 PATH —— host 侧自己起子进程时用的是
+   * process.env,不是会话的 shellEnv。
    */
   private async sessionShellEnv(toolchain: ToolchainResolution, dirs?: string[]): Promise<NodeJS.ProcessEnv> {
     const machine = dirs ?? (await this.machineDirs())
@@ -643,25 +766,44 @@ export class SessionManager {
     return withEnginesOnPath(withMachineOnPath(shellEnvFor(toolchain, process.env), machine), this.options.enginesDir)
   }
 
+  /** 会话当前的执行环境。shellEnv 换过之后(refreshMachineEnv)这里会重建一个。 */
+  private toolEnv(entry: Entry): NodeExecutionEnv {
+    entry.env ??= new NodeExecutionEnv({ cwd: entry.cwd, ...(entry.shellEnv ? { shellEnv: entry.shellEnv } : {}) })
+    return entry.env
+  }
+
   /**
-   * 工具链装好之后调:重算每个**活着的**会话(harness 还在)的 bash 环境
-   * (NodeExecutionEnv.setShellEnv),让下一条命令就看得见新目录,不用重开会话;同时更新
-   * 内核进程自己的 PATH。清单解析也重跑一遍 —— 刚装的可能正是清单里 MISSING 的那个。
-   * 被 LRU 淘汰的会话 dispose 时清掉了 env,这里不会为它们白起 --version 子进程。
+   * 工具链装好之后调:重算每个**活着的**会话的 bash 环境,让下一条命令就看得见新目录,
+   * 不用重开会话;同时更新内核进程自己的 PATH。清单解析也重跑一遍 —— 刚装的可能正是
+   * 清单里 MISSING 的那个。被 LRU 淘汰的会话 dispose 时清掉了 env,这里不会为它们
+   * 白起 --version 子进程。
    */
   async refreshMachineEnv(): Promise<void> {
     const dirs = await this.machineDirs()
     for (const entry of this.entries.values()) {
-      if (!entry.env || !entry.harness) continue
+      if (!isOpen(entry)) continue
       const toolchain = await this.resolveToolchainSafe(entry)
       entry.toolchain = toolchain
-      entry.env.setShellEnv(await this.sessionShellEnv(toolchain, dirs))
+      entry.shellEnv = await this.sessionShellEnv(toolchain, dirs)
+      // 下一轮的 toolContext 会按新 shellEnv 造一个。在飞的那个还拿着旧环境 ——
+      // 它可能正有子进程在跑,不能就地替;但也不能直接丢引用,否则那些子进程会活过
+      // 整个会话(**硬件安全**:可能是一条烧录命令)。退役存起来,这一轮结束或
+      // dispose 时 cleanup。
+      if (entry.env) (entry.retiredEnvs ??= []).push(entry.env)
+      entry.env = undefined
     }
-    // 内核进程自己的 PATH 无条件刷一次(幂等):没有开着的会话时上面的循环不会碰它,
-    // 而 gdb / flash 起子进程用的正是 process.env。
+    // 内核进程自己的 PATH 无条件刷一次(幂等):没有开着的会话时上面的循环不会碰它。
     applyMachinePathToProcess(dirs)
   }
 
+  /**
+   * 工具链清单解析失败(清单文件在,但内容坏了——`schema` 不对/JSON 损坏/写了绝对
+   * 路径等,见 coding-agent 的 parseManifest)绝不能让会话开不起来:会话开不起来
+   * 比工具链没配好严重得多。resolveToolchain() 本身对"项目根本没有清单文件"已经是
+   * 静默返回一个空结果;这里只是把"清单存在但解析炸了"这一种情况也吞掉异常、发一条
+   * kernel.error 诊断,折叠回同一种空结果 —— 调用方(shellEnvFor / promptSectionFor)
+   * 因此不用关心"没有清单"和"清单解析失败"是两回事。
+   */
   private async resolveToolchainSafe(entry: Entry): Promise<ToolchainResolution> {
     const side = this.options.toolchainSide ?? "mother"
     try {
@@ -683,145 +825,110 @@ export class SessionManager {
     }
   }
 
-  /**
-   * 内核事件 → 前端事件。
-   *
-   * 只用 subscribe() 拿观察事件 —— **别用 on()**:agent-harness.ts:230-248 的 emitOwn 和
-   * emitAny 字节相同,都只遍历订阅者桶,所以 on("save_point"/"settled"/"abort"/
-   * "session_compact"/"model_update"/"tools_update"/"queue_update"/"session_tree"/
-   * "thinking_level_update"/"after_provider_response") 这十个类型永远不会触发。
-   * 只有走 emitHook 的 tool_call / tool_result / context / before_agent_start /
-   * session_before_compact / session_before_tree / before_provider_* 才是活的。
-   */
-  private project(entry: Entry, event: AgentHarnessEvent): KernelEvent[] {
-    const projection = entry.projection
-    if (!projection) return []
+  // -------------------------------------------------------------------------
+  // 内核事件 → 前端事件
+  // -------------------------------------------------------------------------
 
-    switch (event.type) {
-      case "message_start": {
-        const message = event.message
-        if (message.role === "assistant") return projection.applyMessage(message)
-        if (message.role === "user") {
-          // renderer 乐观插入过一条,id 要复用。pendingUserID 由 prompt() 放进来。
-          const given = entry.pendingUserID
-          entry.pendingUserID = undefined
-          return projection.applyMessage(message, given ? { messageID: given } : undefined)
-        }
-        return []
-      }
-      case "message_update":
-        if (event.message.role !== "assistant") return []
-        return projection.applyStreamEvent(event.assistantMessageEvent, event.message)
-      case "message_end": {
-        const message = event.message
-        if (message.role === "assistant") {
-          // 在这里判"要不要重试",因为 agent_end 到达时已经来不及压住 idle 了
-          // (事件是同步派发的,而 prompt() 的 promise 要等到之后才 resolve)。
-          entry.lastAssistant = message
-          entry.retryPending =
-            shouldAutoRetry(message, entry.harness?.getModel().contextWindow, entry.retryAttempt ?? 0) ||
-            this.overflowActionFor(entry) === "compact_and_retry"
-          return projection.finalizeAssistant(message)
-        }
-        if (message.role === "user") return []
-        return projection.applyMessage(message)
-      }
-      case "tool_execution_start":
-        return projection.markToolRunning(event.toolCallId)
-      case "turn_start":
-        return this.setStatus(entry, { type: "busy" })
-      case "turn_end":
-      case "settled":
-      case "agent_end":
-        // 要重试就压住 idle:整段重试(含 2s/4s/8s 退避)必须是一个连续的 busy,
-        // 否则退避窗口里会出现一个"看起来跑完了"的会话 —— bench 会当真去回填结果,
-        // 而 agent 正要重试,两边同时动板子。压缩也一并推迟到重试真正结束之后。
-        if (entry.retryPending) return []
-        // 一轮结束后按阈值自动压缩。内核不做这件事,不补就是聊长了直接撞上下文窗口。
-        void this.maybeAutoCompact(entry)
-        return this.setStatus(entry, { type: "idle" })
-      case "session_compact":
-        // 溢出恢复:压完紧接着重试,不能在这里漏一个 idle。
-        return entry.retryPending ? [] : this.setStatus(entry, { type: "idle" })
-      case "save_point":
+  /**
+   * 订阅。内核的事件总线是 **按类型** 订阅的(没有通配),所以这里逐条列出来 ——
+   * 漏一条的表现不是报错,是 UI 上少一块东西。
+   *
+   * 状态机只用三个事实:run_start/run_end 划出 busy,compaction_start/end 划出
+   * compacting。轮内压缩(阈值/溢出)是 run 的一段,压完要回到 busy 而不是 idle ——
+   * 中间漏一个 idle,bench 就会当真去跑判据,而 agent 正要接着说话。
+   */
+  private subscribe(entry: Entry, harness: AgentHarness<ExecutionToolContext>): Array<() => void> {
+    const emit = (events: KernelEvent[]) => {
+      if (events.length) this.options.emit(events)
+    }
+    const apply = (project: (projection: SessionProjection) => KernelEvent[]) => {
+      const projection = entry.projection
+      if (projection) emit(project(projection))
+    }
+    return [
+      harness.events.on("run_start", (event) => {
+        entry.running = true
+        entry.operationId = event.runId
+        emit(this.setStatus(entry, { type: "busy" }))
+      }),
+      harness.events.on("run_end", () => {
+        entry.running = false
+        entry.operationId = undefined
         entry.updatedAt = Date.now()
-        return [{ type: "session.updated", session: toView(entry) }]
-      default:
-        return []
-    }
-  }
-
-  /**
-   * 一轮结束后按阈值自动压缩。
-   *
-   * 任何失败都只发一条 kernel.error,**绝不让这一轮失败** —— 压缩是善后动作,
-   * 它挂了不该把用户已经拿到的回答一起废掉。
-   */
-  private async maybeAutoCompact(entry: Entry): Promise<void> {
-    if (!entry.harness || !entry.session || entry.compacting) return
-    // 一轮结束连着来 turn_end / settled / agent_end 三个事件,判定期间就占住,不然三路并发压缩。
-    entry.compacting = true
-    try {
-      // 回答完成却已超窗:直接压,不看阈值。
-      if (this.overflowActionFor(entry) !== "compact") {
-        const model = entry.harness.getModel()
-        const context = await entry.session.buildContext()
-        const compactions = await entry.session.getStorage().findEntries("compaction")
-        const last = compactions[compactions.length - 1]
-        const decision = shouldAutoCompact(
-          context.messages as AgentMessage[],
-          model.contextWindow,
-          last ? new Date(last.timestamp).getTime() : undefined,
+        emit([...this.setStatus(entry, { type: "idle" }), { type: "session.updated", session: toView(entry) }])
+        // 这一轮结束了,refreshMachineEnv 退役掉的旧环境现在可以安全收子进程了。
+        void this.cleanupRetiredEnvs(entry)
+      }),
+      harness.events.on("message_start", (event) => {
+        const message = event.message
+        if (message.role !== "assistant") return
+        apply((projection) => projection.startAssistant(message))
+      }),
+      harness.events.on("message_update", (event) => {
+        const message = event.message
+        if (message.role !== "assistant") return
+        apply((projection) => projection.applyStreamEvent(event.event, message))
+      }),
+      // 消息在 message_end 才投影:那一刻 entryId 已经有了(navigate 要靠它),
+      // 而用户/工具结果消息的 start 与 end 是同一批发出来的,不会晚。
+      harness.events.on("message_end", (event) => {
+        const message = event.message
+        // renderer 乐观插入过一条,id 要复用。pendingUserID 由 prompt() 放进来。
+        const given = message.role === "user" ? entry.pendingUserID : undefined
+        if (given) entry.pendingUserID = undefined
+        apply((projection) =>
+          projection.applyMessage(message, {
+            ...(event.entryId ? { entryId: event.entryId } : {}),
+            ...(given ? { messageID: given } : {}),
+          }),
         )
-        if (!decision.compact) return
-      }
-      await this.runCompaction(entry, { type: "idle" })
-    } catch (error) {
-      this.emitCompactionError(entry, error)
-    } finally {
-      entry.compacting = false
-    }
-  }
-
-  /** 溢出恢复用:压一次,压完仍是 busy(紧接着要重试,中间漏一个 idle bench 会当真)。 */
-  private async compactNow(entry: Entry): Promise<boolean> {
-    if (!entry.harness || entry.compacting) return false
-    entry.compacting = true
-    try {
-      await this.runCompaction(entry, { type: "busy" })
-      return true
-    } catch (error) {
-      this.emitCompactionError(entry, error)
-      return false
-    } finally {
-      entry.compacting = false
-    }
-  }
-
-  /** 状态 compacting → after 包着 harness.compact();失败照样归位,由调用方报错。 */
-  private async runCompaction(entry: Entry, after: SessionStatus): Promise<void> {
-    this.options.emit(this.setStatus(entry, { type: "compacting" }))
-    try {
-      await entry.harness!.compact()
-      entry.lastAssistant = undefined
-    } finally {
-      this.options.emit(this.setStatus(entry, after))
-    }
-  }
-
-  private overflowActionFor(entry: Entry) {
-    const model = entry.harness?.getModel()
-    return overflowAction(
-      entry.lastAssistant,
-      model && { provider: model.provider, id: model.id, contextWindow: model.contextWindow },
-      entry.overflowRecovered === true,
-    )
-  }
-
-  private emitCompactionError(entry: Entry, error: unknown): void {
-    this.options.emit([
-      { type: "kernel.error", sessionID: entry.id, message: `自动压缩失败:${(error as Error)?.message ?? String(error)}` },
-    ])
+      }),
+      harness.events.on("tool_start", (event) => apply((projection) => projection.markToolRunning(event.toolCallId))),
+      harness.events.on("entry_added", (event) => {
+        entry.updatedAt = Date.now()
+        const added = event.entry
+        // 压缩/分支摘要没有对应的消息事件,只能从 entry 投影。
+        if (added.type === "compaction" || added.type === "branch_summary") {
+          apply((projection) => projection.applySummary(added))
+        } else if (added.type === "custom") {
+          // yoma/compaction:把对应那条压缩分隔线翻成手动。live 与重放同一个函数,
+          // 所以同一段历史两条路得到的 auto 一定相同。
+          apply((projection) => projection.applyCustomEntry(added))
+        }
+      }),
+      harness.events.on("compaction_start", () => {
+        emit(this.setStatus(entry, { type: "compacting" }))
+      }),
+      harness.events.on("compaction_end", () => {
+        emit(this.setStatus(entry, entry.running ? { type: "busy" } : { type: "idle" }))
+      }),
+      harness.events.on("config_update", (event) => {
+        if (event.property === "model") {
+          entry.model = { ...entry.model, providerID: event.value.provider, modelID: event.value.modelId }
+          entry.projection?.setModel(event.value.provider, event.value.modelId)
+        } else if (event.property === "thinkingLevel" && entry.model) {
+          entry.model = { ...entry.model, thinking: event.value }
+        }
+      }),
+      harness.events.on("fault", (event) => {
+        this.fail(entry, `内核故障 ${event.code}:${event.message}`)
+        // fault 把每条 lane 都封死、总线也关了(runtime/harness.ts 的 fault())。留着这个
+        // entry 的话之后每一次 prompt 都会失败到重启为止 —— 销毁掉,下一次调用自己重开。
+        void this.dispose(entry).catch(() => {})
+      }),
+      // handler_error 说的是"某个监听器抛了",**它对这一轮什么都没说**。这里曾经调
+      // fail():于是 renderer 抛一次异常就把会话状态硬改成 idle,而 drive 还在跑,
+      // 下一条 prompt 撞 LaneBusy。只报错误,不碰状态。
+      harness.events.on("handler_error", (event) =>
+        this.options.emit([
+          {
+            type: "kernel.error",
+            sessionID: entry.id,
+            message: `内核事件处理失败(${event.kind}):${event.error}`,
+          },
+        ]),
+      ),
+    ]
   }
 
   private setStatus(entry: Entry, status: SessionStatus): KernelEvent[] {
@@ -830,29 +937,36 @@ export class SessionManager {
     return [{ type: "session.status", sessionID: entry.id, status }]
   }
 
+  /**
+   * 这一轮彻底失败了:报出去并把状态归位。
+   *
+   * 三个来源 —— drive 自己炸了、drive 带着 waiting 回来(没人再驱动它)、harness 报 fault。
+   * **不包括 handler_error**:那条只说某个监听器抛了,对这一轮什么都没说。
+   */
+  private fail(entry: Entry, message: string): void {
+    entry.running = false
+    entry.operationId = undefined
+    this.options.emit([
+      { type: "kernel.error", sessionID: entry.id, message },
+      ...this.setStatus(entry, { type: "idle" }),
+    ])
+  }
+
   // -------------------------------------------------------------------------
   // 一轮对话
   // -------------------------------------------------------------------------
 
   async prompt(sessionID: string, input: PromptInput): Promise<{ messageID: string }> {
     const entry = await this.ensureOpen(sessionID)
-    const harness = entry.harness!
+    const lane = entry.lane!
 
-    // harness 不排队:忙的时候 prompt() 同步抛 busy。先中断,再等真的回到 idle。
-    if (entry.status.type !== "idle") {
-      await harness.abort()
-      await harness.waitForIdle()
-    }
+    // 一条 lane 同时只有一个操作:忙的时候 accept 回 LaneBusy。先中断,再等真的回到 idle。
+    if (entry.status.type !== "idle") await this.stop(entry)
 
     const messageID = input.messageID ?? Identifier.ascending("message")
     entry.pendingUserID = messageID
-    entry.aborter = new AbortController()
-    entry.retryAttempt = 0
-    entry.retryPending = false
-    entry.overflowRecovered = false
-    entry.lastAssistant = undefined
 
-    const images = (input.files ?? [])
+    const images: ImageContent[] = (input.files ?? [])
       .filter((file) => file.mime.startsWith("image/"))
       .map((file) => ({
         type: "image" as const,
@@ -860,12 +974,10 @@ export class SessionManager {
         mimeType: file.mime,
       }))
 
-    // harness.prompt 只收 images,别的附件送不进模型。曾经的事故形态:UI 把 PDF 显示
-    // 成附件、这里静默丢掉,两边都不吭声,用户以为模型看过了。UI 侧已按能力分流
-    // (app 的 attachments:有本机路径的 PDF/文本转 @ 提及,无路径的 PDF 拒收),
-    // 这里是防回归的哨兵 —— 只盯
-    // data: URL 的内容型附件;file:// 的提及件路径已在正文里、agent 自己会去读,
-    // 丢掉 part 是预期行为,不该报。
+    // 一轮只收 images,别的附件送不进模型。曾经的事故形态:UI 把 PDF 显示成附件、
+    // 这里静默丢掉,两边都不吭声,用户以为模型看过了。UI 侧已按能力分流(有本机路径的
+    // PDF/文本转 @ 提及,无路径的 PDF 拒收),这里是防回归的哨兵 —— 只盯 data: URL 的
+    // 内容型附件;file:// 的提及件路径已在正文里、agent 自己会去读,丢掉 part 是预期行为。
     const dropped = (input.files ?? []).filter((file) => !file.mime.startsWith("image/") && file.url.startsWith("data:"))
     if (dropped.length > 0) {
       this.options.emit([
@@ -877,114 +989,122 @@ export class SessionManager {
       ])
     }
 
+    const request: OperationRequest = images.length
+      ? { kind: "prompt", prompt: input.text, images }
+      : { kind: "prompt", prompt: input.text }
+    const accepted = await lane.accept(request, this.context)
+    if (!accepted.ok) {
+      entry.pendingUserID = undefined
+      throw laneError(accepted.error)
+    }
+    const operationId = accepted.value.operationId
+    entry.operationId = operationId
+
     // 不 await:一轮可能跑几分钟,请求必须立刻返回,结果全部走事件流。
-    harness
-      .prompt(input.text, images.length ? { images } : undefined)
-      // 失败也是数据(stopReason:"error" 的 assistant 消息),所以自动重试挂在
-      // resolve 路径上,不是 catch 里。
-      .then((message) => this.maybeAutoRetry(entry, message))
-      .catch((error: unknown) => {
-        entry.retryPending = false
-        this.options.emit([
-          { type: "kernel.error", sessionID, message: (error as Error)?.message ?? String(error) },
-          { type: "session.status", sessionID, status: { type: "idle" } },
-        ])
-        entry.status = { type: "idle" }
-      })
+    // waitForRetry 把内核的退避留在这一次 drive 里,于是整段重试是一个连续的 busy ——
+    // 退避窗口里漏出 idle,bench 会当真去回填结果,而 agent 正要重试。
+    // pollDeferred 同理管 provider 侧的异步生成:漏了它 drive 会带着
+    // kind:"waiting" 提前回来,而 run_end 永远不来,状态就永久钉在 busy。
+    void lane.drive({ operationId, waitForRetry: true, pollDeferred: true }, this.context).then(
+      (driven) => {
+        if (!driven.ok) this.fail(entry, laneErrorMessage(driven.error))
+        // 两个开关都开了还 waiting,说明这一轮没人会再驱动它 —— 当失败处理,
+        // 否则状态停在 busy,用户只能重启。
+        else if (driven.value.kind === "waiting") this.fail(entry, WAITING_TEXT[driven.value.reason])
+      },
+      (error: unknown) => this.fail(entry, laneErrorMessage(error as Error)),
+    )
 
     return { messageID }
   }
 
   /**
-   * 一轮以可重试的错误收场时自动再试。
+   * 请求中断并等到 lane 真的空下来。idle 状态由 run_end 发出去。
    *
-   * 内核对 provider 失败**永不抛异常**,所以判断点在 resolve 路径上。整段重试是一个
-   * 连续的 busy:失败那一轮的 idle 已经被 project() 压住(entry.retryPending),
-   * 这里负责在真正结束时把它补上,并把推迟掉的自动压缩跑起来。
-   *
-   * 用户中途 abort 就停:刚按了停止,不该紧接着又发起一次模型调用。
+   * requestAbort **只落盘一个取消标记**,落定要有人 drive。所以还得问一遍有没有在飞的
+   * 操作:重开会话带进来的、或者 deferred 挂着的那种没有本地 drive,少这一步
+   * waitForIdle 就会永远停在那里(cli 的 abort() 是同一套动作)。
    */
-  private async maybeAutoRetry(entry: Entry, lastMessage: AssistantMessage): Promise<void> {
-    const signal = entry.aborter?.signal
-    let message = lastMessage
-    try {
-      while (entry.retryPending && !signal?.aborted) {
-        if (this.overflowActionFor(entry) === "compact_and_retry") {
-          // 溢出:先压缩再重试,不退避,只试一次。
-          entry.overflowRecovered = true
-          if (!(await this.compactNow(entry))) return
-        } else {
-          const attempt = (entry.retryAttempt ?? 0) + 1
-          entry.retryAttempt = attempt
-          await retrySleep(retryDelayMs(attempt), signal)
-        }
-        if (signal?.aborted) return
-        try {
-          message = await entry.harness!.retryLastTurn()
-        } catch (error) {
-          this.options.emit([
-            {
-              type: "kernel.error",
-              sessionID: entry.id,
-              message: `自动重试失败:${(error as Error)?.message ?? String(error)}`,
-            },
-          ])
-          return
-        }
-        // retryLastTurn 的事件同样流经 project(),retryPending 由那里重新裁决:
-        // 还能重试就继续转,不能了就落到下面的收尾。
-        void message
-      }
-    } finally {
-      const attempted = (entry.retryAttempt ?? 0) > 0
-      const stillPending = entry.retryPending === true
-      entry.retryPending = false
-      // 只在"确实压过 idle"时补收尾:要么中途放弃(abort/重试失败)时它还挂着,
-      // 要么重试成功过 —— 成功路径上最后那一轮的 turn_end 已经把 idle 发过了,
-      // 所以只有 stillPending 才需要这里补,否则会多发一条。
-      if (stillPending || (attempted && entry.status.type !== "idle")) {
-        void this.maybeAutoCompact(entry)
-        entry.status = { type: "idle" }
-        this.options.emit([{ type: "session.status", sessionID: entry.id, status: { type: "idle" } }])
-      }
+  private async stop(entry: Entry): Promise<void> {
+    const lane = entry.lane
+    if (!lane) return
+    const operationId = entry.operationId
+    if (operationId) {
+      // OperationMismatch = 那个操作已经自己结束了,不是错误。
+      const requested = await lane.requestAbort(operationId, this.context)
+      if (!requested.ok && requested.error._tag !== "OperationMismatch") throw laneError(requested.error)
     }
+    const pending = (await lane.inspectExecution(this.context)).current
+    if (pending) {
+      // NoActiveOperation = 刚才那一瞬间它自己落定了,不是错误。
+      const aborted = await lane.abort(this.context)
+      if (!aborted.ok && aborted.error._tag !== "NoActiveOperation") throw laneError(aborted.error)
+    }
+    await lane.waitForIdle(this.context)
   }
 
   async abort(sessionID: string): Promise<void> {
     const entry = this.entries.get(sessionID)
-    if (!entry?.harness) return
-    entry.aborter?.abort()
-    await entry.harness.abort()
-    await entry.harness.waitForIdle()
-    entry.status = { type: "idle" }
-    this.options.emit([{ type: "session.status", sessionID, status: { type: "idle" } }])
+    if (!entry || !isOpen(entry)) return
+    await this.stop(entry)
+    this.options.emit(this.setStatus(entry, { type: "idle" }))
   }
 
+  /** 手动压缩。状态(compacting → idle)由 compaction_start/end 事件发出去。 */
   async compact(sessionID: string): Promise<void> {
     const entry = await this.ensureOpen(sessionID)
-    entry.status = { type: "compacting" }
-    this.options.emit([{ type: "session.status", sessionID, status: { type: "compacting" } }])
-    try {
-      await entry.harness!.compact()
-    } finally {
-      entry.status = { type: "idle" }
-      this.options.emit([{ type: "session.status", sessionID, status: { type: "idle" } }])
+    const lane = entry.lane!
+    // 和 prompt() 同一条规矩:一条 lane 同时只有一个操作,忙着就先中断 ——
+    // 直接压会拿到 LaneBusy,而用户点"压缩"的意思本来就是"这轮别跑了,清上下文"。
+    if (entry.status.type !== "idle") await this.stop(entry)
+    const result = await lane.compact(undefined, this.context)
+    if (!result.ok) throw laneError(result.error)
+
+    // CompactionEntry 没有"为什么压缩"这个字段,而 live 与重放必须给出同一个 auto。
+    // 所以自己补一条 custom entry 当这条事实的载体:结构性操作结束时 tip 正落在刚写进去
+    // 的那条压缩 entry 上(runtime/drive/structural.ts),指的就是它。
+    const compactionEntryId = result.value.compaction.tipId
+    if (compactionEntryId) {
+      await lane.appendCustomEntry(MANUAL_COMPACTION_ENTRY, { compactionEntryId, manual: true }, this.context)
     }
   }
 
   /**
    * 顶替 opencode 的 revert。
    *
-   * yoma 只能把会话树的 leaf 挪回某条消息,**不还原文件**。所以这不是"回滚",
-   * 是"改上一条重发" —— UI 上绝不能叫回滚,否则在 agent 改过固件源码之后,
-   * 用户会以为文件也回去了。
+   * 只能把 lane 的 tip 挪回某条消息,**不还原文件**。所以这不是"回滚",是"改上一条重发"
+   * —— UI 上绝不能叫回滚,否则在 agent 改过固件源码之后,用户会以为文件也回去了。
    */
   async navigate(sessionID: string, messageID: string): Promise<{ editorText: string }> {
     const entry = await this.ensureOpen(sessionID)
-    const result = await entry.harness!.navigateTree(messageID)
-    const editorText = (result as { editorText?: string })?.editorText ?? ""
-    // 树变了,整条 transcript 要重取。
-    this.options.emit([{ type: "session.updated", session: toView(entry) }])
+    const entryId = entry.projection!.entryIdOf(messageID)
+    if (!entryId) throw new Error(`消息 ${messageID} 不在这个会话的历史里`)
+
+    // 目标是一条 user 消息 = "回到发这句话之前":tip 落到它的父节点,原文交还给输入框
+    // 让用户改完重发。别的类型就停在那条 entry 上。
+    const target = await entry.session!.getEntry(entryId, this.context)
+    let tipId: string | null = entryId
+    let editorText = ""
+    if (target?.type === "message" && target.message.role === "user") {
+      tipId = target.parentId
+      editorText = textOf(target.message.content)
+    }
+    // 重建投影之前先留一份快照:被抛下那条分支的消息要逐条报 removed。
+    const before = entry.projection!.snapshot()
+    const result = await entry.lane!.navigateTree(tipId, undefined, this.context)
+    if (!result.ok) throw laneError(result.error)
+
+    // 树变了:投影器必须重建,否则它还记着被抛下那条分支的消息。活下来的那些沿用原 id。
+    const projection = this.newProjection(entry, entry.projection)
+    await this.replay(entry.lane!, projection)
+    entry.projection = projection
+    entry.updatedAt = Date.now()
+    // removed 必须排在 session.updated 之前:前端的消息集合只增不减,只发
+    // session.updated 它不会重拉,被抛下那半条 transcript 会一直留在屏幕上。
+    this.options.emit([
+      ...removalEvents(entry.id, before, projection.snapshot()),
+      { type: "session.updated", session: toView(entry) },
+    ])
     return { editorText }
   }
 
@@ -997,23 +1117,56 @@ export class SessionManager {
   // 生命周期
   // -------------------------------------------------------------------------
 
-  /** 淘汰空闲最久的 harness。只丢内存态,不丢磁盘,重开很便宜。 */
+  /** 淘汰空闲最久的会话。只丢内存态,不丢磁盘,重开很便宜。 */
   private evictIdle(): void {
-    const live = [...this.entries.values()].filter((e) => e.harness && e.status.type === "idle")
+    // 正在装配的不算"活着的":它还没有 lane,淘汰它只会把自己那次 open 拆掉。
+    const live = [...this.entries.values()].filter((e) => isOpen(e) && !e.opening && e.status.type === "idle")
     if (live.length <= MAX_LIVE_SESSIONS) return
     live.sort((a, b) => a.touched - b.touched)
-    for (const entry of live.slice(0, live.length - MAX_LIVE_SESSIONS)) void this.dispose(entry)
+    for (const entry of live.slice(0, live.length - MAX_LIVE_SESSIONS)) void this.dispose(entry).catch(() => {})
   }
 
-  private async dispose(entry: Entry): Promise<void> {
-    entry.unsubscribe?.()
-    entry.unsubscribe = undefined
-    if (entry.harness) await entry.harness.abort().catch(() => {})
+  /**
+   * 销毁内存态。**关的过程本身要可见** —— 记在 entry.closing 上,ensureOpen 据此等它收完
+   * 再重开;否则并发进来的调用会拿到一个订阅已经摘掉、lane 马上要被清空的半关 entry。
+   */
+  private dispose(entry: Entry): Promise<void> {
+    entry.closing ??= this.closeEntry(entry).finally(() => {
+      entry.closing = undefined
+    })
+    return entry.closing
+  }
+
+  private async closeEntry(entry: Entry): Promise<void> {
+    // 装配还在飞就先等它:不等的话那次 open 会在我们关完之后把 lane 又挂回去。
+    if (entry.opening) await entry.opening.catch(() => {})
+    for (const unsubscribe of entry.unsubscribes ?? []) unsubscribe()
+    entry.unsubscribes = undefined
+    // 在飞轮次先中断:**硬件安全**优先,别把板子停在半条命令上。
+    if (entry.lane) await this.stop(entry).catch(() => {})
+    // harness.close() 连会话一起关 —— 必须关,repo 不允许同一个会话开两次。
+    if (entry.harness) await entry.harness.close(this.context).catch(() => {})
+    else if (entry.session) await entry.session.close(this.context).catch(() => {})
+    // 当前的和 refreshMachineEnv 退役掉的一起收:遗留子进程一个都不许活过会话。
+    await this.cleanupRetiredEnvs(entry)
+    await entry.env?.cleanup(this.context).catch(() => {})
     entry.harness = undefined
+    entry.lane = undefined
     entry.projection = undefined
     entry.session = undefined
     entry.env = undefined
+    entry.shellEnv = undefined
     entry.toolchain = undefined
+    entry.running = false
+    entry.operationId = undefined
+  }
+
+  /** 收掉 refreshMachineEnv 退役下来的执行环境(它们可能还拖着子进程)。 */
+  private async cleanupRetiredEnvs(entry: Entry): Promise<void> {
+    const retired = entry.retiredEnvs
+    if (!retired?.length) return
+    entry.retiredEnvs = undefined
+    for (const env of retired) await env.cleanup(this.context).catch(() => {})
   }
 
   async disposeAll(): Promise<void> {
@@ -1022,11 +1175,6 @@ export class SessionManager {
 }
 
 // ---------------------------------------------------------------------------
-
-interface Entry {
-  /** renderer 乐观插入用户消息时铸的 id,等 message_start 到达时复用。 */
-  pendingUserID?: string
-}
 
 function toView(entry: Entry): ViewSession {
   return {
@@ -1043,12 +1191,8 @@ function defaultTitle(entry: Entry): string {
   return name
 }
 
-function toMillis(value: string | number | undefined): number {
-  if (typeof value === "number") return value
-  if (typeof value === "string") {
-    const parsed = Date.parse(value)
-    if (!Number.isNaN(parsed)) return parsed
-  }
-  return Date.now()
+/** 用户消息的正文(图片块丢掉)—— navigate 把它交还给输入框。 */
+function textOf(content: string | Array<{ type: string; text?: string }>): string {
+  if (typeof content === "string") return content
+  return content.flatMap((block) => (block.type === "text" ? [block.text ?? ""] : [])).join("")
 }
-

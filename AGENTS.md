@@ -8,7 +8,9 @@
 Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
 
 - **内核**(`packages/{ai,agent,coding-agent}`)—— agent 循环、会话树、压缩、技能,
-  以及嵌入式工具组(烧录 / 日志 / gdb / 网表 / 数据手册 / STM32 配置 / 逻辑分析仪 / 示波器)。
+  以及嵌入式应用层(工具链解析 / 示例语料 / 引擎调用)。嵌入式工具组(烧录 / 日志 / gdb /
+  网表 / 数据手册 / STM32 配置 / 逻辑分析仪 / 示波器)2026-09-10 **归零**:旧实现搬到
+  `packages/coding-agent/attic/`(不编译、不跑),按新内核的工具接口一个个重写。
 - **桌面端**(`packages/{desktop,app,kernel,ui,session-ui,util,bench}`)——
   Electron 外壳 + SolidJS UI,fork 自 opencode 的前端;`bench` 是无人值守调试台。
 
