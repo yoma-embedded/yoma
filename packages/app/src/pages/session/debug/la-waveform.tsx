@@ -9,8 +9,7 @@
  * 的纯函数,组件被卸载重建照样能画回来;缩放 / 游标状态在 createStore 里。
  *
  * **线格式与画法不在这里**:2bit 列的解码在内核的 `la-codec.ts`(host 也要用),泳道画法与
- * 取色在 session-ui 的 `la-preview.ts` —— 卡片(transcript 里的 la 缩略图)与这台仪器共用同一份,
- * 否则同一份采集在两处会画成两个样子,而且只有人眼看得出来。
+ * 取色在 session-ui 的 `la-preview.ts`。
  */
 import { createEffect, createMemo, For, onCleanup, Show } from "solid-js"
 import { createStore } from "solid-js/store"

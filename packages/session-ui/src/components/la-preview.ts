@@ -1,18 +1,16 @@
 /**
- * la(逻辑分析仪)波形的 **DOM 侧工具箱** —— 卡片(本包 `la-tool.tsx`)与 dock 面板
- * (app 的 `pages/session/debug/la-waveform.tsx`)共用同一份画法、同一份取色。
+ * la(逻辑分析仪)波形的 **DOM 侧工具箱** —— dock 面板(app 的
+ * `pages/session/debug/la-waveform.tsx`)的画法与取色都在这里。
  *
  * 线格式与格式化在内核的 `la-codec.ts`(那边没有 DOM lib,host 也要用),这里只加
  * 需要 DOM 的那一层:读主题 token、盯明暗切换、量 canvas、画泳道。**两半都从这里
  * 出去**(下面原样 re-export 内核那几个),于是消费方 import 一个模块就够了。
  *
- * 单独一个模块而不是塞进 `la-tool.tsx`,有两个理由:
- *  - 卡片要 import `Markdown`,而那条链上有 vite 的 `?worker&url` 说明符 —— vitest
- *    解不开它,于是任何 import 卡片的测试都只会得到一个模块加载错误。
+ * 单独一个模块而不是塞进面板,理由是:
  *  - 这里没有一个模块级可变状态(除了一张按对象身份索引的 WeakMap 缓存):画布是
  *    (数据, 尺寸, 颜色) → 像素的纯函数,虚拟列表随时卸载/重挂都能原样重画。
  */
-import { decodeColumns, foldColumns, LA_COLUMN_EDGE, LA_COLUMN_HIGH, type LaToolDetails } from "@yoma-desktop/kernel"
+import { decodeColumns, foldColumns, LA_COLUMN_EDGE, LA_COLUMN_HIGH } from "@yoma-desktop/kernel"
 
 export {
   decodeColumns,
@@ -25,10 +23,10 @@ export {
   LA_COLUMN_LOW,
 } from "@yoma-desktop/kernel"
 
-export type LaPreview = NonNullable<LaToolDetails["preview"]>
-export type LaChannel = NonNullable<LaToolDetails["channels"]>[number]
+export type LaPreview = { columns: number; from: number; to: number; rows: Record<string, string> }
+export type LaChannel = { index: number; name: string; edges?: number }
 
-/** 一个通道一条泳道的高度(CSS px),卡片的标签层按同一个数排版。 */
+/** 一个通道一条泳道的高度(CSS px)。 */
 export const LA_LANE_HEIGHT = 16
 
 /**
@@ -93,7 +91,7 @@ export function sizeCanvas(
 }
 
 export interface PaintLanesOptions {
-  /** 泳道区左上角(CSS px);面板要给通道名让出 LABEL_W,卡片是 0。 */
+  /** 泳道区左上角(CSS px);面板要给通道名让出 LABEL_W。 */
   x: number
   y: number
   /** 泳道宽度,必须等于 rows 里每条的长度 */
@@ -110,9 +108,9 @@ export interface PaintLanesOptions {
 
 /**
  * 唯一的泳道画法:高/低电平画横线,`LA_COLUMN_EDGE`(该像素里翻转过)画一根竖线把
- * 两条横线连上 —— 于是缩略图与面板是同一个方波,不是"卡片一串点、面板一条线"。
+ * 两条横线连上,于是画出来是方波而不是一串点。
  *
- * rows 必须**已经折到像素**(`foldColumns`),一列就是一像素:预览是 1024 列而卡片只有
+ * rows 必须**已经折到像素**(`foldColumns`),一列就是一像素:预览是 1024 列而画布只有
  * 几百像素宽,逐列画出来是一片灰雾,边沿全糊掉。半像素偏移是为了 1px 线不跨两行像素。
  */
 export function paintLanes(
@@ -192,8 +190,8 @@ interface FoldedRows {
 }
 
 /**
- * 缓存按 **preview 对象身份 + 宽度**:details 在会话里是同一个对象,而 transcript 的
- * 虚拟列表会把卡片反复卸载重挂,每次重解 1024 列 × N 通道纯属白烧。
+ * 缓存按 **preview 对象身份 + 宽度**:details 在会话里是同一个对象,而虚拟列表会把
+ * 消费方反复卸载重挂,每次重解 1024 列 × N 通道纯属白烧。
  * WeakMap 于是不需要失效逻辑 —— details 走了,缓存跟着走。
  */
 const foldCache = new WeakMap<LaPreview, FoldedRows>()
@@ -212,20 +210,4 @@ export function foldedPreviewRows(
   )
   foldCache.set(preview, { width, channels, rows })
   return rows
-}
-
-/**
- * 画波形要的通道表。details 里 channels 与 preview.rows 未必同时齐全 ——
- * 只有 rows 时按 key 兜一份出来,否则重放旧采集会得到一张空画布。
- */
-export function previewChannels(details: Partial<LaToolDetails>): readonly LaChannel[] {
-  const declared = details.channels ?? []
-  if (declared.length > 0) return declared
-  const rows = details.preview?.rows
-  if (!rows) return []
-  return Object.keys(rows)
-    .map((key) => Number(key))
-    .filter((index) => Number.isFinite(index))
-    .sort((a, b) => a - b)
-    .map((index) => ({ index, name: `D${index}` }))
 }

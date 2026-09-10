@@ -14,7 +14,6 @@
  *   retry                     内核对 provider 失败不重试,失败就是一条带 error 的 assistant 消息
  *
  * 本文件必须保持 **浏览器安全**:不 import yoma、不 import node:*。
- * 工具 details 的形状是从 yoma 结构化复制过来的,漂移由 host/details-check.ts 在编译期兜住。
  */
 
 // ---------------------------------------------------------------------------
@@ -181,7 +180,7 @@ export interface ToolStateCompleted {
   /** 给模型看的文本输出。 */
   output: string
   title: string
-  /** 结构化结果。这是硬件工具卡片的全部信息来源。 */
+  /** 工具的结构化结果。UI 不解释它。 */
   metadata: ToolDetails
   time: { start: number; end: number }
   /** 工具返回的图片(datasheet view_figure)。 */
@@ -199,7 +198,7 @@ export interface ToolStateError {
 export type ToolState = ToolStatePending | ToolStateRunning | ToolStateCompleted | ToolStateError
 
 // ---------------------------------------------------------------------------
-// 工具 details —— 从 yoma 结构化复制,漂移由 host/details-check.ts 编译期兜住
+// 工具名与工具链 / la 的 RPC 视图模型
 // ---------------------------------------------------------------------------
 
 export const TOOL_NAMES = [
@@ -229,53 +228,11 @@ export const RETIRED_TOOL_NAMES = ["grep"] as const
 
 export type ToolName = (typeof TOOL_NAMES)[number]
 
-export interface TruncationInfo {
-  content: string
-  truncated: boolean
-  truncatedBy: "lines" | "bytes" | null
-  totalLines: number
-  totalBytes: number
-  outputLines: number
-}
-
-export interface ReadToolDetails {
-  truncation?: TruncationInfo
-  path?: string
-}
-
-export interface BashToolDetails {
-  truncation?: TruncationInfo
-  fullOutputPath?: string
-}
-
-export interface GrepToolDetails {
-  truncation?: TruncationInfo
-  matchLimitReached?: number
-  linesTruncated?: boolean
-}
-
-/** edit 和 write 都带前后全文 + unified patch —— 比 opencode 的还全,Pierre diff 直接能用。 */
-export interface EditToolDetails {
-  path: string
-  oldContent: string
-  newContent: string
-  patch: string
-  firstChangedLine?: number
-}
-
-export interface WriteToolDetails {
-  path: string
-  bytes: number
-  created: boolean
-  oldContent: string | null
-  newContent: string
-}
-
 /**
  * resolveToolchain() 对单个声明工具的判定,从 coding-agent 的 ResolvedTool 结构化
  * 复制(公共契约见 core/toolchain/resolve.ts)。还没有专门的工具卡片消费它 —— 现在
  * 只是渲染成一段文本追加进系统提示词(session-manager.ts 的 promptSectionFor) ——
- * 提前钉住这份形状是为了 P1 补渲染器时不用回头核对字段,漂移仍由 details-check.ts 兜底。
+ * 提前钉住这份形状是为了 P1 补渲染器时不用回头核对字段。
  */
 export interface ToolchainResolvedTool {
   id: string
@@ -299,18 +256,6 @@ export interface ToolchainInstallableView {
   title: string
   version: string
   bytes: number
-}
-
-export interface ToolchainToolDetails {
-  action: "check" | "resolve" | "set" | "install"
-  ok: boolean
-  side?: "mother" | "runner"
-  /** check / resolve 才有:每个声明工具的完整解析结果。 */
-  tools?: ToolchainResolvedTool[]
-  /** set / install 才有:被记录的工具 id。 */
-  id?: string
-  /** install 才有:装到了哪里。 */
-  installed?: { packageId: string; version: string; dir: string; binDir: string; reused: boolean }
 }
 
 /**
@@ -388,151 +333,6 @@ export interface ToolchainInstallResultView {
   status: ToolchainStatusView
 }
 
-/**
- * examples(例程库)工具的 details,从 coding-agent 的 ExamplesToolDetails 结构化
- * 复制(公共契约见 core/tools/examples.ts)。暂无专门卡片消费它(GenericTool 兜底,
- * 与 toolchain 同一先例),提前钉住形状,漂移由 details-check.ts 兜底。
- */
-export interface ExamplesToolDetails {
-  action: "search" | "info" | "seed" | "preflight" | "sync"
-  /** search 才有:命中数与命中 id。 */
-  count?: number
-  hitIds?: string[]
-  /** info / seed 才有。 */
-  id?: string
-  corpus?: string
-  /** seed 才有:落进工作区的绝对路径。 */
-  seededTo?: string
-  /** preflight 才有:参与条目(底盘在前)与重叠条数。 */
-  ids?: string[]
-  conflicts?: number
-  /** sync 才有:目标语料与(代码同步后的)字节数。 */
-  corpusId?: string
-  archiveBytes?: number
-}
-
-export interface NetlistToolDetails {
-  mode: "map" | "board_ir"
-  part?: string
-  files?: { boardIr: string; stm32Map: string; cfgSeed: string }
-}
-
-export interface DatasheetSearchHit {
-  manual_name?: string
-  page?: number
-  /** 单个字符串,不是数组 —— 内核里就是一条已经拼好的标题路径。别对它 join()。 */
-  headings?: string
-  score?: number
-  parsed_path?: string
-  image_path?: string
-  source_pdf?: string
-}
-
-export interface DatasheetToolDetails {
-  action: "search" | "read_section" | "view_figure" | "chips"
-  chip?: string
-  /** search:入参 chip 是型号时,实际搜的那个家族索引名(相等时不填)。 */
-  resolvedChip?: string
-  rev?: string
-  topK?: number
-  /** chips:索引里的家族数 / 手册数。 */
-  families?: number
-  manuals?: number
-  hits?: DatasheetSearchHit[]
-  parsedPath?: string
-  mode?: string
-  heading?: string
-  level?: number
-  lines?: number[]
-  chars?: number
-  sections?: number
-  truncated?: boolean
-  imagePath?: string
-  mime?: string
-  bytes?: number
-}
-
-export interface Stm32ConfigToolDetails {
-  command: string
-  exitCode: number | null
-}
-
-export interface FlashToolDetails {
-  command: string[]
-  exitCode: number | null
-  /** elfPath 给了且 exit 0 时:已落进 flash-state.json 的镜像绝对路径。 */
-  recordedElf?: string
-}
-
-export type LogAction = "start" | "read" | "wait" | "status" | "stop" | "ports"
-
-export interface LogToolDetails {
-  action: LogAction
-  running: boolean
-  cursor: number
-  totalLines: number
-  dropped: number
-  file?: string
-  matched?: boolean
-  exitCode?: number | null
-}
-
-export type GdbAction = "start" | "break" | "exec" | "eval" | "status" | "stop"
-export type GdbTargetState = "halted" | "running" | "exited" | "connection-lost"
-
-export interface GdbToolDetails {
-  action: GdbAction
-  state: GdbTargetState | "no-session"
-  epoch: number
-  stopId: number
-  connection?: string
-  file?: string
-  /** 停在有源码的位置时才有 —— 文件在本机不存在时内核 **不填**,别拿它去开文件。 */
-  path?: string
-  firstChangedLine?: number
-}
-
-export type LaAction =
-  | "devices"
-  | "capture"
-  | "arm"
-  | "collect"
-  | "stop"
-  | "import"
-  | "list"
-  | "decoders"
-  | "summary"
-  | "decode"
-  | "events"
-  | "timing"
-  | "expect"
-
-/**
- * 逻辑分析仪工具。只放摘要与句柄:原始样本永远在 <工程>/.yoma/la/<id>/ 的文件里(details
- * 进会话 JSONL、开会话整批重传、不可回收)。preview 是 1024 列 × 每通道 2bit 的缩略图,
- * 让旧会话重放时卡片仍能画出波形,即便 .yoma/la/ 已被清理。
- */
-export interface LaToolDetails {
-  action: LaAction
-  captureId?: string
-  dir?: string
-  file?: string
-  samplerate?: number
-  samples?: number
-  durationMs?: number
-  triggerPos?: number
-  channels?: { index: number; name: string; edges?: number }[]
-  /** bit0 该列出现过高电平、bit1 出现过低电平;4 列一字节;每通道一个 base64 */
-  preview?: { columns: number; from: number; to: number; rows: Record<string, string> }
-  decoders?: { key: string; id: string; annotations: number }[]
-  window?: { from: number; to: number }
-  armed?: boolean
-  timedOut?: boolean
-  truncated?: boolean
-  issues?: number
-  device?: { model?: string; pid?: string; hdl?: number }
-}
-
 /** la.captures 的每一条:<工程>/.yoma/la/<id>/capture.json 的内容 + 解码状态。 */
 export interface LaCaptureInfo {
   id: string
@@ -581,126 +381,7 @@ export interface LaViewResult {
   lanes: { key: string; decoderId: string; row: string; items: LaViewLaneItem[]; total: number; truncated: boolean }[]
 }
 
-export type ScopeAction =
-  | "connect"
-  | "status"
-  | "setup"
-  | "capture"
-  | "arm"
-  | "collect"
-  | "measure"
-  | "samples"
-  | "screenshot"
-  | "list"
-  | "raw"
-
-/** 一个通道在本次采集上的统计量。都是引擎侧算好的,前端只格式化。 */
-export interface ScopeChannelStats {
-  min: number
-  max: number
-  pp: number
-  mean: number
-  rms: number
-  freq?: number
-  period?: number
-  duty?: number
-  rise?: number
-  fall?: number
-  edges?: number
-}
-
-/** 一路模拟通道的设置与统计。ch 是 1..4。 */
-export interface ScopeChannelDetails {
-  /** 1..4 */
-  ch: number
-  on?: boolean
-  label?: string
-  /** V/div,已含探头衰减 */
-  vdiv?: number
-  offset?: number
-  coupling?: string
-  probe?: number
-  unit?: string
-  bwlimit?: string
-  /** 本次采集落盘的样本数 */
-  points?: number
-  stats?: ScopeChannelStats
-}
-
-/** 示波器自带的一条测量项。 */
-export interface ScopeMeasurement {
-  type: string
-  source: string
-  /** null = 示波器报 "****"(无法测量) */
-  value: number | null
-  unit?: string
-  n?: number
-  min?: number
-  max?: number
-  mean?: number
-}
-
-/**
- * 示波器工具(Siglent SDS824X HD,USBTMC 或 TCP/SCPI)。与 la 同一条纪律:details
- * 只放摘要与句柄,原始波形与截图落在 <工程>/.yoma/scope/ 的文件里。
- */
-export interface ScopeToolDetails {
-  action: ScopeAction
-  /** "usb:<serial>" 或 "host:port" */
-  address?: string
-  model?: string
-  serial?: string
-  firmware?: string
-  captureId?: string
-  dir?: string
-  /** 截图/采集文件的绝对路径 */
-  file?: string
-  sampleRate?: number
-  interval?: number
-  points?: number
-  mdepth?: string
-  timebase?: { scale: number; delay: number }
-  trigger?: { mode?: string; source?: string; level?: number; slope?: string; status?: string }
-  channels?: ScopeChannelDetails[]
-  measurements?: ScopeMeasurement[]
-  armed?: boolean
-  timedOut?: boolean
-  truncated?: boolean
-  /** 截图字节数 */
-  bytes?: number
-}
-
-/**
- * 按工具名判别的 details。渲染器拿到 ToolPart 之后先 narrow 工具名,再读 metadata,
- * 全程有编译期类型 —— 这是 opencode 那边 `metadata: {[k:string]: unknown}` 给不了的。
- */
-export interface ToolDetailsMap {
-  read: ReadToolDetails
-  bash: BashToolDetails
-  edit: EditToolDetails
-  write: WriteToolDetails
-  toolchain: ToolchainToolDetails
-  examples: ExamplesToolDetails
-  grep: GrepToolDetails
-  stm32config: Stm32ConfigToolDetails
-  netlist: NetlistToolDetails
-  flash: FlashToolDetails
-  datasheet: DatasheetToolDetails
-  log: LogToolDetails
-  gdb: GdbToolDetails
-  la: LaToolDetails
-  scope: ScopeToolDetails
-}
-
-export type ToolDetails = ToolDetailsMap[ToolName] | Record<string, unknown>
-
-/** 渲染器用:`if (isTool(part, "flash")) part.state.metadata.chip` 就有类型了。 */
-export function isTool<K extends ToolName>(
-  part: Part,
-  tool: K,
-): part is ToolPart & { tool: K; state: ToolState & { metadata?: ToolDetailsMap[K] } } {
-  return part.type === "tool" && part.tool === tool
-}
+export type ToolDetails = Record<string, unknown>
 
 // ---------------------------------------------------------------------------
 // 错误

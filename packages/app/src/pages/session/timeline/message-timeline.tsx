@@ -19,13 +19,7 @@ import { createVirtualizer, defaultRangeExtractor, elementScroll, type VirtualIt
 import { Accordion } from "@yoma-desktop/ui/accordion"
 import { Button } from "@yoma-desktop/ui/button"
 import { Card } from "@yoma-desktop/ui/card"
-import {
-  ContextToolGroup,
-  Message,
-  MessageDivider,
-  Part as MessagePart,
-  partDefaultOpen,
-} from "@yoma-desktop/session-ui/message-part"
+import { Message, MessageDivider, Part as MessagePart, partDefaultOpen } from "@yoma-desktop/session-ui/message-part"
 import { DiffChanges } from "@yoma-desktop/ui/diff-changes"
 import { FileIcon } from "@yoma-desktop/ui/file-icon"
 import { Icon } from "@yoma-desktop/ui/icon"
@@ -42,13 +36,7 @@ import { ScrollView } from "@yoma-desktop/ui/scroll-view"
 import { StickyAccordionHeader } from "@yoma-desktop/ui/sticky-accordion-header"
 import { TextReveal } from "@yoma-desktop/ui/text-reveal"
 import { TextShimmer } from "@yoma-desktop/ui/text-shimmer"
-import type {
-  AssistantMessage,
-  Message as MessageType,
-  Part as PartType,
-  ToolPart,
-  UserMessage,
-} from "@yoma-desktop/kernel"
+import type { AssistantMessage, Message as MessageType, Part as PartType, UserMessage } from "@yoma-desktop/kernel"
 import { showToast } from "@/utils/toast"
 import { getDirectory, getFilename } from "@yoma-desktop/util/path"
 import { normalize } from "@yoma-desktop/session-ui/session-diff"
@@ -72,7 +60,6 @@ import { filterVirtualIndexes } from "./virtual-items"
 
 const emptyMessages: MessageType[] = []
 const emptyParts: PartType[] = []
-const emptyTools: ToolPart[] = []
 const emptyAssistantMessages: AssistantMessage[] = []
 const idle = { type: "idle" as const }
 
@@ -188,7 +175,6 @@ export function MessageTimeline(props: {
   })
   const activeMessageID = projection.activeMessageID
   const assistantMessagesByParent = projection.assistantMessagesByParent
-  const lastAssistantGroupKey = projection.lastAssistantGroupKey
   const messageByID = projection.messageByID
   const messageLastRowIndex = projection.messageLastRowIndex
   const messageRowIndex = projection.messageRowIndex
@@ -675,36 +661,8 @@ export function MessageTimeline(props: {
   }
 
   const renderAssistantPartGroup = (row: Accessor<TimelineRowMap["AssistantPart"]>, onSizeChange?: () => void) => {
-    if (row().group.type === "context") {
-      const parts = createMemo(() => {
-        const group = row().group
-        if (group.type !== "context") return emptyTools
-        return group.refs
-          .map((ref) => getMsgPart(ref.messageID, ref.partID))
-          .filter((part): part is ToolPart => part?.type === "tool")
-      })
-
-      return (
-        <ContextToolGroup
-          parts={parts()}
-          busy={
-            workingTurn(row().userMessageID) && lastAssistantGroupKey().get(row().userMessageID) === row().group.key
-          }
-          onSizeChange={onSizeChange}
-        />
-      )
-    }
-
-    const message = createMemo(() => {
-      const group = row().group
-      if (group.type !== "part") return
-      return messageByID().get(group.ref.messageID)
-    })
-    const part = createMemo(() => {
-      const group = row().group
-      if (group.type !== "part") return
-      return getMsgPart(group.ref.messageID, group.ref.partID)
-    })
+    const message = createMemo(() => messageByID().get(row().group.ref.messageID))
+    const part = createMemo(() => getMsgPart(row().group.ref.messageID, row().group.ref.partID))
     const defaultOpen = createMemo(() => {
       const item = part()
       if (!item) return
@@ -908,7 +866,7 @@ export function MessageTimeline(props: {
     const row = createMemo(() => timelineRowByKey().get(props.rowKey) ?? initialRow)
     const asyncFile = () => {
       const value = row()
-      if (value._tag !== "AssistantPart" || value.group.type !== "part") return false
+      if (value._tag !== "AssistantPart") return false
       const part = getMsgPart(value.group.ref.messageID, value.group.ref.partID)
       return part?.type === "tool" && ["edit", "write"].includes(part.tool)
     }

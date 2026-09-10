@@ -8,7 +8,6 @@ import {
   formatTime,
   LA_LANE_HEIGHT,
   paintLanes,
-  previewChannels,
   sizeCanvas,
   type LaChannel,
 } from "./la-preview"
@@ -228,27 +227,7 @@ describe("foldedPreviewRows", () => {
   })
 })
 
-describe("previewChannels", () => {
-  test("prefers the declared channel table", () => {
-    const channels = [{ index: 3, name: "SDA" }]
-    expect(previewChannels({ channels, preview: { columns: 4, from: 0, to: 1, rows: { "0": "AA" } } })).toBe(channels)
-  })
-
-  test("falls back to the preview rows, numerically sorted", () => {
-    const rows = { "10": "AA", "2": "AA", "0": "AA" }
-    expect(previewChannels({ preview: { columns: 4, from: 0, to: 1, rows } })).toEqual([
-      { index: 0, name: "D0" },
-      { index: 2, name: "D2" },
-      { index: 10, name: "D10" },
-    ])
-  })
-
-  test("has nothing to draw without channels or rows", () => {
-    expect(previewChannels({})).toEqual([])
-  })
-})
-
-/** 格式化在内核的 la-codec 里(host 也要用),这里只钉住"卡片与面板拿到的就是它"。 */
+/** 格式化在内核的 la-codec 里(host 也要用),这里只钉住"面板拿到的就是它"。 */
 describe("re-exported formatters", () => {
   test("frequency, time and sample counts", () => {
     expect(formatFreq(25_000_000)).toBe("25 MHz")
