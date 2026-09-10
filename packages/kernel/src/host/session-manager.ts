@@ -93,7 +93,8 @@ export function createEmbeddedTools(
     // datasheet 的服务器地址按 显式 > 环境变量 > <configDir>/.env > 内置默认 解析;
     // configDir 必须传,不然 bench / 测试读的是真实 ~/.yoma/.env。
     createDatasheetToolDefinition(env, { configDir: options?.configDir }),
-    createStm32ConfigToolDefinition(env, engines),
+    // configDir 决定 fetch-fw 把 HAL 固件落到哪(`<configDir>/stm32/fw`,升级不丢)。
+    createStm32ConfigToolDefinition(env, { ...engines, configDir: options?.configDir }),
     // flash/log/gdb 自 2026-08 起不吃 enginesDir:烧录命令模型自带,RTT 走 TCP,
     // gdb server 从 PATH 起 —— 引擎目录只剩上面两个还要。
     createFlashToolDefinition(env),

@@ -12,9 +12,20 @@
  *
  * 描述文本与 yoma stm32config.txt 逐字一致。
  */
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { ExecutionEnv } from "@yoma/agent";
 import { type Static, Type } from "typebox";
+import {
+	defaultStm32FwRoot,
+	type LandStm32FwOptions,
+	landStm32Firmware,
+	pickStm32FwDir,
+	stm32FamilyOfPart,
+	stm32FwCatalogEntry,
+	Stm32FwError,
+	stm32FwLanded,
+} from "../stm32/fw.ts";
 import {
 	assertEngineSettled,
 	capEngineOutput,
@@ -35,6 +46,7 @@ export const STM32CONFIG_COMMANDS = [
 	"validate",
 	"generate",
 	"schema",
+	"fetch-fw",
 ] as const;
 
 export type Stm32ConfigCommand = (typeof STM32CONFIG_COMMANDS)[number];
@@ -50,9 +62,11 @@ const stm32ConfigSchema = Type.Object({
 			Type.Literal("validate"),
 			Type.Literal("generate"),
 			Type.Literal("schema"),
+			Type.Literal("fetch-fw"),
 		],
 		{
-			description: "Kernel command: list-mcus | describe-mcu | candidates | solve-clock | validate | generate | schema",
+			description:
+				"Kernel command: list-mcus | describe-mcu | candidates | solve-clock | validate | generate | schema | fetch-fw",
 		},
 	),
 	part: Type.Optional(
@@ -72,7 +86,11 @@ const stm32ConfigSchema = Type.Object({
 		Type.String({ description: 'Peripheral instance for candidates, e.g. "USART1". Required for candidates.' }),
 	),
 	signal: Type.Optional(Type.String({ description: 'Restrict candidates to one short signal name, e.g. "TX"' })),
-	family: Type.Optional(Type.String({ description: 'list-mcus filter: only parts of this family, e.g. "STM32F4"' })),
+	family: Type.Optional(
+		Type.String({
+			description: 'Family name, e.g. "STM32F4". list-mcus: filter to this family. fetch-fw (required): the family whose firmware to download.',
+		}),
+	),
 	package: Type.Optional(
 		Type.String({ description: 'list-mcus filter: only packages containing this text, e.g. "LQFP64"' }),
 	),
@@ -117,8 +135,9 @@ Commands and their required parameters:
 - solve-clock (configPath): solve the clock tree for the config's frequency targets
 - validate (configPath): full validation pipeline; returns diagnostics + summary
 - generate (configPath, out): validate, then write the complete project; writes NOTHING when error diagnostics are present
+- fetch-fw (family): download the family's HAL driver + CMSIS device sources (and the shared CMSIS core) from ST's official GitHub at pinned versions, a few MB, into ~/.yoma/stm32/fw — needed once per family before generate; generate tells you when they are missing
 
-Workflow: describe-mcu → author the config JSON with the write tool (start from the netlist tool's cfg_seed when you have one) → validate → fix every ERROR diagnostic → generate → compile with cmake. Diagnostics are {severity, code, path, message, suggestion} where path is a JSON Pointer into your config document — apply the suggestion at that path and re-run validate.
+Workflow: describe-mcu → author the config JSON with the write tool (start from the netlist tool's cfg_seed when you have one) → validate → fix every ERROR diagnostic → generate (run fetch-fw first if generate reports the family's firmware missing) → compile with cmake. Diagnostics are {severity, code, path, message, suggestion} where path is a JSON Pointer into your config document — apply the suggestion at that path and re-run validate.
 
 Rules:
 - This is a native tool; the stm32kernel CLI is NOT on PATH — never invoke it (or "stm32config") through the bash tool.
@@ -180,13 +199,76 @@ export function buildStm32ConfigArgs(params: Stm32ConfigToolInput, dataDir: stri
 				dataDir,
 				"--pretty",
 			];
+		case "fetch-fw":
+			// 不经 stm32kernel,由 core/stm32/fw.ts 落地;走到这里是调用方接线错了。
+			throw new Error("stm32config fetch-fw is handled by landStm32Firmware, not the kernel CLI");
 	}
 }
 
 /** 需要 config 文档的命令:exit 1 时给模型附上"修复后重跑"的指引。 */
 const CONFIG_COMMANDS: readonly Stm32ConfigCommand[] = ["candidates", "solve-clock", "validate", "generate"];
 
-export type Stm32ConfigToolOptions = EnginePathOptions;
+export interface Stm32ConfigToolOptions extends EnginePathOptions {
+	/** 固件落点 `<configDir>/stm32/fw` 的 configDir,默认 ~/.yoma(kernel 传真实的,测试注入)。 */
+	configDir?: string;
+	/** 固件下载的注入口(fwRoot / catalog / archiveUrl / fetchImpl / env),测试用;生产不传。 */
+	fw?: Pick<LandStm32FwOptions, "fwRoot" | "catalog" | "core" | "archiveUrl" | "fetchImpl" | "env">;
+}
+
+/**
+ * generate 要读的固件根,按顺序:受管目录(`<configDir>/stm32/fw`,升级不丢)、随包 / 源码检出的
+ * `data/stm32/fw`(fetch-fw.ps1 的落点)。返回值第一个就是 fetch-fw 的落点。
+ */
+function stm32FwRoots(dataDir: string, options?: Stm32ConfigToolOptions): string[] {
+	return [options?.fw?.fwRoot ?? defaultStm32FwRoot(options?.configDir), path.join(dataDir, "fw")];
+}
+
+/**
+ * 配置文档里的零件号 → 族(按装了的 irpack 做最长前缀匹配)。任何一步失败都返回 undefined:
+ * 这只是为了在起 stm32kernel 之前给出更好的指引,不是闸门 —— 内核自己会再判一次。
+ */
+function familyOfConfigDocument(configPath: string | undefined, options?: Stm32ConfigToolOptions): string | undefined {
+	if (!configPath) return undefined;
+	try {
+		const doc = JSON.parse(readFileSync(configPath, "utf8")) as { mcu?: { part?: unknown } };
+		const part = doc?.mcu?.part;
+		if (typeof part !== "string") return undefined;
+		return stm32FamilyOfPart(part, stm32Families(options));
+	} catch {
+		return undefined;
+	}
+}
+
+function fetchFwHint(family: string, fwRoot: string): string {
+	const spec = stm32FwCatalogEntry(family);
+	const what = spec
+		? `${spec.hal.repo}@${spec.hal.tag} + ${spec.device.repo}@${spec.device.tag} from github.com/STMicroelectronics, a few MB, once`
+		: "if Yoma has a download for this family";
+	return `Run this tool with command "fetch-fw" and family "${family}" (downloads ${what}) into ${fwRoot}, then re-run generate.`;
+}
+
+const FW_MISSING_RE = /firmware components for (\S+) not found/i;
+
+async function runFetchFw(
+	params: Stm32ConfigToolInput,
+	fwRoot: string,
+	options: Stm32ConfigToolOptions | undefined,
+	signal: AbortSignal | undefined,
+) {
+	const family = params.family?.trim();
+	if (!family) throw new Error('stm32config fetch-fw requires family (e.g. "STM32F1")');
+	try {
+		const landed = await landStm32Firmware({ family, fwRoot, signal, ...options?.fw });
+		const mb = (landed.bytes / 1e6).toFixed(1);
+		const text = landed.reused
+			? `${landed.family} firmware is already present at ${landed.dir} (HAL ${landed.hal.repo}@${landed.hal.tag}, CMSIS device ${landed.device.repo}@${landed.device.tag}, CMSIS core ${landed.core.repo}@${landed.core.tag}); nothing downloaded. generate can use it.`
+			: `Landed ${landed.family} firmware at ${landed.dir}: HAL ${landed.hal.repo}@${landed.hal.tag}, CMSIS device ${landed.device.repo}@${landed.device.tag}, CMSIS core ${landed.core.repo}@${landed.core.tag} (${landed.files} files, ${mb} MB). generate can now use it.`;
+		return { content: [{ type: "text" as const, text }], details: { command: "fetch-fw" as const, exitCode: 0 } };
+	} catch (error) {
+		if (error instanceof Stm32FwError) throw new Error(`stm32config fetch-fw ${family} failed (${error.phase}): ${error.message}`);
+		throw error;
+	}
+}
 
 export function createStm32ConfigToolDefinition(
 	env: ExecutionEnv,
@@ -215,16 +297,34 @@ export function createStm32ConfigToolDefinition(
 				out: params.out ? await resolveToCwd(env, params.out) : undefined,
 			};
 
-			const kernel = engineBin("stm32kernel", options);
 			const dataDir = engineDataDir("stm32", options);
-			const args = buildStm32ConfigArgs(resolved, dataDir, path.join(dataDir, "fw"));
+			const fwRoots = stm32FwRoots(dataDir, options);
+			if (params.command === "fetch-fw") return runFetchFw(params, fwRoots[0]!, options, signal);
+
+			const kernel = engineBin("stm32kernel", options);
+			// generate 的固件根按配置文档里的族挑(受管目录优先);这一族哪儿都没有就先别起内核,
+			// 直接告诉模型去 fetch-fw —— 内核那句"run tools/fetch-fw.ps1"是给仓库开发者看的。
+			let fwDir = fwRoots[0]!;
+			if (params.command === "generate") {
+				const family = familyOfConfigDocument(resolved.configPath, options);
+				fwDir = pickStm32FwDir(family, fwRoots);
+				if (family && !stm32FwLanded(fwDir, family)) {
+					const text = `Firmware components for ${family} are not installed — generate needs the family's HAL driver and CMSIS device sources, and nothing was generated. ${fetchFwHint(family, fwRoots[0]!)}`;
+					return { content: [{ type: "text" as const, text }], details: { command: params.command, exitCode: null } };
+				}
+			}
+			const args = buildStm32ConfigArgs(resolved, dataDir, fwDir);
 
 			const result = assertEngineSettled(
 				await runEngine(kernel, args, { cwd: env.cwd, signal }),
 				`stm32kernel ${params.command}`,
 			);
 			if (result.exitCode === 2 || (result.exitCode !== 0 && !result.stdout.trim())) {
-				throw new Error(`stm32kernel ${params.command} failed (exit ${result.exitCode}): ${result.stderr}`);
+				// 零件号推不出族(配置文档没读到 / irpack 缺席)时上面的预检不响,内核会自己报缺固件;
+				// 把它的话翻成模型能执行的动作。
+				const missing = params.command === "generate" ? FW_MISSING_RE.exec(result.stderr) : null;
+				const hint = missing ? ` ${fetchFwHint(missing[1]!, fwRoots[0]!)}` : "";
+				throw new Error(`stm32kernel ${params.command} failed (exit ${result.exitCode}): ${result.stderr}${hint}`);
 			}
 
 			// exit 1 = "有 ERROR 诊断":stdout 上的 JSON 就是修复回路,按正常结果返回。
