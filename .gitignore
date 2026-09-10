@@ -46,5 +46,6 @@ engines/data/
 __pycache__/
 *.pyc
 
-# 个人本地笔记 / 上手文档,不入库
+# 个人本地笔记 / 上手文档 / 创业执行记录,不入库
 doc_ljq_local/
+docs/business/
