@@ -240,12 +240,15 @@ describe("NodeExecutionEnv exec", () => {
 		const env = new NodeExecutionEnv({ cwd: root });
 		const controller = new AbortController();
 		// 孙子进程持有一个 60 秒的 sleep;只杀 shell 的话它会活下来继续写 marker。
-		const execution = env.exec("(sleep 0.2; touch grandchild-alive) & sleep 60", {
+		// 孙子先睡 2 秒再写 marker:Windows 上杀树是异步起一个 taskkill /T,它从 spawn 到真正
+		// 动手常常超过几百毫秒,写成 0.2 秒的话 marker 会在树被杀之前落地,用例随机红
+		// (CI 的 Windows 岗与本机都撞过)。要断言的是"树最终被杀干净",不是"200 ms 内杀完"。
+		const execution = env.exec("(sleep 2; touch grandchild-alive) & sleep 60", {
 			abortSignal: controller.signal,
 		});
 		controller.abort();
 		await execution;
-		await new Promise((resolve) => setTimeout(resolve, 500));
+		await new Promise((resolve) => setTimeout(resolve, 3000));
 		expect(getOrThrow(await env.exists("grandchild-alive"))).toBe(false);
 	});
 });
