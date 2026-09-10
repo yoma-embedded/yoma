@@ -2,7 +2,8 @@ name: ci
 
 on:
   push:
-    branches: [main, develop]
+    # release 是打包分发专用分支(2026-09-10 起,不进 develop),出包前的单测闸门也要在它上面跑。
+    branches: [main, develop, release]
   pull_request:
 
 permissions:

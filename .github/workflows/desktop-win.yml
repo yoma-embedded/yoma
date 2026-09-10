@@ -1,7 +1,10 @@
 # 在 Windows runner 上直接出安装包(NSIS),并在版本 tag 上发布 GitHub Release。
 #
 #   手动触发(workflow_dispatch) → 构建并上传临时 artifact,用于验证不同渠道;
-#   推送 tag `v*`               → 当场编引擎、构建 prod、验收安装包、创建正式 Release。
+#   推送 tag `v*`               → 当场编引擎、构建 prod、验收安装包、创建 Release。
+#                                 tag 带 `-` 后缀(v0.1.5-rc.1)= 候选版:prerelease、不标 latest,
+#                                 已装用户的自动更新看不见它;不带后缀 = 正式版,成为 latest。
+#                                 tag 必须等于 packages/desktop/package.json 的 version(含后缀)。
 #
 # 引擎来源:
 #   tag `v*` 和 engines=build —— 当场 `bun engines/build.ts --dist`
@@ -236,10 +239,17 @@ jobs:
         with:
           generate_release_notes: true
           fail_on_unmatched_files: true
+          # 带 `-` 后缀的 tag(v0.1.5-rc.1 / v0.2.0-beta.1)是候选版:标成 prerelease、不标 latest。
+          # electron-updater 不开 allowPrerelease 时按 GitHub 的 latest 取版本,所以已装用户不会被
+          # 推到候选版;官网 / 人只从 latest 拿正式包。正式 tag(v0.1.5)照旧成为 latest。
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ !contains(github.ref_name, '-') }}
           body: |
             > [!WARNING]
             > Windows 安装包目前未做代码签名。请只从本 Release 下载、核对 `SHA256SUMS.txt`,
             > 并预期首次安装时会看到 SmartScreen 的“未知发布者”提示。
+            >
+            > 版本号带 `-rc` / `-beta` 后缀的是候选版,不会推送给已安装用户的自动更新。
           files: |
             release/yoma-win-x64.exe
             release/yoma-win-x64.exe.blockmap

@@ -128,7 +128,7 @@
     },
     "packages/desktop": {
       "name": "@yoma-desktop/desktop",
-      "version": "0.1.4",
+      "version": "0.1.5-rc.1",
       "dependencies": {
         "@zip.js/zip.js": "catalog:",
         "effect": "catalog:",
