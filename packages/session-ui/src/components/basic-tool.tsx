@@ -5,6 +5,7 @@ import { createStore } from "solid-js/store"
 import { Collapsible } from "@yoma-desktop/ui/collapsible"
 import type { IconProps } from "@yoma-desktop/ui/icon"
 import { TextShimmer } from "@yoma-desktop/ui/text-shimmer"
+import type { ToolProps } from "./message-part"
 
 export type TriggerTitle = {
   title: string
@@ -297,16 +298,19 @@ export function BasicTool(props: BasicToolProps) {
   )
 }
 
+const LABEL_KEYS = ["description", "query", "url", "filePath", "path", "pattern", "name", "command"]
+const LABEL_KEY_SET = new Set(LABEL_KEYS)
+
 function label(input: Record<string, unknown> | undefined) {
-  const keys = ["description", "query", "url", "filePath", "path", "pattern", "name"]
-  return keys.map((key) => input?.[key]).find((value): value is string => typeof value === "string" && value.length > 0)
+  return LABEL_KEYS.map((key) => input?.[key]).find(
+    (value): value is string => typeof value === "string" && value.length > 0,
+  )
 }
 
 function args(input: Record<string, unknown> | undefined) {
   if (!input) return []
-  const skip = new Set(["description", "query", "url", "filePath", "path", "pattern", "name"])
   return Object.entries(input)
-    .filter(([key]) => !skip.has(key))
+    .filter(([key]) => !LABEL_KEY_SET.has(key))
     .flatMap(([key, value]) => {
       if (typeof value === "string") return [`${key}=${value}`]
       if (typeof value === "number") return [`${key}=${value}`]
@@ -316,24 +320,25 @@ function args(input: Record<string, unknown> | undefined) {
     .slice(0, 3)
 }
 
-export function GenericTool(props: {
-  tool: string
-  status?: string
-  hideDetails?: boolean
-  input?: Record<string, unknown>
-}) {
+export function GenericTool(props: ToolProps) {
   const i18n = useI18n()
+  const output = () => (typeof props.output === "string" ? props.output : "")
 
   return (
     <BasicTool
+      {...props}
       icon="mcp"
-      status={props.status}
       trigger={{
         title: i18n.t("ui.basicTool.called", { tool: props.tool }),
         subtitle: label(props.input),
         args: args(props.input),
       }}
-      hideDetails={props.hideDetails}
-    />
+    >
+      {output() ? (
+        <div data-component="tool-output" data-scrollable>
+          <pre>{output()}</pre>
+        </div>
+      ) : undefined}
+    </BasicTool>
   )
 }

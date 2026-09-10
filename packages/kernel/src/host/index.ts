@@ -31,9 +31,6 @@ import {
 } from "./toolchain.ts"
 import { VcsWatchers } from "./vcs-watch.ts"
 
-// 纯类型模块,无运行时产物。re-export 只为把工具 details 的漂移闸门拉进编译单元。
-export type * from "./details-check.ts"
-
 export { SessionProjection } from "./projector.ts"
 export { SessionManager } from "./session-manager.ts"
 export { StreamSink } from "./stream.ts"

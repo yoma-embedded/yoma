@@ -90,12 +90,9 @@ pi 上游包(`ai` / `agent` / `chord` / `telemetry`,包名保留 `@earendil-work
 `packages/kernel` 的两个入口边界必须守住:
 
 - `.`(`src/index.ts`)—— **浏览器安全**,不 import yoma、不 import `node:*`。
-  视图模型里的工具 details 是从 yoma **结构化复制** 的,不是 import 的。
+  视图模型不解释任何工具的结果:`ToolState` 的 `metadata` 是 `Record<string, unknown>`,
+  界面对所有工具统一走 `GenericTool` 万能卡(2026-09-10 卡片归零,专用卡待重写工具时按名注册)。
 - `./host`(`src/host/`)—— 只跑在 utilityProcess 里,碰内核、碰文件系统。
-
-复制的漂移由 `src/host/details-check.ts` 在编译期兜住(yoma 改名/删字段/改类型 → 编译失败)。
-**断言必须写成约束式 `Expect<T extends true>`** —— 写成 `const _: Check = true as never`
-是一个不会响的闸门(`never` 可赋给任何类型,实测踩过)。
 
 ## 命令
 
@@ -513,8 +510,8 @@ TS 侧的纪律:
 `analyze.ts` 统计/边沿/文本示意图、`store.ts` 落盘、`siglent.ts` 驱动)+ `tools/scope.ts`(11 个动作:
 connect / status / setup / capture / arm / collect / measure / samples / screenshot / list / raw)。
 样本落在 `<工程>/.yoma/scope/<id>/`(`c<n>.i16` 原始 code + `capture.json`),截图在 `.yoma/scope/screens/`,
-本机仪器地址在 `.yoma/scope.json`;三样都在 `YOMA_IGNORE`。卡片是纯 KV(session-ui 的 `scope-tool.tsx`),
-截图经 attachments 显示在卡片里 —— 用户说过不要花哨前端。
+本机仪器地址在 `.yoma/scope.json`;三样都在 `YOMA_IGNORE`。专用卡片已随卡片归零删除,目前走万能卡,
+截图 attachments 暂不显示 —— 用户说过不要花哨前端。
 
 **USB 走 node-usb 3**(`usb@3.1.0`:Rust nusb + napi-rs,各平台预编译包 `@node-usb/usb-<platform>` 作可选依赖,
 **不装 libusb、不编译**)。它在根 catalog、`coding-agent` 与 `desktop` 的 `dependencies` 里都要在:desktop 那份让

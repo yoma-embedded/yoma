@@ -83,18 +83,9 @@ export function createTimelineProjection(input: {
     })
     return result
   })
-  const lastAssistantGroupKey = createMemo(() => {
-    const result = new Map<string, string>()
-    rows().forEach((row) => {
-      if (row._tag === "AssistantPart") result.set(row.userMessageID, row.group.key)
-    })
-    return result
-  })
-
   return {
     activeMessageID,
     assistantMessagesByParent,
-    lastAssistantGroupKey,
     messageByID,
     messageRowIndex,
     messageLastRowIndex,

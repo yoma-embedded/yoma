@@ -1,10 +1,9 @@
 /**
  * 工具名集合的运行时钉法。
  *
- * 编译期钉法(details-check.ts 的 SameToolNames)在 yoma 2026-08 精简后失效:
- * 它不再导出 ToolName 联合。这里改为真装配一遍工具(不跑、只构造)再逐名核对 ——
- * yoma 增删工具或改名,这个测试立刻红,提醒去补/清 session-ui 渲染器、
- * 权限规则表和 types.ts 的 details 副本。
+ * 编译期钉法在 yoma 2026-08 精简后失效:它不再导出 ToolName 联合。这里改为真装配
+ * 一遍工具(不跑、只构造)再逐名核对 —— yoma 增删工具或改名,这个测试立刻红,
+ * 提醒去补/清 session-ui 渲染器和权限规则表。
  */
 
 import { describe, expect, test } from "vitest"

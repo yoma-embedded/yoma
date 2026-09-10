@@ -11,7 +11,7 @@ import type { AgentMessage } from "@yoma/agent"
 import { SessionProjection } from "./projector.ts"
 import type { KernelEvent } from "../protocol.ts"
 import { sortKeyOf } from "../ids.ts"
-import type { Part, ToolPart } from "../types.ts"
+import type { Part, ToolPart, ToolStateCompleted } from "../types.ts"
 
 const T0 = 1_800_000_000_000
 
@@ -197,7 +197,7 @@ describe("工具", () => {
     expect(a.state.status).toBe("completed")
     expect((a.state as { output: string }).output).toBe("A 的内容")
     expect((b.state as { output: string }).output).toBe("B 的内容")
-    expect((a.state as { metadata: { path: string } }).metadata.path).toBe("/a")
+    expect((a.state as ToolStateCompleted).metadata.path).toBe("/a")
   })
 
   test("工具结果里的图片变成 attachments,不会消失", () => {
