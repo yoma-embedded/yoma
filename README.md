@@ -78,7 +78,7 @@ If CubeMX is already installed, the sources are copied from its installation dir
 git clone https://github.com/yoma-embedded/yoma.git yoma
 cd yoma
 bun install
-bun engines/build.ts    # netlist parsing / STM32 tools. STM32 configuration needs CubeMX installed locally: build parses the device database to generate irpacks
+bun engines/build.ts    # netlist parsing / STM32 tools. The STM32 device data (irpacks) ships with the repository; CubeMX is only needed to regenerate it
 bun dev:desktop         # restart this command after changing the kernel
 ```
 

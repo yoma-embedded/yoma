@@ -648,8 +648,9 @@ NsisUpdater 的 blockmap 路径 —— 通道本来就通。这次修的是**用
   "名字叫 engines 且存在",会高高兴兴找到一个没有 `bin/` 的空壳,然后报
   "去跑 `bun engines/build.ts`",让你以为是没编译。合库后 `engines/` 就是仓内真目录
   (引擎源码 + build.ts;2026-08-17 起两个引擎仓已整个吸收进本仓,不再是 submodule
-  —— `data/*.irpack` 是 CubeMX 解析出的构建产物,不入库;`bun engines/build.ts`
-  本机有 CubeMX 时会导入。`data/fw/` 这 1.1GB 的 HAL/CMSIS 除外,要跑
+  —— `data/*.irpack` 是 CubeMX 解析出的 IR,2026-09-10 起**随仓库提交**(5.7 MB;出安装包的
+  CI runner 没有 CubeMX,不入库正式包里就没有 STM32 配置数据),`bun engines/build.ts` 见够数
+  就跳过导入,要重新生成先删旧 pack。`data/fw/` 这 1.1GB 的 HAL/CMSIS 仍不入库,要跑
   stm32-config-kernel 的编译门禁测试先 `tools/fetch-fw.ps1`)。
 - **探针栈不在引擎里**(2026-08-17 起,probe-rs 整体移除):烧录命令由模型自带
   (OpenOCD / J-Link / 厂商 CLI),flash 工具只管探针租约 + 超时杀树 + flash-state

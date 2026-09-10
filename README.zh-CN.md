@@ -78,7 +78,7 @@ powershell -File engines/stm32-config-kernel/tools/fetch-fw.ps1 -Families STM32F
 git clone https://github.com/yoma-embedded/yoma.git yoma
 cd yoma
 bun install
-bun engines/build.ts    # 网表解析 / STM32 工具。STM32 配置需要本机已装 CubeMX：build 会解析器件库生成 irpack
+bun engines/build.ts    # 网表解析 / STM32 工具。STM32 器件数据(irpack)随仓库自带；只有要重新生成时才需要本机装 CubeMX
 bun dev:desktop         # 改内核要重启这条命令
 ```
 

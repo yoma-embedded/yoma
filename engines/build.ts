@@ -20,9 +20,11 @@
 // 冻结进可执行文件本身,产出真正与路径无关的二进制(dist 阶段会验这一点)。
 //
 // data 分两半,处理方式不同:
-//   - irpacks —— CubeMX 器件库经 stm32ck-import 解析出的构建产物,**不进 git**。
-//     本机有 CubeMX(或 STM32CK_CUBEMX_DB)时,build.ts 会自己导入;装进运行时
-//     布局 / --dist 产物。没有 CubeMX 时开发构建跳过 STM32 配置(网表引擎照装),
+//   - irpacks —— CubeMX 器件库经 stm32ck-import 解析出的 IR,2026-09-10 起**随仓库提交**
+//     (stm32-config-kernel/data/*.irpack,5.7 MB):出安装包的 CI runner 没有 CubeMX,
+//     不入库正式包里就没有 STM32 配置数据。够数(≥MIN_IRPACKS)就跳过导入;要重新生成
+//     先删旧 pack,本机有 CubeMX(或 STM32CK_CUBEMX_DB)时 build.ts 会自己导入。
+//     pack 被删光又没有 CubeMX 时开发构建跳过 STM32 配置(网表引擎照装),
 //     --dist 仍然硬失败 —— 安装包不能默默少一族。
 //   - fw/(ST 官方 HAL 组件,**1.1GB**,压缩后仍有 ~174MB)—— **不进分发产物**。
 //     它只有 `stm32kernel generate` 用得到,而那条命令本来就收 --fw-dir,

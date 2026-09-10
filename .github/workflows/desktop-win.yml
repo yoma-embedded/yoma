@@ -10,8 +10,9 @@
 #   engines=prebuilt(仅手动触发的默认)—— 按 packages/desktop/engines.lock.json 下载。
 #                               跨平台复用预编译 zip 时才用。
 #
-# GitHub 托管机没有 CubeMX,`--dist --allow-missing-irpacks` 仍出网表引擎;
-# 安装包里没有 STM32 配置 irpack。本机有 CubeMX 时去掉该 flag 再编即可补上。
+# GitHub 托管机没有 CubeMX,但 irpack 自 2026-09-10 起随仓库提交
+# (engines/stm32-config-kernel/data/*.irpack),build.ts 见够数就跳过导入,安装包里有
+# STM32 配置数据。`--allow-missing-irpacks` 留作保险:pack 被删光时仍出网表引擎而不是红。
 # yoma-la 在 Windows 上硬依赖 MSYS2 ucrt64 —— 漏装会直接红,不会默默少一个引擎。
 #
 # 产出的是**未签名**包:装的时候 SmartScreen 会拦,点「更多信息 → 仍要运行」。
