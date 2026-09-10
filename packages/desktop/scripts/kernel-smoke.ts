@@ -43,7 +43,7 @@ try {
 }
 
 // ---------------------------------------------------------------------------
-// 1. 内核在真实 runtime 下加载得起来,而且 14 个工具(TOOL_NAMES 减退役)都构造得出来
+// 1. 内核在真实 runtime 下加载得起来,四件套都构造得出来
 // ---------------------------------------------------------------------------
 
 const enginesDir = join(repoRoot, "engines")
@@ -58,32 +58,17 @@ try {
   fail(`内核自检失败:\n${(error as { stdout?: string; message?: string }).stdout ?? (error as Error).message}`)
 }
 
-// grep 已随 yoma 2026-08 的装配面精简退役(视图侧仍认得它,只为重放旧会话)。
+// 嵌入式那一套已于 2026-09-10 归零,只剩内核自带的四件套。
 // 对着**构建产物**核对:这个清单落后于内核装配面时,旧 out/ 会在这里如实报缺。
-const EXPECTED = [
-  "read",
-  "bash",
-  "edit",
-  "write",
-  "toolchain",
-  "examples",
-  "netlist",
-  "datasheet",
-  "stm32config",
-  "flash",
-  "log",
-  "gdb",
-  "la",
-  "scope",
-]
+const EXPECTED = ["read", "bash", "edit", "write"]
 
 const missing = EXPECTED.filter((tool) => !report.tools.includes(tool))
 if (missing.length) fail(`工具缺失:${missing.join(", ")}(内核改了工具集?)`)
 
 const extra = report.tools.filter((tool) => !EXPECTED.includes(tool))
 if (extra.length) {
-  // 不算失败,但要大声说 —— 新工具没有渲染器就会掉进 GenericTool,只画一行标题没有输出体。
-  console.warn(`⚠ 内核新增了工具:${extra.join(", ")} —— 需要在 session-ui 里补渲染器`)
+  // 不算失败,但要大声说 —— 界面按万能卡画得出来,可 TOOL_NAMES 与这份清单得跟上。
+  console.warn(`⚠ 内核新增了工具:${extra.join(", ")} —— 去对一下 kernel 的 TOOL_NAMES`)
 }
 
 console.log(`✓ 内核加载正常 (node ${report.node} / electron ${report.electron ?? "n/a"}),${report.tools.length} 个工具`)

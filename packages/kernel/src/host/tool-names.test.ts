@@ -1,30 +1,17 @@
 /**
  * 工具名集合的运行时钉法。
  *
- * 编译期钉法在 yoma 2026-08 精简后失效:它不再导出 ToolName 联合。这里改为真装配
- * 一遍工具(不跑、只构造)再逐名核对 —— yoma 增删工具或改名,这个测试立刻红,
- * 提醒去补/清 session-ui 渲染器和权限规则表。
+ * 真装配一遍工具(不跑、只构造)再逐名核对:内核增删工具或改名,这个测试立刻红 ——
+ * 提醒去看 session-ui 的万能卡够不够用,以及 desktop 冒烟脚本里的期望清单。
  */
 
 import { describe, expect, test } from "vitest"
 
-import { NodeExecutionEnv } from "@yoma/agent/node"
-import { createCodingToolDefinitions } from "@yoma/coding-agent"
-
-import { RETIRED_TOOL_NAMES, TOOL_NAMES } from "../types.ts"
-import { createEmbeddedTools } from "./session-manager.ts"
+import { TOOL_NAMES } from "../types.ts"
+import { createAgentTools } from "./session-manager.ts"
 
 describe("工具名集合", () => {
-  test("yoma 装配面 = TOOL_NAMES − RETIRED_TOOL_NAMES,逐字相同", () => {
-    const env = new NodeExecutionEnv({ cwd: process.cwd() })
-    const assembled = [...createCodingToolDefinitions(env), ...createEmbeddedTools(env)].map((t) => t.name)
-    const retired: readonly string[] = RETIRED_TOOL_NAMES
-    const live = TOOL_NAMES.filter((name) => !retired.includes(name))
-    expect([...assembled].sort()).toEqual([...live].sort())
-  })
-
-  test("退役工具仍在视图词汇表里 —— 旧会话重放要认得", () => {
-    const names: readonly string[] = TOOL_NAMES
-    for (const retired of RETIRED_TOOL_NAMES) expect(names).toContain(retired)
+  test("host 装配面 = TOOL_NAMES,逐字相同(连顺序)", () => {
+    expect(createAgentTools().map((tool) => tool.name)).toEqual([...TOOL_NAMES])
   })
 })

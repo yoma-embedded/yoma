@@ -1,19 +1,16 @@
 /**
  * 内核宿主(Node 侧)。跑在 Electron 的 utilityProcess 里,不在 main、也不在 renderer。
  *
- * 进程模型是刻意的单例:yoma 的 probe 租约(claimProbe/releaseProbe)、gdb session 表、
- * log capture 都是 **模块级全局**(coding-agent/src/core/tools/engines.ts:63-113),
- * 所以整个 app 只能有一个内核进程 —— 绝不按窗口或按目录分片 fork。
+ * 进程模型是刻意的单例:会话的 JSONL 由**一个进程独占**(JsonlSessionRepo 对同一个
+ * 会话开两次直接抛),所以整个 app 只能有一个内核进程 —— 绝不按窗口或按目录分片 fork。
  */
 
 import path from "node:path"
 
-import { AgentHarness } from "@yoma/agent"
-import { NodeExecutionEnv } from "@yoma/agent/node"
-import { createCodingToolDefinitions } from "@yoma/coding-agent"
+import { AgentHarness } from "@earendil-works/pi-agent-core"
 
 import type { KernelEvent, KernelHandlers, KernelMethod, KernelParams, KernelResult } from "../protocol.ts"
-import { createEmbeddedTools, SessionManager, type SessionManagerOptions } from "./session-manager.ts"
+import { createAgentTools, SessionManager, type SessionManagerOptions } from "./session-manager.ts"
 import { runPreflight, inspectEngines } from "./preflight.ts"
 import { yomaConfigDir } from "./auth.ts"
 import { laCaptures, laView } from "./la-view.ts"
@@ -226,24 +223,23 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     },
     async dispose() {
       vcsWatchers.dispose()
+      // 先关 sink:disposeAll 会中断在飞轮次,那一串收尾事件是故意丢掉的 ——
+      // 进程正在退,renderer 的通道也在拆,推过去没人收。
       sink.close()
       await sessions.disposeAll()
     },
   }
 }
 
-/** 冒烟自检:依赖图能加载,engines 二进制真的在。 */
+/** 冒烟自检:依赖图能加载,工具装配得出来,engines 二进制真的在。 */
 export function kernelSelfCheck(options: { enginesDir?: string } = {}) {
-  const env = new NodeExecutionEnv({ cwd: process.cwd() })
-  const coding = createCodingToolDefinitions(env)
-  // 自检是对着真机跑的,configDir 就是真实 ~/.yoma —— 但显式传,和会话装配同一条纪律。
-  const embedded = createEmbeddedTools(env, options.enginesDir, { configDir: yomaConfigDir() })
   const engines = inspectEngines(options.enginesDir)
   return {
     node: process.versions.node,
     electron: process.versions.electron ?? null,
-    harness: typeof AgentHarness,
-    tools: [...coding, ...embedded].map((t) => t.name),
+    // 整个内核依赖图真的加载起来了才有这个 "function"(AgentHarness 本身只是个对象)。
+    harness: typeof AgentHarness.create,
+    tools: createAgentTools().map((tool) => tool.name),
     engines,
   }
 }

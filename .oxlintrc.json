@@ -4,6 +4,7 @@
     "engines/**",
     "**/out/**",
     "**/dist/**",
-    "packages/agent/docs/**"
+    "packages/agent/docs/**",
+    "packages/coding-agent/attic/**"
   ]
 }

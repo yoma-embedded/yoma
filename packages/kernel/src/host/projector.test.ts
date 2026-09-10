@@ -6,9 +6,9 @@
  */
 import { describe, expect, test } from "vitest"
 import type { AssistantMessage, AssistantMessageEvent, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai"
-import type { AgentMessage } from "@yoma/agent"
+import type { AgentMessage, BranchSummaryEntry, CompactionEntry, CustomEntry } from "@earendil-works/pi-agent-core"
 
-import { SessionProjection } from "./projector.ts"
+import { removalEvents, SessionProjection } from "./projector.ts"
 import type { KernelEvent } from "../protocol.ts"
 import { sortKeyOf } from "../ids.ts"
 import type { Part, ToolPart, ToolStateCompleted } from "../types.ts"
@@ -62,6 +62,57 @@ function toolResult(toolCallId: string, text: string, details?: unknown, timesta
     details,
     isError: false,
     timestamp,
+  }
+}
+
+/** 一条压缩 entry(内核 CompactionEntry 的最小形状)。 */
+function compaction(summary: string, extra: Partial<CompactionEntry> = {}, timestamp = T0 + 4): CompactionEntry {
+  return {
+    id: "entry-compaction",
+    parentId: null,
+    seq: 1,
+    timestamp,
+    type: "compaction",
+    summary,
+    retainedTail: [],
+    tokensBefore: 90_000,
+    fromHook: false,
+    ...extra,
+  }
+}
+
+/** host 在手动压缩之后补的那条自定义 entry。 */
+function manualCompaction(compactionEntryId: string, timestamp = T0 + 5): CustomEntry {
+  return {
+    id: "entry-custom",
+    parentId: null,
+    seq: 3,
+    timestamp,
+    type: "custom",
+    customType: "yoma/compaction",
+    data: { compactionEntryId, manual: true },
+  }
+}
+
+/**
+ * renderer 乐观铸出来的 id。`counter` 是**对方进程**的同毫秒计数器 —— host 看不见它,
+ * 所以 host 自己的时钟必须按这个 id 往前对。
+ */
+function optimisticID(timestamp: number, counter: number): string {
+  const key = ((BigInt(timestamp) << 12n) + BigInt(counter)) & ((1n << 48n) - 1n)
+  return `msg_${key.toString(16).padStart(12, "0")}Qdq3ABCDEFGHIJ`
+}
+
+function branchSummary(summary: string, timestamp = T0 + 6): BranchSummaryEntry {
+  return {
+    id: "entry-branch",
+    parentId: null,
+    seq: 2,
+    timestamp,
+    type: "branch_summary",
+    fromId: null,
+    summary,
+    fromHook: false,
   }
 }
 
@@ -133,7 +184,7 @@ describe("流式", () => {
 
     const chunks = ["从", "前", "有", "座", "山"]
     let partial = assistant([{ type: "text", text: "" }], { stopReason: "toolUse" })
-    p.applyMessage(partial)
+    p.startAssistant(partial)
 
     let accumulated = ""
     let partID = ""
@@ -146,8 +197,10 @@ describe("流式", () => {
       }
     }
 
+    // 收尾走的是 message_end(applyMessage)—— 内核不转发 done/error 流式事件,
+    // 它们在 isUpdateEvent 那一关就被筛掉了。
     const final = assistant([{ type: "text", text: accumulated }])
-    p.applyStreamEvent({ type: "done", reason: "stop", message: final }, final)
+    p.applyMessage(final)
 
     const snapshot = p.snapshot().at(-1)!
     const textPart = snapshot.parts.find((part) => part.id === partID)
@@ -161,15 +214,59 @@ describe("流式", () => {
     const live = projection()
     live.applyMessage(user("你好"))
     const streaming = assistant([{ type: "text", text: "" }], { stopReason: "toolUse" })
-    live.applyMessage(streaming)
+    live.startAssistant(streaming)
     const final = assistant([{ type: "text", text: "完整回答" }])
-    live.applyStreamEvent({ type: "done", reason: "stop", message: final }, final)
+    live.applyMessage(final)
 
     const replayed = projection()
     replayed.applyMessage(user("你好"))
     replayed.applyMessage(final)
 
     expect(JSON.stringify(live.snapshot())).toBe(JSON.stringify(replayed.snapshot()))
+  })
+
+  test("message_end 收尾的是流式那一条,不会多出一条重复回复", () => {
+    const p = projection()
+    p.applyMessage(user("你好"))
+    const streaming = assistant([{ type: "text", text: "" }], { stopReason: "toolUse" })
+    p.startAssistant(streaming)
+    p.applyMessage(assistant([{ type: "text", text: "说完了" }]))
+    // 紧接着的下一轮必须是**新的**一条 —— 收尾过的消息不再是"流式中的那条"。
+    p.applyMessage(assistant([{ type: "text", text: "再说一句" }], {}, T0 + 2))
+
+    const texts = p.snapshot().map((item) => item.parts.map((part) => (part.type === "text" ? part.text : "")).join(""))
+    expect(texts).toEqual(["你好", "说完了", "再说一句"])
+  })
+})
+
+describe("entryId 映射", () => {
+  test("落盘的消息记下 entryId,navigate 据此翻译", () => {
+    const p = projection()
+    const events = p.applyMessage(user("你好"), { entryId: "entry-7" })
+    const id = (events[0] as Extract<KernelEvent, { type: "message.updated" }>).message.id
+    expect(p.entryIdOf(id)).toBe("entry-7")
+    expect(p.entryIdOf("msg_unknown")).toBeUndefined()
+  })
+
+  test("renderer 乐观铸的 id 被复用,而且也绑到 entryId 上", () => {
+    const p = projection()
+    const events = p.applyMessage(user("你好"), { entryId: "entry-9", messageID: "msg_optimistic" })
+    const info = (events[0] as Extract<KernelEvent, { type: "message.updated" }>).message
+    expect(info.id).toBe("msg_optimistic")
+    expect(p.entryIdOf("msg_optimistic")).toBe("entry-9")
+  })
+
+  test("复用乐观 id 时排序时钟也要跟上 —— 否则同毫秒的回复排在提问前面", () => {
+    // 真实形态:renderer 在 host 之后铸 id,两个进程的同毫秒计数器互相看不见。
+    // 不把 lastKey 顶到这条 id 上,紧接着铸出的 assistant 回复字典序会更小。
+    const p = projection()
+    const given = optimisticID(T0 + 5, 9)
+    p.applyMessage(user("问题", T0), { messageID: given })
+    const events = p.applyMessage(assistant([{ type: "text", text: "回答" }], {}, T0))
+    const id = (events[0] as Extract<KernelEvent, { type: "message.updated" }>).message.id
+
+    expect(sortKeyOf(id) > sortKeyOf(given)).toBe(true)
+    expect(id > given).toBe(true) // 前端就是按整个字符串二分的
   })
 })
 
@@ -204,20 +301,22 @@ describe("工具", () => {
     const p = projection()
     p.applyMessage(user("看图"))
     p.applyMessage(
-      assistant([{ type: "toolCall", id: "call_img", name: "datasheet", arguments: {} }], { stopReason: "toolUse" }),
+      assistant([{ type: "toolCall", id: "call_img", name: "read", arguments: { path: "/a.png" } }], {
+        stopReason: "toolUse",
+      }),
     )
     p.applyMessage({
       role: "toolResult",
       toolCallId: "call_img",
-      toolName: "datasheet",
+      toolName: "read",
       content: [
-        { type: "text", text: "figure 12" },
+        { type: "text", text: "a.png" },
         { type: "image", data: "AAAA", mimeType: "image/png" },
       ],
-      details: { action: "view_figure", mime: "image/png" },
+      details: { mimeType: "image/png" },
       isError: false,
       timestamp: T0 + 9,
-    } as AgentMessage)
+    })
 
     const part = (p.snapshot().at(-1)!.parts as ToolPart[]).find((x) => x.callID === "call_img")!
     expect(part.state.status).toBe("completed")
@@ -226,10 +325,55 @@ describe("工具", () => {
     expect(attachments![0]!.url.startsWith("data:image/png;base64,")).toBe(true)
   })
 
+  test("附件的 part id 不撞同一条消息里下一个 content block", () => {
+    // 曾经是 index * 100 + i + 1:工具在 0、文本在 1,第一张附件也算出 1 —— 撞了
+    // 之后前端按 part id 去重,少画一块,而且不报错。
+    const p = projection()
+    p.applyMessage(user("看图"))
+    p.applyMessage(
+      assistant(
+        [
+          { type: "toolCall", id: "call_img", name: "read", arguments: { path: "/a.png" } },
+          { type: "text", text: "看完了" },
+        ],
+        { stopReason: "toolUse" },
+      ),
+    )
+    p.applyMessage({
+      role: "toolResult",
+      toolCallId: "call_img",
+      toolName: "read",
+      content: [
+        { type: "text", text: "a.png" },
+        { type: "image", data: "AAAA", mimeType: "image/png" },
+      ],
+      isError: false,
+      timestamp: T0 + 9,
+    })
+
+    const parts = p.snapshot().at(-1)!.parts
+    const tool = parts.find((part) => part.type === "tool") as ToolPart
+    const attachments = (tool.state as { attachments?: Array<{ id: string }> }).attachments!
+    const ids = [...parts.map((part) => part.id), ...attachments.map((part) => part.id)]
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
   test("找不到对应调用的结果被丢弃,不凭空造无主卡片", () => {
     const p = projection()
     p.applyMessage(user("你好"))
     expect(p.applyMessage(toolResult("call_ghost", "野结果"))).toEqual([])
+  })
+
+  test("tool_start 把卡片推到 running", () => {
+    const p = projection()
+    p.applyMessage(user("读文件"))
+    p.applyMessage(
+      assistant([{ type: "toolCall", id: "c1", name: "read", arguments: { path: "/a" } }], { stopReason: "toolUse" }),
+    )
+    const events = p.markToolRunning("c1")
+    expect(partsOf(events).map((part) => (part.type === "tool" ? part.state.status : part.type))).toEqual(["running"])
+    // 不认识的 toolCallId 是 no-op,不凭空造卡片。
+    expect(p.markToolRunning("nope")).toEqual([])
   })
 
   test("重算快照不会把已完成的工具倒回 pending", () => {
@@ -238,7 +382,7 @@ describe("工具", () => {
     const call = assistant([{ type: "toolCall", id: "c1", name: "read", arguments: { path: "/a" } }], {
       stopReason: "toolUse",
     })
-    p.applyMessage(call)
+    p.startAssistant(call)
     p.applyMessage(toolResult("c1", "内容"))
     // 流式事件会触发快照重算 —— 不能因此把状态机倒回去。
     p.applyStreamEvent({ type: "toolcall_end", contentIndex: 0, toolCall: call.content[0] as never, partial: call }, call)
@@ -248,8 +392,24 @@ describe("工具", () => {
 })
 
 describe("错误", () => {
+  test("流式中途 provider 失败:错误在 message_end 那一条上 —— 没有 done/error 流式事件这回事", () => {
+    // 内核只转发 start 与 start/done/error 之外的事件(execution/assistant.ts 的
+    // isUpdateEvent),所以失败只能从收尾那条消息的 stopReason 读出来。
+    const p = projection()
+    p.applyMessage(user("你好"))
+    const streaming = assistant([{ type: "text", text: "" }], { stopReason: "toolUse" })
+    p.startAssistant(streaming)
+    const failed = assistant([{ type: "text", text: "半句" }], { stopReason: "error", errorMessage: "socket hang up" })
+    const events = p.applyMessage(failed)
+
+    const info = (events[0] as Extract<KernelEvent, { type: "message.updated" }>).message
+    expect((info as { error?: { name: string } }).error?.name).toBe("UnknownError")
+    // 收尾的是流式那一条,没有多出一条重复回复。
+    expect(p.snapshot().length).toBe(2)
+  })
+
   test("stopReason error/aborted 必须投影成 MessageError,不能变成空白轮次", () => {
-    // yoma 的内核对 provider 失败永不抛异常,失败就是一条消息。漏投影 = UI 上什么都没有。
+    // 内核对 provider 失败永不抛异常,失败就是一条消息。漏投影 = UI 上什么都没有。
     const cases: Array<[AssistantMessage["stopReason"], string, string]> = [
       ["aborted", "用户中断", "MessageAbortedError"],
       ["error", "context length exceeded", "ContextOverflowError"],
@@ -280,72 +440,95 @@ describe("错误", () => {
   })
 })
 
-describe("自定义角色", () => {
-  test("bashExecution 用内核自己的渲染函数,不会消失", () => {
-    const p = projection()
-    p.applyMessage(user("跑一下"))
-    const events = p.applyMessage({
-      role: "bashExecution",
-      command: "ls -la",
-      output: "total 0",
-      exitCode: 0,
-      cancelled: false,
-      truncated: false,
-      timestamp: T0 + 3,
-    } as AgentMessage)
-    const parts = partsOf(events)
-    expect(parts.length).toBe(1)
-    expect((parts[0] as { text: string }).text).toContain("ls -la")
-    expect((parts[0] as { text: string }).text).toContain("total 0")
-  })
-
-  test("compactionSummary 既画分隔线,也保住摘要正文", () => {
+describe("压缩与分支摘要", () => {
+  test("压缩 entry 既画分隔线,也保住摘要正文", () => {
     const p = projection()
     p.applyMessage(user("你好"))
-    const parts = partsOf(
-      p.applyMessage({
-        role: "compactionSummary",
-        summary: "前面聊了 STM32 时钟树配置",
-        tokensBefore: 90_000,
-        timestamp: T0 + 4,
-      } as AgentMessage),
-    )
+    const parts = partsOf(p.applySummary(compaction("前面聊了 STM32 时钟树配置")))
     expect(parts.map((part) => part.type)).toEqual(["compaction", "text"])
+    expect((parts[0] as { auto: boolean }).auto).toBe(true)
     expect((parts[1] as { text: string }).text).toContain("时钟树")
   })
 
-  test("compactionSummary 自带的 usage 记到合成消息的 cost/tokens 上", () => {
+  test("手动压缩:yoma/compaction entry 把分隔线翻成 auto:false,live 与重放同一条路", () => {
+    // 压缩 entry 自己记不下"是谁按的",所以 host 额外落一条自定义 entry。投影器两条路
+    // (live 的 entry_added / 重放)都从它读,同一段历史才不会一边 auto 一边手动。
     const p = projection()
     p.applyMessage(user("你好"))
-    const events = p.applyMessage({
-      role: "compactionSummary",
-      summary: "摘要",
-      tokensBefore: 90_000,
-      timestamp: T0 + 4,
-      usage: {
-        input: 1000,
-        output: 200,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 1200,
-        cost: { input: 0.001, output: 0.002, cacheRead: 0, cacheWrite: 0, total: 0.003 },
-      },
-    } as AgentMessage)
-    const info = events.find((e) => e.type === "message.updated")!.message as { cost: number; tokens: { input: number; output: number } }
-    expect(info.cost).toBe(0.003)
-    expect(info.tokens).toMatchObject({ input: 1000, output: 200 })
+    const parts = partsOf(p.applySummary(compaction("摘要")))
+    expect((parts[0] as { auto: boolean }).auto).toBe(true)
+
+    const flipped = partsOf(p.applyCustomEntry(manualCompaction("entry-compaction")))
+    expect(flipped.map((part) => part.id)).toEqual([parts[0]!.id])
+    expect((flipped[0] as { auto: boolean }).auto).toBe(false)
+    expect((p.snapshot().at(-1)!.parts[0] as { auto: boolean }).auto).toBe(false)
+
+    // 指向不认识的 entry、或者别的 customType,都是 no-op。
+    expect(p.applyCustomEntry(manualCompaction("entry-nope"))).toEqual([])
+    expect(p.applyCustomEntry({ ...manualCompaction("entry-compaction"), customType: "别的" })).toEqual([])
   })
 
-  test("display:false 的 custom 消息不渲染", () => {
+  test("分支摘要画的是 branch 分隔线", () => {
     const p = projection()
-    expect(
-      p.applyMessage({
-        role: "custom",
-        customType: "internal",
-        content: "不该出现",
-        display: false,
-        timestamp: T0,
-      } as AgentMessage),
-    ).toEqual([])
+    const parts = partsOf(p.applySummary(branchSummary("那条支线试了 DMA,没成")))
+    expect((parts[0] as { auto: boolean; branch?: boolean }).branch).toBe(true)
+    expect((parts[0] as { auto: boolean }).auto).toBe(false)
+    expect((parts[1] as { text: string }).text).toContain("DMA")
+  })
+
+  test("摘要自带的 usage 记到合成消息的 cost/tokens 上", () => {
+    const p = projection()
+    p.applyMessage(user("你好"))
+    const events = p.applySummary(
+      compaction("摘要", {
+        usage: {
+          input: 1000,
+          output: 200,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 1200,
+          cost: { input: 0.001, output: 0.002, cacheRead: 0, cacheWrite: 0, total: 0.003 },
+        },
+      }),
+    )
+    const info = events.find((e) => e.type === "message.updated")!.message as {
+      cost: number
+      tokens: { input: number; output: number }
+      synthetic?: boolean
+    }
+    expect(info.cost).toBe(0.003)
+    expect(info.tokens).toMatchObject({ input: 1000, output: 200 })
+    expect(info.synthetic).toBe(true)
+  })
+
+  test("摘要 entry 也进 entryId 映射 —— navigate 能落到它身上", () => {
+    const p = projection()
+    const events = p.applySummary(compaction("摘要"))
+    const id = (events[0] as Extract<KernelEvent, { type: "message.updated" }>).message.id
+    expect(p.entryIdOf(id)).toBe("entry-compaction")
+  })
+})
+
+describe("removalEvents", () => {
+  /** 只要 id 与 parts,别的字段 removalEvents 不看。 */
+  function snap(id: string, ...partIDs: string[]) {
+    return {
+      info: { id } as never,
+      parts: partIDs.map((partID) => ({ id: partID }) as never) as Part[],
+    }
+  }
+
+  test("消失的消息报 message.removed,活下来的消息里消失的 part 报 message.part.removed", () => {
+    const before = [snap("msg_a", "prt_a0", "prt_a1"), snap("msg_b", "prt_b0")]
+    const after = [snap("msg_a", "prt_a0")]
+    expect(removalEvents("ses_1", before, after)).toEqual([
+      { type: "message.part.removed", sessionID: "ses_1", messageID: "msg_a", partID: "prt_a1" },
+      { type: "message.removed", sessionID: "ses_1", messageID: "msg_b" },
+    ])
+  })
+
+  test("什么都没变就一条事件都不发", () => {
+    const same = [snap("msg_a", "prt_a0")]
+    expect(removalEvents("ses_1", same, same)).toEqual([])
   })
 })

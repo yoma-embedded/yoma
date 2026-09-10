@@ -47,7 +47,7 @@ jobs:
       # bench 还有 5 个依赖 POSIX shell 的 mailbox 用例(路径断言、autocrlf、5 s 超时),先不加。
       # desktop 的单测(更新器状态机、信箱控制器等)是纯 Node 逻辑,Windows 上照跑。
       - name: 内核单测(agent + kernel + coding-agent + desktop,Windows 岗)
-        run: npx vitest run --project agent --project agent-legacy --project kernel --project coding-agent --project desktop
+        run: npx vitest run --project agent --project kernel --project coding-agent --project desktop
       - name: 下载 Electron 二进制
         shell: pwsh
         run: |

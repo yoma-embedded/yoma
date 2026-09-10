@@ -9,6 +9,11 @@
 
 ## 这个包的性质:**产品,永久 fork**
 
+> 2026-09-10 工具归零:下面提到的 `core/tools/**` 与独立 CLI(`src/cli/`)已整体退役 ——
+> 工具实现搬进 `attic/tools/`(不编译、不跑,重写时按一个目录一个工具读),CLI 删除。
+> 本节对这些文件的上游血缘结论不变,只是路径换了;仍在编译的是 `core/{engines,system-prompt,
+> resources,models,datasheet-server}.ts` 与 `core/{toolchain,examples,la,scope}/`。
+
 - 上游从未有的文件:嵌入式工具组(netlist / datasheet / stm32config / flash / log / gdb / gdb-mi /
   serial / engines / examples / toolchain)、`core/toolchain/`、`core/examples/`。
   (ACP 适配器曾属于这一类,已于 2026-09 删除。)
@@ -20,10 +25,10 @@
   yoma 在 `kernel/src/host/{compaction,retry,session-manager}.ts` 重建了只服务桌面端的最小子集 ——
   要找上游参照(比如溢出压缩策略)去 `D:\toy\pi\packages\coding-agent\src\core\agent-session.ts`,
   不要被"内核只给了机制"这句话误导成上游没有。
-- `src/core/models.ts` **同时是桌面端、bench、CLI 三个消费方的模型目录来源**(经 `@yoma/coding-agent/models`
+- `src/core/models.ts` **同时是桌面端与 bench 两个消费方的模型目录来源**(经 `@yoma/coding-agent/models`
   深引用别名可达)。目录本身来自 pi-ai 的 `builtinProviders()`(2026-08-23 起,从前是两家的手写表);这个文件
   只管凭证(`FileCredentialStore`)、选择(`YOMA_*` / settings.json)和"一个 key 就能用"的过滤
-  (`configurableProviders()`)。动它要验三条路。
+  (`configurableProviders()`)。动它要验两条路。
 
 ## 与上游工具层的关系:不跟 `agent/src/harness/tools/`
 

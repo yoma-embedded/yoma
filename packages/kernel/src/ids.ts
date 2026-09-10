@@ -4,10 +4,8 @@
  * 这是整个迁移里最容易静默出错的地方。前端每一个集合都用 Binary.search 按 id 字符串
  * 比较维护有序数组,所以 id 的字典序 **就是** transcript 的显示顺序。
  *
- * yoma 自己的 entry id 不能用:jsonl-storage.ts 的 generateEntryId() 是
- * `uuidv7().slice(-8)` —— 取的是 uuidv7 的 **随机尾部**(它的注释写着"短 ID 必须取
- * 随机尾部",因为前缀是时间戳、两次调用间几乎不变)。把它透传进前端,消息顺序会
- * 乱,而且不报错。
+ * 内核自己的 entry id(uuidv7)不能直接用:它不是前端那套 26 位格式,字典序也不是
+ * 前端要的那条序。把它透传进去,消息顺序会乱,而且不报错。
  *
  * 所以 host 自己铸 id,格式与 opencode 的 Identifier 逐字节一致(前 12 位十六进制是
  * 时间戳+计数器,后 14 位 base62 随机),这样 packages/app 里现存的 id 处理代码一行
@@ -78,20 +76,6 @@ export const Identifier = {
       return given
     }
     return build(prefix, nextCounted(Date.now()))
-  },
-
-  /**
-   * 铸一个 **严格大于** `after` 的 id。
-   *
-   * 必须有这个:用户消息的 id 由 renderer 乐观铸出,assistant 消息的 id 由 host 铸出,
-   * 两个进程的同毫秒计数器互相看不见。同一毫秒内两边都从 counter=1 起步,时间戳段会
-   * 撞上,顺序就退化成随机后缀决定 —— 那正是"回复排在提问前面"这类幽灵 bug。
-   */
-  ascendingAfter(prefix: IdPrefix, after: string | undefined): string {
-    const now = nextCounted(Date.now())
-    if (!after) return build(prefix, now)
-    const previous = sortKeyOf(after)
-    return build(prefix, now > previous ? now : previous + 1n)
   },
 
   /** 从 id 反解毫秒时间戳。 */

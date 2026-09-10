@@ -8,16 +8,19 @@
 Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
 
 - **内核**(`packages/{agent,coding-agent}` + npm 的 `@earendil-works/pi-ai`)—— agent 循环、
-  会话树、压缩、技能,以及嵌入式工具组(烧录 / 日志 / gdb / 网表 / 数据手册 / STM32 配置 / 逻辑分析仪 / 示波器)。
+  会话树、压缩、技能,以及嵌入式应用层(工具链解析 / 示例语料 / 引擎调用)。
+  嵌入式工具组(烧录 / 日志 / gdb / 网表 / 数据手册 / STM32 配置 / 逻辑分析仪 / 示波器)2026-09-10
+  **归零**:旧实现搬到 `packages/coding-agent/attic/`(不编译、不跑),按新内核的工具接口一个个重写。
 - **桌面端**(`packages/{desktop,app,kernel,ui,session-ui,util,bench}`)——
   Electron 外壳 + SolidJS UI,fork 自 opencode 的前端;`bench` 是无人值守调试台。
 
 **内核与上游 pi 的关系**(2026-08-21 核实;coding-agent 的细节在 `packages/coding-agent/UPSTREAM.md`):
-两包分叉自上游 **2026-07-13 的快照 `f8f75544b`**(不是 `v0.80.6`)。
+`coding-agent` 与当年那份 `agent` 分叉自上游 **2026-07-13 的快照 `f8f75544b`**(不是 `v0.80.6`)。
 `pi-ai` 是 npm 依赖(版本钉在 catalog;从前 vendored 的 `packages/ai` 零自改,已删);`agent`
 建在上游的 v1 `AgentHarness` 上 —— **上游自己的 CLI 从没用过它**(生产路径是 `Agent` +
-coding-agent 的 `AgentSession`),2026-08-04 上游把它掏空成 v2 空壳、8-11 又定了 v3 规格,
-所以 `agent` 是 yoma 自有代码,只定向摘果、不整体 rebase;`coding-agent` 是产品,永久 fork。
+coding-agent 的 `AgentSession`),2026-08-04 上游把它掏空成 v2 空壳、8-11 又定了 v3 规格。
+那份自有分叉(`agent-legacy`)已于 2026-09-10 删除,`agent` 现在是**哈希锁定的上游拷贝**;
+`coding-agent` 是产品,永久 fork。
 
 **2026-08 之前这是两个仓库**(`yoma` 和 `yoma-desktop`,兄弟目录 + alias 接缝)。
 合并的决定性理由是**它们从来不独立发布**:打包时 esbuild 把内核源码整个 inline 进
@@ -36,7 +39,7 @@ coding-agent 的 `AgentSession`),2026-08-04 上游把它掏空成 v2 空壳、8-
 - electron-vite 默认外部化 node_modules 里的东西,而内核必须被 **inline**:
   它只发 raw TypeScript(`exports` 指向 `src/*.ts`,内部大量 `./x.ts` 后缀说明符),
   外部化后 Node 的 strip-only 加载器报 `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`,
-  **无 flag 可关**;还有 TS 参数属性(`gdb.ts`)会直接
+  **无 flag 可关**;还有 TS 参数属性(从前 `core/tools/gdb.ts` 那处)会直接
   `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`。inline 时这两样一起消失。
 - 别名指的是**真实路径**而不是 node_modules 里的软链,这是有意的:走软链时
   TypeScript 会把同一个 `ProviderStreams` 当成两个类型(private 字段让它们名义上
@@ -49,7 +52,7 @@ coding-agent 的 `AgentSession`),2026-08-04 上游把它掏空成 v2 空壳、8-
 | 位置 | 谁用 |
 |---|---|
 | `tsconfig.yoma.json` 的 `paths` | typecheck(tsgo),被 kernel/desktop 继承 —— **位置的真源** |
-| `packages/kernel/tsconfig.json` 里 **内联** 的同一份 | tsx 直跑源码时(coding-agent / bench 的 CLI)按最近的 tsconfig 解析 |
+| `packages/kernel/tsconfig.json` 里 **内联** 的同一份 | tsx 直跑源码时(bench 的 CLI)按最近的 tsconfig 解析 |
 | `packages/bench/tsconfig.json` 里同样的内联副本 | bench 直接跑源码,同理 |
 | `packages/kernel/kernel-alias.ts` 的 `KERNEL_ALIASES` | 打包期(electron-vite / esbuild),根目录从第一份反推 |
 
@@ -59,14 +62,15 @@ coding-agent 的 `AgentSession`),2026-08-04 上游把它掏空成 v2 空壳、8-
 
 ## 仓库结构
 
-npm workspace,`packages/` 下 12 个包 —— 四个 pi 上游包、两个内核包、七个桌面端包。
+npm workspace,`packages/` 下 12 个包 —— 四个 pi 上游包、一个应用层包、七个桌面端包。
 
 pi 上游包(`ai` / `agent` / `chord` / `telemetry`,包名保留 `@earendil-works/*`)由根目录的 `upstream-lock.json` +
 `npm run upstream:check|diff|update` 逐文件哈希锁定,**源码一个字都不改**,见 `UPSTREAM.md`。其中 `agent`
-(`@earendil-works/pi-agent-core`,pi `b2602be77` 的新 AgentHarness)2026-09-09 刚搬进来,kernel 还没切过去。
+(`@earendil-works/pi-agent-core`,pi `b2602be77` 的新 AgentHarness)2026-09-09 搬进来,2026-09-10 起
+kernel 与 coding-agent 都接它 —— 从前那份自有 harness(`agent-legacy` / `@yoma/agent`)同日删除。
 
-内核两包:`agent-legacy`(`@yoma/agent`,2025 年从 pi `f8f75544b` 派生、自行维护的旧 harness,kernel 当前接的就是它,
-切到新 core 后删除)和 `coding-agent`(见上)。
+应用层一个包:`coding-agent`(`@yoma/coding-agent`,见上)—— 工具链解析、示例语料、引擎辅助、
+系统提示词与资源发现;工具实现归零后留在它的 `attic/`。
 
 桌面端这 7 个:
 
@@ -101,10 +105,10 @@ pi 上游包(`ai` / `agent` / `chord` / `telemetry`,包名保留 `@earendil-work
 | `npm run dev:desktop` | 开发模式(renderer 有 HMR;**内核进程没有**) |
 | `npm run build:desktop` | 生产构建 → `packages/desktop/out/` |
 | `npm run package:mac` / `:win` / `:linux` | electron-builder 安装包 |
-| `npm run typecheck` | turbo 跑全部 9 个包 —— **必须常绿 9/9**(2026-08-21 起内核两包也有 `typecheck`:从前只有被 kernel 的 paths 拉到的内核源码受检,test 目录没人查) |
+| `npm run typecheck` | turbo 跑全部 12 个包 —— **必须常绿 12/12**(2026-08-21 起内核两包也有 `typecheck`:从前只有被 kernel 的 paths 拉到的内核源码受检,test 目录没人查) |
 | `npm run lint` | oxlint |
 | `npm test` | 全量单测:`vitest run`,项目清单在根 `vitest.config.ts`(每个包一份 `vitest.config.ts`,app 另有 browser / perf 两份)|
-| `npm run smoke -w packages/desktop` | 内核冒烟:对 **构建产物** 验证 14 个工具(`TOOL_NAMES` 减退役)+ 4 个引擎二进制 |
+| `npm run smoke -w packages/desktop` | 内核冒烟:对 **构建产物** 验证内核装配(2026-09-10 工具归零后不再逐个点名)+ 4 个引擎二进制 |
 | `npm run e2e:ipc -w packages/desktop` | 生产路径:真 utilityProcess + 真 MessagePort + 真协议帧(不开窗口) |
 | `npm run e2e:renderer -w packages/desktop` | 最后一跳:真窗口 + 真 preload + **真 contextBridge**(含 mailbox 桥三条) |
 | `npm run smoke:mailbox -w packages/desktop` | 调试台冒烟:Electron RUN_AS_NODE 对打包产物跑完整**本机演练**(假模型,零 key 零硬件) |

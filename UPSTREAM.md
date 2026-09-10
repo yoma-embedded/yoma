@@ -94,7 +94,7 @@ npm run upstream:update -- --source ../pi --ref <完整SHA> --model-data-reviewe
 - 内部依赖写 `"*"` 走 workspace 链接,外部版本在各包 package.json 里写死字面量,由 package-lock.json 固定。
 - 显式声明 pi-ai 源码直接使用的 `@smithy/types` 并固定为 4.14.2。上游原仓的 hoist 隐式提供它;独立安装需要明确声明。provider 源码未改。
 - 四个上游包用 `tsconfig.node.json`(pi 形状)做类型检查;每包各有 vitest.config.ts,保留选定的上游测试原文。默认测试使用离线模型和临时文件。
-- `packages/agent-legacy` 是 2025 年从 pi `f8f75544b` 派生、自行维护的旧 harness,不受本工具管理;kernel 切到新 core 后删除。
+- `packages/agent-legacy`(2025 年从 pi `f8f75544b` 派生、自行维护的旧 harness)已于 2026-09-10 删除,kernel 与 coding-agent 都接 `packages/agent` 这份上游拷贝。
 
 ## 这次验证
 

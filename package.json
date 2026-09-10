@@ -6,7 +6,6 @@
   "type": "module",
   "packageManager": "npm@11.19.0",
   "scripts": {
-    "cli": "tsx packages/coding-agent/src/cli.ts",
     "dev:desktop": "npm run dev -w packages/desktop",
     "dev:web": "npm run dev -w packages/app",
     "build:desktop": "npm run build -w packages/desktop",
@@ -26,7 +25,6 @@
     "packages/*"
   ],
   "dependencies": {
-    "@yoma/agent": "*",
     "@yoma/coding-agent": "*"
   },
   "devDependencies": {

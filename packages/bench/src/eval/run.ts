@@ -138,8 +138,8 @@ export async function runEval(options: EvalOptions): Promise<EvalOutput> {
 }
 
 /**
- * 事件旁路。逐 token 的 delta 不落(会把文件撑到几百 MB),其余全记 —— tool_execution 的
- * 入参与 isError 是"工具好不好用"的唯一数据来源。
+ * 事件旁路。逐 token 的 delta 不落(会把文件撑到几百 MB),其余全记 —— 工具卡片的
+ * 入参与 error 是"工具好不好用"的唯一数据来源。
  *
  * 写失败不能带垮整轮(磁盘满、路径没权限):transcript 是分析材料,不是判据。
  */
