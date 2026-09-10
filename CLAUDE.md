@@ -594,6 +594,47 @@ dock 面板(没有,也不打算先做)。
   这一层(darwin-arm64 / x86_64 / aarch64 三个都核过);第一版 catalog 按 tar 的惯例给 zip 也写了 root,
   真装就炸。`locateRoot` 因此按 root → 根上直接有 binDir → 唯一顶层目录 四步试,改 catalog 时**以真实
   压缩包为准**。macOS / Linux 的 tar 路径还没在真机上跑过。
+- **bash 也从这里来(2026-09-10 起)**。agent 的命令工具靠 `bash -c`(packages/agent 的 nodejs.ts 只认
+  `Program Files\Git\bin\bash.exe` 与 PATH 上的 bash.exe),干净 Windows 上只有 System32 那个 WSL 垫片,
+  于是编译 / cmake / 烧录命令一条都跑不了 —— 装机版 v0.1.0~v0.1.4 都是这样。**MinGit 自带 bash**:
+  `usr/bin/sh.exe` 就是 GNU bash 5.3(以 sh 名义启动是 POSIX 模式),同目录还有 ls/cp/grep/sed/awk/find
+  这套 coreutils(zip 逐个核过),不需要 330 MB 的 PortableGit。为此 catalog 多了两个声明字段:
+  `extraBinDirs`(binDir 之外也进 PATH、也参与"可执行文件在不在"判定的目录,MinGit 是 `usr/bin`)与
+  `postExtract`(解压后在包内复制,`usr/bin/sh.exe → bash.exe`);标记文件多记 `binDirs`,记账时按工具挑
+  目录(名字就叫这个 id 的可执行文件所在的那个:git → cmd/,bash → usr/bin/)。families 每个平台多一行
+  `bash`(optional,**version 钉 >=4**:WSL 垫片没装发行版时 `--version` 报不出版本,不钉它会被记成 ok);
+  locations 加了 Git for Windows 的 bin\(装完只有 cmd\ 上 PATH,不加这档已装 Git 的机器也显示缺 bash)。
+  kernel 的 `managedShellPath`(session-manager)只在"没有系统 Git Bash、但机器级目录里有 bash.exe"时给
+  harness 传 shellPath,并在 refreshMachineEnv 里 `setShellPath` —— 装完这一会话的下一条命令就能跑;
+  有 Git for Windows 的机器行为一个字节不变。bash 工具撞到 shell_unavailable 时给模型补一句
+  "toolchain install id=bash"。真机验过(隔离 configDir 真装 MinGit 9.8 s):bash 5.3.15、posix off、
+  coreutils 与 git 都解析到,设置页那条 resolve 走 managed 档报 ok。
+
+### STM32 固件运行时下载(`stm32config fetch-fw` / `core/stm32/fw.ts`)
+
+2026-09-10 起。`stm32kernel generate` 要读该族的 HAL + CMSIS device 源码与共享的 CMSIS core,26 族 1.1 GB
+不进安装包(engines/build.ts 文件头的产品决定);从前 README 的答案是仓库脚本 `tools/fetch-fw.ps1`,装机
+用户没有仓库也没有 git,等于"生成驱动不可用"。现在是内核动作:按族从 ST 官方 GitHub 组件仓取钉死 tag
+的 `archive/refs/tags/<tag>.zip`(不需要 git、不吃 API 配额),只留 Inc/ Src/ Include/ Source/Templates 与
+许可证,落到 **`<configDir>/stm32/fw/<族>/{HAL_Driver,CMSIS_Device}` + 共享 `CMSIS_Core/Include`** ——
+与 fetch-fw.ps1 相同、也就是 Rust 侧 `FwPaths::locate` 认的布局;落在 configDir 而不是安装目录,升级不丢。
+
+- **表是数据**(`STM32_FW_CATALOG`):25 族(irpack 里除 MP1 之外的全部)→ hal 仓 + device 仓 + tag,
+  2026-09-10 按各仓最新 tag 抄的(`git ls-remote --tags`;GitHub API 会限流)。仓库名不机械(wb0 / wl3 只有
+  一个 x),逐族写死。**STM32MP1 有意缺席**:ST 从没把它的 HAL 拆成组件仓,只有几 GB 的整包,fetch-fw 对它
+  报 unsupported 并给手动放置的路径。GitHub 的 archive zip 没有厂商 sha256(字节随 git 版本漂),所以钉的是
+  tag;验收看落地的树:`HAL_Driver/Src/*_hal.c` 恰好一个、`CMSIS_Device/Include` 非空、
+  `Source/Templates/gcc/startup_*.s` 在 —— 正是 generate 会读的三样。
+- 纪律抄 toolchain/install.ts(`downloadTo` / `extractZip` / `insideDir` 为此导出):`.work-<pid>` 中转、
+  组装到 `<族>.extracting` 再 rename、任何失败不留半成品;同 tag 已在就复用(标记 `.yoma-fw.json` 记着
+  tag 与 zip 的 sha256),表升了 tag 才重下;core 落过就不碰。`YOMA_TOOLCHAIN_MIRROR` 同一个口子
+  (`<镜像>/<repo>-<tag>.zip`)。
+- **工具接线**(`tools/stm32config.ts`):新命令 `fetch-fw (family)`;`generate` 先读配置文档的
+  `mcu.part`,按装了的 irpack 做最长前缀匹配推族(STM32WL33 → WL3 不是 WL),固件根按顺序挑第一个已落这一族
+  的:`<configDir>/stm32/fw` → 随包 / 源码检出的 `data/stm32/fw`;哪儿都没有就**不起内核**,直接返回
+  "去 fetch-fw"的指引(内核那句 "run tools/fetch-fw.ps1" 是给仓库开发者看的);推不出族时内核自己报的
+  "firmware components for X not found" 也翻成同一句。kernel 的 createEmbeddedTools 把 configDir 传给它。
+  真机验过:STM32F1 三个组件 12.7 s、238 文件 19 MB,gcc 启动文件与 CMSIS_Core 30 个头都在。
 
 ### 数据手册服务器默认地址(`core/datasheet-server.ts`)
 

@@ -50,6 +50,8 @@ Currently only DeepSeek and Kimi are supported.
 
 Under **Toolchain** on the left side of Settings, audit the tools for your chip platform. Tools with an **Install** button (Arm GNU Toolchain, CMake, Ninja, OpenOCD, and Git on Windows) are installed by Yoma itself: it downloads the pinned official release, verifies the sha256, unpacks it into `~/.yoma/toolchains/`, and every later session finds it automatically. The agent also installs them on its own when a command turns out to be missing. Everything else (J-Link, STM32CubeProgrammer, Keil, ESP-IDF and other vendor installers) is installed by hand following the hint; paste the path afterwards.
 
+On Windows the bash the agent runs commands with comes the same way: a clean Windows has no bash, so the first time one is needed Yoma offers to install Git (the portable MinGit, ~39 MB, which ships bash plus ls/grep/sed and friends); the next command in that session already works. Machines with Git for Windows installed simply use its Git Bash.
+
 Those directories are only on PATH inside Yoma sessions, not in your own terminal.
 
 ### 4. Datasheet search
@@ -64,13 +66,15 @@ Set `YOMA_DATASHEET_SERVER=off` to disable manual lookup entirely.
 
 ### 5. Generating an STM32 driver for the first time
 
-Before using this tool, fetch the HAL sources once for the chip family you use:
+Generating a driver project needs the family's HAL and CMSIS sources, which the installer does not ship (1.1 GB across 26 families). The first time you generate for a family, the agent runs `stm32config fetch-fw` itself: it downloads pinned versions of the components from ST's official GitHub repositories (a few MB to a couple dozen MB per family) into `~/.yoma/stm32/fw/<FAMILY>/`, where they survive Yoma upgrades. You can also just tell the agent "fetch the STM32F1 firmware". STM32MP1 is the exception: ST publishes no component repositories for it, so place the sources by hand following the layout of `engines/stm32-config-kernel/tools/fetch-fw.ps1`.
+
+Developers running from source can still land several families at once with the repository script (copied from a local CubeMX installation when present):
 
 ```powershell
 powershell -File engines/stm32-config-kernel/tools/fetch-fw.ps1 -Families STM32F1
 ```
 
-If CubeMX is already installed, the sources are copied from its installation directory; otherwise they are pulled from ST's official GitHub repositories. The output lands in, for example, `engines/data/stm32/fw/STM32F1/` (relative to the repository root).
+That output lands in `engines/data/stm32/fw/STM32F1/` (relative to the repository root); generation prefers `~/.yoma/stm32/fw` and falls back to it.
 
 ## Run from source
 

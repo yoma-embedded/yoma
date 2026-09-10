@@ -50,6 +50,8 @@
 
 设置左侧 **工具链** 按芯片平台逐项核账。带「安装」按钮的工具(Arm GNU Toolchain、CMake、Ninja、OpenOCD、Windows 上的 Git)Yoma 可以直接帮你装:从官方发布页下载钉死版本的压缩包、校验 sha256、解压到 `~/.yoma/toolchains/`,之后所有会话自动认得。会话里 agent 撞到「命令不存在」时也会自己装。其余工具(J-Link、STM32CubeProgrammer、Keil、ESP-IDF 等厂商安装器)按提示手动安装后把路径填进来即可。
 
+Windows 上 agent 跑命令用的 bash 也走这条路:干净的 Windows 没有 bash,Yoma 在第一次需要时提示安装 Git(便携版 MinGit,约 39 MB,自带 bash 与 ls/grep/sed 等常用命令),装完这一会话里的下一条命令就能跑;已经装了 Git for Windows 的机器直接用它的 Git Bash。
+
 Windows 上的 Git Bash 里、macOS/Linux 的终端里,这些目录不会自动进你自己的 PATH —— 它们只对 Yoma 的会话生效。
 
 ### 4. 数据手册检索
@@ -64,13 +66,15 @@ YOMA_DATASHEET_SERVER=http://你的服务器:端口
 
 ### 5. 第一次生成 STM32 驱动
 
-用这个工具前，按所用的芯片类别把拉一次 HAL 源码即可：
+生成驱动工程要用到该芯片族的 HAL 与 CMSIS 源码，安装包里不带（26 族加起来 1.1 GB）。第一次对某个族执行生成时，agent 会自己调用 `stm32config fetch-fw`，从 ST 官方 GitHub 仓库下载钉死版本的组件（每族几 MB 到二十几 MB），落到 `~/.yoma/stm32/fw/<族>/`，之后升级 Yoma 也不用重下。你也可以直接对 agent 说「把 STM32F1 的固件下好」。STM32MP1 例外：ST 没有提供组件仓库，需要按 `engines/stm32-config-kernel/tools/fetch-fw.ps1` 的布局手动放置。
+
+从源码运行的开发者仍可以用仓库脚本一次拉多个族（已装 CubeMX 时从其安装目录拷贝）：
 
 ```powershell
 powershell -File engines/stm32-config-kernel/tools/fetch-fw.ps1 -Families STM32F1
 ```
 
-当已经安装了 CubeMX 时从其安装目录拷贝，否则从 ST 官方 GitHub 仓库拉。产物例如 `engines/data/stm32/fw/STM32F1/`（相对仓库根目录）。
+产物落在 `engines/data/stm32/fw/STM32F1/`（相对仓库根目录），生成时优先使用 `~/.yoma/stm32/fw`，其次才是这里。
 
 ## 从源码运行
 
