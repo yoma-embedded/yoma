@@ -286,6 +286,27 @@ const GIT: ToolchainFamilyTool = {
 	},
 };
 
+// bash 是 agent 命令工具的运行时(harness 用 `bash -c` 跑每一条命令,见 packages/agent 的
+// nodejs.ts):没有它,编译 / cmake / 烧录命令一条都跑不了,而干净 Windows 上只有 System32
+// 那个 WSL 垫片。与 git 同理每个平台都列一条 optional:macOS / Linux 系统自带,PATH 上就能
+// 探到;Windows 上 Git for Windows 的 bin\ 是常见位置(locations.ts),没有的话 catalog 里
+// MinGit 那一个包既给 git 也给 bash(usr/bin 自带 bash 与 coreutils)。
+// version 钉 >=4 不是挑版本:System32\bash.exe 没装 WSL 发行版时 --version 报不出版本号,
+// 不钉的话它会被当成一个能用的 bash 记成 ok(2026-09-10 实机核过)。
+const BASH: ToolchainFamilyTool = {
+	id: "bash",
+	title: "Bash",
+	pathKind: "exe",
+	optional: true,
+	bin: ["bash"],
+	version: ">=4",
+	install: {
+		win32: "让 Yoma 自动安装 Git(便携版 MinGit 自带 bash 与 coreutils),或从 gitforwindows.org 装 Git for Windows",
+		darwin: "系统自带(/bin/bash);brew install bash 可换新版",
+		linux: "apt install bash(Debian/Ubuntu)—— 发行版通常自带",
+	},
+};
+
 // ─── 平台目录 ────────────────────────────────────────────────────────────────
 
 export const TOOLCHAIN_FAMILIES: readonly ToolchainFamily[] = [
@@ -293,12 +314,12 @@ export const TOOLCHAIN_FAMILIES: readonly ToolchainFamily[] = [
 		id: "stm32",
 		name: "STM32",
 		providers: ARM_GNU_PROVIDER,
-		tools: [ARM_GCC, ARM_GDB, CMAKE, NINJA, OPENOCD, STM32CUBEPROG, JLINK, STM32CUBEMX, KEIL, GIT],
+		tools: [ARM_GCC, ARM_GDB, CMAKE, NINJA, OPENOCD, STM32CUBEPROG, JLINK, STM32CUBEMX, KEIL, GIT, BASH],
 	},
 	{
 		id: "esp32",
 		name: "ESP32(ESP-IDF)",
-		tools: [IDF, PYTHON, ESPTOOL, GIT],
+		tools: [IDF, PYTHON, ESPTOOL, GIT, BASH],
 	},
 	{
 		// 全部 optional 是有意的:NCS/Zephyr、裸机 gcc、Keil 是三条并行路线,没有哪个
@@ -306,7 +327,7 @@ export const TOOLCHAIN_FAMILIES: readonly ToolchainFamily[] = [
 		id: "nordic",
 		name: "Nordic(nRF)",
 		providers: ARM_GNU_PROVIDER,
-		tools: [WEST, ZEPHYR_SDK, { ...ARM_GCC, optional: true }, NRFUTIL, JLINK, KEIL, GIT],
+		tools: [WEST, ZEPHYR_SDK, { ...ARM_GCC, optional: true }, NRFUTIL, JLINK, KEIL, GIT, BASH],
 	},
 ];
 

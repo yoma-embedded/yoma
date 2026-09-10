@@ -510,6 +510,42 @@ function seedManagedInstall(opts: {
 	return { dir, binDir: managedBinDir, exe };
 }
 
+describe("managed 档:标记里的 binDirs(一个包两个目录)", () => {
+	it("可执行文件只在第二个目录(usr/bin)时照样命中 —— MinGit 的 bash 就住在那里", async () => {
+		const dir = managedPackageDir("git", "9.9.9", configDir);
+		const usrBin = join(dir, "usr", "bin");
+		mkdirSync(join(dir, "cmd"), { recursive: true });
+		mkdirSync(usrBin, { recursive: true });
+		const exe = writeFakeExe(usrBin, "widget", "5.3.15");
+		writeFileSync(
+			join(dir, MANAGED_MARKER),
+			JSON.stringify({
+				packageId: "git",
+				version: "9.9.9",
+				binDir: "cmd",
+				binDirs: ["cmd", "usr/bin"],
+				provides: ["git", "widget"],
+				archiveSha256: "d".repeat(64),
+				installedAt: Date.now(),
+			}),
+		);
+
+		const result = await resolveToolchain({
+			projectDir,
+			configDir,
+			skipLedger: true,
+			platform: process.platform,
+			env: baseEnv(),
+			manifestText: manifestJson([{ id: "widget", bin: ["widget"] }]),
+		});
+
+		expect(result.tools[0].status).toBe("ok");
+		expect(result.tools[0].source).toBe("managed");
+		expect(result.tools[0].version).toBe("5.3.15");
+		expect(Object.values(result.tools[0].bin).map((p) => p.toLowerCase())).toEqual([exe.toLowerCase()]);
+	});
+});
+
 describe("managed 档", () => {
 	it('skipLedger 的新鲜探测照样找得到 Yoma 装的东西,source 是 "managed"', async () => {
 		const managed = seedManagedInstall({

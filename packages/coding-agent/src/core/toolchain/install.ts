@@ -40,6 +40,7 @@ import { once } from "node:events";
 import {
 	chmodSync,
 	closeSync,
+	copyFileSync,
 	createWriteStream,
 	existsSync,
 	mkdirSync,
@@ -85,6 +86,8 @@ export interface ManagedInstall {
 	dir: string;
 	/** 可执行文件所在目录(绝对路径)。 */
 	binDir: string;
+	/** binDir 加 catalog 的 extraBinDirs(绝对路径,binDir 永远是第一个)。 */
+	binDirs: string[];
 	provides: string[];
 	archiveSha256: string;
 	installedAt: number;
@@ -128,6 +131,8 @@ export interface InstalledToolchain {
 	version: string;
 	dir: string;
 	binDir: string;
+	/** binDir 加 catalog 的 extraBinDirs(绝对路径)。 */
+	binDirs: string[];
 	/** 已经装好且 sha 相同,跳过了下载与解压,只重新记账。 */
 	reused: boolean;
 	recorded: Array<{ id: string; binPath: string; version?: string }>;
@@ -200,12 +205,21 @@ function readMarker(dir: string): ManagedInstall | undefined {
 	const provides = Array.isArray(parsed.provides) ? parsed.provides.filter((p): p is string => typeof p === "string") : [];
 	const binDirRel = typeof parsed.binDir === "string" ? parsed.binDir : "bin";
 	// 标记里记的是相对 binDir(包目录可能被整体搬过);绝对路径从当前位置重算。
-	const binDir = path.isAbsolute(binDirRel) ? binDirRel : path.join(dir, binDirRel);
+	const absolute = (rel: string) => (path.isAbsolute(rel) ? rel : path.join(dir, rel));
+	const binDir = absolute(binDirRel);
+	// binDirs = binDir + catalog 的 extraBinDirs;老标记没有这一项,就只有 binDir。
+	const extraRel = Array.isArray(parsed.binDirs) ? parsed.binDirs.filter((p): p is string => typeof p === "string") : [];
+	const binDirs = [binDir];
+	for (const rel of extraRel) {
+		const abs = absolute(rel);
+		if (!binDirs.includes(abs)) binDirs.push(abs);
+	}
 	return {
 		packageId: parsed.packageId,
 		version: parsed.version,
 		dir,
 		binDir,
+		binDirs,
 		provides,
 		archiveSha256: parsed.archiveSha256,
 		installedAt: typeof parsed.installedAt === "number" ? parsed.installedAt : 0,
@@ -278,7 +292,10 @@ export function machinePathDirs(opts: { configDir?: string; ledger?: Ledger }): 
 		seen.add(dir);
 		dirs.push(dir);
 	};
-	for (const install of listManagedInstalls(opts.configDir)) push(install.binDir);
+	for (const install of listManagedInstalls(opts.configDir)) {
+		// 第二个目录(MinGit 的 usr/bin)可能被杀毒软件掏空,不在的不前置。
+		for (const dir of install.binDirs) if (existsSync(dir)) push(dir);
+	}
 	for (const entry of Object.values(opts.ledger?.entries ?? {})) {
 		if (entry.by !== "user") continue;
 		for (const binPath of Object.values(entry.bin)) {
@@ -331,9 +348,9 @@ export function canInstall(toolId: string, host: HostKey | undefined, catalog: r
  * 注入的 env 常常只有 `PATH: ""`(测试隔离),Windows 上没有 PATHEXT 就找不到 `.exe/.bat` ——
  * 后缀表从真实进程环境兜底,这不是"读开发机的 PATH",只是 Windows 的可执行后缀约定。
  */
-function anyBinResolves(dir: string, names: string[], env: NodeJS.ProcessEnv): boolean {
+function anyBinResolves(dirs: string | string[], names: string[], env: NodeJS.ProcessEnv): boolean {
 	if (names.length === 0) return false;
-	const synthetic = withPath(env, [dir]);
+	const synthetic = withPath(env, Array.isArray(dirs) ? dirs : [dirs]);
 	if (process.platform === "win32" && findEnvKey(synthetic, "PATHEXT") === undefined) {
 		synthetic.PATHEXT = process.env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM";
 	}
@@ -459,7 +476,7 @@ interface DownloadResult {
 }
 
 /** 流式写 `.part`、边写边算 sha256;任何失败都删掉 `.part` 再抛。 */
-async function downloadTo(
+export async function downloadTo(
 	url: string,
 	dest: string,
 	fetchImpl: typeof fetch,
@@ -511,7 +528,7 @@ async function downloadTo(
 // ─── 解压 ────────────────────────────────────────────────────────────────────
 
 /** 目标必须落在 root 里面(zip-slip / tar 里的 `..`)。 */
-function insideDir(root: string, target: string): boolean {
+export function insideDir(root: string, target: string): boolean {
 	const rel = path.relative(root, target);
 	return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 }
@@ -519,7 +536,7 @@ function insideDir(root: string, target: string): boolean {
 const S_IFMT = 0o170000;
 const S_IFLNK = 0o120000;
 
-async function extractZip(archive: string, dest: string, signal: AbortSignal | undefined): Promise<void> {
+export async function extractZip(archive: string, dest: string, signal: AbortSignal | undefined): Promise<void> {
 	const zip = await import("@zip.js/zip.js");
 	zip.configure({ useWebWorkers: false });
 
@@ -762,6 +779,10 @@ export async function installToolchain(opts: InstallToolchainOptions): Promise<I
 	const pkgDir = managedPackageDir(pkg.id, pkg.version, opts.configDir);
 	const binDirRel = artifact.binDir ?? "bin";
 	const binDir = binDirRel === "" ? pkgDir : path.join(pkgDir, binDirRel);
+	// binDir 之外的目录(catalog 的 extraBinDirs):进 PATH、参与"可执行文件在不在"的判定、
+	// 记账时按工具挑目录。相对路径记进标记,绝对路径从包目录现算。
+	const extraBinDirsRel = artifact.extraBinDirs ?? [];
+	const binDirs = [binDir, ...extraBinDirsRel.map((rel) => path.join(pkgDir, rel))];
 	const extracting = `${pkgDir}.extracting`;
 	const archiveName = artifactBasename(artifact);
 	const archiveFile = path.join(managedRoot(opts.configDir), "downloads", archiveName);
@@ -786,7 +807,7 @@ export async function installToolchain(opts: InstallToolchainOptions): Promise<I
 		// ── reuse ──
 		const existing = readMarker(pkgDir);
 		let reused = false;
-		if (existing && existing.archiveSha256 === artifact.sha256 && anyBinResolves(binDir, expectedBins, env)) {
+		if (existing && existing.archiveSha256 === artifact.sha256 && anyBinResolves(binDirs, expectedBins, env)) {
 			reused = true;
 		} else {
 			// ── download ──
@@ -848,10 +869,27 @@ export async function installToolchain(opts: InstallToolchainOptions): Promise<I
 				if (!existsSync(stagedBin)) {
 					throw new Error(`expected "${binDirRel || "."}" inside the extracted ${pkg.title} archive, found none`);
 				}
-				markExecutables(stagedBin);
-				if (!anyBinResolves(stagedBin, expectedBins, env)) {
+				// postExtract 复制(MinGit:usr/bin/sh.exe → bash.exe)。源不在 = 目录写错了,不装一个缺文件的包。
+				for (const step of artifact.postExtract ?? []) {
+					const from = path.join(rootDir, step.copy);
+					const to = path.join(rootDir, step.to);
+					if (!insideDir(rootDir, from) || !insideDir(rootDir, to)) {
+						throw new Error(`postExtract step escapes the package directory: ${step.copy} → ${step.to}`);
+					}
+					if (!existsSync(from)) {
+						throw new Error(
+							`postExtract source "${step.copy}" is not in the extracted ${pkg.title} archive — the catalog's layout for this package is wrong`,
+						);
+					}
+					ensureDir(path.dirname(to));
+					copyFileSync(from, to);
+				}
+				const stagedBins = [stagedBin, ...extraBinDirsRel.map((rel) => path.join(rootDir, rel))];
+				for (const dir of stagedBins) markExecutables(dir);
+				if (!anyBinResolves(stagedBins, expectedBins, env)) {
+					const where = [binDirRel || ".", ...extraBinDirsRel].map((d) => `"${d}"`).join(" / ");
 					throw new Error(
-						`none of the expected executables (${expectedBins.join(", ")}) are in "${binDirRel || "."}" of the extracted ${pkg.title} archive — the catalog's layout for this package is wrong`,
+						`none of the expected executables (${expectedBins.join(", ")}) are in ${where} of the extracted ${pkg.title} archive — the catalog's layout for this package is wrong`,
 					);
 				}
 				if (rootDir === extracting) {
@@ -873,6 +911,7 @@ export async function installToolchain(opts: InstallToolchainOptions): Promise<I
 				version: pkg.version,
 				provides: pkg.provides,
 				binDir: binDirRel,
+				binDirs: [binDirRel, ...extraBinDirsRel],
 				archiveSha256: artifact.sha256,
 				installedAt: Date.now(),
 			};
@@ -888,11 +927,19 @@ export async function installToolchain(opts: InstallToolchainOptions): Promise<I
 			const bins = declaredBins(pkg, id);
 			// 机器装出来的包,声明的可执行名一个都解析不到就是包坏了 —— 不能像用户手填那样
 			// "原样记录目录":记进去的目录会让核账永远报 ok(见文件头)。
-			if (!anyBinResolves(binDir, bins, env)) {
-				throw fail("record", `installed ${pkg.title} but none of ${bins.join(", ")} can be found in ${binDir} — the install is broken; delete ${pkgDir} and try again`);
+			// 多个目录时按工具挑:先找"名字就叫这个 id"的可执行文件所在目录(git → cmd/,
+			// bash → usr/bin/),再退到任一声明名解析得到的目录。
+			const recordDir =
+				(bins.includes(id) ? binDirs.find((dir) => anyBinResolves(dir, [id], env)) : undefined) ??
+				binDirs.find((dir) => anyBinResolves(dir, bins, env));
+			if (!recordDir) {
+				throw fail(
+					"record",
+					`installed ${pkg.title} but none of ${bins.join(", ")} can be found in ${binDirs.join(", ")} — the install is broken; delete ${pkgDir} and try again`,
+				);
 			}
 			try {
-				const entry = await recordToolchainPath({ id, path: binDir, configDir: opts.configDir, bins, probe: "version" });
+				const entry = await recordToolchainPath({ id, path: recordDir, configDir: opts.configDir, bins, probe: "version" });
 				recorded.push({ id: entry.id, binPath: entry.binPath, version: entry.version });
 			} catch (error) {
 				throw fail("record", `installed ${pkg.title} but could not record ${id}: ${(error as Error)?.message ?? String(error)}`, error);
@@ -900,7 +947,7 @@ export async function installToolchain(opts: InstallToolchainOptions): Promise<I
 		}
 
 		report("done");
-		return { packageId: pkg.id, version: pkg.version, dir: pkgDir, binDir, reused, recorded };
+		return { packageId: pkg.id, version: pkg.version, dir: pkgDir, binDir, binDirs, reused, recorded };
 	} catch (error) {
 		if (error instanceof ToolchainInstallError) {
 			report(error.phase === "cancelled" ? "cancelled" : "error", { message: error.message });

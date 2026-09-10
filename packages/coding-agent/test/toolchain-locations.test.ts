@@ -208,6 +208,9 @@ const REQUIRED_TOOL_IDS = [
 	"stm32cubeprog",
 	"idf",
 	"zephyr-sdk",
+	// bash:Git for Windows 装完只把 cmd\ 放上 PATH,bash 藏在 bin\ —— 没有这一档,装了 Git 的
+	// 机器在设置页也会显示"缺 bash"。
+	"bash",
 ];
 const PLATFORMS: PlatformKey[] = ["win32", "darwin", "linux"];
 

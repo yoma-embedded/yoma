@@ -246,6 +246,29 @@ describe("git", () => {
 	});
 });
 
+// bash 是 agent 命令工具的运行时(harness 用 bash -c 跑每条命令),理由同 git:内核硬依赖、
+// Windows 工位机常常没有、账本全机共享。version 钉 >=4 挡的是 System32 那个 WSL 垫片
+// (没装发行版时报不出版本号,不钉版本它会被记成一个能用的 bash)。
+describe("bash", () => {
+	it("每个平台都列了 bash,且都是同一条定义(optional / pathKind exe / bin ['bash'] / version >=4)", () => {
+		for (const family of TOOLCHAIN_FAMILIES) {
+			const bash = family.tools.find((tool) => tool.id === "bash");
+			expect({ family: family.id, hasBash: bash !== undefined }).toEqual({ family: family.id, hasBash: true });
+			expect({ family: family.id, optional: bash?.optional }).toEqual({ family: family.id, optional: true });
+			expect({ family: family.id, pathKind: bash?.pathKind }).toEqual({ family: family.id, pathKind: "exe" });
+			expect({ family: family.id, bin: bash?.bin }).toEqual({ family: family.id, bin: ["bash"] });
+			expect({ family: family.id, version: bash?.version }).toEqual({ family: family.id, version: ">=4" });
+		}
+	});
+
+	it("三个平台都有安装指引;Windows 那条要说明随 Git 一起自动装", () => {
+		const bash = findFamilyTool("bash");
+		expect(bash?.install?.win32).toContain("Git");
+		expect(bash?.install?.darwin).toBeDefined();
+		expect(bash?.install?.linux).toBeDefined();
+	});
+});
+
 describe("findFamilyTool", () => {
 	it("按 id 命中(任一平台里的第一条),未知 id 返回 undefined", () => {
 		const git = findFamilyTool("git");

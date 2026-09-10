@@ -315,6 +315,19 @@ export const WELL_KNOWN_LOCATIONS: LocationTable = {
 		darwin: [`${HOME}/zephyr-sdk-*/arm-zephyr-eabi/bin`, "/opt/zephyr-sdk-*/arm-zephyr-eabi/bin"],
 		linux: [`${HOME}/zephyr-sdk-*/arm-zephyr-eabi/bin`, "/opt/zephyr-sdk-*/arm-zephyr-eabi/bin"],
 	},
+	// bash:Git for Windows 装完只把 cmd\ 放上 PATH,bash 住在 bin\(带 PATH 设置的包装器,
+	// harness 认的就是它)与 usr\bin\(真身),PATH 档探不到,按默认安装位置找;"仅为我安装"
+	// 落在用户目录下的 Programs\Git。macOS / Linux 系统自带,PATH 档已经命中,这里只是兜底。
+	bash: {
+		win32: [
+			...winDriveVariants("Program Files\\Git\\bin"),
+			...winDriveVariants("Program Files\\Git\\usr\\bin"),
+			...winDriveVariants("Program Files (x86)\\Git\\bin"),
+			`${HOME}\\AppData\\Local\\Programs\\Git\\bin`,
+		],
+		darwin: ["/bin", "/usr/bin", "/opt/homebrew/bin", "/usr/local/bin"],
+		linux: ["/bin", "/usr/bin"],
+	},
 	// Keil 只有 Windows;探测的是编译器(armclang/armcc)而不是 UV4 —— 见 families.ts
 	// KEIL 条目的注释(对 GUI spawn --version 会真的弹起 IDE)。装盘符可选,同 jlink;
 	// AC6(armclang)在 ARM\ARMCLANG\bin,AC5(armcc)在 ARM\BIN(实机核对过,不是

@@ -915,3 +915,92 @@ describe("withMachineOnPath", () => {
 		expect(env.PATH).toBe("/usr/bin");
 	});
 });
+
+// ─── extraBinDirs + postExtract:一个包、两个目录、解压后复制 ─────────────────────
+//
+// 真实形状是 MinGit:git 在 cmd/,bash 与 coreutils 在 usr/bin/,而 bash 在包里叫 sh.exe
+// (以 sh 名义启动是 POSIX 模式),要复制一份叫 bash.exe。这里用 widget(cmd/)+ gizmo
+// (usr/bin/,由 sh 复制而来)复刻同一形状:记账要按工具挑对目录(不是"都记进第一个
+// 目录"),标记要把两个目录都记下,PATH 注入与 managed 档解析都要看得见第二个目录。
+
+describe("installToolchain extraBinDirs + postExtract", () => {
+	const SH_NAME = process.platform === "win32" ? "sh.bat" : "sh";
+	const GIZMO_NAME = process.platform === "win32" ? "gizmo.bat" : "gizmo";
+	const SH_BODY = process.platform === "win32" ? "@echo off\r\necho 9.9.9\r\n" : '#!/bin/sh\necho "9.9.9"\n';
+
+	function twoDirCatalog(zip: Buffer, postExtract: CatalogArtifact["postExtract"]): CatalogPackage[] {
+		const artifacts: CatalogPackage["artifacts"] = {};
+		artifacts[HOST] = {
+			url: `${baseUrl}/two-dir.zip`,
+			sha256: sha256(zip),
+			bytes: zip.byteLength,
+			archive: "zip",
+			root: ROOT,
+			binDir: "cmd",
+			extraBinDirs: ["usr/bin"],
+			postExtract,
+		};
+		return [
+			{
+				id: PKG_ID,
+				title: "Widget Tools",
+				version: PKG_VERSION,
+				provides: ["widget", "gizmo"],
+				bins: ["widget", "gizmo"],
+				artifacts,
+			},
+		];
+	}
+
+	function twoDirZip(): Promise<Buffer> {
+		return makeZip([
+			{ name: `${ROOT}/cmd/${EXE_NAME}`, body: EXE_BODY, mode: 0o755 },
+			{ name: `${ROOT}/usr/bin/${SH_NAME}`, body: SH_BODY, mode: 0o755 },
+		]);
+	}
+
+	it("复制出来的可执行文件记账到第二个目录,标记与 PATH 注入都带两个目录,第二次安装直接复用", async () => {
+		const zip = await twoDirZip();
+		bucket.set("/two-dir.zip", zip);
+		const catalog = twoDirCatalog(zip, [{ copy: `usr/bin/${SH_NAME}`, to: `usr/bin/${GIZMO_NAME}` }]);
+
+		const installed = await installToolchain({ toolId: "gizmo", configDir, host: HOST, catalog, env: { PATH: "" } });
+		const dir = managedPackageDir(PKG_ID, PKG_VERSION, configDir);
+		const cmdDir = join(dir, "cmd");
+		const usrBin = join(dir, "usr", "bin");
+		expect(installed.binDir).toBe(cmdDir);
+		expect(installed.binDirs).toEqual([cmdDir, usrBin]);
+		expect(existsSync(join(usrBin, GIZMO_NAME))).toBe(true);
+		expect(existsSync(join(usrBin, SH_NAME))).toBe(true);
+
+		// 记账:widget 落在 cmd/,gizmo 落在 usr/bin/。
+		const ledger = await readLedger(configDir);
+		expect(Object.values(ledger.entries.widget?.bin ?? {}).map((p) => p.toLowerCase())).toEqual([
+			join(cmdDir, EXE_NAME).toLowerCase(),
+		]);
+		expect(Object.values(ledger.entries.gizmo?.bin ?? {}).map((p) => p.toLowerCase())).toEqual([
+			join(usrBin, GIZMO_NAME).toLowerCase(),
+		]);
+		expect(ledger.entries.gizmo?.version).toBe("9.9.9");
+
+		expect((readMarkerJson(installed.dir) as { binDirs?: unknown }).binDirs).toEqual(["cmd", "usr/bin"]);
+		expect(listManagedInstalls(configDir)[0]?.binDirs).toEqual([cmdDir, usrBin]);
+		expect(machinePathDirs({ configDir })).toEqual([cmdDir, usrBin]);
+
+		const again = await installToolchain({ toolId: "gizmo", configDir, host: HOST, catalog, env: { PATH: "" } });
+		expect(again.reused).toBe(true);
+		expect(again.binDirs).toEqual([cmdDir, usrBin]);
+	});
+
+	it("postExtract 的源文件不在压缩包里:extract 阶段响亮失败,包目录不留半成品", async () => {
+		const zip = await twoDirZip();
+		bucket.set("/two-dir.zip", zip);
+		const catalog = twoDirCatalog(zip, [{ copy: "usr/bin/nope", to: `usr/bin/${GIZMO_NAME}` }]);
+
+		const error = await failure(installToolchain({ toolId: "gizmo", configDir, host: HOST, catalog, env: { PATH: "" } }));
+		expect(error.phase).toBe("extract");
+		expect(error.message).toContain("usr/bin/nope");
+		expect(existsSync(managedPackageDir(PKG_ID, PKG_VERSION, configDir))).toBe(false);
+		expect(existsSync(`${managedPackageDir(PKG_ID, PKG_VERSION, configDir)}.extracting`)).toBe(false);
+	});
+});

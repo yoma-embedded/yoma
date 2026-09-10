@@ -24,7 +24,7 @@ import { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCal
 
 import type { KernelEvent } from "../protocol.ts"
 import type { ToolPart } from "../types.ts"
-import { applyMachinePathToProcess, SessionManager } from "./session-manager.ts"
+import { applyMachinePathToProcess, managedShellPath, SessionManager } from "./session-manager.ts"
 
 const roots: string[] = []
 afterEach(() => {
@@ -378,5 +378,34 @@ describe("applyMachinePathToProcess", () => {
     applyMachinePathToProcess(["C:\\yoma\\bin"], env)
     expect(Object.keys(env)).toEqual(["Path"])
     expect(env.Path).toBe(["C:\\yoma\\bin", "C:\\Windows\\System32"].join(path.delimiter))
+  })
+})
+
+describe("managedShellPath", () => {
+  // Windows 上 harness 只认 Program Files\Git\bin\bash.exe 与 PATH 上的 bash.exe(干净机器上
+  // 撞到的是 System32 的 WSL 垫片);Yoma 装的 MinGit 把 bash 放在包的 usr/bin,要显式交给
+  // harness。平台与 env 都注入,三个平台上都能跑到 win32 分支。
+  test("非 Windows 永远不传", () => {
+    const dir = tempDir("yoma-shell-")
+    writeFileSync(path.join(dir, "bash.exe"), "")
+    expect(managedShellPath([dir], "linux", {})).toBeUndefined()
+    expect(managedShellPath([dir], "darwin", {})).toBeUndefined()
+  })
+
+  test("系统装了 Git for Windows 时不传,harness 走它自己那条路(行为一个字节不变)", () => {
+    const programFiles = tempDir("yoma-pf-")
+    mkdirSync(path.join(programFiles, "Git", "bin"), { recursive: true })
+    writeFileSync(path.join(programFiles, "Git", "bin", "bash.exe"), "")
+    const managed = tempDir("yoma-managed-")
+    writeFileSync(path.join(managed, "bash.exe"), "")
+    expect(managedShellPath([managed], "win32", { ProgramFiles: programFiles })).toBeUndefined()
+  })
+
+  test("没有系统 Git 时挑机器级目录里的 bash.exe;一个都没有就不传(harness 自己报 shell_unavailable)", () => {
+    const cmd = tempDir("yoma-cmd-")
+    const usrBin = tempDir("yoma-usrbin-")
+    writeFileSync(path.join(usrBin, "bash.exe"), "")
+    expect(managedShellPath([cmd, usrBin], "win32", {})).toBe(path.join(usrBin, "bash.exe"))
+    expect(managedShellPath([cmd], "win32", {})).toBeUndefined()
   })
 })

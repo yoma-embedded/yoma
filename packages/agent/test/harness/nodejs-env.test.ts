@@ -191,6 +191,18 @@ describe("NodeExecutionEnv exec", () => {
 		if (!spawnError.ok) expect(spawnError.error).toMatchObject({ code: "spawn_error" });
 	});
 
+	it("setShellPath swaps the shell for later exec calls (undefined returns to auto-detection)", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root, shellPath: join(root, "missing-shell") });
+		const before = await env.exec("printf ok");
+		expect(before.ok).toBe(false);
+		if (!before.ok) expect(before.error).toMatchObject({ code: "shell_unavailable" });
+
+		env.setShellPath(undefined);
+		const after = getOrThrow(await env.exec("printf ok"));
+		expect(after.stdout).toBe("ok");
+	});
+
 	it("returns an aborted result for aborted commands", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });

@@ -137,6 +137,28 @@ export function applyMachinePathToProcess(dirs: string[], env: NodeJS.ProcessEnv
   env[pathKey] = next[pathKey]
 }
 
+/**
+ * Windows 上会话 bash 的显式路径。harness 自己只认 `Program Files\Git\bin\bash.exe` 与 PATH 上的
+ * bash.exe —— 后者在干净 Windows 上撞到的是 System32 的 WSL 垫片。Yoma 自动装的 Git(MinGit)
+ * 把 bash 放在包的 usr/bin(catalog 的 extraBinDirs,已在机器级目录里),这里把它挑出来交给
+ * harness。系统装了 Git for Windows 时不传,harness 原有行为一个字节不变;其它平台永远不传。
+ */
+export function managedShellPath(
+  machineDirs: string[],
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  if (platform !== "win32") return undefined
+  for (const root of [env.ProgramFiles, env["ProgramFiles(x86)"]]) {
+    if (root && existsSync(path.join(root, "Git", "bin", "bash.exe"))) return undefined
+  }
+  for (const dir of machineDirs) {
+    const bash = path.join(dir, "bash.exe")
+    if (existsSync(bash)) return bash
+  }
+  return undefined
+}
+
 interface Entry {
   id: string
   cwd: string
@@ -518,7 +540,13 @@ export class SessionManager {
     // 它,Windows 没有内置 grep)。放 shellEnvFor 之后、env 构造之前,和工具链目录
     // 同一条规则(前置不替换,去重,写回原键)。机器级目录(Yoma 装的 + 用户手指的)
     // 夹在中间:项目清单解析到的赢过它们,它们赢过 process.env 里原有的。
-    const env = new NodeExecutionEnv({ cwd: entry.cwd, shellEnv: await this.sessionShellEnv(toolchain) })
+    // shellPath 只在"没有系统 Git Bash、但 Yoma 装过 MinGit"时有值(managedShellPath)。
+    const machine = await this.machineDirs()
+    const env = new NodeExecutionEnv({
+      cwd: entry.cwd,
+      shellEnv: await this.sessionShellEnv(toolchain, machine),
+      shellPath: managedShellPath(machine),
+    })
     entry.env = env
     entry.toolchain = toolchain
 
@@ -651,11 +679,15 @@ export class SessionManager {
    */
   async refreshMachineEnv(): Promise<void> {
     const dirs = await this.machineDirs()
+    const shellPath = managedShellPath(dirs)
     for (const entry of this.entries.values()) {
       if (!entry.env || !entry.harness) continue
       const toolchain = await this.resolveToolchainSafe(entry)
       entry.toolchain = toolchain
       entry.env.setShellEnv(await this.sessionShellEnv(toolchain, dirs))
+      // 刚装的可能正是 bash 本身(Windows 上随 Git 一起来)—— 不换 shell 的话这一会话里
+      // 装完了下一条命令照样 shell_unavailable。
+      entry.env.setShellPath(shellPath)
     }
     // 内核进程自己的 PATH 无条件刷一次(幂等):没有开着的会话时上面的循环不会碰它,
     // 而 gdb / flash 起子进程用的正是 process.env。

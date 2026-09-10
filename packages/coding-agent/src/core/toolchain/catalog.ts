@@ -42,6 +42,17 @@ export interface CatalogArtifact {
 	root?: string;
 	/** 可执行文件所在的子目录(相对包目录);空串 = 包目录本身;缺省 "bin"。 */
 	binDir?: string;
+	/**
+	 * binDir 之外还要进 PATH、也参与"声明的可执行文件在不在"判定的目录(相对包目录)。
+	 * 一个包给两种工具、住在两个目录时用:MinGit 的 git 在 cmd/,bash 与 coreutils 在 usr/bin/。
+	 */
+	extraBinDirs?: string[];
+	/**
+	 * 解压后在包目录里做的文件复制(两边都相对包目录;源不存在 = 目录写错了,响亮失败)。
+	 * MinGit 只带 usr/bin/sh.exe —— 它就是 GNU bash(实测 5.3.15),但以 sh 名义启动会进 POSIX
+	 * 模式;复制一份叫 bash.exe,行为才与 Git Bash 一致,harness 也才按名字找得到它。
+	 */
+	postExtract?: Array<{ copy: string; to: string }>;
 }
 
 export interface CatalogPackage {
@@ -278,11 +289,14 @@ export const TOOLCHAIN_CATALOG: readonly CatalogPackage[] = [
 	},
 	{
 		// MinGit:便携版 git,只给 Windows —— macOS 的 git 随 Xcode 命令行工具、Linux 走包管理器。
+		// 同一个包也是 Windows 上 bash 的来源:agent 的命令工具靠 bash 跑,干净 Windows 只有
+		// System32 那个 WSL 垫片。MinGit 的 usr/bin 里躺着 GNU bash(叫 sh.exe)和 ls/cp/grep/sed/
+		// awk/find 这套 coreutils(zip 里逐个核过),不需要 330 MB 的 PortableGit。
 		id: "git",
 		title: "Git (MinGit)",
 		version: MINGIT_VERSION,
-		provides: ["git"],
-		bins: ["git"],
+		provides: ["git", "bash"],
+		bins: ["git", "bash"],
 		homepage: "https://gitforwindows.org/",
 		license: "GPL-2.0",
 		artifacts: {
@@ -293,6 +307,8 @@ export const TOOLCHAIN_CATALOG: readonly CatalogPackage[] = [
 				archive: "zip",
 				root: "",
 				binDir: "cmd",
+				extraBinDirs: ["usr/bin"],
+				postExtract: [{ copy: "usr/bin/sh.exe", to: "usr/bin/bash.exe" }],
 			},
 		},
 	},

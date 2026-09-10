@@ -178,6 +178,16 @@ export function createBashToolDefinition(
 						const timeoutSecs = result.executionError.message.split(":")[1] ?? String(timeout);
 						throw new Error(appendStatus(text, `Command timed out after ${timeoutSecs} seconds`));
 					}
+					if (result.executionError.code === "shell_unavailable" && process.platform === "win32") {
+						// harness 的那段话只会让模型去劝用户装 Git for Windows;Yoma 自己就能装
+						// (catalog 的 MinGit 同一个包带 bash 与 coreutils),让模型直接走那条路。
+						throw new Error(
+							appendStatus(
+								text,
+								`${result.executionError.message}\n\nYoma can install bash itself: call the toolchain tool with action "install" and id "bash" (downloads the portable Git for Windows, ~39 MB, which ships bash and coreutils), then retry this command.`,
+							),
+						);
+					}
 					throw new Error(appendStatus(text, result.executionError.message));
 				}
 

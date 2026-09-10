@@ -389,6 +389,14 @@ export class NodeExecutionEnv implements ExecutionEnv {
 		return this.shellEnv;
 	}
 
+	/**
+	 * 换掉之后所有 exec 用的 shell(undefined = 回到按平台自动查找)。与 setShellEnv 同一个理由:
+	 * 宿主在会话中途把 bash 装好了(Windows 上随 Git 便携版一起装),下一条命令就该能跑。
+	 */
+	setShellPath(shellPath: string | undefined): void {
+		this.shellPath = shellPath;
+	}
+
 	async absolutePath(path: string): Promise<Result<string, FileError>> {
 		return ok(resolvePath(this.cwd, path));
 	}

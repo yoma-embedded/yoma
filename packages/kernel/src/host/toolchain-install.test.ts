@@ -66,6 +66,7 @@ function fakeInstalled(over: Partial<InstalledToolchain> = {}): InstalledToolcha
     version: "15.2.rel1",
     dir,
     binDir: path.join(dir, "bin"),
+    binDirs: [path.join(dir, "bin")],
     reused: false,
     recorded: [],
     ...over,

@@ -226,7 +226,8 @@ function managedHits(tool: ToolSpec, configDir: string | undefined, env: NodeJS.
 	const hits: Hit[] = [];
 	for (const install of listManagedInstalls(configDir)) {
 		if (!install.provides.includes(tool.id)) continue;
-		const bin = resolveNamesInDirs(names, [install.binDir], env);
+		// binDirs = binDir + catalog 的 extraBinDirs(MinGit:git 在 cmd/,bash 在 usr/bin/)。
+		const bin = resolveNamesInDirs(names, install.binDirs, env);
 		if (bin) hits.push(bin);
 	}
 	return hits;
