@@ -18,8 +18,8 @@ import { NormalizedProviderListResponse } from "@yoma-desktop/session-ui/context
 
 import { showToast } from "@/utils/toast"
 import { formatServerError } from "@/utils/server-errors"
-import type { Sdk } from "@/utils/server"
-import { ScopedKey, type ServerScope } from "@/utils/server-scope"
+import type { Sdk } from "@/utils/kernel"
+import { LOCAL_SCOPE, ScopedKey } from "@/utils/scoped-key"
 import type { Config, Path, State, VcsCache } from "./types"
 import type { ServerSession } from "../server-session"
 import { cmp, normalizeProviderList } from "./utils"
@@ -65,17 +65,18 @@ function errors(list: PromiseSettledResult<unknown>[]) {
 
 const providerRev = new Map<string, number>()
 
-export function clearProviderRev(scope: ServerScope, directory: string) {
-  providerRev.delete(ScopedKey.from(scope, directory))
+export function clearProviderRev(directory: string) {
+  providerRev.delete(ScopedKey.from(directory))
 }
 
 function runAll(list: Array<() => Promise<unknown>>) {
   return Promise.allSettled(list.map((item) => item()))
 }
 
-export const loadProjectsQuery = (scope: ServerScope, sdk: Sdk) =>
+// query key 的第一段保留 "local":多服务器时代它是 scope,现在恒为这个常量。
+export const loadProjectsQuery = (sdk: Sdk) =>
   queryOptions({
-    queryKey: [scope, "project"],
+    queryKey: [LOCAL_SCOPE, "project"],
     queryFn: () =>
       retry(() =>
         sdk.project.list().then((list) =>
@@ -90,15 +91,14 @@ export const loadProjectsQuery = (scope: ServerScope, sdk: Sdk) =>
       ),
   })
 
-export const loadProvidersQuery = (scope: ServerScope, directory: string | null, sdk: Sdk) =>
+export const loadProvidersQuery = (directory: string | null, sdk: Sdk) =>
   queryOptions({
-    queryKey: [scope, directory, "providers"],
+    queryKey: [LOCAL_SCOPE, directory, "providers"],
     queryFn: () => retry(() => sdk.model.list().then((list) => normalizeProviderList(list))),
   })
 
 export async function bootstrapGlobal(input: {
   serverSDK: Sdk
-  scope: ServerScope
   requestFailedTitle: string
   translate: (key: string, vars?: Record<string, string | number>) => string
   formatMoreCount: (count: number) => string
@@ -106,10 +106,10 @@ export async function bootstrapGlobal(input: {
   queryClient: QueryClient
 }) {
   await runAll([
-    () => input.queryClient.fetchQuery(loadProvidersQuery(input.scope, null, input.serverSDK)),
+    () => input.queryClient.fetchQuery(loadProvidersQuery(null, input.serverSDK)),
     () =>
       input.queryClient
-        .fetchQuery(loadProjectsQuery(input.scope, input.serverSDK))
+        .fetchQuery(loadProjectsQuery(input.serverSDK))
         .then((data) => input.setGlobalStore("project", data)),
   ])
   // 删掉的:config(内核没有配置服务)、path(目录前端自己知道,不必往内核要)。
@@ -141,7 +141,6 @@ function mergeSession(setStore: SetStoreFunction<State>, session: Session) {
 
 export async function bootstrapDirectory(input: {
   directory: string
-  scope: ServerScope
   sdk: Sdk
   store: Store<State>
   setStore: SetStoreFunction<State>
@@ -162,7 +161,7 @@ export async function bootstrapDirectory(input: {
   input.setStore("project", input.directory)
   if (loading) input.setStore("status", "partial")
 
-  const revKey = ScopedKey.from(input.scope, input.directory)
+  const revKey = ScopedKey.from(input.directory)
   providerRev.set(revKey, (providerRev.get(revKey) ?? 0) + 1)
   ;(async () => {
     const slow: Array<() => Promise<unknown>> = [
@@ -175,7 +174,7 @@ export async function bootstrapDirectory(input: {
           }),
         ),
       () =>
-        input.queryClient.fetchQuery(loadProvidersQuery(input.scope, input.directory, input.sdk)).catch((err) => {
+        input.queryClient.fetchQuery(loadProvidersQuery(input.directory, input.sdk)).catch((err) => {
           showToast({
             variant: "error",
             title: input.translate("toast.project.reloadFailed.title", { project: getFilename(input.directory) }),

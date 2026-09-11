@@ -7,9 +7,6 @@ import { dict as en } from "@/i18n/en"
 import { dict as zh } from "@/i18n/zh"
 import { handleNotificationClick } from "@/utils/notification-click"
 import pkg from "../package.json"
-import { ServerConnection } from "./context/server"
-
-const DEFAULT_SERVER_URL_KEY = "yoma.settings.dat:defaultServerUrl"
 
 const getLocale = () => {
   if (typeof navigator !== "object") return "en" as const
@@ -26,31 +23,6 @@ const getRootNotFoundError = () => {
   const locale = getLocale()
   return locale === "zh" ? (zh[key] ?? en[key]) : en[key]
 }
-
-const getStorage = (key: string) => {
-  if (typeof localStorage === "undefined") return null
-  try {
-    return localStorage.getItem(key)
-  } catch {
-    return null
-  }
-}
-
-const setStorage = (key: string, value: string | null) => {
-  if (typeof localStorage === "undefined") return
-  try {
-    if (value !== null) {
-      localStorage.setItem(key, value)
-      return
-    }
-    localStorage.removeItem(key)
-  } catch {
-    return
-  }
-}
-
-const readDefaultServerUrl = () => getStorage(DEFAULT_SERVER_URL_KEY)
-const writeDefaultServerUrl = (url: string | null) => setStorage(DEFAULT_SERVER_URL_KEY, url)
 
 const notify: Platform["notify"] = async (title, description, href) => {
   if (!("Notification" in window)) return
@@ -96,19 +68,6 @@ if (!(root instanceof HTMLElement) && import.meta.env.DEV) {
   throw new Error(getRootNotFoundError())
 }
 
-const getCurrentUrl = () => {
-  if (location.hostname.includes("opencode.ai")) return "http://localhost:4096"
-  if (import.meta.env.DEV)
-    return `http://${import.meta.env.VITE_YOMA_SERVER_HOST ?? "localhost"}:${import.meta.env.VITE_YOMA_SERVER_PORT ?? "4096"}`
-  return location.origin
-}
-
-const getDefaultUrl = () => {
-  const lsDefault = readDefaultServerUrl()
-  if (lsDefault) return lsDefault
-  return getCurrentUrl()
-}
-
 const clearAuthToken = () => {
   const params = new URLSearchParams(location.search)
   if (!params.has("auth_token")) return
@@ -124,33 +83,18 @@ const platform: Platform = {
   forward,
   restart,
   notify,
-  getDefaultServer: async () => {
-    const stored = readDefaultServerUrl()
-    return stored ? ServerConnection.Key.make(stored) : null
-  },
-  setDefaultServer: writeDefaultServerUrl,
 }
 
 if (root instanceof HTMLElement) {
-  // web host 原来从 URL 的 auth_token 里取 Basic 凭据去连远程服务器。
-  // 内核是进程内的,没有凭据也没有远端,这条路整个消失。
+  // web host 原来从 URL 的 auth_token 里取 Basic 凭据去连远程服务器,再把那台服务器
+  // 当成 AppInterface 的 defaultServer 传进去。内核是进程内的:没有凭据、没有远端、
+  // 也没有"连哪台"可选,于是这里只剩清掉 URL 上的残留参数。
   clearAuthToken()
-  const server: ServerConnection.Http = {
-    type: "http",
-    authToken: false,
-    http: {
-      url: getCurrentUrl(),
-    },
-  }
   render(
     () => (
       <PlatformProvider value={platform}>
         <AppBaseProviders>
-          <AppInterface
-            defaultServer={ServerConnection.Key.make(getDefaultUrl())}
-            canonicalLocalServer={ServerConnection.key(server)}
-            servers={[server]}
-          />
+          <AppInterface />
         </AppBaseProviders>
       </PlatformProvider>
     ),

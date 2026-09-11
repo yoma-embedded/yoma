@@ -9,9 +9,8 @@ import { Dialog, DialogBody, DialogFooter, DialogHeader, DialogTitleGroup } from
 import { ButtonV2 } from "@yoma-desktop/ui/v2/button-v2"
 import { TextInputV2 } from "@yoma-desktop/ui/v2/text-input-v2"
 import { useDialog } from "@yoma-desktop/ui/context/dialog"
-import { ServerConnection, useServer } from "@/context/server"
 import { useServerSync } from "@/context/server-sync"
-import { useTabs } from "@/context/tabs"
+import { useDrafts } from "@/context/drafts"
 import { useLanguage } from "@/context/language"
 import { useLayout, type LocalProject } from "@/context/layout"
 import { usePlatform } from "@/context/platform"
@@ -19,6 +18,7 @@ import { useGlobal } from "@/context/global"
 import { useDirectoryPicker } from "@/components/directory-picker"
 import { displayName, projectForSession, sortedRootSessions } from "./helpers"
 import { sessionTitle } from "@/utils/session-title"
+import { sessionHref } from "@/utils/session-href"
 import { sessionTime, terseAgo } from "./codex-util"
 
 const LOAD_LIMIT = 64
@@ -29,9 +29,8 @@ const ROW_IDLE = "text-v2-text-text-muted hover:bg-v2-background-bg-layer-01 hov
 const ROW_ACTIVE = "bg-v2-background-bg-layer-03 text-v2-text-text-base"
 
 export function CodexSidebar() {
-  const server = useServer()
   const layout = useLayout()
-  const tabs = useTabs()
+  const drafts = useDrafts()
   const language = useLanguage()
   const pickDirectory = useDirectoryPicker()
   const dialog = useDialog()
@@ -48,44 +47,35 @@ export function CodexSidebar() {
   function openSession(session: Session) {
     const directory = projectForSession(session, projects())?.worktree ?? session.directory
     layout.projects.open(directory)
-    const tab = tabs.addSessionTab({ server: server.key, sessionId: session.id })
-    tabs.select(tab)
+    navigate(sessionHref(session.id))
   }
 
   function newChat(directory?: string) {
-    const conn = server.current
-    if (!conn) return
     const target = directory ?? projects()[0]?.worktree
     if (target) {
       layout.projects.open(target)
-      tabs.newDraft({ server: server.key, directory: target }, "")
+      drafts.create({ directory: target }, "")
       return
     }
     pickDirectory({
-      server: conn,
       title: language.t("codex.search.openFolder"),
-      multiple: false,
       onSelect: (result) => {
         const picked = Array.isArray(result) ? result[0] : result
         if (!picked) return
         layout.projects.open(picked)
-        tabs.newDraft({ server: server.key, directory: picked }, "")
+        drafts.create({ directory: picked }, "")
       },
     })
   }
 
   function addProject(directory: string) {
     layout.projects.open(directory)
-    tabs.newDraft({ server: server.key, directory }, "")
+    drafts.create({ directory }, "")
   }
 
   function openExistingFolder() {
-    const conn = server.current
-    if (!conn) return
     pickDirectory({
-      server: conn,
       title: language.t("codex.projects.openExisting"),
-      multiple: false,
       onSelect: (result) => {
         const picked = Array.isArray(result) ? result[0] : result
         if (picked) addProject(picked)
@@ -94,8 +84,6 @@ export function CodexSidebar() {
   }
 
   function openNewProject() {
-    const conn = server.current
-    if (!conn) return
     dialog.show(() => (
       <NewProjectChoiceDialog
         onOpenExisting={() => {
@@ -103,7 +91,7 @@ export function CodexSidebar() {
           openExistingFolder()
         }}
         onCreateNew={() => {
-          dialog.show(() => <NewFolderDialog server={conn} onCreated={addProject} />)
+          dialog.show(() => <NewFolderDialog onCreated={addProject} />)
         }}
       />
     ))
@@ -344,14 +332,13 @@ function ProjectChoiceRow(props: { icon: string; title: string; description: str
   )
 }
 
-function NewFolderDialog(props: { server: ServerConnection.Any; onCreated: (path: string) => void }) {
+function NewFolderDialog(props: { onCreated: (path: string) => void }) {
   const dialog = useDialog()
   const language = useLanguage()
   const platform = usePlatform()
   const global = useGlobal()
   const pickDirectory = useDirectoryPicker()
-  const { sync } = global.ensureServerCtx(props.server)
-  const [parent, setParent] = createSignal(sync.data.path.directory || "")
+  const [parent, setParent] = createSignal(global.ctx.sync.data.path.directory || "")
   const [name, setName] = createSignal("")
   const [busy, setBusy] = createSignal(false)
   const [error, setError] = createSignal("")
@@ -375,9 +362,7 @@ function NewFolderDialog(props: { server: ServerConnection.Any; onCreated: (path
 
   function chooseParent() {
     pickDirectory({
-      server: props.server,
       title: language.t("codex.projects.chooseLocation"),
-      multiple: false,
       onSelect: (result) => {
         const picked = Array.isArray(result) ? result[0] : result
         if (picked) setParent(picked)

@@ -9,12 +9,11 @@ export function SessionTabAvatar(props: {
   project?: LocalProject
   directory: string
   sessionId: string
-  activeServer: boolean
   revealProjectOnHover?: boolean
 }) {
   const directory = () => props.directory
   const sessionId = () => props.sessionId
-  const state = useSessionTabAvatarState(directory, sessionId, () => props.activeServer)
+  const state = useSessionTabAvatarState(directory, sessionId)
   const projectAvatar = () => (
     <ProjectAvatar fallback={displayName(props.project ?? { worktree: props.directory })} unread={state.unread()} />
   )

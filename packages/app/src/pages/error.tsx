@@ -5,7 +5,6 @@ import { Component, onMount, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import { usePlatform } from "@/context/platform"
 import { useLanguage } from "@/context/language"
-import { errorDescriptionKey } from "./error-description"
 
 export type InitError = {
   name: string
@@ -282,7 +281,7 @@ export const ErrorPage: Component<ErrorPageProps> = (props) => {
         <Logo class="w-58.5 opacity-12 shrink-0" />
         <div class="flex flex-col items-center gap-2 text-center">
           <h1 class="text-lg font-medium text-text-strong">{language.t("error.page.title")}</h1>
-          <p class="text-sm text-text-weak">{language.t(errorDescriptionKey(props.error))}</p>
+          <p class="text-sm text-text-weak">{language.t("error.page.description")}</p>
         </div>
         <TextField
           value={formattedError()}

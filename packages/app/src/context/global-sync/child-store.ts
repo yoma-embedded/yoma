@@ -18,11 +18,9 @@ import { useQuery } from "@tanstack/solid-query"
 import { QueryOptionsApi } from "../server-sync"
 import { directoryKey, type DirectoryKey } from "./utils"
 import { NormalizedProviderListResponse } from "@yoma-desktop/session-ui/context"
-import type { ServerScope } from "@/utils/server-scope"
 
 export function createChildStoreManager(input: {
   owner: Owner
-  scope: ServerScope
   persist: typeof persisted
   isBooting: (directory: string) => boolean
   isLoadingSessions: (directory: string) => boolean
@@ -146,7 +144,7 @@ export function createChildStoreManager(input: {
     if (!children[key]) {
       const vcs = runWithOwner(input.owner, () =>
         input.persist(
-          Persist.serverWorkspace(input.scope, directory, "vcs", ["vcs.v1"]),
+          Persist.workspace(directory, "vcs", ["vcs.v1"]),
           createStore({ value: undefined as VcsInfo | undefined }),
         ),
       )
@@ -156,7 +154,7 @@ export function createChildStoreManager(input: {
 
       const meta = runWithOwner(input.owner, () =>
         input.persist(
-          Persist.serverWorkspace(input.scope, directory, "project", ["project.v1"]),
+          Persist.workspace(directory, "project", ["project.v1"]),
           createStore({ value: undefined as ProjectMeta | undefined }),
         ),
       )
@@ -165,7 +163,7 @@ export function createChildStoreManager(input: {
 
       const icon = runWithOwner(input.owner, () =>
         input.persist(
-          Persist.serverWorkspace(input.scope, directory, "icon", ["icon.v1"]),
+          Persist.workspace(directory, "icon", ["icon.v1"]),
           createStore({ value: undefined as string | undefined }),
         ),
       )

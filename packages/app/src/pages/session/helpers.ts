@@ -1,4 +1,4 @@
-import { batch, createMemo, onCleanup, onMount, type Accessor } from "solid-js"
+import { createMemo, onCleanup, onMount, type Accessor } from "solid-js"
 import { createStore } from "solid-js/store"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { same } from "@/utils/same"
@@ -14,8 +14,6 @@ type TabsInput = {
   tabs: Accessor<Tabs>
   pathFromTab: (tab: string) => string | undefined
   normalizeTab: (tab: string) => string
-  review?: Accessor<boolean>
-  hasReview?: Accessor<boolean>
 }
 
 export const getSessionKey = (dir: string | undefined, id: string | undefined) => `${dir ?? ""}${id ? `/${id}` : ""}`
@@ -25,8 +23,6 @@ export function shouldShowFileTree(input: { visible: boolean; opened: boolean })
 }
 
 export const createSessionTabs = (input: TabsInput) => {
-  const review = input.review ?? (() => false)
-  const hasReview = input.hasReview ?? (() => false)
   const contextOpen = createMemo(() => input.tabs().active() === "context" || input.tabs().all().includes("context"))
   const openedTabs = createMemo(
     () => {
@@ -35,6 +31,7 @@ export const createSessionTabs = (input: TabsInput) => {
         .tabs()
         .all()
         .flatMap((tab) => {
+          // "review" 是审查页时代的标签名,存量记录里可能还有,认出来丢掉。
           if (tab === "context" || tab === "review") return []
           const value = input.pathFromTab(tab) ? input.normalizeTab(tab) : tab
           if (seen.has(value)) return []
@@ -48,13 +45,11 @@ export const createSessionTabs = (input: TabsInput) => {
   const activeTab = createMemo(() => {
     const active = input.tabs().active()
     if (active === "context") return active
-    if (active === "review" && review()) return active
     if (active && input.pathFromTab(active)) return input.normalizeTab(active)
 
     const first = openedTabs()[0]
     if (first) return first
     if (contextOpen()) return "context"
-    if (review() && hasReview()) return "review"
     return "empty"
   })
   const activeFileTab = createMemo(() => {
@@ -75,28 +70,6 @@ export const createSessionTabs = (input: TabsInput) => {
     activeTab,
     activeFileTab,
     closableTab,
-  }
-}
-
-export const createOpenReviewFile = (input: {
-  showAllFiles: () => void
-  tabForPath: (path: string) => string
-  openTab: (tab: string) => void
-  setActive: (tab: string) => void
-  loadFile: (path: string) => any | Promise<void>
-}) => {
-  return (path: string) => {
-    batch(() => {
-      input.showAllFiles()
-      const maybePromise = input.loadFile(path)
-      const open = () => {
-        const tab = input.tabForPath(path)
-        input.openTab(tab)
-        input.setActive(tab)
-      }
-      if (maybePromise instanceof Promise) void maybePromise.then(open)
-      else open()
-    })
   }
 }
 

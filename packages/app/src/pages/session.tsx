@@ -18,15 +18,12 @@ import { createMediaQuery } from "@solid-primitives/media"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
 import { debounce } from "@solid-primitives/scheduled"
 import { useLocal } from "@/context/local"
-import { selectionFromLines, useFile, type FileSelection, type SelectedLineRange } from "@/context/file"
+import { useFile } from "@/context/file"
 import { createStore } from "solid-js/store"
-import { Button } from "@yoma-desktop/ui/button"
 import { ResizeHandle } from "@yoma-desktop/ui/resize-handle"
-import { Tabs } from "@yoma-desktop/ui/tabs"
 import { createAutoScroll } from "@yoma-desktop/ui/hooks"
-import { previewSelectedLines } from "@yoma-desktop/session-ui/pierre/selection-bridge"
 import { showToast } from "@/utils/toast"
-import { base64Encode, checksum } from "@yoma-desktop/util/encode"
+import { base64Encode } from "@yoma-desktop/util/encode"
 import { useLocation, useSearchParams } from "@solidjs/router"
 import { NewSessionView, SessionHeader } from "@/components/session"
 import { useComments } from "@/context/comments"
@@ -46,15 +43,9 @@ import {
   createSessionComposerRegionController,
   SessionComposerRegion,
 } from "@/pages/session/composer"
-import {
-  createOpenReviewFile,
-  createSessionTabs,
-  createSizing,
-  shouldShowFileTree,
-} from "@/pages/session/helpers"
+import { createSessionTabs, createSizing, shouldShowFileTree } from "@/pages/session/helpers"
 import { MessageTimeline } from "@/pages/session/timeline/message-timeline"
 import { createTimelineModel } from "@/pages/session/timeline/model"
-import { type DiffStyle, SessionReviewTab, type SessionReviewTabProps } from "@/pages/session/review-tab"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { syncSessionModel } from "@/pages/session/session-model-helpers"
 import { SessionSidePanel } from "@/pages/session/session-side-panel"
@@ -74,7 +65,6 @@ const emptyFollowups: FollowupItem[] = []
 
 const sessionViewState = () => ({
   messageId: undefined as string | undefined,
-  mobileTab: "session" as "session" | "changes",
 })
 
 export default function Page() {
@@ -109,7 +99,7 @@ export default function Page() {
 
   const [ui, setUi] = createStore({
     pendingMessage: undefined as string | undefined,
-    reviewSnap: false,
+    dockSnap: false,
     scrollGesture: 0,
     scroll: {
       overflow: false,
@@ -139,8 +129,6 @@ export default function Page() {
           layout.handoff.clearTabs()
           return
         }
-        if (pending.scope !== serverSDK().scope) return
-
         if (pending.id !== id) return
         layout.handoff.clearTabs()
         if (pending.dir !== base64Encode(sdk().directory)) return
@@ -165,7 +153,8 @@ export default function Page() {
 
   const isDesktop = createMediaQuery("(min-width: 768px)")
   const size = createSizing()
-  const desktopReviewOpen = createMemo(() => isDesktop() && view().reviewPanel.opened())
+  // view().reviewPanel 是右栏的"开着没开"那一位(持久化字段名是审查页时代留下的)。
+  const desktopDockOpen = createMemo(() => isDesktop() && view().reviewPanel.opened())
   const desktopFileTreeOpen = createMemo(
     () =>
       isDesktop() &&
@@ -174,7 +163,7 @@ export default function Page() {
         opened: layout.fileTree.opened(),
       }),
   )
-  const desktopSidePanelOpen = createMemo(() => desktopReviewOpen() || desktopFileTreeOpen())
+  const desktopSidePanelOpen = createMemo(() => desktopDockOpen() || desktopFileTreeOpen())
   // 右侧四模式面板的可见性 —— 与 SessionSidePanel 内的 Show 条件保持一致
   const dockVisible = createMemo(() => isDesktop() && !!params.id)
   // 新布局这一行有 gap-2(8px)：中间栏按百分比减宽时要把这道缝一起减掉，
@@ -186,10 +175,10 @@ export default function Page() {
       return `calc(100% - ${layout.dock.width() + rowGap()}px)` // 三个子页同一个宽度：右栏固定宽，中间吃剩下的
     }
     if (!desktopSidePanelOpen()) return "100%"
-    if (desktopReviewOpen()) return `${layout.session.width()}px`
+    if (desktopDockOpen()) return `${layout.session.width()}px`
     return `calc(100% - ${layout.fileTree.width()}px)`
   })
-  const centered = createMemo(() => isDesktop() && !desktopReviewOpen())
+  const centered = createMemo(() => isDesktop() && !desktopDockOpen())
 
   function normalizeTab(tab: string) {
     if (!tab.startsWith("file://")) return tab
@@ -208,27 +197,16 @@ export default function Page() {
     return next
   }
 
-  const openReviewPanel = () => {
-    if (!view().reviewPanel.opened()) view().reviewPanel.open()
-  }
-
-  // 项目就是目录:有目录就能审查。别拿 sync().project 当开关 —— 它查的是内核的"最近项目"列表
-  // (project.list),而那份列表从没人写,永远是空的,审查标签因此从来没亮过(2026-09-06 实测)。
-  const canReview = createMemo(() => !!sync().data.project)
-  const reviewTab = createMemo(() => isDesktop())
   const tabState = createSessionTabs({
     tabs,
     pathFromTab: file.pathFromTab,
     normalizeTab,
-    review: reviewTab,
-    hasReview: canReview,
   })
   const activeFileTab = tabState.activeFileTab
   const timeline = createTimelineModel({ sessionID: () => params.id })
   const historyLoading = timeline.history.loading
   const historyMore = timeline.history.more
   const lastUserMessage = timeline.lastUserMessage
-  const messages = timeline.messages
   const messagesReady = timeline.ready
   const sessionSync = timeline.resource
   const userMessages = timeline.userMessages
@@ -270,7 +248,7 @@ export default function Page() {
   })
 
   const [followup, setFollowup] = persisted(
-    Persist.serverWorkspace(serverSDK().scope, sdk().directory, "followup", ["followup.v1"]),
+    Persist.workspace(sdk().directory, "followup", ["followup.v1"]),
     createStore<{
       items: Record<string, FollowupItem[] | undefined>
       failed: Record<string, string | undefined>
@@ -296,74 +274,43 @@ export default function Page() {
     return key
   })
 
-  let reviewFrame: number | undefined
+  let dockFrame: number | undefined
 
   createComputed((prev) => {
-    const open = desktopReviewOpen()
+    const open = desktopDockOpen()
     if (prev === undefined || prev === open) return open
 
-    if (reviewFrame !== undefined) cancelAnimationFrame(reviewFrame)
-    setUi("reviewSnap", true)
-    reviewFrame = requestAnimationFrame(() => {
-      reviewFrame = undefined
-      setUi("reviewSnap", false)
+    if (dockFrame !== undefined) cancelAnimationFrame(dockFrame)
+    setUi("dockSnap", true)
+    dockFrame = requestAnimationFrame(() => {
+      dockFrame = undefined
+      setUi("dockSnap", false)
     })
     return open
-  }, desktopReviewOpen())
+  }, desktopDockOpen())
 
-  const mobileChanges = createMemo(() => !isDesktop() && store.mobileTab === "changes")
   /**
-   * 变更视图只剩「工作区未提交改动」一种。
-   *
-   * yoma 没有文件快照,所以没有"本轮改了哪些文件"；host 的 vcs.diff 也只给工作区 diff,
-   * 没有 default_branch,所以 git / branch / turn 三个模式收敛成一个。
+   * 工作区未提交改动。审查页拆掉之后这份 diff 只剩一个用处:文件树/资源管理器上那些
+   * "改过"的角标(ExplorerPanel 的 modified / kinds)。
    */
   const vcsKey = createMemo(() => ["session-vcs", sdk().directory, sync().data.vcs?.branch ?? ""] as const)
-  /** vcs.info 还没回来时是 undefined:那时既不能说"不是 git 仓库",也不能说"没改动"。 */
-  const vcsKnown = createMemo(() => sync().data.vcs !== undefined)
   const hasVcs = createMemo(() => !!sync().data.vcs?.root)
   /** 刚 git init、一次提交都没有:没有 HEAD 可比,diff 拉了也是空的。 */
   const vcsEmpty = createMemo(() => !!sync().data.vcs?.empty)
   const vcsQuery = createQuery(() => ({
     queryKey: vcsKey(),
-    // 面板关着也拉:右栏"审查"按钮上的角标要一直是活的。numstat 很轻,文件内容按需再读。
     enabled: hasVcs() && !vcsEmpty(),
     queryFn: () =>
       sdk()
         .client.vcs.diff(sdk().directory)
         .catch((error) => {
-          console.debug("[session-review] failed to load vcs diff", { error })
+          console.debug("[session-vcs] failed to load vcs diff", { error })
           return []
         }),
   }))
   const refreshVcs = debounce(() => void queryClient.invalidateQueries({ queryKey: vcsKey() }), 100)
   // avoids suspense
-  const reviewDiffs = () => (vcsQuery.isFetched ? (vcsQuery.data ?? []) : [])
-  const reviewCount = () => reviewDiffs().length
-  const hasReview = () => reviewCount() > 0
-  /** 角标用:文件数 + 增删行数(Claude Code 的 +12 -1、Zed 的"几文件几行"那种,信息最密、成本最低)。 */
-  const reviewStats = createMemo(() =>
-    reviewDiffs().reduce(
-      (acc, diff) => ({ files: acc.files + 1, added: acc.added + diff.added, removed: acc.removed + diff.removed }),
-      { files: 0, added: 0, removed: 0 },
-    ),
-  )
-  // 查询被禁用(不是仓库 / 空仓库)时 TanStack 让 isPending 永远为 true,不能拿它当"加载中"。
-  const reviewReady = () => (hasVcs() && !vcsEmpty() ? !vcsQuery.isPending : vcsKnown())
-  const gitInit = useMutation(() => ({
-    mutationFn: () => sdk().client.vcs.init(sdk().directory),
-    onSuccess: (next) => {
-      sync().set("vcs", next)
-      refreshVcs()
-    },
-    onError: (error) => {
-      showToast({
-        variant: "error",
-        title: language.t("session.review.noVcs.createGit.failed"),
-        description: formatServerError(error, language.t),
-      })
-    },
-  }))
+  const vcsDiffs = () => (vcsQuery.isFetched ? (vcsQuery.data ?? []) : [])
 
   const setActiveMessage = (message: UserMessage | undefined) => {
     messageMark = scrollMark
@@ -478,63 +425,6 @@ export default function Page() {
   })
   onCleanup(stopVcs)
 
-  const selectionPreview = (path: string, selection: FileSelection) => {
-    const content = file.get(path)?.content?.content
-    if (!content) return undefined
-    return previewSelectedLines(content, { start: selection.startLine, end: selection.endLine })
-  }
-
-  const addCommentToContext = (input: {
-    file: string
-    selection: SelectedLineRange
-    comment: string
-    preview?: string
-    origin?: "review" | "file"
-  }) => {
-    const selection = selectionFromLines(input.selection)
-    const preview = input.preview ?? selectionPreview(input.file, selection)
-    const saved = comments.add({
-      file: input.file,
-      selection: input.selection,
-      comment: input.comment,
-    })
-    prompt.context.add({
-      type: "file",
-      path: input.file,
-      selection,
-      comment: input.comment,
-      commentID: saved.id,
-      commentOrigin: input.origin,
-      preview,
-    })
-  }
-
-  const updateCommentInContext = (input: {
-    id: string
-    file: string
-    selection: SelectedLineRange
-    comment: string
-    preview?: string
-  }) => {
-    comments.update(input.file, input.id, input.comment)
-    prompt.context.updateComment(input.file, input.id, {
-      comment: input.comment,
-      ...(input.preview ? { preview: input.preview } : {}),
-    })
-  }
-
-  const removeCommentFromContext = (input: { id: string; file: string }) => {
-    comments.remove(input.file, input.id)
-    prompt.context.removeComment(input.file, input.id)
-  }
-
-  const reviewCommentActions = createMemo(() => ({
-    moreLabel: language.t("common.moreOptions"),
-    editLabel: language.t("common.edit"),
-    deleteLabel: language.t("common.delete"),
-    saveLabel: language.t("common.save"),
-  }))
-
   const isEditableTarget = (target: EventTarget | null | undefined) => {
     if (!(target instanceof HTMLElement)) return false
     return /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(target.tagName) || target.isContentEditable
@@ -595,26 +485,6 @@ export default function Page() {
   const fileTreeTab = () => layout.fileTree.tab()
   const setFileTreeTab = (value: "changes" | "all") => layout.fileTree.setTab(value)
 
-  const [tree, setTree] = createStore({
-    reviewScroll: undefined as HTMLDivElement | undefined,
-    pendingDiff: undefined as string | undefined,
-    activeDiff: undefined as string | undefined,
-  })
-
-  createEffect(
-    on(
-      sessionKey,
-      () => {
-        setTree({
-          reviewScroll: undefined,
-          pendingDiff: undefined,
-          activeDiff: undefined,
-        })
-      },
-      { defer: true },
-    ),
-  )
-
   const showAllFiles = () => {
     if (fileTreeTab() !== "changes") return
     setFileTreeTab("all")
@@ -630,98 +500,7 @@ export default function Page() {
     navigateMessageByOffset,
     setActiveMessage,
     focusInput,
-    review: reviewTab,
   })
-
-  const openReviewFile = createOpenReviewFile({
-    showAllFiles,
-    tabForPath: file.tab,
-    openTab: tabs().open,
-    setActive: tabs().setActive,
-    loadFile: file.load,
-  })
-
-  const empty = (text: string) => (
-    <div class="h-full pb-64 -mt-4 flex flex-col items-center justify-center text-center gap-6">
-      <div class="text-14-regular text-text-weak max-w-56">{text}</div>
-    </div>
-  )
-
-  const reviewEmptyText = createMemo(() => language.t("session.review.noUncommittedChanges"))
-
-  // 非 git 目录:引导 git init(Codex app 与 opencode 的做法;把面板禁掉不是主流)。文案沿用上游同键。
-  const createGit = (input: { emptyClass: string }) => (
-    <div class={input.emptyClass}>
-      <div class="flex flex-col gap-3">
-        <div class="text-14-medium text-text-strong">{language.t("session.review.noVcs.createGit.title")}</div>
-        <div class="text-14-regular text-text-base max-w-md" style={{ "line-height": "var(--line-height-normal)" }}>
-          {language.t("session.review.noVcs.createGit.description")}
-        </div>
-      </div>
-      <Button size="large" disabled={gitInit.isPending} onClick={() => gitInit.mutate()}>
-        {gitInit.isPending
-          ? language.t("session.review.noVcs.createGit.actionLoading")
-          : language.t("session.review.noVcs.createGit.action")}
-      </Button>
-    </div>
-  )
-
-  const reviewEmpty = (input: { loadingClass: string; emptyClass: string }) => {
-    const loading = () => <div class={input.loadingClass}>{language.t("session.review.loadingChanges")}</div>
-    if (!vcsKnown()) return loading()
-    if (!hasVcs()) return createGit(input)
-    if (vcsEmpty()) return empty(language.t("session.review.noCommits"))
-    if (!reviewReady()) return loading()
-    return empty(reviewEmptyText())
-  }
-
-  const reviewContent = (input: {
-    diffStyle: DiffStyle
-    onDiffStyleChange?: (style: DiffStyle) => void
-    classes?: SessionReviewTabProps["classes"]
-    loadingClass: string
-    emptyClass: string
-  }) => (
-    <Show when={!store.deferRender}>
-      <SessionReviewTab
-        title={null}
-        empty={reviewEmpty(input)}
-        diffs={reviewDiffs}
-        view={view}
-        diffStyle={input.diffStyle}
-        onDiffStyleChange={input.onDiffStyleChange}
-        onScrollRef={(el) => setTree("reviewScroll", el)}
-        focusedFile={tree.activeDiff}
-        onLineComment={(comment) => addCommentToContext({ ...comment, origin: "review" })}
-        onLineCommentUpdate={updateCommentInContext}
-        onLineCommentDelete={removeCommentFromContext}
-        lineCommentActions={reviewCommentActions()}
-        commentMentions={{
-          items: file.searchFilesAndDirectories,
-        }}
-        comments={comments.all()}
-        focusedComment={comments.focus()}
-        onFocusedCommentChange={comments.setFocus}
-        onViewFile={openReviewFile}
-        classes={input.classes}
-      />
-    </Show>
-  )
-
-  const reviewPanel = () => (
-    <div
-      class="flex flex-col h-full overflow-hidden contain-strict bg-v2-background-bg-base"
-    >
-      <div class="relative pt-2 flex-1 min-h-0 overflow-hidden">
-        {reviewContent({
-          diffStyle: layout.review.diffStyle(),
-          onDiffStyleChange: layout.review.setDiffStyle,
-          loadingClass: "px-6 py-4 text-text-weak",
-          emptyClass: "h-full pb-64 -mt-4 flex flex-col items-center justify-center text-center gap-6",
-        })}
-      </div>
-    </div>
-  )
 
   createEffect(
     on(
@@ -734,87 +513,6 @@ export default function Page() {
       { defer: true },
     ),
   )
-
-  const reviewDiffId = (path: string) => {
-    const sum = checksum(path)
-    if (!sum) return
-    return `session-review-diff-${sum}`
-  }
-
-  const reviewDiffTop = (path: string) => {
-    const root = tree.reviewScroll
-    if (!root) return
-
-    const id = reviewDiffId(path)
-    if (!id) return
-
-    const el = document.getElementById(id)
-    if (!(el instanceof HTMLElement)) return
-    if (!root.contains(el)) return
-
-    const a = el.getBoundingClientRect()
-    const b = root.getBoundingClientRect()
-    return a.top - b.top + root.scrollTop
-  }
-
-  const scrollToReviewDiff = (path: string) => {
-    const root = tree.reviewScroll
-    if (!root) return false
-
-    const top = reviewDiffTop(path)
-    if (top === undefined) return false
-
-    view().setScroll("review", { x: root.scrollLeft, y: top })
-    root.scrollTo({ top, behavior: "auto" })
-    return true
-  }
-
-  const focusReviewDiff = (path: string) => {
-    openReviewPanel()
-    view().review.openPath(path)
-    setTree({ activeDiff: path, pendingDiff: path })
-  }
-
-  createEffect(() => {
-    const pending = tree.pendingDiff
-    if (!pending) return
-    if (!tree.reviewScroll) return
-    if (!reviewReady()) return
-
-    const attempt = (count: number) => {
-      if (tree.pendingDiff !== pending) return
-      if (count > 60) {
-        setTree("pendingDiff", undefined)
-        return
-      }
-
-      const root = tree.reviewScroll
-      if (!root) {
-        requestAnimationFrame(() => attempt(count + 1))
-        return
-      }
-
-      if (!scrollToReviewDiff(pending)) {
-        requestAnimationFrame(() => attempt(count + 1))
-        return
-      }
-
-      const top = reviewDiffTop(pending)
-      if (top === undefined) {
-        requestAnimationFrame(() => attempt(count + 1))
-        return
-      }
-
-      if (Math.abs(root.scrollTop - top) <= 1) {
-        setTree("pendingDiff", undefined)
-        return
-      }
-
-      requestAnimationFrame(() => attempt(count + 1))
-    }
-
-    requestAnimationFrame(() => attempt(0))
-  })
 
   let treeDir: string | undefined
   createEffect(() => {
@@ -1215,7 +913,7 @@ export default function Page() {
   })
 
   onCleanup(() => {
-    if (reviewFrame !== undefined) cancelAnimationFrame(reviewFrame)
+    if (dockFrame !== undefined) cancelAnimationFrame(dockFrame)
     if (scrollStateFrame !== undefined) cancelAnimationFrame(scrollStateFrame)
     if (fillFrame !== undefined) cancelAnimationFrame(fillFrame)
   })
@@ -1270,45 +968,6 @@ export default function Page() {
     )
   }
 
-  const mobileTabs = (compact = false, bottom = false) => (
-    <Tabs value={store.mobileTab} class="h-auto">
-      <Tabs.List
-        classList={{
-          "!h-9": compact,
-          "[&::after]:!border-b-0 [&::after]:!border-t [&::after]:!border-border-weak-base": bottom,
-        }}
-      >
-        <Tabs.Trigger
-          value="session"
-          classList={{
-            "!w-1/2 !max-w-none": true,
-            "!border-b-0 !border-t !border-border-weak-base [&:has([data-selected])]:!border-t-transparent": bottom,
-          }}
-          classes={{ button: compact ? "w-full !py-2" : "w-full" }}
-          onClick={() => setStore("mobileTab", "session")}
-        >
-          {language.t("session.tab.session")}
-        </Tabs.Trigger>
-        <Tabs.Trigger
-          value="changes"
-          classList={{
-            "!w-1/2 !max-w-none !border-r-0": true,
-            "!border-b-0 !border-t !border-border-weak-base [&:has([data-selected])]:!border-t-transparent": bottom,
-          }}
-          classes={{ button: compact ? "w-full !py-2" : "w-full" }}
-          onClick={() => setStore("mobileTab", "changes")}
-        >
-          {hasReview()
-            ? language.t("session.review.filesChanged", { count: reviewCount() })
-            : language.t("session.review.change.other")}
-        </Tabs.Trigger>
-      </Tabs.List>
-    </Tabs>
-  )
-  const mobileTabsBottom = createMemo(
-    () => !isDesktop() && settings.general.mobileTitlebarPosition() === "bottom",
-  )
-
   return (
     <div class="relative size-full overflow-hidden flex flex-col">
       {sessionSync() ?? ""}
@@ -1320,7 +979,7 @@ export default function Page() {
           classList={{
             "@container relative shrink-0 flex flex-col min-h-0 h-full flex-1 md:flex-none transition-[width]": true,
             "duration-[240ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none":
-              !size.active() && !ui.reviewSnap,
+              !size.active() && !ui.dockSnap,
           }}
           style={{
             width: sessionPanelWidth(),
@@ -1334,25 +993,8 @@ export default function Page() {
               "shadow-[var(--v2-elevation-raised)]": !!params.id,
             }}
           >
-            <Show when={!isDesktop() && !!params.id && !mobileTabsBottom()}>
-              {mobileTabs(true)}
-            </Show>
             <div class="flex-1 min-h-0 overflow-hidden">
               <Switch>
-                <Match when={params.id && mobileChanges()}>
-                  <div class="relative h-full overflow-hidden">
-                    {reviewContent({
-                      diffStyle: "unified",
-                      classes: {
-                        root: "pb-8 [&_[data-slot=session-review-list]]:pb-0",
-                        header: "px-4 !h-16 !pb-4",
-                        container: "px-4",
-                      },
-                      loadingClass: "px-4 py-4 text-text-weak",
-                      emptyClass: "h-full pb-64 -mt-4 flex flex-col items-center justify-center text-center gap-6",
-                    })}
-                  </div>
-                </Match>
                 <Match when={params.id}>
                   <Show when={messagesReady() ? params.id : undefined} keyed>
                     {(_id) => (
@@ -1400,12 +1042,11 @@ export default function Page() {
               </Switch>
             </div>
 
-            <Show when={params.id && !mobileChanges()}>{(_) => composerRegion()}</Show>
-            <Show when={!!params.id && mobileTabsBottom()}>{mobileTabs(true, true)}</Show>
+            <Show when={params.id}>{(_) => composerRegion()}</Show>
           </div>
 
           {/* 右栏（三子页）由面板自己左边缘那根手柄统一调宽，这根只服务旧布局，免得同一条缝上叠两根 */}
-          <Show when={!dockVisible() && desktopReviewOpen()}>
+          <Show when={!dockVisible() && desktopDockOpen()}>
             <div onPointerDown={() => size.start()}>
               <ResizeHandle
                 class="-right-1"
@@ -1422,20 +1063,7 @@ export default function Page() {
           </Show>
         </div>
 
-        <SessionSidePanel
-          canReview={canReview}
-          diffs={reviewDiffs}
-          diffsReady={reviewReady}
-          empty={reviewEmptyText}
-          hasReview={hasReview}
-          reviewCount={reviewCount}
-          reviewStats={reviewStats}
-          reviewPanel={reviewPanel}
-          activeDiff={tree.activeDiff}
-          focusReviewDiff={focusReviewDiff}
-          reviewSnap={ui.reviewSnap}
-          size={size}
-        />
+        <SessionSidePanel diffs={vcsDiffs} snap={ui.dockSnap} size={size} />
       </div>
 
     </div>

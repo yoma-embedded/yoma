@@ -2,12 +2,6 @@ import type { DesktopMenuAction } from "@yoma-desktop/app/desktop-menu"
 import type { UpdaterState } from "@yoma-desktop/app/updater"
 import type { ManualsPlatform } from "@yoma-desktop/app/manuals/types"
 
-export type ServerReadyData = {
-  url: string
-  username: string | null
-  password: string | null
-}
-
 /**
  * 内核通道。形状必须和 @yoma-desktop/kernel 的 KernelTransport 一致 ——
  * renderer 直接 `createKernelClient(window.api.kernel)`。
@@ -81,13 +75,9 @@ export type FatalRendererError = {
 
 export type ElectronAPI = {
   kernel: KernelAPI
-  killSidecar: () => Promise<void>
-  awaitInitialization: () => Promise<ServerReadyData>
   manuals: ManualsAPI
   mailbox: MailboxAPI
   updater: UpdaterAPI
-  getDefaultServerUrl: () => Promise<string | null>
-  setDefaultServerUrl: (url: string | null) => Promise<void>
   storeGet: (name: string, key: string) => Promise<string | null>
   storeSet: (name: string, key: string, value: string) => Promise<void>
   storeDelete: (name: string, key: string) => Promise<void>

@@ -1,7 +1,6 @@
 import { beforeAll, describe, expect, test, vi } from "vitest"
 import type { AsyncStorage } from "@solid-primitives/storage"
 import { createEffect, createRoot } from "solid-js"
-import { ServerScope } from "@/utils/server-scope"
 
 let Prompt: typeof import("@/context/prompt")
 let read: ((value: string | null) => void) | undefined
@@ -40,7 +39,7 @@ describe("prompt persistence", () => {
   test("waits for an async draft to hydrate before reporting ready", async () => {
     await new Promise<void>((resolve, reject) => {
       createRoot((dispose) => {
-        const session = Prompt.createPromptSession(ServerScope.local, { draftID: "draft-async" })
+        const session = Prompt.createPromptSession({ draftID: "draft-async" })
         const ready = Prompt.createPromptReady(() => session)
 
         expect(ready()).toBe(false)

@@ -5,12 +5,7 @@ import { batch, createMemo, createRoot, getOwner, onCleanup, type Accessor } fro
 import { createStore, type SetStoreFunction } from "solid-js/store"
 import type { FileSelection } from "@/context/file"
 import { Persist, persisted } from "@/utils/persist"
-import { useServerSDK } from "./server-sdk"
-import type { ServerScope } from "@/utils/server-scope"
 import { useSDK } from "./sdk"
-import { useTabs, type Tab } from "./tabs"
-import { ServerConnection } from "./server"
-import { requireServerKey } from "@/utils/session-route"
 
 interface PartBase {
   content: string
@@ -177,15 +172,6 @@ type PromptStore = {
 
 type Scope = { draftID: string } | { dir: string; id?: string }
 
-export function selectPromptTab(tabs: Tab[], scope: Scope, server: ServerConnection.Key) {
-  if ("draftID" in scope) return tabs.find((tab) => tab.type === "draft" && tab.draftID === scope.draftID)
-  if (!scope.id) return
-  return (
-    tabs.find((tab) => tab.type === "session" && tab.server === server && tab.sessionId === scope.id) ??
-    ({ type: "session", server, sessionId: scope.id } satisfies Tab)
-  )
-}
-
 function scopeKey(scope: Scope) {
   if ("draftID" in scope) return `draft:${scope.draftID}`
   return `${scope.dir}:${scope.id ?? WORKSPACE_KEY}`
@@ -196,17 +182,14 @@ type PromptCacheEntry = {
   dispose: VoidFunction
 }
 
-function promptTarget(serverScope: ServerScope, scope: Scope) {
+function promptTarget(scope: Scope) {
   if ("draftID" in scope) return Persist.draft(scope.draftID, "prompt")
   const legacy = `${scope.dir}/prompt${scope.id ? "/" + scope.id : ""}.v2`
-  return Persist.serverScoped(serverScope, scope.dir, scope.id, "prompt", [legacy])
+  return Persist.scoped(scope.dir, scope.id, "prompt", [legacy])
 }
 
-export function createPromptSession(serverScope: ServerScope, scope: Scope) {
-  const [store, setStore, _, ready] = persisted(
-    promptTarget(serverScope, scope),
-    createStore<PromptStore>(promptStore()),
-  )
+export function createPromptSession(scope: Scope) {
+  const [store, setStore, _, ready] = persisted(promptTarget(scope), createStore<PromptStore>(promptStore()))
 
   return { ready, ...createPromptStateValue(store, setStore) }
 }
@@ -281,21 +264,13 @@ export function createPromptState() {
   }
 }
 
-export const createTabPromptState = (
-  tabs: ReturnType<typeof useTabs>,
-  tab: Tab,
-  ...args: Parameters<typeof createPromptSession>
-) => tabs.state(tab, "prompt", () => createPromptSession(...args))
-
 export const { use: usePrompt, provider: PromptProvider } = createSimpleContext({
   name: "Prompt",
   gate: false,
   init: () => {
-    const params = useParams<{ serverKey?: string; id?: string }>()
+    const params = useParams<{ id?: string }>()
     const sdk = useSDK()
     const [search] = useSearchParams<{ draftId?: string }>()
-    const serverSDK = useServerSDK()
-    const tabs = useTabs()
     const cache = new Map<string, PromptCacheEntry>()
 
     const disposeAll = () => {
@@ -318,16 +293,9 @@ export const { use: usePrompt, provider: PromptProvider } = createSimpleContext(
     }
 
     const owner = getOwner()
-    const serverKey = () =>
-      params.serverKey ? requireServerKey(params.serverKey) : ServerConnection.key(serverSDK().server)
     const scope = () =>
       search.draftId ? { draftID: search.draftId } : { dir: base64Encode(sdk().directory), id: params.id }
     const load = (scope: Scope) => {
-      const current = selectPromptTab(tabs.store, scope, serverKey())
-      if (current) {
-        return createTabPromptState(tabs, current, serverSDK().scope, scope)
-      }
-
       const key = scopeKey(scope)
       const existing = cache.get(key)
       if (existing) {
@@ -338,7 +306,7 @@ export const { use: usePrompt, provider: PromptProvider } = createSimpleContext(
 
       const entry = createRoot(
         (dispose) => ({
-          value: createPromptSession(serverSDK().scope, scope),
+          value: createPromptSession(scope),
           dispose,
         }),
         owner,

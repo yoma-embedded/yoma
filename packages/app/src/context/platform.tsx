@@ -2,7 +2,6 @@ import { createSimpleContext } from "@yoma-desktop/ui/context"
 import type { AsyncStorage, SyncStorage } from "@solid-primitives/storage"
 import type { Accessor } from "solid-js"
 import type { DesktopMenuAction } from "../desktop-menu"
-import { ServerConnection } from "./server"
 import type { ManualsPlatform } from "../manuals/types"
 import type { UpdaterPlatform } from "../updater"
 import type {
@@ -92,12 +91,6 @@ type PlatformBase = {
 
   /** Fetch override */
   fetch?: typeof fetch
-
-  /** Get the configured default server URL (platform-specific) */
-  getDefaultServer?(): Promise<ServerConnection.Key | null>
-
-  /** Set the default server URL to use on app startup (platform-specific) */
-  setDefaultServer?(url: ServerConnection.Key | null): Promise<void> | void
 
   /** Datasheet manual library: list/download shared manuals, ingest user docs (desktop only) */
   manuals?: ManualsPlatform

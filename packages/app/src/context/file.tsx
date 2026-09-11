@@ -22,8 +22,7 @@ import {
   touchFileContent,
 } from "./file/content-cache"
 import { createFileViewCache } from "./file/view-cache"
-import { useServerSDK } from "./server-sdk"
-import { SessionRouteKey, SessionStateKey } from "@/utils/server-scope"
+import { SessionRouteKey, SessionStateKey } from "@/utils/scoped-key"
 import { createFileTreeStore } from "./file/tree-store"
 import {
   selectionFromLines,
@@ -58,14 +57,13 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
     const sdk = useSDK()
     useSync()
     const params = useParams()
-    const serverSDK = useServerSDK()
     const language = useLanguage()
     const layout = useLayout()
 
     const scope = createMemo(() => sdk().directory)
     const path = createPathHelpers(scope)
     const tabs = layout.tabs(() =>
-      SessionStateKey.from(serverSDK().scope, SessionRouteKey.fromRoute(base64Encode(sdk().directory), params.id)),
+      SessionStateKey.from(SessionRouteKey.fromRoute(base64Encode(sdk().directory), params.id)),
     )
 
     const inflight = new Map<string, Promise<void>>()
@@ -112,7 +110,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       })
     })
 
-    const viewCache = createFileViewCache(serverSDK().scope)
+    const viewCache = createFileViewCache()
     const view = createMemo(() => viewCache.load(scope(), params.id))
 
     const ensure = (file: string) => {

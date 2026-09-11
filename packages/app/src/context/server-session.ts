@@ -16,7 +16,7 @@ import { retry } from "@yoma-desktop/util/retry"
 import type { KernelEvent, Message, Part, Session, SessionStatus } from "@yoma-desktop/kernel"
 import { batch } from "solid-js"
 import { createStore, produce, reconcile } from "solid-js/store"
-import type { Sdk } from "@/utils/server"
+import type { Sdk } from "@/utils/kernel"
 import { dropSessionCaches, pickSessionCacheEvictions, SESSION_CACHE_LIMIT } from "./global-sync/session-cache"
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)

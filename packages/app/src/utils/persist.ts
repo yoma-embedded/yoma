@@ -4,7 +4,6 @@ import { checksum } from "@yoma-desktop/util/encode"
 import { createResource, type Accessor } from "solid-js"
 import type { SetStoreFunction, Store } from "solid-js/store"
 import { pathKey } from "@/utils/path-key"
-import { ScopedKey, ServerScope, type ServerScope as ServerScopeValue } from "@/utils/server-scope"
 
 type InitType = Promise<string> | string | null
 type PersistedWithReady<T> = [
@@ -364,8 +363,7 @@ function legacyWorkspaceStorage(dir: string) {
   return [...result]
 }
 
-function serverWorkspaceTarget(scope: ServerScopeValue, dir: string, key: string, legacy?: string[]): PersistTarget {
-  if (scope !== ServerScope.local) return { storage: workspaceStorage(ScopedKey.from(scope, pathKey(dir))), key }
+function workspaceTarget(dir: string, key: string, legacy?: string[]): PersistTarget {
   return { storage: workspaceStorage(pathKey(dir)), legacyStorageNames: legacyWorkspaceStorage(dir), key, legacy }
 }
 
@@ -477,29 +475,15 @@ export const Persist = {
   draft(draftID: string, key: string, legacy?: string[]): PersistTarget {
     return { storage: draftStorage(draftID), key: `draft:${key}`, legacy }
   },
-  serverGlobal(scope: ServerScopeValue, key: string, legacy?: string[]): PersistTarget {
-    if (scope === ServerScope.local) return Persist.global(key, legacy)
-    return { storage: GLOBAL_STORAGE, key: ScopedKey.from(scope, key) }
-  },
   workspace(dir: string, key: string, legacy?: string[]): PersistTarget {
-    return serverWorkspaceTarget(ServerScope.local, dir, `workspace:${key}`, legacy)
-  },
-  serverWorkspace(scope: ServerScopeValue, dir: string, key: string, legacy?: string[]): PersistTarget {
-    return serverWorkspaceTarget(scope, dir, `workspace:${key}`, legacy)
+    return workspaceTarget(dir, `workspace:${key}`, legacy)
   },
   session(dir: string, session: string, key: string, legacy?: string[]): PersistTarget {
-    return serverWorkspaceTarget(ServerScope.local, dir, `session:${session}:${key}`, legacy)
-  },
-  serverSession(scope: ServerScopeValue, dir: string, session: string, key: string, legacy?: string[]): PersistTarget {
-    return serverWorkspaceTarget(scope, dir, `session:${session}:${key}`, legacy)
+    return workspaceTarget(dir, `session:${session}:${key}`, legacy)
   },
   scoped(dir: string, session: string | undefined, key: string, legacy?: string[]): PersistTarget {
     if (session) return Persist.session(dir, session, key, legacy)
     return Persist.workspace(dir, key, legacy)
-  },
-  serverScoped(scope: ServerScopeValue, dir: string, session: string | undefined, key: string, legacy?: string[]) {
-    if (session) return Persist.serverSession(scope, dir, session, key, legacy)
-    return Persist.serverWorkspace(scope, dir, key, legacy)
   },
 }
 

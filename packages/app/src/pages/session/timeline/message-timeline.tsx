@@ -42,11 +42,10 @@ import { useDialog } from "@yoma-desktop/ui/context/dialog"
 import { useLanguage } from "@/context/language"
 import { useSessionKey } from "@/pages/session/session-layout"
 import { useSettings } from "@/context/settings"
-import { useTabs } from "@/context/tabs"
-import { legacySessionHref, requireServerKey, sessionHref } from "@/utils/session-route"
+import { useDrafts } from "@/context/drafts"
+import { sessionHref } from "@/utils/session-href"
 import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
-import { notifySessionTabsRemoved } from "@/components/titlebar-session-events"
 import { sessionTitle } from "@/utils/session-title"
 import { scheduleConnectedMeasure } from "./measure"
 import { createTimelineProjection } from "./projection"
@@ -134,7 +133,7 @@ export function MessageTimeline(props: {
   const sdk = useSDK()
   const sync = useSync()
   const settings = useSettings()
-  const tabs = useTabs()
+  const drafts = useDrafts()
   const dialog = useDialog()
   const language = useLanguage()
   const { params, sessionKey } = useSessionKey()
@@ -522,17 +521,12 @@ export function MessageTimeline(props: {
 
   const navigateAfterSessionRemoval = (sessionID: string, nextSessionID?: string) => {
     if (params.id !== sessionID) return
-    const href = (id: string) =>
-      params.serverKey ? sessionHref(requireServerKey(params.serverKey), id) : legacySessionHref(sdk().directory, id)
     if (nextSessionID) {
-      navigate(href(nextSessionID))
+      navigate(sessionHref(nextSessionID))
       return
     }
-    if (params.serverKey) {
-      tabs.newDraft({ server: requireServerKey(params.serverKey), directory: sdk().directory })
-      return
-    }
-    navigate(`/${params.dir}/session`)
+    // 没有下一个会话了 —— 开一张草稿页,而不是回那个已经不存在的 /<dir>/session 路由。
+    drafts.create({ directory: sdk().directory })
   }
 
   const deleteSession = async (sessionID: string) => {
@@ -565,7 +559,6 @@ export function MessageTimeline(props: {
     )
 
     sync().session.evict(sessionID)
-    notifySessionTabsRemoved({ directory: sdk().directory, sessionIDs: [sessionID] })
     return true
   }
 

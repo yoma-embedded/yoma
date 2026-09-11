@@ -5,12 +5,10 @@ import { FileComponentProvider } from "@yoma-desktop/ui/context/file"
 import { MarkedProvider } from "@yoma-desktop/ui/context/marked"
 import { File } from "@yoma-desktop/session-ui/file"
 import { Font } from "@yoma-desktop/ui/font"
-import { Splash } from "@yoma-desktop/ui/logo"
 import { ThemeProvider } from "@yoma-desktop/ui/theme/context"
 import { MetaProvider } from "@solidjs/meta"
 import { type BaseRouterProps, Navigate, Route, Router, useParams, useSearchParams } from "@solidjs/router"
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query"
-import { Effect } from "effect"
 import {
   type Component,
   createEffect,
@@ -19,10 +17,8 @@ import {
   createResource,
   createSignal,
   ErrorBoundary,
-  For,
   type JSX,
   lazy,
-  onCleanup,
   type ParentProps,
   Show,
 } from "solid-js"
@@ -30,23 +26,22 @@ import { Dynamic } from "solid-js/web"
 import { CommandProvider, useCommand, type CommandOption } from "@/context/command"
 import { CommentsProvider } from "@/context/comments"
 import { FileProvider } from "@/context/file"
-import { ServerSDKProvider, useServerSDK } from "@/context/server-sdk"
+import { ServerSDKProvider } from "@/context/server-sdk"
 import { ServerSyncProvider, useServerSync } from "@/context/server-sync"
-import { GlobalProvider, useGlobal } from "@/context/global"
+import { GlobalProvider } from "@/context/global"
 import { LanguageProvider, type Locale, useLanguage } from "@/context/language"
 import { LayoutProvider } from "@/context/layout"
 import { ModelsProvider } from "@/context/models"
 import { NotificationProvider, useNotification } from "@/context/notification"
 import { usePlatform } from "@/context/platform"
 import { PromptProvider } from "@/context/prompt"
-import { ServerConnection, ServerProvider, serverName, useServer } from "@/context/server"
 import { SettingsProvider } from "@/context/settings"
-import { TabsProvider, useTabs, type DraftTab } from "@/context/tabs"
+import { DraftsProvider, useDrafts, type Draft } from "@/context/drafts"
 import { SDKProvider, useSDK } from "@/context/sdk"
 import DirectoryLayout, { DirectoryDataProvider } from "@/pages/directory-layout"
 import NewLayout from "@/pages/layout-new"
 import { ErrorPage } from "./pages/error"
-import { legacySessionServer, requireServerKey, sessionHref } from "./utils/session-route"
+import { sessionHref } from "./utils/session-href"
 import { isSessionNotFoundError } from "./utils/server-errors"
 
 import Session from "@/pages/session"
@@ -60,26 +55,16 @@ const SessionRoute = () => {
   const params = useParams()
   const [search] = useSearchParams<{ draftId?: string; prompt?: string }>()
   const sdk = useSDK()
-  const server = useServer()
-  const tabs = useTabs()
+  const drafts = useDrafts()
 
-  if (params.id) {
-    const sessionID = params.id
-    return (
-      <Show when={tabs.ready()}>
-        {(_) => {
-          const persisted = tabs.store.filter((item) => item.type === "session")
-          return <Navigate href={sessionHref(legacySessionServer(persisted, sessionID, server.key), sessionID)} />
-        }}
-      </Show>
-    )
-  }
+  // 旧形状 /<base64(dir)>/session/<id> —— 桌面端记着的上次路由可能还是它,转到正式路由。
+  if (params.id) return <Navigate href={sessionHref(params.id)} />
 
   // The bare /:dir/session route (no id) is replaced by a draft at /new-session?draftId=…
   createEffect(() => {
     if (params.id || search.draftId) return
-    if (!tabs.ready() || !sdk().directory) return
-    tabs.newDraft({ server: server.key, directory: sdk().directory }, search.prompt)
+    if (!drafts.ready() || !sdk().directory) return
+    drafts.create({ directory: sdk().directory }, search.prompt)
   })
 
   return (
@@ -89,45 +74,25 @@ const SessionRoute = () => {
   )
 }
 
-const TargetSessionRoute = () => {
-  const params = useParams<{ serverKey: string; id: string }>()
-  const global = useGlobal()
-  const conn = createMemo(() => {
-    const key = requireServerKey(params.serverKey)
-    return global.servers.list().find((item) => ServerConnection.key(item) === key)
-  })
-
-  return (
-    <Show when={requireServerKey(params.serverKey)} keyed>
-      <ServerSDKProvider server={conn}>
-        <ServerSyncProvider server={conn}>
-          <ResolvedTargetSessionRoute />
-        </ServerSyncProvider>
-      </ServerSDKProvider>
-    </Show>
-  )
-}
-
-function ResolvedTargetSessionRoute() {
-  const params = useParams<{ serverKey: string; id: string }>()
-  const tabs = useTabs()
+function TargetSessionRoute() {
+  const params = useParams<{ id: string }>()
   const sync = useServerSync()
-  const serverKey = createMemo(() => requireServerKey(params.serverKey))
+  const [missing, setMissing] = createSignal(false)
   const cached = createMemo(() => sync().session.get(params.id))
   const [resolved] = createResource(
     () => {
       if (cached()) return
-      return { id: params.id, server: serverKey(), sync: sync() }
+      return { id: params.id, sync: sync() }
     },
-    ({ id, server, sync }) =>
+    ({ id, sync }) =>
       // 原来解析的是 lineage(沿 parentID 往上找祖先链)。内核里 session 之间没有父子,
       // 所以退化成"把这一个会话取回来"。
       sync.session.resolve(id).catch((error: unknown) => {
-        // 会话不存在不是致命错误 —— 删掉失效标签页、回首页就行。
-        // 换内核之后尤其常见:上个版本残留的标签页带的是 opencode 格式的 id(ses_xxx),
-        // 而新内核的 id 是 UUID。**不能往上抛**,否则整个 app 崩到错误页。
+        // 会话不存在不是致命错误 —— 回首页就行。换内核之后尤其常见:桌面端记着的上次
+        // 路由带的是 opencode 格式的 id(ses_xxx),而新内核的 id 是 UUID。
+        // **不能往上抛**,否则整个 app 崩到错误页。
         if (isSessionNotFoundError(error, id)) {
-          tabs.removeSessionTab({ server, sessionId: id })
+          setMissing(true)
           return undefined
         }
         throw error
@@ -141,35 +106,28 @@ function ResolvedTargetSessionRoute() {
   const directory = createMemo(() => current()?.directory)
   const targetDirectory = () => directory()!
 
-  createEffect(() => {
-    const session = current()
-    if (!session) return
-    tabs.addSessionTab({
-      server: serverKey(),
-      sessionId: session.id,
-    })
-  })
-
   return (
-    <TargetServerScopedProviders directory={directory} sessionID={() => params.id}>
-      <Show when={!!current() || resolved.state !== "errored"} fallback={<ErrorPage error={resolved.error} />}>
-        <Show when={directory()}>
-          <SDKProvider directory={targetDirectory}>
-            <DirectoryDataProvider directory={targetDirectory} server={serverKey}>
-              <TargetSessionPage />
-            </DirectoryDataProvider>
-          </SDKProvider>
+    // 会话已经不存在了:回首页,别把用户留在一张空页面上。
+    <Show when={!missing()} fallback={<Navigate href="/" />}>
+      <TargetServerScopedProviders directory={directory} sessionID={() => params.id}>
+        <Show when={!!current() || resolved.state !== "errored"} fallback={<ErrorPage error={resolved.error} />}>
+          <Show when={directory()}>
+            <SDKProvider directory={targetDirectory}>
+              <DirectoryDataProvider directory={targetDirectory} sessionRoute>
+                <TargetSessionPage />
+              </DirectoryDataProvider>
+            </SDKProvider>
+          </Show>
         </Show>
-      </Show>
-    </TargetServerScopedProviders>
+      </TargetServerScopedProviders>
+    </Show>
   )
 }
 
 function TargetSessionPage() {
   const sdk = useSDK()
-  const serverSDK = useServerSDK()
   return (
-    <Show when={`${serverSDK().scope}\0${sdk().directory}`} keyed>
+    <Show when={sdk().directory} keyed>
       <SessionProviders>
         <Session />
       </SessionProviders>
@@ -177,16 +135,13 @@ function TargetSessionPage() {
   )
 }
 
-// Wraps the non-draft routes. They are gated on (and keyed to) the globally selected
-// server via ServerKey, then provide the server-scoped shell (Layout/
-// Notification/Models + the visual Layout) for that server.
+// 内核的 SDK / sync 上下文。以前这里还要先 gate 在"当前选中哪台服务器"上,
+// 现在只有一个内核,剩下的就是把两个 provider 摊开。
 function SelectedServerProviders(props: ParentProps) {
   return (
-    <ServerKey>
-      <ServerSDKProvider>
-        <ServerSyncProvider>{props.children}</ServerSyncProvider>
-      </ServerSDKProvider>
-    </ServerKey>
+    <ServerSDKProvider>
+      <ServerSyncProvider>{props.children}</ServerSyncProvider>
+    </ServerSDKProvider>
   )
 }
 
@@ -202,11 +157,11 @@ function DirectoryRouteProviders(props: ParentProps) {
 
 function DraftRoute() {
   const [search] = useSearchParams<{ draftId?: string }>()
-  const tabs = useTabs()
+  const drafts = useDrafts()
   return (
-    <Show when={tabs.ready()}>
+    <Show when={drafts.ready()}>
       <Show
-        when={tabs.store.find((tab): tab is DraftTab => tab.type === "draft" && tab.draftID === search.draftId)}
+        when={search.draftId ? drafts.get(search.draftId) : undefined}
         keyed
         fallback={<Navigate href="/" />}
       >
@@ -216,27 +171,20 @@ function DraftRoute() {
   )
 }
 
-function ResolvedDraftRoute(props: { draft: DraftTab }) {
-  const global = useGlobal()
-  const conn = createMemo(() => global.servers.list().find((item) => ServerConnection.key(item) === props.draft.server))
+function ResolvedDraftRoute(props: { draft: Draft }) {
   const directory = () => props.draft.directory
-  const serverKey = () => props.draft.server
 
   return (
-    <Show when={`${props.draft.server}\0${props.draft.directory}`} keyed>
-      <ServerSDKProvider server={conn}>
-        <ServerSyncProvider server={conn}>
-          <TargetServerScopedProviders directory={directory}>
-            <SDKProvider directory={directory}>
-              <DirectoryDataProvider directory={directory} server={serverKey}>
-                <DraftProviders>
-                  <NewSession />
-                </DraftProviders>
-              </DirectoryDataProvider>
-            </SDKProvider>
-          </TargetServerScopedProviders>
-        </ServerSyncProvider>
-      </ServerSDKProvider>
+    <Show when={props.draft.directory} keyed>
+      <TargetServerScopedProviders directory={directory}>
+        <SDKProvider directory={directory}>
+          <DirectoryDataProvider directory={directory} draftID={props.draft.draftID}>
+            <DraftProviders>
+              <NewSession />
+            </DraftProviders>
+          </DirectoryDataProvider>
+        </SDKProvider>
+      </TargetServerScopedProviders>
     </Show>
   )
 }
@@ -410,20 +358,8 @@ export function AppBaseProviders(props: ParentProps<{ locale?: Locale }>) {
   )
 }
 
-function ServerKey(props: ParentProps) {
-  const server = useServer()
-  return (
-    <Show when={server.key} keyed>
-      {props.children}
-    </Show>
-  )
-}
-
 export function AppInterface(props: {
   children?: JSX.Element
-  defaultServer: ServerConnection.Key
-  canonicalLocalServer?: ServerConnection.Key
-  servers?: Array<ServerConnection.Any>
   router?: Component<BaseRouterProps>
 }) {
   // The visual new layout lives in the router root so it remains mounted across
@@ -439,30 +375,24 @@ export function AppInterface(props: {
   )
 
   return (
-    <ServerProvider
-      defaultServer={props.defaultServer}
-      canonicalLocalServer={props.canonicalLocalServer}
-      servers={props.servers}
-    >
-      <GlobalProvider>
-        <SettingsProvider>
-          <Dynamic
-            component={props.router ?? Router}
-            root={(routerProps) => (
-              <TabsProvider>
-                <NotificationProvider>
-                  <ServerShell>
-                    <NewAppLayout>{routerProps.children}</NewAppLayout>
-                  </ServerShell>
-                </NotificationProvider>
-              </TabsProvider>
-            )}
-          >
-            <Routes />
-          </Dynamic>
-        </SettingsProvider>
-      </GlobalProvider>
-    </ServerProvider>
+    <GlobalProvider>
+      <SettingsProvider>
+        <Dynamic
+          component={props.router ?? Router}
+          root={(routerProps) => (
+            <DraftsProvider>
+              <NotificationProvider>
+                <ServerShell>
+                  <NewAppLayout>{routerProps.children}</NewAppLayout>
+                </ServerShell>
+              </NotificationProvider>
+            </DraftsProvider>
+          )}
+        >
+          <Routes />
+        </Dynamic>
+      </SettingsProvider>
+    </GlobalProvider>
   )
 }
 
@@ -478,30 +408,22 @@ function Routes() {
       <Route path="/" component={NewHome} />
       <Route path="/manuals" component={ManualsPage} />
       <Route path="/bench" component={BenchPage} />
-      <Route path="/:dir/session/:id" component={LegacyTargetSessionRoute} />
+      <Route path="/:dir/session/:id" component={LegacySessionRedirect} />
       <Route path="/new-session" component={DraftRoute} />
-      <Route path="/server/:serverKey/session/:id" component={TargetSessionRoute} />
+      <Route path="/session/:id" component={TargetSessionRoute} />
+      <Route path="/server/:serverKey/session/:id" component={LegacySessionRedirect} />
     </>
   )
 }
 
-function LegacyTargetSessionRoute() {
-  const server = useServer()
-  const tabs = useTabs()
+/**
+ * 旧会话路由的去处。两种形状都只是改了地址:
+ *   /server/<base64(serverKey)>/session/<id>  多服务器时代的正式形状
+ *   /<base64(dir)>/session/<id>               更早的、按目录编址的形状
+ * 桌面端把上次的路由存进了 localStorage(renderer/index.tsx),这两条重定向是
+ * 为了让升级后那条记忆仍然落在会话上,而不是 404。
+ */
+function LegacySessionRedirect() {
   const params = useParams<{ id: string }>()
-
-  return (
-    <Show when={tabs.ready()}>
-      <Navigate
-        href={sessionHref(
-          legacySessionServer(
-            tabs.store.filter((item) => item.type === "session"),
-            params.id,
-            server.key,
-          ),
-          params.id,
-        )}
-      />
-    </Show>
-  )
+  return <Navigate href={sessionHref(params.id)} />
 }

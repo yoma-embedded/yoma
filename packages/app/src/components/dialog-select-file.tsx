@@ -20,8 +20,8 @@ import { createSessionTabs } from "@/pages/session/helpers"
 import { decode64 } from "@/utils/base64"
 import { getRelativeTime } from "@/utils/time"
 
-const DialogSelectFileV2 = lazy(() =>
-  import("./dialog-select-directory-v2").then((module) => ({ default: module.DialogSelectDirectoryV2 })),
+const DialogSelectFileTree = lazy(() =>
+  import("./dialog-select-file-tree").then((module) => ({ default: module.DialogSelectFileTree })),
 )
 
 type EntryType = "command" | "file" | "session"
@@ -48,7 +48,6 @@ const COMMON_COMMAND_IDS = [
   "session.new",
   "session.previous",
   "session.next",
-  "review.toggle",
 ] as const
 
 const uniqueEntries = (items: Entry[]) => {
@@ -391,9 +390,7 @@ export function DialogSelectFile(props: {
 
   if (filesOnly() && platform.platform === "desktop") {
     return (
-      <DialogSelectFileV2
-        server={serverSDK().server}
-        mode="file"
+      <DialogSelectFileTree
         start={projectDirectory()}
         title={language.t("session.header.searchFiles")}
         onSelect={(result) => {

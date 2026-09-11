@@ -35,17 +35,6 @@ function scrollRoot(container: HTMLElement) {
 function target(container: HTMLElement): Target | undefined {
   if (typeof document === "undefined") return
 
-  const review = container.closest("[data-component='session-review']")
-  if (review instanceof HTMLElement) {
-    const root = scrollRoot(container) ?? review
-    const content = review.querySelector("[data-slot='session-review-container']")
-    return {
-      key: review,
-      root,
-      content: content instanceof HTMLElement ? content : undefined,
-    }
-  }
-
   const root = scrollRoot(container)
   if (root) {
     const content = root.querySelector("[role='log']")

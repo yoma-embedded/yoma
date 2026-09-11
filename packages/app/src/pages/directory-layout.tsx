@@ -9,15 +9,15 @@ import { SDKProvider } from "@/context/sdk"
 import { useSync } from "@/context/sync"
 import { decode64 } from "@/utils/base64"
 import { Schema } from "effect"
-import type { ServerConnection } from "@/context/server"
-import { sessionHref } from "@/utils/session-route"
+import { sessionHref } from "@/utils/session-href"
 import { useServerSync } from "@/context/server-sync"
 
 export function DirectoryDataProvider(
   props: ParentProps<{
     directory: string | Accessor<string>
     draftID?: string
-    server?: Accessor<ServerConnection.Key | undefined>
+    /** 会话路由(/session/:id)下挂着:那里没有 /:dir 段可以归一化。 */
+    sessionRoute?: boolean
   }>,
 ) {
   const location = useLocation()
@@ -27,15 +27,11 @@ export function DirectoryDataProvider(
   const serverSync = useServerSync()
   const directory = () => (typeof props.directory === "function" ? props.directory() : props.directory)
   const slug = createMemo(() => base64Encode(directory()))
-  const href = (sessionID: string) => {
-    const server = props.server?.()
-    if (server) return sessionHref(server, sessionID)
-    return `/${slug()}/session/${sessionID}`
-  }
+  const href = (sessionID: string) => sessionHref(sessionID)
 
   createEffect(() => {
     // A draft lives at /new-session?draftId=… and has no directory segment to normalize.
-    if (props.draftID || props.server?.()) return
+    if (props.draftID || props.sessionRoute) return
     const next = sync().data.path.directory
     if (!next || next === directory()) return
     const path = location.pathname.slice(slug().length + 1)

@@ -17,19 +17,15 @@
 
 import type { KernelEvent } from "@yoma-desktop/kernel"
 import { createSimpleContext } from "@yoma-desktop/ui/context"
-import { type Accessor, batch, createMemo, onCleanup } from "solid-js"
-import { createSdkForServer } from "@/utils/server"
-import { kernelAvailable } from "@/utils/kernel"
-import { useLanguage } from "./language"
-import { ServerConnection, useServer } from "./server"
+import { batch, createMemo, onCleanup } from "solid-js"
+import { kernel, kernelAvailable } from "@/utils/kernel"
 import { createRefCountMap } from "@/utils/refcount"
 import { useGlobal } from "./global"
-import { ServerScope } from "@/utils/server-scope"
 
 export type KernelEventHandler = (event: KernelEvent) => void
 
-function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerScope) {
-  const client = createSdkForServer()
+function createServerSdkContextBase() {
+  const client = kernel
   const handlers = new Set<KernelEventHandler>()
 
   // web host(dev:web)和单测里没有 window.api.kernel。那里没有事件流,但其余 API 表
@@ -46,9 +42,6 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   }
 
   return {
-    server,
-    scope,
-    url: server.http.url,
     client,
     event: {
       listen(handler: KernelEventHandler) {
@@ -75,8 +68,8 @@ export type ServerSDK = ServerSDKBase & {
   ensureDirSdkContext: (directory: string) => ReturnType<typeof createDirSdkContext>
 }
 
-export function createServerSdkContext(server: ServerConnection.Any, scope: ServerScope): ServerSDK {
-  const sdk = createServerSdkContextBase(server, scope)
+export function createServerSdkContext(): ServerSDK {
+  const sdk = createServerSdkContextBase()
   return Object.assign(sdk, {
     ensureDirSdkContext: createRefCountMap((dir) => createDirSdkContext(dir, sdk)),
   })
@@ -84,18 +77,11 @@ export function createServerSdkContext(server: ServerConnection.Any, scope: Serv
 
 export const { use: useServerSDK, provider: ServerSDKProvider } = createSimpleContext({
   name: "ServerSDK",
-  // Returns an accessor so the resolved server can change reactively (e.g. a
-  // /new-session draft retargeting its server) without re-instantiating the subtree.
-  init: (props: { server?: Accessor<ServerConnection.Any | undefined> }) => {
+  // 仍然返回 accessor:几百处调用点写的是 `serverSDK().client`。进程里只有一个内核,
+  // 这个 memo 永远返回同一个对象,但形状保持不变,迁移就不必动那些调用点。
+  init: () => {
     const global = useGlobal()
-    const language = useLanguage()
-    const server = useServer()
-
-    return createMemo<ServerSDK>(() => {
-      const conn = props.server?.() ?? server.current
-      if (!conn) throw new Error(language.t("error.serverSDK.noServerAvailable"))
-      return global.ensureServerCtx(conn).sdk
-    })
+    return createMemo<ServerSDK>(() => global.ctx.sdk)
   },
 })
 
@@ -108,12 +94,8 @@ export const { use: useServerSDK, provider: ServerSDKProvider } = createSimpleCo
  */
 function createDirSdkContext(directory: string, serverSDK: ServerSDKBase) {
   return {
-    scope: serverSDK.scope,
     directory,
     client: serverSDK.client,
-    get url() {
-      return serverSDK.url
-    },
     createClient(opts?: unknown) {
       return serverSDK.createClient(opts)
     },

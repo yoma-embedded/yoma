@@ -1,10 +1,7 @@
 import { expect, test } from "vitest"
-import { base64Encode } from "@yoma-desktop/util/encode"
 import { fixture } from "../timeline/session-timeline-stress.fixture"
 import { stressSessionHref } from "../timeline/timeline-test-helpers"
 
-test("builds stress session links for the benchmark server", () => {
-  expect(stressSessionHref(fixture.sourceID)).toBe(
-    `/server/${base64Encode("http://127.0.0.1:4096")}/session/${fixture.sourceID}`,
-  )
+test("builds stress session links on the single-kernel session route", () => {
+  expect(stressSessionHref(fixture.sourceID)).toBe(`/session/${fixture.sourceID}`)
 })

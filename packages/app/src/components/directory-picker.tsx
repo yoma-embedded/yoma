@@ -1,43 +1,24 @@
-import { useDialog } from "@yoma-desktop/ui/context/dialog"
-import { ServerConnection } from "@/context/server"
 import { usePlatform } from "@/context/platform"
-import { lazy } from "solid-js"
-import { DialogSelectDirectory } from "./dialog-select-directory"
-import { directoryPickerKind } from "./directory-picker-policy"
 
-const DialogSelectDirectoryV2 = lazy(() =>
-  import("./dialog-select-directory-v2").then((module) => ({ default: module.DialogSelectDirectoryV2 })),
-)
-
-type DirectoryPickerInput = {
-  server: ServerConnection.Any
-  title?: string
-  multiple?: boolean
-  onSelect: (result: string | string[] | null) => void
-}
-
+/**
+ * 「打开文件夹」背后的唯一一条路:系统原生选择框。
+ *
+ * 原来这里有分流:desktop + 本地服务器走原生,其它情况弹一个自己画的应用内目录浏览器
+ * (爬远端服务器的目录树)。远端服务器这个概念没了 —— 内核是进程内的,用户看的就是本机
+ * 文件系统 —— 那条分支在真机上永不执行,连带 933 行对话框一起删掉了。
+ *
+ * web host(dev:web)没有 openDirectoryPickerDialog:那里没有原生对话框也没有远端可爬,
+ * 于是直接回 null,调用点本来就在处理"用户取消"。
+ */
 export function useDirectoryPicker() {
   const platform = usePlatform()
-  const dialog = useDialog()
 
-  return (input: DirectoryPickerInput) => {
-    if (directoryPickerKind(platform.platform, input.server) === "native" && platform.platform === "desktop") {
-      void platform.openDirectoryPickerDialog({ title: input.title, multiple: input.multiple }).then(input.onSelect)
+  return (input: { title?: string; multiple?: boolean; onSelect: (result: string | string[] | null) => void }) => {
+    const open = platform.platform === "desktop" ? platform.openDirectoryPickerDialog : undefined
+    if (!open) {
+      input.onSelect(null)
       return
     }
-
-    let selected = false
-    const onSelect = (result: string | string[] | null) => {
-      selected = result !== null
-      input.onSelect(result)
-    }
-    const cancel = () => {
-      if (!selected) input.onSelect(null)
-    }
-    if (platform.platform === "desktop") {
-      dialog.show(() => <DialogSelectDirectoryV2 {...input} onSelect={onSelect} />, cancel)
-      return
-    }
-    dialog.show(() => <DialogSelectDirectory {...input} onSelect={onSelect} />, cancel)
+    void open({ title: input.title, multiple: input.multiple }).then(input.onSelect)
   }
 }

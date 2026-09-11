@@ -5,16 +5,11 @@ import {
   displayName,
   effectiveWorkspaceOrder,
   errorMessage,
-  homeProjectNavigation,
   homeProjectDirectories,
-  homeSessionServerStatus,
   latestRootSession,
   toggleHomeProjectSelection,
 } from "./helpers"
 import { pathKey } from "@/utils/path-key"
-import { ServerConnection } from "@/context/server"
-
-const serverKey = ServerConnection.Key.make
 
 const session = (input: Partial<Session> & Pick<Session, "id" | "directory">): Session => ({
   title: "",
@@ -96,91 +91,31 @@ describe("layout workspace helpers", () => {
     expect(displayName({ worktree: "/" })).toBe("/")
   })
 
-  test("scopes home project selection by server", () => {
-    expect(
-      toggleHomeProjectSelection(undefined, serverKey("https://debian.example"), "/home/luke/repos/amazon"),
-    ).toEqual({
-      server: serverKey("https://debian.example"),
+  test("toggles the selected home project", () => {
+    expect(toggleHomeProjectSelection(undefined, "/home/luke/repos/amazon")).toEqual({
       directory: "/home/luke/repos/amazon",
     })
-    expect(
-      toggleHomeProjectSelection(
-        { server: serverKey("https://windows.example"), directory: "/home/luke/repos/amazon" },
-        serverKey("https://debian.example"),
-        "/home/luke/repos/amazon",
-      ),
-    ).toEqual({ server: serverKey("https://debian.example"), directory: "/home/luke/repos/amazon" })
-    expect(
-      toggleHomeProjectSelection(
-        { server: serverKey("https://debian.example"), directory: "/home/luke/repos/amazon" },
-        serverKey("https://debian.example"),
-        "/home/luke/repos/amazon",
-      ),
-    ).toEqual({ server: serverKey("https://debian.example") })
+    expect(toggleHomeProjectSelection({ directory: "/home/luke/repos/other" }, "/home/luke/repos/amazon")).toEqual({
+      directory: "/home/luke/repos/amazon",
+    })
+    expect(toggleHomeProjectSelection({ directory: "/home/luke/repos/amazon" }, "/home/luke/repos/amazon")).toEqual({})
   })
 
-  test("closes a home project through its server context", () => {
+  test("closing the selected home project clears the selection", () => {
     const closed: string[] = []
 
-    expect(
-      closeHomeProject(
-        { server: serverKey("https://windows.example"), directory: "/shared" },
-        serverKey("https://debian.example"),
-        { close: (directory) => closed.push(directory) },
-        "/shared",
-      ),
-    ).toEqual({ server: serverKey("https://windows.example"), directory: "/shared" })
+    expect(closeHomeProject({ directory: "/other" }, { close: (d) => closed.push(d) }, "/shared")).toEqual({
+      directory: "/other",
+    })
     expect(closed).toEqual(["/shared"])
-    expect(
-      closeHomeProject(
-        { server: serverKey("https://debian.example"), directory: "/shared" },
-        serverKey("https://debian.example"),
-        { close: (directory) => closed.push(directory) },
-        "/shared",
-      ),
-    ).toEqual({ server: serverKey("https://debian.example") })
-  })
-
-  test("defers home project navigation until its server is active", () => {
-    expect(
-      homeProjectNavigation(serverKey("sidecar"), serverKey("https://debian.example"), "/YW1hem9u/session"),
-    ).toEqual({
-      server: serverKey("https://debian.example"),
-      href: "/YW1hem9u/session",
-    })
-    expect(
-      homeProjectNavigation(
-        serverKey("https://debian.example"),
-        serverKey("https://debian.example"),
-        "/YW1hem9u/session",
-      ),
-    ).toEqual({
-      href: "/YW1hem9u/session",
-    })
+    expect(closeHomeProject({ directory: "/shared" }, { close: (d) => closed.push(d) }, "/shared")).toEqual({})
+    expect(closed).toEqual(["/shared", "/shared"])
   })
 
   test("preserves picker order when adding multiple projects", () => {
     expect(homeProjectDirectories(["/first", "/second"])).toEqual(["/first", "/second"])
     expect(homeProjectDirectories("/only")).toEqual(["/only"])
     expect(homeProjectDirectories(null)).toEqual([])
-  })
-
-  test("hides status derived from an inactive server", () => {
-    let reads = 0
-    const status = () => {
-      reads++
-      return { working: true, tint: "red" }
-    }
-    expect(homeSessionServerStatus(false, status)).toEqual({
-      working: false,
-      tint: undefined,
-    })
-    expect(reads).toBe(0)
-    expect(homeSessionServerStatus(true, status)).toEqual({
-      working: true,
-      tint: "red",
-    })
-    expect(reads).toBe(1)
   })
 
   test("extracts api error message and fallback", () => {

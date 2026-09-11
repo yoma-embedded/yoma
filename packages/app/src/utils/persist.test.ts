@@ -1,5 +1,4 @@
 import { beforeAll, beforeEach, describe, expect, test, vi } from "vitest"
-import { ServerScope } from "./server-scope"
 
 type PersistTestingType = typeof import("./persist").PersistTesting
 type PersistType = typeof import("./persist").Persist
@@ -184,28 +183,48 @@ describe("persist localStorage resilience", () => {
     expect(storage.getItem(`${target.storage}:${target.key}`)).toBeNull()
   })
 
-  test("server workspace target preserves local storage and isolates remote storage", () => {
-    const local = Persist.serverWorkspace(ServerScope.local, "/home/luke/repo", "prompt")
-    const windows = Persist.serverWorkspace("https://windows.example" as ServerScope, "/home/luke/repo", "prompt")
-    const debian = Persist.serverWorkspace("https://debian.example" as ServerScope, "/home/luke/repo", "prompt")
-
-    expect(local).toEqual(Persist.workspace("/home/luke/repo", "prompt"))
-    expect(windows.storage).not.toBe(local.storage)
-    expect(debian.storage).not.toBe(local.storage)
-    expect(debian.storage).not.toBe(windows.storage)
-    expect(windows.legacyStorageNames).toBeUndefined()
-    expect(debian.legacyStorageNames).toBeUndefined()
-  })
-
-  test("server global target preserves local key and isolates remote keys", () => {
-    expect(Persist.serverGlobal(ServerScope.local, "notification")).toEqual(Persist.global("notification"))
-    expect(Persist.serverGlobal("https://debian.example" as ServerScope, "notification")).toEqual({
+  /**
+   * 这一组钉的是**用户硬盘上已有的键**。多服务器时代的 `Persist.server*` 变体没了,
+   * 留下的 global / workspace / session / draft 必须和当年 scope === "local" 时
+   * 算出来的字节完全一样,否则升级之后草稿、评论、文件视图、通知已读全部失踪。
+   */
+  test("global target keeps its storage name, key and legacy key", () => {
+    expect(Persist.global("layout", ["layout.v6"])).toEqual({
       storage: "yoma.global.dat",
-      key: "https://debian.example\0notification",
+      key: "layout",
+      legacy: ["layout.v6"],
+    })
+    expect(Persist.global("notification", ["notification.v1"])).toEqual({
+      storage: "yoma.global.dat",
+      key: "notification",
+      legacy: ["notification.v1"],
+    })
+    expect(Persist.global("tabs")).toEqual({ storage: "yoma.global.dat", key: "tabs", legacy: undefined })
+    expect(Persist.global("server", ["server.v3"])).toEqual({
+      storage: "yoma.global.dat",
+      key: "server",
+      legacy: ["server.v3"],
     })
   })
 
-  test("server global target cannot collide when scope and key contain colons", () => {
-    expect(Persist.serverGlobal("a:b" as ServerScope, "c")).not.toEqual(Persist.serverGlobal("a" as ServerScope, "b:c"))
+  test("workspace and session targets keep their exact storage name and key", () => {
+    expect(Persist.workspace("/home/luke/repo", "prompt")).toEqual({
+      storage: "yoma.workspace.-home-luke-r.1dbjore.dat",
+      legacyStorageNames: undefined,
+      key: "workspace:prompt",
+      legacy: undefined,
+    })
+    expect(Persist.session("/home/luke/repo", "ses_1", "prompt", ["/home/luke/repo/prompt/ses_1.v2"])).toEqual({
+      storage: "yoma.workspace.-home-luke-r.1dbjore.dat",
+      legacyStorageNames: undefined,
+      key: "session:ses_1:prompt",
+      legacy: ["/home/luke/repo/prompt/ses_1.v2"],
+    })
+    expect(Persist.scoped("/home/luke/repo", undefined, "file-view")).toEqual(
+      Persist.workspace("/home/luke/repo", "file-view"),
+    )
+    expect(Persist.scoped("/home/luke/repo", "ses_1", "comments")).toEqual(
+      Persist.session("/home/luke/repo", "ses_1", "comments"),
+    )
   })
 })

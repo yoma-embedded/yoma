@@ -2,7 +2,6 @@ import { describe, expect, test } from "vitest"
 import { createMemo, createRoot } from "solid-js"
 import { createStore } from "solid-js/store"
 import {
-  createOpenReviewFile,
   createOpenSessionFileTab,
   createSessionTabs,
   getTabReorderIndex,
@@ -13,26 +12,6 @@ describe("shouldShowFileTree", () => {
   test("does not reserve space for a disabled file tree", () => {
     expect(shouldShowFileTree({ visible: false, opened: true })).toBe(false)
     expect(shouldShowFileTree({ visible: true, opened: true })).toBe(true)
-  })
-})
-
-describe("createOpenReviewFile", () => {
-  test("opens and loads selected review file", () => {
-    const calls: string[] = []
-    const openReviewFile = createOpenReviewFile({
-      showAllFiles: () => calls.push("show"),
-      tabForPath: (path) => {
-        calls.push(`tab:${path}`)
-        return `file://${path}`
-      },
-      openTab: (tab) => calls.push(`open:${tab}`),
-      setActive: (tab) => calls.push(`active:${tab}`),
-      loadFile: (path) => calls.push(`load:${path}`),
-    })
-
-    openReviewFile("src/a.ts")
-
-    expect(calls).toEqual(["show", "load:src/a.ts", "tab:src/a.ts", "open:file://src/a.ts", "active:file://src/a.ts"])
   })
 })
 
@@ -98,7 +77,7 @@ describe("createSessionTabs", () => {
     })
   })
 
-  test("prefers context and review fallbacks when no file tab is active", () => {
+  test("falls back to the context tab when no file tab is active", () => {
     createRoot((dispose) => {
       const [state] = createStore({
         active: undefined as string | undefined,
@@ -109,30 +88,30 @@ describe("createSessionTabs", () => {
         tabs,
         pathFromTab: () => undefined,
         normalizeTab: (tab) => tab,
-        review: () => true,
-        hasReview: () => true,
       })
 
       expect(result.activeTab()).toBe("context")
       expect(result.closableTab()).toBe("context")
       dispose()
     })
+  })
 
+  /** 审查页拆掉了:存量记录里残留的 "review" 标签不能再被当成一个可显示的标签。 */
+  test("ignores a leftover review tab", () => {
     createRoot((dispose) => {
       const [state] = createStore({
-        active: undefined as string | undefined,
-        all: [],
+        active: "review" as string | undefined,
+        all: ["review"],
       })
       const tabs = createMemo(() => ({ active: () => state.active, all: () => state.all }))
       const result = createSessionTabs({
         tabs,
         pathFromTab: () => undefined,
         normalizeTab: (tab) => tab,
-        review: () => true,
-        hasReview: () => true,
       })
 
-      expect(result.activeTab()).toBe("review")
+      expect(result.openedTabs()).toEqual([])
+      expect(result.activeTab()).toBe("empty")
       expect(result.activeFileTab()).toBeUndefined()
       expect(result.closableTab()).toBeUndefined()
       dispose()

@@ -3,7 +3,6 @@ import { createStore, produce } from "solid-js/store"
 import { Persist, persisted } from "@/utils/persist"
 import { createScopedCache } from "@/utils/scoped-cache"
 import type { FileViewState, SelectedLineRange } from "./types"
-import type { ServerScope } from "@/utils/server-scope"
 
 const WORKSPACE_KEY = "__workspace__"
 const MAX_FILE_VIEW_SESSIONS = 20
@@ -34,11 +33,11 @@ function equalSelectedLines(a: SelectedLineRange | null | undefined, b: Selected
   )
 }
 
-function createViewSession(scope: ServerScope, dir: string, id: string | undefined) {
+function createViewSession(dir: string, id: string | undefined) {
   const legacyViewKey = `${dir}/file${id ? "/" + id : ""}.v1`
 
   const [view, setView, _, ready] = persisted(
-    Persist.serverScoped(scope, dir, id, "file-view", [legacyViewKey]),
+    Persist.scoped(dir, id, "file-view", [legacyViewKey]),
     createStore<{
       file: Record<string, FileViewState>
     }>({
@@ -120,14 +119,14 @@ function createViewSession(scope: ServerScope, dir: string, id: string | undefin
   }
 }
 
-export function createFileViewCache(scope: ServerScope) {
+export function createFileViewCache() {
   const cache = createScopedCache(
     (key) => {
       const split = key.lastIndexOf("\n")
       const dir = split >= 0 ? key.slice(0, split) : key
       const id = split >= 0 ? key.slice(split + 1) : WORKSPACE_KEY
       return createRoot((dispose) => ({
-        value: createViewSession(scope, dir, id === WORKSPACE_KEY ? undefined : id),
+        value: createViewSession(dir, id === WORKSPACE_KEY ? undefined : id),
         dispose,
       }))
     },

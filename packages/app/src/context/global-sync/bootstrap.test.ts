@@ -4,8 +4,8 @@ import { QueryClient } from "@tanstack/solid-query"
 import type { NormalizedProviderListResponse } from "@yoma-desktop/session-ui/context"
 import { bootstrapDirectory, loadProjectsQuery, loadProvidersQuery, type Project } from "./bootstrap"
 import type { Config, State, VcsCache } from "./types"
-import type { Sdk } from "@/utils/server"
-import { ServerScope } from "@/utils/server-scope"
+import type { Sdk } from "@/utils/kernel"
+import { LOCAL_SCOPE } from "@/utils/scoped-key"
 
 const provider = { all: new Map(), connected: [], default: {} } satisfies NormalizedProviderListResponse
 
@@ -36,7 +36,6 @@ describe("bootstrapDirectory", () => {
 
     await bootstrapDirectory({
       directory: "/project",
-      scope: ServerScope.local,
       global: {
         config: {} satisfies Config,
         path: { directory: "/project" },
@@ -80,21 +79,11 @@ describe("bootstrapDirectory", () => {
 })
 
 describe("query keys", () => {
-  test("partitions identical directories by server scope", () => {
+  test("keeps the \"local\" first segment the multi-server scope used to supply", () => {
     const client = {} as Sdk
-    const remote = "https://debian.example" as typeof ServerScope.local
 
-    expect([...loadProvidersQuery(ServerScope.local, "/repo", client).queryKey]).toEqual(["local", "/repo", "providers"])
-    expect([...loadProvidersQuery(remote, "/repo", client).queryKey]).toEqual([
-      "https://debian.example",
-      "/repo",
-      "providers",
-    ])
-    expect([...loadProvidersQuery(remote, null, client).queryKey]).toEqual([
-      "https://debian.example",
-      null,
-      "providers",
-    ])
-    expect([...loadProjectsQuery(remote, client).queryKey]).toEqual(["https://debian.example", "project"])
+    expect([...loadProvidersQuery("/repo", client).queryKey]).toEqual([LOCAL_SCOPE, "/repo", "providers"])
+    expect([...loadProvidersQuery(null, client).queryKey]).toEqual([LOCAL_SCOPE, null, "providers"])
+    expect([...loadProjectsQuery(client).queryKey]).toEqual([LOCAL_SCOPE, "project"])
   })
 })

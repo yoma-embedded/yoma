@@ -1,4 +1,3 @@
-import { useNavigate } from "@solidjs/router"
 import { useCommand, type CommandOption } from "@/context/command"
 import { useDialog } from "@yoma-desktop/ui/context/dialog"
 import { previewSelectedLines } from "@yoma-desktop/session-ui/pierre/selection-bridge"
@@ -16,15 +15,13 @@ import { createSessionTabs } from "@/pages/session/helpers"
 import { extractPromptFromParts } from "@/utils/prompt"
 import { UserMessage } from "@yoma-desktop/kernel"
 import { useSessionLayout } from "@/pages/session/session-layout"
-import { useTabs } from "@/context/tabs"
-import { requireServerKey } from "@/utils/session-route"
+import { useDrafts } from "@/context/drafts"
 import { createSessionOwnership } from "./session-ownership"
 
 export type SessionCommandContext = {
   navigateMessageByOffset: (offset: number) => void
   setActiveMessage: (message: UserMessage | undefined) => void
   focusInput: () => void
-  review?: () => boolean
 }
 
 const withCategory = (category: string) => {
@@ -44,17 +41,15 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
   const sdk = useSDK()
   const settings = useSettings()
   const sync = useSync()
-  const sessionTabs = useTabs()
+  const drafts = useDrafts()
   const layout = useLayout()
-  const navigate = useNavigate()
-  const { params, sessionKey, tabs, view } = useSessionLayout()
+  const { params, sessionKey, tabs } = useSessionLayout()
   const sessionOwnership = createSessionOwnership(sessionKey)
   const openDialog = async <T,>(load: () => Promise<T>, show: (value: T) => void) => {
     const owner = sessionOwnership.capture()
     const value = await load()
     owner.run(() => show(value))
   }
-  const hasReview = () => !!params.id
   const normalizeTab = (tab: string) => {
     if (!tab.startsWith("file://")) return tab
     return file.tab(tab)
@@ -63,8 +58,6 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     tabs,
     pathFromTab: file.pathFromTab,
     normalizeTab,
-    review: actions.review,
-    hasReview,
   })
   const activeFileTab = tabState.activeFileTab
   const closableTab = tabState.closableTab
@@ -190,11 +183,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       keybind: "mod+shift+s",
       slash: "new",
       onSelect: () => {
-        if (params.serverKey) {
-          sessionTabs.newDraft({ server: requireServerKey(params.serverKey), directory: sdk().directory })
-          return
-        }
-        navigate(`/${params.dir}/session`)
+        drafts.create({ directory: sdk().directory })
       },
     }),
     sessionCommand({
@@ -248,12 +237,6 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
   ]
 
   const viewCmds = () => [
-    viewCommand({
-      id: "review.toggle",
-      title: language.t("command.review.toggle"),
-      keybind: "mod+shift+r",
-      onSelect: () => view().reviewPanel.toggle(),
-    }),
     ...(shown()
       ? [
           viewCommand({

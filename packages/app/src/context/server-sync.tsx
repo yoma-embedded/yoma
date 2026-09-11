@@ -12,7 +12,7 @@
 import { showToast } from "@/utils/toast"
 import { getFilename } from "@yoma-desktop/util/path"
 import type { KernelEvent } from "@yoma-desktop/kernel"
-import { type Accessor, batch, createMemo, getOwner, onCleanup, onMount, untrack } from "solid-js"
+import { batch, createMemo, getOwner, onCleanup, onMount, untrack } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import { useLanguage } from "@/context/language"
 import { ServerSDK } from "./server-sdk"
@@ -38,9 +38,8 @@ import { createSimpleContext } from "@yoma-desktop/ui/context"
 import { NormalizedProviderListResponse } from "@yoma-desktop/session-ui/context"
 import { createRefCountMap } from "@/utils/refcount"
 import { useGlobal } from "./global"
-import { ServerConnection, useServer } from "./server"
-import type { ServerScope } from "@/utils/server-scope"
-import type { Sdk } from "@/utils/server"
+import { LOCAL_SCOPE } from "@/utils/scoped-key"
+import type { Sdk } from "@/utils/kernel"
 import { persisted } from "@/utils/persist"
 import { createServerSession } from "./server-session"
 
@@ -53,12 +52,13 @@ type GlobalStore = {
   reload: undefined | "pending" | "complete"
 }
 
-function makeQueryOptionsApi(scope: ServerScope, serverSDK: () => Sdk, sdkFor: (dir: PathKey) => Sdk) {
+function makeQueryOptionsApi(serverSDK: () => Sdk, sdkFor: (dir: PathKey) => Sdk) {
   return {
-    projects: () => loadProjectsQuery(scope, serverSDK()),
+    projects: () => loadProjectsQuery(serverSDK()),
     providers: (directory: PathKey | null) =>
-      loadProvidersQuery(scope, directory, directory === null ? serverSDK() : sdkFor(directory)),
-    sessions: (directory: PathKey) => ({ queryKey: [scope, directory, "loadSessions"] as const }),
+      loadProvidersQuery(directory, directory === null ? serverSDK() : sdkFor(directory)),
+    // query key 的第一段保留 "local":和 bootstrap 里的键同源,换了就对不上。
+    sessions: (directory: PathKey) => ({ queryKey: [LOCAL_SCOPE, directory, "loadSessions"] as const }),
   }
 }
 export type QueryOptionsApi = ReturnType<typeof makeQueryOptionsApi>
@@ -82,7 +82,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     return sdk
   }
 
-  const queryOptionsApi = makeQueryOptionsApi(serverSDK.scope, () => serverSDK.client, sdkFor)
+  const queryOptionsApi = makeQueryOptionsApi(() => serverSDK.client, sdkFor)
 
   const providerQuery = useQuery(() => queryOptionsApi.providers(null))
 
@@ -128,11 +128,10 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   }) as typeof setGlobalStore
 
   const bootstrap = useQuery(() => ({
-    queryKey: [serverSDK.scope, "bootstrap"],
+    queryKey: [LOCAL_SCOPE, "bootstrap"],
     queryFn: async () => {
       await bootstrapGlobal({
         serverSDK: serverSDK.client,
-        scope: serverSDK.scope,
         requestFailedTitle: language.t("common.requestFailed"),
         translate: language.t,
         formatMoreCount: (count) => language.t("common.moreCountSuffix", { count }),
@@ -157,7 +156,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   const queue = createRefreshQueue({
     paused,
     key: directoryKey,
-    bootstrap: () => queryClient.fetchQuery({ queryKey: [serverSDK.scope, "bootstrap"] }),
+    bootstrap: () => queryClient.fetchQuery({ queryKey: [LOCAL_SCOPE, "bootstrap"] }),
     bootstrapInstance,
   })
 
@@ -165,7 +164,6 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
 
   const children = createChildStoreManager({
     owner,
-    scope: serverSDK.scope,
     persist: persisted,
     isBooting: (directory) => booting.has(directory),
     isLoadingSessions: (directory) => sessionLoads.has(directory),
@@ -177,7 +175,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       queue.clear(key)
       sessionMeta.delete(key)
       sdkCache.delete(key)
-      clearProviderRev(serverSDK.scope, key)
+      clearProviderRev(key)
     },
     translate: language.t,
     queryOptions: queryOptionsApi,
@@ -265,7 +263,6 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       const sdk = sdkFor(directory)
       await bootstrapDirectory({
         directory,
-        scope: serverSDK.scope,
         global: {
           config: globalStore.config,
           path: globalStore.path,
@@ -420,18 +417,10 @@ export type ServerSync = ReturnType<typeof createServerSyncContext>
 
 export const { use: useServerSync, provider: ServerSyncProvider } = createSimpleContext({
   name: "ServerSync",
-  // Returns an accessor so the resolved server can change reactively without
-  // re-instantiating the subtree (mirrors useServerSDK).
-  init: (props: { server?: Accessor<ServerConnection.Any | undefined> }) => {
+  // 和 useServerSDK 一样返回 accessor:只有一个内核,但调用点写的是 `sync()`。
+  init: () => {
     const global = useGlobal()
-    const language = useLanguage()
-    const server = useServer()
-
-    return createMemo<ServerSync>(() => {
-      const conn = props.server?.() ?? server.current
-      if (!conn) throw new Error(language.t("error.serverSDK.noServerAvailable"))
-      return global.ensureServerCtx(conn).sync
-    })
+    return createMemo<ServerSync>(() => global.ctx.sync)
   },
 })
 

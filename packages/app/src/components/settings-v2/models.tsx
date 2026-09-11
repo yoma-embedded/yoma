@@ -7,7 +7,6 @@ import { TextInputV2 } from "@yoma-desktop/ui/v2/text-input-v2"
 import { type Component, For, Show } from "solid-js"
 import { useLanguage } from "@/context/language"
 import { useModels } from "@/context/models"
-import { popularProviders } from "@/hooks/use-providers"
 import { SettingsListV2 } from "./parts/list"
 import { SettingsRowV2 } from "./parts/row"
 import "./settings-v2.css"
@@ -15,6 +14,21 @@ import "./settings-v2.css"
 type ModelItem = ReturnType<ReturnType<typeof useModels>["list"]>[number]
 
 const PROVIDER_ICON_SIZE = 16
+
+/**
+ * 模型列表里哪些厂商排前面。唯一的用处就是这个排序 —— 原来它住在 `hooks/use-providers.ts`
+ * 里,那个文件是 opencode 的 provider 目录(内核没有,已整体删掉),只剩这个常量值得留。
+ */
+const popularProviders = [
+  "opencode",
+  "opencode-go",
+  "anthropic",
+  "github-copilot",
+  "openai",
+  "google",
+  "openrouter",
+  "vercel",
+]
 
 export const SettingsModelsV2: Component = () => {
   const language = useLanguage()

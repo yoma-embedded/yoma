@@ -4,7 +4,7 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from "electron"
 import type { IpcMainEvent, IpcMainInvokeEvent } from "electron"
 import type { DesktopMenuAction } from "@yoma-desktop/app/desktop-menu"
 
-import type { FatalRendererError, ServerReadyData, TitlebarTheme } from "../preload/types"
+import type { FatalRendererError, TitlebarTheme } from "../preload/types"
 import { runDesktopMenuAction } from "./desktop-menu-actions"
 import { assertAttachmentBudget, createPickedFileAuthorizations } from "./attachment-picker"
 import { getStore } from "./store"
@@ -22,13 +22,9 @@ const pickerFilters = (ext?: string[]) => {
 const pickedFiles = createPickedFileAuthorizations()
 
 type Deps = {
-  killSidecar: () => Promise<void> | void
   /** 给发起调用的那个窗口重新牵一条到内核的 MessagePort。 */
   attachKernel: (event: IpcMainInvokeEvent) => void
   relaunch: () => void
-  awaitInitialization: () => Promise<ServerReadyData>
-  getDefaultServerUrl: () => Promise<string | null> | string | null
-  setDefaultServerUrl: (url: string | null) => Promise<void> | void
   updater: UpdaterController
   /** "启动时 / 定时自动检查更新"的开关(yoma.updater store)。 */
   updaterAutoCheck: { get: () => boolean; set: (value: boolean) => void }
@@ -45,7 +41,6 @@ export function registerIpcHandlers(deps: Deps) {
   const updaterSubscriptions = createUpdaterSubscriptions()
   app.once("will-quit", updaterSubscriptions.clear)
 
-  ipcMain.handle("kill-sidecar", () => deps.killSidecar())
   ipcMain.handle("mailbox-configure", (_event: IpcMainInvokeEvent, settings: Parameters<Deps["mailbox"]["configure"]>[0]) =>
     deps.mailbox.configure(settings),
   )
@@ -64,11 +59,6 @@ export function registerIpcHandlers(deps: Deps) {
   )
   // renderer reload 之后端口失效,preload 主动来要一次重新牵线。
   ipcMain.handle("kernel-attach", (event: IpcMainInvokeEvent) => deps.attachKernel(event))
-  ipcMain.handle("await-initialization", () => deps.awaitInitialization())
-  ipcMain.handle("get-default-server-url", () => deps.getDefaultServerUrl())
-  ipcMain.handle("set-default-server-url", (_event: IpcMainInvokeEvent, url: string | null) =>
-    deps.setDefaultServerUrl(url),
-  )
   ipcMain.handle("updater-subscribe", (event) => {
     const id = event.sender.id
     updaterSubscriptions.set(

@@ -4,7 +4,7 @@ import { base64Encode } from "@yoma-desktop/util/encode"
 import { Binary } from "@yoma-desktop/util/binary"
 import { useNavigate, useParams, useSearchParams } from "@solidjs/router"
 import { batch, type Accessor } from "solid-js"
-import { useTabs } from "@/context/tabs"
+import { useDrafts } from "@/context/drafts"
 import { useServerSync, type ServerSync } from "@/context/server-sync"
 import { useLanguage } from "@/context/language"
 import { useLayout } from "@/context/layout"
@@ -15,7 +15,8 @@ import { useSync, type DirectorySync } from "@/context/sync"
 import { Identifier } from "@/utils/id"
 import { buildRequestParts } from "./build-request-parts"
 import { setCursorPosition } from "./editor-dom"
-import { ScopedKey } from "@/utils/server-scope"
+import { ScopedKey } from "@/utils/scoped-key"
+import { sessionHref } from "@/utils/session-href"
 import { createPromptSubmissionState } from "./submission-state"
 
 type PendingPrompt = {
@@ -166,8 +167,8 @@ export function createPromptSubmit(input: PromptSubmitInput) {
   const language = useLanguage()
   const params = useParams()
   const [search] = useSearchParams<{ draftId?: string }>()
-  const tabs = useTabs()
-  const pendingKey = (sessionID: string) => ScopedKey.from(sdk().scope, sessionID)
+  const drafts = useDrafts()
+  const pendingKey = (sessionID: string) => ScopedKey.from(sessionID)
 
   const errorMessage = (err: unknown) => {
     if (err && typeof err === "object" && "data" in err) {
@@ -284,8 +285,8 @@ export function createPromptSubmit(input: PromptSubmitInput) {
         local.session.promote(sessionDirectory, created.id)
         layout.handoff.setTabs(base64Encode(sessionDirectory), created.id)
         const draftID = search.draftId
-        if (draftID) tabs.promoteDraft(draftID, { server: tabs.draft(draftID).server, sessionId: created.id })
-        else navigate(`/${base64Encode(sessionDirectory)}/session/${created.id}`)
+        if (draftID) drafts.promote(draftID, created.id)
+        else navigate(sessionHref(created.id))
         submission.retarget(prompt.capture({ dir: base64Encode(sessionDirectory), id: created.id }))
       }
     }

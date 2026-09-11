@@ -1,7 +1,6 @@
 import { getFilename } from "@yoma-desktop/util/path"
 import { type Session } from "@yoma-desktop/kernel"
 import { pathKey } from "@/utils/path-key"
-import type { ServerConnection } from "@/context/server"
 import type { HomeProjectSelection } from "@/context/layout"
 
 type SessionStore = {
@@ -39,39 +38,28 @@ export const latestRootSession = (stores: SessionStore[], now: number) =>
 export const displayName = (project: { name?: string; worktree: string }) =>
   project.name || getFilename(project.worktree) || project.worktree
 
+/** 点同一个工程就取消选中(回到"全部工程"),点别的就选它。 */
 export function toggleHomeProjectSelection(
   current: HomeProjectSelection | undefined,
-  server: ServerConnection.Key,
   directory: string,
 ): HomeProjectSelection {
-  if (current?.server === server && current.directory === directory) return { server }
-  return { server, directory }
+  if (current?.directory === directory) return {}
+  return { directory }
 }
 
 export function closeHomeProject(
   selected: HomeProjectSelection | undefined,
-  server: ServerConnection.Key,
   projects: { close: (directory: string) => void },
   directory: string,
 ) {
   projects.close(directory)
-  if (selected?.server === server && selected.directory === directory) return { server }
+  if (selected?.directory === directory) return {}
   return selected
-}
-
-export function homeProjectNavigation(active: ServerConnection.Key, server: ServerConnection.Key, href: string) {
-  if (active === server) return { href }
-  return { server, href }
 }
 
 export function homeProjectDirectories(result: string | string[] | null) {
   if (!result) return []
   return Array.isArray(result) ? result : [result]
-}
-
-export function homeSessionServerStatus(active: boolean, status: () => { working: boolean; tint?: string }) {
-  if (!active) return { working: false, tint: undefined }
-  return status()
 }
 
 /**

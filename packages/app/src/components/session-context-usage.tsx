@@ -66,7 +66,7 @@ export function SessionContextUsage(props: SessionContextUsageProps) {
   const hasOtherTabs = createMemo(() =>
     tabs()
       .all()
-      .some((tab) => tab !== "context" && tab !== "review"),
+      .some((tab) => tab !== "context"),
   )
 
   const openContext = () => {

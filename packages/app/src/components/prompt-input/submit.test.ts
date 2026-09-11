@@ -17,7 +17,7 @@ const optimisticSeeded: boolean[] = []
 const storedSessions: Record<string, Array<{ id: string; title?: string }>> = {}
 const promoted: Array<{ directory: string; sessionID: string }> = []
 const syncedDirectories: string[] = []
-const promotedDrafts: Array<{ draftID: string; server: string; sessionId: string }> = []
+const promotedDrafts: Array<{ draftID: string; sessionId: string }> = []
 
 let params: { id?: string } = {}
 let search: { draftId?: string } = {}
@@ -103,15 +103,10 @@ beforeAll(async () => {
     }),
   }))
 
-  vi.doMock("@/context/server", () => ({
-    useServer: () => ({ key: "server-key" }),
-  }))
-
-  vi.doMock("@/context/tabs", () => ({
-    useTabs: () => ({
-      draft: () => ({ server: "project-server" }),
-      promoteDraft: (draftID: string, session: { server: string; sessionId: string }) => {
-        promotedDrafts.push({ draftID, ...session })
+  vi.doMock("@/context/drafts", () => ({
+    useDrafts: () => ({
+      promote: (draftID: string, sessionId: string) => {
+        promotedDrafts.push({ draftID, sessionId })
       },
     }),
   }))
@@ -260,13 +255,13 @@ describe("prompt submit", () => {
     expect(sentPrompts).toEqual([{ sessionID: "session-1", text: "ls", setModelCallsBefore: 1 }])
   })
 
-  test("promotes drafts using the selected project's server", async () => {
+  test("promotes the draft onto the session it just created", async () => {
     search = { draftId: "draft-1" }
     const submit = createPromptSubmit({ ...baseInput(), info: () => undefined })
 
     await submit.handleSubmit(event())
 
-    expect(promotedDrafts).toEqual([{ draftID: "draft-1", server: "project-server", sessionId: "session-1" }])
+    expect(promotedDrafts).toEqual([{ draftID: "draft-1", sessionId: "session-1" }])
   })
 
   test("carries the selected model on optimistic prompts", async () => {

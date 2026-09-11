@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createEffect, createMemo, on, onCleanup, type JSX } from "solid-js"
+import { For, Match, Show, Switch, createEffect, createMemo, on, onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createMediaQuery } from "@solid-primitives/media"
 import { Tabs } from "@yoma-desktop/ui/tabs"
@@ -42,8 +42,6 @@ function BarButton(props: {
   title: string
   on?: boolean
   label?: string
-  /** 图标右侧的小角标(比如审查的"3 +12 −1"),没有就不占位 */
-  badge?: JSX.Element
   onClick: () => void
 }) {
   return (
@@ -63,26 +61,16 @@ function BarButton(props: {
         <Show when={props.label}>
           <span class="text-12-regular">{props.label}</span>
         </Show>
-        <Show when={props.badge}>
-          <span class="text-12-regular tabular-nums flex items-center gap-1">{props.badge}</span>
-        </Show>
       </button>
     </Tooltip>
   )
 }
 
 export function SessionSidePanel(props: {
-  canReview: () => boolean
+  /** 工作区未提交改动 —— 只用来给资源管理器的文件挂"改过"角标 */
   diffs: () => FileDiff[]
-  diffsReady: () => boolean
-  empty: () => string
-  hasReview: () => boolean
-  reviewCount: () => number
-  reviewStats: () => { files: number; added: number; removed: number }
-  reviewPanel: () => JSX.Element
-  activeDiff?: string
-  focusReviewDiff: (path: string) => void
-  reviewSnap: boolean
+  /** 右栏刚开/刚关的那一帧:别让宽度动画追着跑 */
+  snap: boolean
   size: Sizing
 }) {
   const layout = useLayout()
@@ -96,16 +84,16 @@ export function SessionSidePanel(props: {
   const isDesktop = createMediaQuery("(min-width: 768px)")
 
   // ---- 模式与旧布局状态同步 ------------------------------------------------
-  // 旧的 header 开关/快捷键仍写 view().reviewPanel / layout.fileTree；
-  // 这里单向同步到 dock（打开→切模式），dock 侧切模式时回写 reviewPanel，
-  // 保证 changes 模式下中间栏宽度联动（sessionPanelWidth）与原来一致。
+  // 「打开某个文件」的入口(mod+k 文件搜索、输入框里的文件/评论条目)写的是
+  // view().reviewPanel —— 审查页拆掉之后那一位就是"右栏开着没开",打开即切到文件标签页。
+  // dock 侧切模式时回写它,保证中间栏宽度联动(sessionPanelWidth)与原来一致。
   createEffect(
     on(
       () => view().reviewPanel.opened(),
       (opened) => {
         if (opened) {
           dock.open()
-          dock.setMode("changes")
+          dock.setMode("tabs")
         }
       },
       { defer: true },
@@ -127,7 +115,7 @@ export function SessionSidePanel(props: {
   const switchMode = (m: DockMode) => {
     dock.open()
     dock.setMode(m)
-    if (m === "changes") {
+    if (m === "tabs") {
       if (!view().reviewPanel.opened()) view().reviewPanel.open()
     } else if (view().reviewPanel.opened()) {
       view().reviewPanel.close()
@@ -195,8 +183,8 @@ export function SessionSidePanel(props: {
     openTab: tabs().open,
     pathFromTab: file.pathFromTab,
     loadFile: file.load,
-    // 打开文件标签时切到 changes 模式（文件标签栏在那里）
-    openReviewPanel: () => switchMode("changes"),
+    // 打开文件标签时切到文件标签页（标签栏在那里）
+    openReviewPanel: () => switchMode("tabs"),
     setActive: tabs().setActive,
   })
 
@@ -204,8 +192,6 @@ export function SessionSidePanel(props: {
     tabs,
     pathFromTab: file.pathFromTab,
     normalizeTab,
-    review: () => isDesktop(),
-    hasReview: props.canReview,
   })
   const contextOpen = tabState.contextOpen
   const openedTabs = tabState.openedTabs
@@ -220,19 +206,6 @@ export function SessionSidePanel(props: {
     if (!path) return undefined
     return getFilenameTruncated(path, 18)
   })
-
-  /** "审查"按钮的角标:文件数 + 增删行数。面板关着也显示,agent 一改文件用户就看得见。 */
-  const reviewBadge = () => {
-    const stats = props.reviewStats()
-    if (stats.files === 0) return undefined
-    return (
-      <>
-        <span>{stats.files}</span>
-        <span style={{ color: "var(--icon-diff-add-base)" }}>+{stats.added}</span>
-        <span style={{ color: "var(--icon-diff-delete-base)" }}>−{stats.removed}</span>
-      </>
-    )
-  }
 
   const showAllFiles = () => {
     if (fileTreeTab() !== "changes") return
@@ -312,13 +285,14 @@ export function SessionSidePanel(props: {
         }
       >
         <aside
+          // id 是样式挂钩:ui/components/tabs.css 用 #review-panel 认这条标签栏,别改名。
           id="review-panel"
           ref={(el: HTMLElement) => (panelEl = el)}
-          aria-label={language.t("session.panel.reviewAndFiles")}
+          aria-label={language.t("session.panel.title")}
           class="relative min-w-0 h-full flex flex-col shrink-0 overflow-hidden bg-background-base"
           classList={{
             "transition-[width] duration-[240ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none":
-              !props.size.active() && !props.reviewSnap,
+              !props.size.active() && !props.snap,
             "rounded-[10px] shadow-[var(--v2-elevation-raised)]": true,
             "flex-1": dock.fullscreen(),
           }}
@@ -340,14 +314,13 @@ export function SessionSidePanel(props: {
             </div>
           </Show>
 
-          {/* 顶部图标栏：changes / 调试 / file ·· ＋ / 全屏 / 收起 */}
+          {/* 顶部图标栏：文件标签 / 调试 / 文件树 ·· ＋ / 全屏 / 收起 */}
           <div class="h-9 shrink-0 flex items-center gap-0.5 px-1.5 border-b border-border-weaker-base">
             <BarButton
-              icon="review"
-              title={language.t("session.tab.review")}
-              on={dock.mode() === "changes"}
-              badge={reviewBadge()}
-              onClick={() => switchMode("changes")}
+              icon="open-file"
+              title={language.t("session.tab.openedFiles")}
+              on={dock.mode() === "tabs"}
+              onClick={() => switchMode("tabs")}
             />
             <BarButton icon="debug" title="调试" on={dock.mode() === "debug"} onClick={() => switchMode("debug")} />
             <BarButton
@@ -368,8 +341,8 @@ export function SessionSidePanel(props: {
           </div>
 
           <Switch>
-            {/* -------- changes：原审查/文件标签页机制，原样保留 -------- */}
-            <Match when={dock.mode() === "changes"}>
+            {/* -------- 文件标签：从时间线/文件搜索打开的文件都落在这里 -------- */}
+            <Match when={dock.mode() === "tabs"}>
               <div class="relative min-w-0 flex-1 min-h-0 overflow-hidden bg-background-base">
                 <div class="size-full min-w-0 h-full bg-background-base">
                   <DragDropProvider
@@ -388,16 +361,6 @@ export function SessionSidePanel(props: {
                             onCleanup(stop)
                           }}
                         >
-                          <Show when={props.canReview()}>
-                            <Tabs.Trigger value="review">
-                              <div class="flex items-center gap-1.5">
-                                <div>{language.t("session.tab.review")}</div>
-                                <Show when={props.hasReview()}>
-                                  <div>{props.reviewCount()}</div>
-                                </Show>
-                              </div>
-                            </Tabs.Trigger>
-                          </Show>
                           <Show when={contextOpen()}>
                             <Tabs.Trigger
                               value="context"
@@ -433,12 +396,6 @@ export function SessionSidePanel(props: {
                           </SortableProvider>
                         </Tabs.List>
                       </div>
-
-                      <Show when={props.canReview()}>
-                        <Tabs.Content value="review" class="flex flex-col h-full overflow-hidden contain-strict">
-                          <Show when={activeTab() === "review"}>{props.reviewPanel()}</Show>
-                        </Tabs.Content>
-                      </Show>
 
                       <Tabs.Content value="empty" class="flex flex-col h-full overflow-hidden contain-strict">
                         <Show when={activeTab() === "empty"}>

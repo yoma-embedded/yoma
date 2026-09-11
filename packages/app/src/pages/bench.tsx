@@ -17,7 +17,7 @@ import type {
 } from "@yoma-desktop/kernel"
 import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
-import { legacySessionHref } from "@/utils/session-route"
+import { sessionHref } from "@/utils/session-href"
 
 const LABEL = "text-[12px] text-v2-text-text-muted [font-weight:500]"
 const CARD = "rounded-[8px] border border-v2-border-border-base"
@@ -207,7 +207,7 @@ export default function BenchPage() {
 
   function watchSession(sessionID: string) {
     const directory = snapshot()?.job?.directory
-    if (directory) navigate(legacySessionHref(directory, sessionID))
+    if (directory) navigate(sessionHref(sessionID))
   }
 
   const TabButton = (props: { tab: Tab; label: string }) => (

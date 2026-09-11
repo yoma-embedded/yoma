@@ -1,6 +1,6 @@
 import { createStore, reconcile } from "solid-js/store"
-import { type Accessor, batch, createEffect, createMemo, createRoot, getOwner, onCleanup } from "solid-js"
-import { useParams, useSearchParams } from "@solidjs/router"
+import { type Accessor, batch, createEffect, createMemo, onCleanup } from "solid-js"
+import { useParams } from "@solidjs/router"
 import { createSimpleContext } from "@yoma-desktop/ui/context"
 import type { ServerSDK } from "./server-sdk"
 import type { ServerSync } from "./server-sync"
@@ -10,12 +10,9 @@ import { useSettings } from "@/context/settings"
 import { base64Encode } from "@yoma-desktop/util/encode"
 import { decode64 } from "@/utils/base64"
 import { Persist, persisted } from "@/utils/persist"
+import { sessionHref } from "@/utils/session-href"
 import { playSoundById } from "@/utils/sound"
 import { useGlobal } from "./global"
-import { ServerConnection, useServer } from "./server"
-import { type DraftTab, useTabs } from "./tabs"
-import { requireServerKey } from "@/utils/session-route"
-import type { ServerScope } from "@/utils/server-scope"
 
 type NotificationBase = {
   directory?: string
@@ -113,74 +110,31 @@ export const { use: useNotification, provider: NotificationProvider } = createSi
   name: "Notification",
   gate: false,
   init: () => {
-    const params = useParams<{ serverKey?: string; dir?: string; id?: string }>()
-    const [search] = useSearchParams<{ draftId?: string }>()
+    const params = useParams<{ dir?: string; id?: string }>()
     const global = useGlobal()
-    const server = useServer()
-    const tabs = useTabs()
     const platform = usePlatform()
     const settings = useSettings()
     const language = useLanguage()
-    const owner = getOwner()
-    const states = new Map<ServerScope, { dispose: () => void; state: NotificationState }>()
 
-    const activeServer = createMemo(() => {
-      if (params.serverKey) return requireServerKey(params.serverKey)
-      if (search.draftId) {
-        const draft = tabs.store.find((tab): tab is DraftTab => tab.type === "draft" && tab.draftID === search.draftId)
-        if (draft) return draft.server
-      }
-      return server.key
-    })
     const activeDirectory = createMemo(() => decode64(params.dir))
     const activeSession = createMemo(() => params.id)
 
-    const ensure = (key: ServerConnection.Key) => {
-      const conn = global.servers.list().find((item) => ServerConnection.key(item) === key)
-      if (!conn) throw new Error(`Notification server not found: ${key}`)
-      const ctx = global.ensureServerCtx(conn)
-      const existing = states.get(ctx.sdk.scope)
-      if (existing) return existing.state
-      const root = createRoot(
-        (dispose) => ({
-          dispose,
-          state: createServerNotificationState({
-            sdk: ctx.sdk,
-            sync: ctx.sync,
-            active: () => server.scope(activeServer()) === ctx.sdk.scope,
-            directory: activeDirectory,
-            sessionID: activeSession,
-            platform,
-            settings,
-            language,
-          }),
-        }),
-        owner ?? undefined,
-      )
-      states.set(ctx.sdk.scope, root)
-      return root.state
-    }
-
-    createEffect(() => {
-      global.servers.list().forEach((conn) => ensure(ServerConnection.key(conn)))
+    // 原来这里按 scope 分桶:每台服务器一个 createRoot + 一份未读账本,跟着 server.list 增删。
+    // 只有一个内核,桶也只有一个 —— 直接建在 provider 自己的 owner 上,生命周期跟着它走。
+    const state = createServerNotificationState({
+      sdk: global.ctx.sdk,
+      sync: global.ctx.sync,
+      directory: activeDirectory,
+      sessionID: activeSession,
+      platform,
+      settings,
+      language,
     })
 
-    createEffect(() => {
-      const scopes = new Set(global.servers.list().map((conn) => server.scope(ServerConnection.key(conn))))
-      states.forEach((value, scope) => {
-        if (scopes.has(scope)) return
-        value.dispose()
-        states.delete(scope)
-      })
-    })
-
-    onCleanup(() => states.forEach((value) => value.dispose()))
-
-    const selected = () => ensure(activeServer())
+    const selected = () => state
 
     return {
       ready: () => selected().ready(),
-      ensureServerState: ensure,
       session: {
         all: (session: string) => selected().session.all(session),
         unseen: (session: string) => selected().session.unseen(session),
@@ -199,12 +153,9 @@ export const { use: useNotification, provider: NotificationProvider } = createSi
   },
 })
 
-type NotificationState = ReturnType<typeof createServerNotificationState>
-
 function createServerNotificationState(input: {
   sdk: ServerSDK
   sync: ServerSync
-  active: Accessor<boolean>
   directory: Accessor<string | undefined>
   sessionID: Accessor<string | undefined>
   platform: ReturnType<typeof usePlatform>
@@ -223,7 +174,7 @@ function createServerNotificationState(input: {
   const currentSession = input.sessionID
 
   const [store, setStore, _, ready] = persisted(
-    Persist.serverGlobal(serverSDK().scope, "notification", ["notification.v1"]),
+    Persist.global("notification", ["notification.v1"]),
     createStore({
       list: [] as Notification[],
     }),
@@ -316,7 +267,6 @@ function createServerNotificationState(input: {
   }
 
   const viewedInCurrentSession = (directory: string, sessionID?: string) => {
-    if (!input.active()) return false
     const activeDirectory = currentDirectory()
     const activeSession = currentSession()
     if (!activeSession) return false
@@ -348,7 +298,7 @@ function createServerNotificationState(input: {
         session: sessionID,
       })
 
-      const href = `/${base64Encode(directory)}/session/${sessionID}`
+      const href = sessionHref(session.id)
       if (settings.notifications.agent()) {
         void platform.notify(language.t("notification.session.responseReady.title"), session.title ?? sessionID, href)
       }
@@ -380,7 +330,7 @@ function createServerNotificationState(input: {
       const description =
         session?.title ??
         (typeof error === "string" ? error : language.t("notification.session.error.fallbackDescription"))
-      const href = sessionID ? `/${base64Encode(directory)}/session/${sessionID}` : `/${base64Encode(directory)}`
+      const href = sessionID ? sessionHref(sessionID) : `/${base64Encode(directory)}`
       if (settings.notifications.errors()) {
         void platform.notify(language.t("notification.session.error.title"), description, href)
       }

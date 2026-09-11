@@ -1,21 +1,19 @@
 import { randomUUID } from "node:crypto"
 import { mkdirSync, rmSync } from "node:fs"
 import * as http from "node:http"
-import { createServer } from "node:net"
 import { homedir, tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { getCACertificates, setDefaultCACertificates } from "node:tls"
 import { app, BrowserWindow, Notification } from "electron"
 
-import { Deferred, Effect, Fiber } from "effect"
+import { Effect } from "effect"
 import contextMenu from "electron-context-menu"
 
 // 深引用叶子模块 —— 走 `@yoma-desktop/bench` 主入口会把整个内核 inline 进
 // out/main/index.js(bench 在 devDependencies 里,externalizeDeps 不碰它)。
 import { defaultConfigDir } from "@yoma-desktop/bench/mailbox/paths"
 
-import type { ServerReadyData } from "../preload/types"
 import { CHANNEL } from "./constants"
 import { registerIpcHandlers, sendMenuCommand } from "./ipc"
 import { spawnKernel, type KernelProcess } from "./kernel"
@@ -24,11 +22,7 @@ import type { MailboxSettings } from "./mailbox-controller"
 import { getStore } from "./store"
 import { exportDebugLogs, initCrashReporter, initLogging, startNetLog, write as writeLog } from "./logging"
 import { createMenu } from "./menu"
-import {
-  getDefaultServerUrl,
-  preferAppEnv,
-  setDefaultServerUrl,
-} from "./server"
+import { preferAppEnv } from "./app-env"
 import { disableInstallOnQuit, setupAutoUpdater, showUpdaterDialog, updaterAutoCheckPrefs } from "./updater"
 import {
   createMainWindow,
@@ -96,9 +90,6 @@ function useEnvProxy() {
     logger.warn("failed to load proxy environment", error)
   }
 }
-
-/** 保留只为兼容 renderer 还在调的 IPC 通道;HTTP sidecar 已经不存在了。 */
-async function killSidecar() {}
 
 function ensureLoopbackNoProxy() {
   const loopback = ["127.0.0.1", "localhost", "::1"]
@@ -242,8 +233,6 @@ const main = Effect.gen(function* () {
     })
   }
 
-  const serverReady = Deferred.makeUnsafe<ServerReadyData, unknown>()
-
   yield* Effect.promise(() => app.whenReady())
 
   // tauri→electron 的 .dat 迁移已随运行时身份换成 Yoma 一起摘除:Yoma 从未发过 tauri 版,
@@ -282,23 +271,11 @@ const main = Effect.gen(function* () {
   })
   const mailbox = mailboxMain
   registerIpcHandlers({
-    killSidecar: () => killSidecar(),
     attachKernel: (event) => {
       const win = BrowserWindow.fromWebContents(event.sender)
       if (win) kernelProcess?.attach(win)
     },
     relaunch,
-    awaitInitialization: Effect.fnUntraced(
-      function* () {
-        logger.log("awaiting server ready")
-        const res = yield* Deferred.await(serverReady)
-        logger.log("server ready", { url: res.url })
-        return res
-      },
-      (e) => Effect.runPromise(e),
-    ),
-    getDefaultServerUrl: () => getDefaultServerUrl(),
-    setDefaultServerUrl: (url) => setDefaultServerUrl(url),
     updater,
     updaterAutoCheck: updaterAutoCheckPrefs(),
     mailbox: {
@@ -328,41 +305,6 @@ const main = Effect.gen(function* () {
       }),
     ),
   )
-
-  const port = yield* Effect.gen(function* () {
-    const fromEnv = process.env.YOMA_PORT
-    if (fromEnv) {
-      const parsed = Number.parseInt(fromEnv, 10)
-      if (!Number.isNaN(parsed)) return parsed
-    }
-
-    const res = yield* Deferred.make<number, unknown>()
-    const server = createServer()
-    server.on("error", (e) => Deferred.failSync(res, () => e))
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address()
-      if (typeof address !== "object" || !address) {
-        server.close()
-        Deferred.failSync(res, () => new Error("Failed to get port"))
-        return
-      }
-      const port = address.port
-      server.close(() => Effect.runSync(Deferred.succeed(res, port)))
-    })
-
-    return yield* Deferred.await(res)
-  })
-  // HTTP sidecar 整条路径已经拆除:renderer 现在通过 MessagePort 直连内核
-  // utilityProcess(见 main/kernel.ts),不再需要端口、密码、CORS 和健康探测。
-  //
-  // serverReady 这个 Deferred 还留着,是因为 renderer 的 awaitInitialization() 仍在
-  // 等它才渲染 —— 给一个占位值让启动继续。ServerConnection 这一整套概念的清除
-  // 是后续独立工作(它散在 app 的路由与标签页里)。
-  yield* Deferred.succeed(serverReady, {
-    url: "kernel://local",
-    username: null,
-    password: null,
-  })
 
   // yoma 内核进程。整个 app 只 fork 这一个 —— yoma 的 probe 租约、gdb session 表、
   // log capture 都是模块级全局,分片 fork 会让两个进程各自以为自己独占探针。

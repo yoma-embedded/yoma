@@ -55,3 +55,10 @@ const transport: KernelTransport = {
 
 /** 全应用唯一的内核客户端。 */
 export const kernel = createKernelClient(transport)
+
+/**
+ * 内核客户端的类型。原来叫 `Sdk`,住在 `utils/server.ts` 里(那个文件导出的
+ * `createSdkForServer(config)` 是 opencode 的"按服务器造一个 SDK"工厂,参数早已被忽略)。
+ * 只有一个内核,工厂就没有存在的理由了,名字留着是因为几十处调用点写的是 `Sdk`。
+ */
+export type Sdk = typeof kernel

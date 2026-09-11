@@ -11,6 +11,7 @@ import {
   Show,
   startTransition,
 } from "solid-js"
+import { useNavigate } from "@solidjs/router"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { createStore } from "solid-js/store"
 import { useQuery } from "@tanstack/solid-query"
@@ -20,17 +21,16 @@ import { ButtonV2 } from "@yoma-desktop/ui/v2/button-v2"
 import { Icon as IconV2 } from "@yoma-desktop/ui/v2/icon"
 import { IconButtonV2 } from "@yoma-desktop/ui/v2/icon-button-v2"
 import { useLayout, type HomeProjectSelection, type LocalProject } from "@/context/layout"
-import { useNavigate } from "@solidjs/router"
 import { usePlatform } from "@/context/platform"
 import { DateTime } from "luxon"
 import { useSettingsCommand } from "@/components/settings-dialog"
-import { ServerConnection, useServer } from "@/context/server"
-import { sessionHasOpenTab, useTabs } from "@/context/tabs"
+import { useDrafts } from "@/context/drafts"
 import { useServerSync, type ServerSync } from "@/context/server-sync"
 import { useLanguage } from "@/context/language"
 import { displayName, projectForSession, sortedRootSessions } from "@/pages/layout/helpers"
 import { SessionTabAvatar } from "@/pages/layout/session-tab-avatar"
 import { sessionTitle } from "@/utils/session-title"
+import { sessionHref } from "@/utils/session-href"
 import { pathKey } from "@/utils/path-key"
 import { useGlobal } from "@/context/global"
 import { useCommand } from "@/context/command"
@@ -68,8 +68,6 @@ const HOME_SEARCH_RESULT_TITLE =
   "min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[13px] leading-4 tracking-[-0.04px] text-v2-text-text-base [font-weight:530]"
 const HOME_SEARCH_RESULT_META =
   "min-w-0 flex-[1_1_auto] overflow-hidden text-ellipsis whitespace-nowrap text-[13px] leading-4 tracking-[-0.04px] text-v2-text-text-muted [font-weight:440]"
-
-let pendingHomeNavigation: { server: ServerConnection.Key; href: string } | undefined
 
 function buildHomeSessionRecords(input: {
   sync: Pick<ServerSync, "child">
@@ -209,11 +207,10 @@ export function NewHome() {
   const sync = useServerSync()
   const layout = useLayout()
   const platform = usePlatform()
-  const navigate = useNavigate()
-  const server = useServer()
   const language = useLanguage()
   const global = useGlobal()
-  const tabs = useTabs()
+  const drafts = useDrafts()
+  const navigate = useNavigate()
   const command = useCommand()
   const marked = useMarked()
   const openSettings = useSettingsCommand()
@@ -224,21 +221,12 @@ export function NewHome() {
   })
   const selection = layout.home.selection
 
-  const focusedServer = createMemo(
-    () => global.servers.list().find((conn) => ServerConnection.key(conn) === selection().server) ?? server.current,
-  )
-  const focusedServerCtx = createMemo(() => {
-    const conn = focusedServer()
-    if (!conn) return
-    return global.ensureServerCtx(conn)
-  })
-  const focusedSync = () => focusedServerCtx()?.sync ?? sync()
-  const projects = createMemo(() => focusedServerCtx()?.projects.list() ?? layout.projects.list())
+  const projects = createMemo(() => layout.projects.list())
   const selectedProject = createMemo(() => projects().find((project) => project.worktree === selection().directory))
   const newSessionProject = createMemo(
     () =>
       selectedProject() ??
-      projects().find((project) => project.worktree === focusedServerCtx()?.projects.last()) ??
+      projects().find((project) => project.worktree === global.ctx.projects.last()) ??
       projects()[0],
   )
   const projectDirectories = createMemo(() => {
@@ -255,12 +243,10 @@ export function NewHome() {
     return language.t("home.sessions.search.placeholder")
   })
   const sessionLoad = useQuery(() => ({
-    queryKey: ["home", "sessions", selection().server, ...projectDirectories()] as const,
+    queryKey: ["home", "sessions", ...projectDirectories()] as const,
     queryFn: async () => {
       await Promise.all(
-        projectDirectories().map((directory) =>
-          focusedSync().project.loadSessions(directory, { limit: HOME_SESSION_LIMIT }),
-        ),
+        projectDirectories().map((directory) => sync().project.loadSessions(directory, { limit: HOME_SESSION_LIMIT })),
       )
       return null
     },
@@ -268,7 +254,7 @@ export function NewHome() {
 
   const allRecords = createMemo(() =>
     buildHomeSessionRecords({
-      sync: focusedSync(),
+      sync: sync(),
       projectDirectories,
       projects,
     }),
@@ -285,12 +271,11 @@ export function NewHome() {
   const prefetched = new Set<string>()
 
   createEffect(() => {
-    const ctx = focusedServerCtx()
-    if (!ctx) return
+    const ctx = global.ctx
     records()
       .slice(0, 2)
       .forEach((record) => {
-        const key = `${ServerConnection.key(focusedServer()!)}\0${record.session.id}`
+        const key = record.session.id
         if (prefetched.has(key)) return
         prefetched.add(key)
         createRoot((dispose) => {
@@ -341,45 +326,25 @@ export function NewHome() {
     },
   ])
 
-  createEffect(() => {
-    const list = global.servers.list()
-    if (list.some((conn) => ServerConnection.key(conn) === selection().server)) return
-    const conn = list.find((conn) => ServerConnection.key(conn) === server.key) ?? list[0]
-    if (conn) setSelection({ server: ServerConnection.key(conn) })
-  })
-
-  createEffect(() => {
-    const pending = pendingHomeNavigation
-    if (!pending || pending.server !== server.key) return
-    pendingHomeNavigation = undefined
-    navigate(pending.href)
-  })
-
   function openNewSession() {
-    const conn = focusedServer()
     const project = newSessionProject()
-    if (!conn || !project) return
-    openProjectNewSession(conn, project.worktree)
+    if (!project) return
+    openProjectNewSession(project.worktree)
   }
 
-  function openProjectNewSession(conn: ServerConnection.Any, directory: string) {
-    const ctx = global.ensureServerCtx(conn)
-    ctx.projects.open(directory)
-    ctx.projects.touch(directory)
-    tabs.newDraft({ server: ServerConnection.key(conn), directory })
+  function openProjectNewSession(directory: string) {
+    global.ctx.projects.open(directory)
+    global.ctx.projects.touch(directory)
+    drafts.create({ directory })
   }
 
   function openSession(session: Session) {
     const project = projectForSession(session, projects())
-    const conn = focusedServer()
-    if (!conn) return
     const directory = project?.worktree ?? session.directory
-    const ctx = global.ensureServerCtx(conn)
-    ctx.projects.open(directory)
-    ctx.projects.touch(directory)
+    global.ctx.projects.open(directory)
+    global.ctx.projects.touch(directory)
     startTransition(() => {
-      const tab = tabs.addSessionTab({ server: ServerConnection.key(conn), sessionId: session.id })
-      tabs.select(tab)
+      navigate(sessionHref(session.id))
     })
   }
 
@@ -399,8 +364,6 @@ export function NewHome() {
             loading={sessionLoad.isLoading}
             results={searchResults()}
             showProjectName={!selectedProject()}
-            server={selection().server}
-            activeServer={selection().server === server.key}
             noResultsLabel={language.t("home.sessions.search.noResults", { query: search() })}
             bindFocus={(focus) => {
               focusSessionSearch = focus
@@ -459,8 +422,6 @@ export function NewHome() {
                               <HomeSessionRow
                                 record={record}
                                 showProjectName={!selectedProject()}
-                                server={selection().server}
-                                activeServer={selection().server === server.key}
                                 openSession={openSession}
                               />
                             )}
@@ -502,26 +463,14 @@ function HomeUtilityNav(props: {
 function HomeSessionLeading(props: {
   project: LocalProject
   session: Session
-  server: ServerConnection.Key
-  activeServer: boolean
   revealProjectOnHover: boolean
 }) {
-  const tabs = useTabs()
-  const hasOpenTab = createMemo(() => sessionHasOpenTab(tabs.store, props.server, props.session))
   return (
     <div class="relative shrink-0">
-      <Show when={hasOpenTab()}>
-        <span
-          aria-hidden="true"
-          class="pointer-events-none absolute top-1/2 h-[7px] w-[3px] -translate-y-1/2 rounded-[2px] bg-v2-background-bg-layer-04"
-          style={{ right: "calc(100% + 5px)" }}
-        />
-      </Show>
       <SessionTabAvatar
         project={props.project}
         directory={props.session.directory}
         sessionId={props.session.id}
-        activeServer={props.activeServer}
         revealProjectOnHover={props.revealProjectOnHover}
       />
     </div>
@@ -535,8 +484,6 @@ function HomeSessionSearch(props: {
   loading: boolean
   results: HomeSessionRecord[]
   showProjectName: boolean
-  server: ServerConnection.Key
-  activeServer: boolean
   noResultsLabel: string
   bindFocus: (focus: () => void) => void
   onInput: (value: string) => void
@@ -653,8 +600,6 @@ function HomeSessionSearch(props: {
                               <HomeSessionSearchResultRow
                                 record={record}
                                 showProjectName={props.showProjectName}
-                                server={props.server}
-                                activeServer={props.activeServer}
                                 selected={store.active === homeSessionSearchKey(record)}
                                 onHighlight={() => setStore("active", homeSessionSearchKey(record))}
                                 onSelect={(session) => props.onSelect(session)}
@@ -740,8 +685,6 @@ function HomeSessionSearch(props: {
 function HomeSessionSearchResultRow(props: {
   record: HomeSessionRecord
   showProjectName: boolean
-  server: ServerConnection.Key
-  activeServer: boolean
   selected: boolean
   onHighlight: () => void
   onSelect: (session: Session) => void
@@ -770,8 +713,6 @@ function HomeSessionSearchResultRow(props: {
       <HomeSessionLeading
         project={props.record.project}
         session={props.record.session}
-        server={props.server}
-        activeServer={props.activeServer}
         revealProjectOnHover={!!showProjectName()}
       />
       <div class="flex min-w-0 flex-1 items-center gap-1.5">
@@ -809,8 +750,6 @@ function HomeSessionGroupHeader(props: {
 function HomeSessionRow(props: {
   record: HomeSessionRecord
   showProjectName: boolean
-  server: ServerConnection.Key
-  activeServer: boolean
   openSession: (session: Session) => void
 }) {
   const title = createMemo(() => sessionTitle(props.record.session.title) || props.record.session.id)
@@ -830,8 +769,6 @@ function HomeSessionRow(props: {
         <HomeSessionLeading
           project={props.record.project}
           session={props.record.session}
-          server={props.server}
-          activeServer={props.activeServer}
           revealProjectOnHover={!!showProjectName()}
         />
         <span

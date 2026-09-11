@@ -7,7 +7,6 @@ import { useDialog } from "@yoma-desktop/ui/context/dialog"
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show } from "solid-js"
 import { useGlobal } from "@/context/global"
 import { useLanguage } from "@/context/language"
-import { ServerConnection } from "@/context/server"
 import {
   absoluteTreePath,
   activeTreeNavigation,
@@ -26,28 +25,28 @@ import {
   pickerParent,
   pickerRoot,
 } from "./directory-picker-domain"
-import "./dialog-select-directory-v2.css"
+import "./dialog-select-file-tree.css"
 import { DividerV2 } from "@yoma-desktop/ui/v2/divider-v2"
 
-interface DialogSelectDirectoryV2Props {
+/**
+ * 目录树里挑一个**文件**的对话框(mod+p 的"搜索文件",桌面端)。
+ *
+ * 它原来叫 DialogSelectDirectoryV2,一个组件两种模式:directory 模式是 opencode 的
+ * 「浏览远端服务器的目录树」—— 那条路随多服务器一起删了(目录选择一律走系统原生框)。
+ * 留下来的只有 file 模式,于是改名落实:`mode` / `multiple` / `server` 三个 prop 都没了。
+ */
+interface DialogSelectFileTreeProps {
   title?: string
-  multiple?: boolean
   onSelect: (result: string | string[] | null) => void
-  server: ServerConnection.Any
-  mode?: "directory" | "file"
   start?: string
 }
 
-export function DialogSelectDirectoryV2(props: DialogSelectDirectoryV2Props) {
+export function DialogSelectFileTree(props: DialogSelectFileTreeProps) {
   const global = useGlobal()
-  const { sync, sdk } = global.ensureServerCtx(props.server)
+  const { sync, sdk } = global.ctx
   const dialog = useDialog()
   const language = useLanguage()
-  const policy = pickerMode(props.mode ?? "directory", props.start)
-  const action = {
-    file: language.t("dialog.directory.action.selectFile"),
-    directory: language.t("dialog.directory.action.selectFolder"),
-  }
+  const policy = pickerMode("file", props.start)
   const [root, setRoot] = createSignal("")
   const [input, setInput] = createSignal("")
   const [selected, setSelected] = createSignal("")
@@ -192,7 +191,7 @@ export function DialogSelectDirectoryV2(props: DialogSelectDirectoryV2Props) {
   function resolve() {
     const path = policy.result(root(), selected(), rootValid())
     if (!path) return
-    props.onSelect(props.multiple ? [path] : path)
+    props.onSelect(path)
     dialog.close()
   }
 
@@ -236,7 +235,7 @@ export function DialogSelectDirectoryV2(props: DialogSelectDirectoryV2Props) {
     })
     if (!container) return
     tree.render({ containerWrapper: container })
-    tree.getFileTreeContainer()?.classList.add("directory-picker-v2-tree")
+    tree.getFileTreeContainer()?.classList.add("file-tree-picker-tree")
   })
 
   createEffect(() => {
@@ -248,13 +247,13 @@ export function DialogSelectDirectoryV2(props: DialogSelectDirectoryV2Props) {
   onCleanup(() => tree?.cleanUp())
 
   return (
-    <Dialog size="large" class="directory-picker-v2">
+    <Dialog size="large" class="file-tree-picker">
       <DialogHeader>
         <DialogTitle>{props.title ?? language.t("command.project.open")}</DialogTitle>
       </DialogHeader>
       <DividerV2 />
-      <DialogBody class="directory-picker-v2-body pt-4!">
-        <div class="directory-picker-v2-path" ref={pathArea}>
+      <DialogBody class="file-tree-picker-body pt-4!">
+        <div class="file-tree-picker-path" ref={pathArea}>
           <TextInputV2
             value={input()}
             autofocus
@@ -270,13 +269,13 @@ export function DialogSelectDirectoryV2(props: DialogSelectDirectoryV2Props) {
             role="combobox"
             aria-autocomplete="list"
             aria-expanded={suggestionsOpen()}
-            aria-controls="directory-picker-v2-suggestions"
+            aria-controls="file-tree-picker-suggestions"
             aria-activedescendant={
-              activeSuggestion() >= 0 ? `directory-picker-v2-suggestion-${activeSuggestion()}` : undefined
+              activeSuggestion() >= 0 ? `file-tree-picker-suggestion-${activeSuggestion()}` : undefined
             }
             onKeyDown={handleInputKey}
           />
-          <div class="directory-picker-v2-actions">
+          <div class="file-tree-picker-actions">
             <ButtonV2 size="small" variant="ghost" onClick={() => void navigate(home())}>
               ~
             </ButtonV2>
@@ -288,11 +287,11 @@ export function DialogSelectDirectoryV2(props: DialogSelectDirectoryV2Props) {
             </ButtonV2>
           </div>
           <Show when={suggestionsOpen() && currentSuggestions().length > 0}>
-            <div id="directory-picker-v2-suggestions" role="listbox" class="directory-picker-v2-suggestions">
+            <div id="file-tree-picker-suggestions" role="listbox" class="file-tree-picker-suggestions">
               <For each={currentSuggestions()}>
                 {(suggestion, index) => (
                   <button
-                    id={`directory-picker-v2-suggestion-${index()}`}
+                    id={`file-tree-picker-suggestion-${index()}`}
                     role="option"
                     aria-selected={index() === activeSuggestion()}
                     data-active={index() === activeSuggestion() ? "" : undefined}
@@ -308,7 +307,7 @@ export function DialogSelectDirectoryV2(props: DialogSelectDirectoryV2Props) {
           </Show>
         </div>
         <div
-          class="directory-picker-v2-browser"
+          class="file-tree-picker-browser"
           ref={container}
           onWheel={(event) => {
             const scroller = tree
@@ -328,20 +327,20 @@ export function DialogSelectDirectoryV2(props: DialogSelectDirectoryV2Props) {
           }}
         >
           <Show when={loading()}>
-            <div class="directory-picker-v2-state">{language.t("common.loading")}</div>
+            <div class="file-tree-picker-state">{language.t("common.loading")}</div>
           </Show>
           <Show when={!loading() && error()}>
-            <div class="directory-picker-v2-state">{language.t("dialog.directory.readError")}</div>
+            <div class="file-tree-picker-state">{language.t("dialog.directory.readError")}</div>
           </Show>
         </div>
-        <div class="directory-picker-v2-selection">{policy.result(root(), selected(), rootValid())}</div>
+        <div class="file-tree-picker-selection">{policy.result(root(), selected(), rootValid())}</div>
       </DialogBody>
       <DialogFooter>
         <ButtonV2 variant="neutral" onClick={() => dialog.close()}>
           {language.t("common.cancel")}
         </ButtonV2>
         <ButtonV2 variant="contrast" disabled={!policy.result(root(), selected(), rootValid())} onClick={resolve}>
-          {action[policy.action]}
+          {language.t("dialog.directory.action.selectFile")}
         </ButtonV2>
       </DialogFooter>
     </Dialog>

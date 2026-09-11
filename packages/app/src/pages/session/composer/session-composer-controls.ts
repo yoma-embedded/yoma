@@ -9,10 +9,8 @@ import { useGlobal } from "@/context/global"
 import { useLayout } from "@/context/layout"
 import { useLocal } from "@/context/local"
 import type { QueryOptionsApi } from "@/context/server-sync"
-import { useServerSDK } from "@/context/server-sdk"
-import { serverName, ServerConnection, useServer } from "@/context/server"
 import { useSDK } from "@/context/sdk"
-import { useTabs } from "@/context/tabs"
+import { useDrafts } from "@/context/drafts"
 import { pathKey } from "@/utils/path-key"
 
 export function createPromptInputController(input: {
@@ -43,62 +41,31 @@ export function createPromptInputController(input: {
 export function createPromptProjectControls() {
   const navigate = useNavigate()
   const layout = useLayout()
-  const server = useServer()
-  const serverSDK = useServerSDK()
   const sdk = useSDK()
-  const tabs = useTabs()
+  const drafts = useDrafts()
   const global = useGlobal()
   const pickDirectory = useDirectoryPicker()
   const [search] = useSearchParams<{ draftId?: string }>()
-  const projectServer = () => serverSDK().server
-  const projectServerCtx = createMemo(() => global.ensureServerCtx(projectServer()))
-  const projects = createMemo(() => {
-    if (server.list.length <= 1) {
-      return search.draftId ? projectServerCtx().projects.list() : layout.projects.list()
-    }
-    return server.list.flatMap((conn) => {
-      const item = { key: ServerConnection.key(conn), name: serverName(conn) }
-      return global
-        .ensureServerCtx(conn)
-        .projects.list()
-        .map((project) => ({ ...project, server: item }))
-    })
-  })
-  const selectProject = (worktree: string, serverKey?: string) => {
-    const conn = serverKey ? server.list.find((conn) => ServerConnection.key(conn) === serverKey) : projectServer()
+  const projects = createMemo(() => (search.draftId ? global.ctx.projects.list() : layout.projects.list()))
+
+  const selectProject = (worktree: string) => {
     if (search.draftId) {
-      if (!conn) return
-      const target = global.ensureServerCtx(conn)
-      target.projects.open(worktree)
-      target.projects.touch(worktree)
-      tabs.updateDraft(search.draftId, { server: ServerConnection.key(conn), directory: worktree })
+      global.ctx.projects.open(worktree)
+      global.ctx.projects.touch(worktree)
+      drafts.update(search.draftId, { directory: worktree })
       return
     }
-
-    if (!serverKey) {
-      layout.projects.open(worktree)
-      server.projects.touch(worktree)
-      navigate(`/${base64Encode(worktree)}/session`)
-      return
-    }
-
-    if (!conn) return
-    const target = global.ensureServerCtx(conn)
-    target.projects.open(worktree)
-    target.projects.touch(worktree)
-    server.setActive(ServerConnection.key(conn))
+    layout.projects.open(worktree)
+    global.ctx.projects.touch(worktree)
     navigate(`/${base64Encode(worktree)}/session`)
   }
 
-  const addProject = (title: string, serverKey?: string) => {
-    const conn = serverKey ? server.list.find((conn) => ServerConnection.key(conn) === serverKey) : projectServer()
-    if (!conn) return
+  const addProject = (title: string) => {
     pickDirectory({
-      server: conn,
       title,
       onSelect: (result) => {
         const directory = Array.isArray(result) ? result[0] : result
-        if (directory) selectProject(directory, serverKey)
+        if (directory) selectProject(directory)
       },
     })
   }
@@ -106,7 +73,6 @@ export function createPromptProjectControls() {
   return createMemo<PromptProjectControls>(() => ({
     available: projects(),
     directory: sdk().directory,
-    server: server.list.length > 1 ? ServerConnection.key(projectServer()) : undefined,
     select: selectProject,
     add: addProject,
   }))

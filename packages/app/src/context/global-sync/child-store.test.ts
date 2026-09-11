@@ -4,7 +4,7 @@ import { createStore } from "solid-js/store"
 import type { NormalizedProviderListResponse } from "@yoma-desktop/session-ui/context"
 import type { State } from "./types"
 import type { QueryOptionsApi } from "../server-sync"
-import { ServerScope } from "@/utils/server-scope"
+import { LOCAL_SCOPE } from "@/utils/scoped-key"
 
 let createChildStoreManager: typeof import("./child-store").createChildStoreManager
 const querySingles: Array<() => { queryKey?: unknown[]; enabled?: boolean }> = []
@@ -21,12 +21,12 @@ const provider = { all: new Map(), connected: [], default: {} } satisfies Normal
 // 内核只剩 providers 一个目录级 query —— path / mcp / mcpResources / lsp / references
 // 都随迁移一起没了。
 const queryOptionsApi = {
-  projects: () => ({ queryKey: [ServerScope.local, "projects"], queryFn: async () => [] }),
+  projects: () => ({ queryKey: [LOCAL_SCOPE, "projects"], queryFn: async () => [] }),
   providers: (directory: string | null) => ({
-    queryKey: [ServerScope.local, directory, "providers"],
+    queryKey: [LOCAL_SCOPE, directory, "providers"],
     queryFn: async () => provider,
   }),
-  sessions: (directory: string) => ({ queryKey: [ServerScope.local, directory, "loadSessions"] as const }),
+  sessions: (directory: string) => ({ queryKey: [LOCAL_SCOPE, directory, "loadSessions"] as const }),
 } as unknown as QueryOptionsApi
 
 function createOwner(callback: (owner: Owner) => void) {
@@ -73,7 +73,6 @@ describe("createChildStoreManager", () => {
 
     const manager = createChildStoreManager({
       owner,
-      scope: ServerScope.local,
       persist,
       isBooting: () => false,
       isLoadingSessions: () => false,
@@ -103,7 +102,6 @@ describe("createChildStoreManager", () => {
     const dispose = createOwner((owner) => {
       manager = createChildStoreManager({
         owner,
-        scope: ServerScope.local,
         persist,
         isBooting: () => false,
         isLoadingSessions: () => false,
@@ -137,7 +135,6 @@ describe("createChildStoreManager", () => {
     const dispose = createOwner((owner) => {
       manager = createChildStoreManager({
         owner,
-        scope: ServerScope.local,
         persist,
         isBooting: () => false,
         isLoadingSessions: () => false,
@@ -167,7 +164,6 @@ describe("createChildStoreManager", () => {
     const dispose = createOwner((owner) => {
       manager = createChildStoreManager({
         owner,
-        scope: ServerScope.local,
         persist,
         isBooting: () => false,
         isLoadingSessions: () => false,

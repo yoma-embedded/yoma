@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest"
 import type { retry } from "@yoma-desktop/util/retry"
 import type { MessagePage, Message, Part, Session } from "@yoma-desktop/kernel"
-import type { Sdk } from "@/utils/server"
+import type { Sdk } from "@/utils/kernel"
 import { createServerSession } from "./server-session"
 
 const session = (id: string): Session => ({

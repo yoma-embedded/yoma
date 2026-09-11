@@ -4,8 +4,7 @@ import { useLocation } from "@solidjs/router"
 import { createSimpleContext } from "@yoma-desktop/ui/context"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { useServerSync } from "./server-sync"
-import { useServerSDK } from "./server-sdk"
-import { ServerConnection, useServer } from "./server"
+import { useGlobal } from "./global"
 import { usePlatform } from "./platform"
 import { Project } from "@yoma-desktop/kernel"
 import { Persist, persisted, removePersisted } from "@/utils/persist"
@@ -14,10 +13,8 @@ import { same } from "@/utils/same"
 import { createScrollPersistence, type SessionScroll } from "./layout-scroll"
 import { createPathHelpers } from "./file/path"
 import type { ProjectAvatarVariant } from "@yoma-desktop/ui/v2/project-avatar-v2"
-import { migrateLegacySessionStateKeys, ServerScope, SessionStateKey } from "@/utils/server-scope"
+import { migrateLegacySessionStateKeys, SessionStateKey } from "@/utils/scoped-key"
 import { createSessionKeyReader, ensureSessionKey, pruneSessionKeys } from "./layout-helpers"
-import { requireServerKey } from "@/utils/session-route"
-import { type DraftTab, useTabs } from "./tabs"
 
 export { createSessionKeyReader, ensureSessionKey, pruneSessionKeys }
 
@@ -62,14 +59,12 @@ type SessionTabs = {
 
 type SessionView = {
   scroll: Record<string, SessionScroll>
-  reviewOpen?: string[]
   pendingMessage?: string
   pendingMessageAt?: number
   todoCollapsed?: boolean
 }
 
 type TabHandoff = {
-  scope: ServerScope
   dir: string
   id: string
   at: number
@@ -86,20 +81,22 @@ export type LocalProject = Partial<Project> & {
   expanded: boolean
   icon?: { override?: string; color?: string }
 }
-export type HomeProjectSelection = { server: ServerConnection.Key; directory?: string }
+export type HomeProjectSelection = { directory?: string }
 
-export type ReviewDiffStyle = "unified" | "split"
+/**
+ * 右栏是被谁打开的。输入框上的"上下文"按钮打开的面板,在上下文标签关掉之后要自动收回去
+ * (见 session-context-usage),别的入口打开的就留着。
+ */
 export type ReviewPanelSource = "context-button" | "other"
 
 export type LayoutRoute =
   | { type: "home" }
-  | { type: "draft"; draftID: string; server?: ServerConnection.Key }
-  | { type: "dir-new-sesssion"; dir: string; dirBase64: string; server?: ServerConnection.Key }
-  | { type: "session"; sessionId: string; server?: ServerConnection.Key }
+  | { type: "draft"; draftID: string }
+  | { type: "dir-new-sesssion"; dir: string; dirBase64: string }
+  | { type: "session"; sessionId: string }
 
 function nextSessionTabsForOpen(current: SessionTabs | undefined, tab: string): SessionTabs {
   const all = current?.all ?? []
-  if (tab === "review") return { all: all.filter((x) => x !== "review"), active: tab }
   if (tab === "context") return { all: [tab, ...all.filter((x) => x !== tab)], active: tab }
   if (!all.includes(tab)) return { all: [...all, tab], active: tab }
   return { all, active: tab }
@@ -147,13 +144,9 @@ const currentRoute = (pathname: string, search: string): LayoutRoute => {
     return { type: "draft", draftID }
   }
 
-  if (parts[0] === "server" && parts[2] === "session" && parts[3]) {
-    return {
-      type: "session",
-      sessionId: parts[3],
-      server: requireServerKey(parts[1]),
-    }
-  }
+  // 会话的正式路由就一个形状:/session/<id>。/server/<key>/session/<id> 和
+  // /<base64(dir)>/session/<id> 这两种旧形状在 app.tsx 里被重定向掉,不会走到这里。
+  if (parts[0] === "session" && parts[1]) return { type: "session", sessionId: parts[1] }
 
   const dirBase64 = parts[0]
   const dir = decode64(dirBase64)
@@ -170,22 +163,11 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
   name: "Layout",
   gate: false,
   init: () => {
-    const serverSdk = useServerSDK()
     const serverSync = useServerSync()
-    const server = useServer()
-    const tabs = useTabs()
+    const global = useGlobal()
     const platform = usePlatform()
     const location = useLocation()
-    const route = createMemo(() => {
-      const value = currentRoute(location.pathname, location.search)
-      if (value.type === "home") return value
-      if (value.server) return value
-      if (value.type === "draft") {
-        const draft = tabs.store.find((tab): tab is DraftTab => tab.type === "draft" && tab.draftID === value.draftID)
-        if (draft) return { ...value, server: draft.server }
-      }
-      return { ...value, server: server.key }
-    })
+    const route = createMemo(() => currentRoute(location.pathname, location.search))
 
     const isRecord = (value: unknown): value is Record<string, unknown> =>
       typeof value === "object" && value !== null && !Array.isArray(value)
@@ -277,7 +259,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       }
     }
 
-    const target = Persist.serverGlobal(serverSdk().scope, "layout", ["layout.v6"])
+    const target = Persist.global("layout", ["layout.v6"])
     const [store, setStore, _, ready] = persisted(
       { ...target, migrate },
       createStore({
@@ -287,8 +269,8 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
           workspaces: {} as Record<string, boolean>,
           workspacesDefault: false,
         },
+        // 只剩"右栏开着没开"一位。字段名是审查页时代留下的,改名等于把用户的这一位清零。
         review: {
-          diffStyle: "split" as ReviewDiffStyle,
           panelOpened: DEFAULT_REVIEW_PANEL_OPENED,
         },
         fileTree: {
@@ -311,7 +293,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
           tabs: undefined as TabHandoff | undefined,
         },
         home: {
-          selection: { server: server.key } as HomeProjectSelection,
+          selection: {} as HomeProjectSelection,
         },
       }),
     )
@@ -334,19 +316,18 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
 
     const dropSessionState = (keys: string[]) => {
       for (const key of keys) {
-        const scope = SessionStateKey.scope(key)
+        // 多服务器时代 localStorage 里可能留下 `https://…<NUL>…` 这类远端条目。
+        // 它们的 workspace 存储名里编了服务器前缀,这边算不出来,也没有归属了 —— 跳过。
+        if (!SessionStateKey.isLocal(key)) continue
         const parts = SessionStateKey.route(key).split("/")
         const dir = parts[0]
         const session = parts[1]
         if (!dir) continue
 
         for (const entry of SESSION_STATE_KEYS) {
-          const target = session
-            ? Persist.serverSession(scope, dir, session, entry.key)
-            : Persist.serverWorkspace(scope, dir, entry.key)
+          const target = session ? Persist.session(dir, session, entry.key) : Persist.workspace(dir, entry.key)
           void removePersisted(target, platform)
 
-          if (scope !== ServerScope.local) continue
           const legacyKey = `${dir}/${entry.legacy}${session ? "/" + session : ""}.${entry.version}`
           void removePersisted({ key: legacyKey }, platform)
         }
@@ -455,7 +436,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       return base
     }
 
-    const enriched = createMemo(() => server.projects.list().map(enrich))
+    const enriched = createMemo(() => global.ctx.projects.list().map(enrich))
     const list = createMemo(() => {
       const projects = enriched()
       return projects.map((project) => {
@@ -512,7 +493,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         sessionTimer = window.setTimeout(() => {
           sessionTimer = undefined
           void Promise.all(
-            server.projects.list().map((project) => {
+            global.ctx.projects.list().map((project) => {
               return serverSync().project.loadSessions(project.worktree)
             }),
           )
@@ -537,7 +518,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       handoff: {
         tabs: createMemo(() => store.handoff?.tabs),
         setTabs(dir: string, id: string) {
-          setStore("handoff", "tabs", { scope: serverSdk().scope, dir, id, at: Date.now() })
+          setStore("handoff", "tabs", { dir, id, at: Date.now() })
         },
         clearTabs() {
           if (!store.handoff?.tabs) return
@@ -547,21 +528,21 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       projects: {
         list,
         open(directory: string) {
-          if (server.projects.list().find((x) => x.worktree === directory)) return
+          if (global.ctx.projects.list().find((x) => x.worktree === directory)) return
           void serverSync().project.loadSessions(directory)
-          server.projects.open(directory)
+          global.ctx.projects.open(directory)
         },
         close(directory: string) {
-          server.projects.close(directory)
+          global.ctx.projects.close(directory)
         },
         expand(directory: string) {
-          server.projects.expand(directory)
+          global.ctx.projects.expand(directory)
         },
         collapse(directory: string) {
-          server.projects.collapse(directory)
+          global.ctx.projects.collapse(directory)
         },
         move(directory: string, toIndex: number) {
-          server.projects.move(directory, toIndex)
+          global.ctx.projects.move(directory, toIndex)
         },
       },
       sidebar: {
@@ -588,16 +569,6 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         toggleWorkspaces(directory: string) {
           const current = store.sidebar.workspaces[directory] ?? store.sidebar.workspacesDefault ?? false
           setStore("sidebar", "workspaces", directory, !current)
-        },
-      },
-      review: {
-        diffStyle: createMemo(() => store.review?.diffStyle ?? "split"),
-        setDiffStyle(diffStyle: ReviewDiffStyle) {
-          if (!store.review) {
-            setStore("review", { diffStyle, panelOpened: DEFAULT_REVIEW_PANEL_OPENED })
-            return
-          }
-          setStore("review", "diffStyle", diffStyle)
         },
       },
       fileTree: {
@@ -731,7 +702,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
           const current = store.review
           if (!current) {
             batch(() => {
-              setStore("review", { diffStyle: "split" as ReviewDiffStyle, panelOpened: next })
+              setStore("review", { panelOpened: next })
               setEphemeral("reviewPanelSource", nextSource)
             })
             return
@@ -776,73 +747,6 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
             close() {
               setReviewPanelOpened(false, "other")
             },
-            toggle() {
-              setReviewPanelOpened(!reviewPanelOpened(), "other")
-            },
-          },
-          review: {
-            open: createMemo(() => s().reviewOpen ?? []),
-            setOpen(open: string[]) {
-              const session = key()
-              const next = Array.from(new Set(open))
-              const current = store.sessionView[session]
-              if (!current) {
-                setStore("sessionView", session, {
-                  scroll: {},
-                  reviewOpen: next,
-                })
-                return
-              }
-
-              if (same(current.reviewOpen, next)) return
-              setStore("sessionView", session, "reviewOpen", next)
-            },
-            openPath(path: string) {
-              const session = key()
-              const current = store.sessionView[session]
-              if (!current) {
-                setStore("sessionView", session, {
-                  scroll: {},
-                  reviewOpen: [path],
-                })
-                return
-              }
-
-              if (!current.reviewOpen) {
-                setStore("sessionView", session, "reviewOpen", [path])
-                return
-              }
-
-              if (current.reviewOpen.includes(path)) return
-              setStore("sessionView", session, "reviewOpen", current.reviewOpen.length, path)
-            },
-            closePath(path: string) {
-              const session = key()
-              const current = store.sessionView[session]?.reviewOpen
-              if (!current) return
-
-              const index = current.indexOf(path)
-              if (index === -1) return
-              setStore(
-                "sessionView",
-                session,
-                "reviewOpen",
-                produce((draft) => {
-                  if (!draft) return
-                  draft.splice(index, 1)
-                }),
-              )
-            },
-            togglePath(path: string) {
-              const session = key()
-              const current = store.sessionView[session]?.reviewOpen
-              if (!current || !current.includes(path)) {
-                this.openPath(path)
-                return
-              }
-
-              this.closePath(path)
-            },
           },
         }
       },
@@ -855,6 +759,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         return {
           tabs,
           active: createMemo(() => tabs().active),
+          // 存量记录里可能还有审查页时代的 "review" 标签,过滤掉。
           all: createMemo(() => tabs().all.filter((tab) => tab !== "review")),
           setActive(tab: string | undefined) {
             const session = key()
@@ -883,12 +788,6 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
             const session = key()
             const current = store.sessionTabs[session]
             if (!current) return
-
-            if (tab === "review") {
-              if (current.active !== tab) return
-              setStore("sessionTabs", session, "active", current.all[0])
-              return
-            }
 
             const all = current.all.filter((x) => x !== tab)
             if (current.active !== tab) {

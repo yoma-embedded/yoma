@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createResource, Show, untrack } from "solid-js"
+import { createEffect, createMemo, createResource, createSignal, Show, untrack } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useLocation, useNavigate, useParams } from "@solidjs/router"
 import { IconButtonV2 } from "@yoma-desktop/ui/v2/icon-button-v2"
@@ -6,21 +6,17 @@ import { Icon as IconV2 } from "@yoma-desktop/ui/v2/icon"
 import { KeybindV2 } from "@yoma-desktop/ui/v2/keybind-v2"
 import { TooltipV2 } from "@yoma-desktop/ui/v2/tooltip-v2"
 
-import { LayoutRoute, useLayout } from "@/context/layout"
+import { useLayout } from "@/context/layout"
 import { usePlatform } from "@/context/platform"
 import { useCommand } from "@/context/command"
 import { useLanguage } from "@/context/language"
 import { useSettings } from "@/context/settings"
 import { WindowsAppMenu } from "./windows-app-menu"
 import { applyPath, backPath, forwardPath } from "./titlebar-history"
-import { makeEventListener } from "@solid-primitives/event-listener"
 import { createMediaQuery } from "@solid-primitives/media"
-import { readSessionTabsRemovedDetail, SESSION_TABS_REMOVED_EVENT } from "@/components/titlebar-session-events"
 import { useGlobal } from "@/context/global"
-import { ServerConnection, useServer } from "@/context/server"
-import { useTabs } from "@/context/tabs"
+import { useDrafts } from "@/context/drafts"
 import "./titlebar.css"
-import { newTabTooltipKeybind } from "./command-tooltip-keybind"
 
 const v2TitlebarHeight = 36
 const minTitlebarZoom = 0.25
@@ -41,7 +37,6 @@ export function Titlebar(props: {
   const command = useCommand()
   const language = useLanguage()
   const settings = useSettings()
-  const server = useServer()
   const navigate = useNavigate()
   const location = useLocation()
   const params = useParams()
@@ -155,95 +150,65 @@ export function Titlebar(props: {
       {(() => {
         const layout = useLayout()
         const global = useGlobal()
-
-        const tabs = useTabs()
-        const tabsStore = tabs.store
-        const tabsStoreActions = tabs
+        const drafts = useDrafts()
         const [session] = createResource(
           () => {
             const route = layout.route()
             if (route.type !== "session") return undefined
-            const conn = global.servers
-              .list()
-              .find((item) => ServerConnection.key(item) === (route.server ?? server.key))
-            return conn ? { route, sdk: global.ensureServerCtx(conn).sdk } : undefined
+            return { route, sdk: global.ctx.sdk }
           },
           ({ route, sdk }) => sdk.client.session.get(route.sessionId).catch(() => {}),
         )
 
-        const matchRoute = (route: LayoutRoute) => {
-          if (route.type === "home") return
-          if (route.type === "draft") {
-            return tabsStore.find((item) => item.type === "draft" && item.draftID === route.draftID)
-          }
-          if (route.type === "session") {
-            const main = tabsStore.find(
-              (item) =>
-                item.type === "session" && item.server === route.server && item.sessionId === route.sessionId,
-            )
-            if (main) return main
-            // 内核里 session 之间没有父子关系(树在单个 session 内部,节点是 entry),
-            // 所以不存在"回到父会话的标签页"这件事。
-          }
-        }
+        /**
+         * 首页按钮是个来回开关:在会话/草稿上点一下去首页,再点一下回刚才那页。
+         * 以前"刚才那页"是标签条里的 recent 标签(持久化在 tabs.recent);标签没了之后
+         * 只记这一次会话里离开的那个地址 —— 重启后桌面端本来就会把上次的路由还原回来。
+         */
+        const [back, setBack] = createSignal<string | undefined>()
 
-        const currentTab = () => matchRoute(layout.route())
-
-        createEffect(() => {
-          const route = layout.route()
-          if (!tabs.ready()) return
-          const tab = currentTab()
-          if (tab) {
-            tabs.remember(tab)
-            return
-          }
-
-          if (route.type === "session") {
-            const s = session()
-            if (!s) return
-            const sessionId = s.id
-            const next = { server: route.server ?? server.key, sessionId }
-            tabsStoreActions.addSessionTab(next)
-          }
-        })
-
-        makeEventListener(window, SESSION_TABS_REMOVED_EVENT, (event) => {
-          const detail = readSessionTabsRemovedDetail(event)
-          if (!detail) return
-          tabsStoreActions.removeSessions(detail)
-        })
-
-        const openNewTab = () => {
+        const newSession = () => {
           const route = layout.route()
           const activeSession = session()
           if (route.type === "session" && activeSession) {
-            tabs.newDraft({ server: route.server ?? server.key, directory: activeSession.directory }, "")
+            drafts.create({ directory: activeSession.directory }, "")
             return
           }
 
-          const activeTab = currentTab()
-          if (activeTab?.type === "draft") {
-            tabs.newDraft({ server: activeTab.server, directory: activeTab.directory }, "")
-            return
+          if (route.type === "draft") {
+            const draft = drafts.get(route.draftID)
+            if (draft) {
+              drafts.create({ directory: draft.directory }, "")
+              return
+            }
           }
 
-          const current = layout.projects.list()[0]
-          if (current) {
-            tabs.newDraft({ server: server.key, directory: current.worktree }, "")
-            return
-          }
-
-          const fallback = global.servers.list().flatMap((conn) => {
-            const project = global.ensureServerCtx(conn).projects.list()[0]
-            return project ? [{ server: ServerConnection.key(conn), project }] : []
-          })[0]
-          if (!fallback) return
-
-          tabs.newDraft({ server: fallback.server, directory: fallback.project.worktree }, "")
+          const current = layout.projects.list()[0] ?? global.ctx.projects.list()[0]
+          if (!current) return
+          drafts.create({ directory: current.worktree }, "")
         }
-        const toggleHome = () => tabs.toggleHome({ home: layout.route().type === "home", current: currentTab() })
+
+        const toggleHome = () => {
+          if (layout.route().type === "home") {
+            const target = back()
+            if (target) navigate(target)
+            return
+          }
+          setBack(`${location.pathname}${location.search}`)
+          navigate("/")
+        }
 
         command.register("titlebar-home", () => [
+          {
+            // 标签条没了之后 mod+t 也没了;首页和草稿页上也得有一条键盘/菜单路径能开新会话。
+            // 会话页自己也注册 session.new(同一个 id,command 注册表按 id 先到先得,不会双触发)。
+            id: "session.new",
+            title: language.t("command.session.new"),
+            category: language.t("command.category.session"),
+            keybind: "mod+shift+s",
+            hidden: true,
+            onSelect: newSession,
+          },
           {
             id: "home.toggle",
             title: language.t("home.title"),
@@ -253,65 +218,6 @@ export function Titlebar(props: {
             onSelect: toggleHome,
           },
         ])
-
-        command.register("tabs", () => {
-          const current = currentTab()
-
-          return [
-            {
-              id: "tab.new",
-              category: "tab",
-              title: language.t("command.session.new"),
-              keybind: "mod+t",
-              hidden: true,
-              onSelect: openNewTab,
-            },
-            current && {
-              id: "tab.close",
-              category: "tab",
-              title: language.t("command.tab.close"),
-              keybind: "mod+w",
-              hidden: true,
-              onSelect: () => {
-                tabsStoreActions.removeTab(tabsStore.findIndex((tab) => current === tab))
-              },
-            },
-            {
-              id: `tab.prev`,
-              category: "tab",
-              title: "",
-              keybind: `mod+option+ArrowLeft,ctrl+shift+tab`,
-              hidden: true,
-              onSelect: () => {
-                let index = tabsStore.findIndex((tab) => tab === currentTab())
-                if (index === -1) return
-
-                index -= 1
-                if (index === -1) index = tabsStore.length - 1
-
-                const next = tabsStore[index]
-                if (next) tabs.select(next)
-              },
-            },
-            {
-              id: `tab.next`,
-              category: "tab",
-              title: "",
-              keybind: `mod+option+ArrowRight,ctrl+tab`,
-              hidden: true,
-              onSelect: () => {
-                let index = tabsStore.findIndex((tab) => tab === currentTab())
-                if (index === -1) return
-
-                index += 1
-                if (index === tabsStore.length) index = 0
-
-                const next = tabsStore[index]
-                if (next) tabs.select(next)
-              },
-            },
-          ].filter((v) => v !== undefined)
-        })
 
         return (
           <div
@@ -376,22 +282,14 @@ export function Titlebar(props: {
             </TooltipV2>
 
             <Show when={!creating()}>
-              <TooltipV2
-                placement="bottom"
-                value={
-                  <>
-                    {language.t("command.session.new")}
-                    <KeybindV2 keys={newTabTooltipKeybind(command)} variant="neutral" />
-                  </>
-                }
-              >
+              <TooltipV2 placement="bottom" value={language.t("command.session.new")}>
                 <IconButtonV2
                   type="button"
                   variant="ghost-muted"
                   size="large"
                   class="shrink-0"
                   icon={<IconV2 name="plus" />}
-                  onClick={openNewTab}
+                  onClick={newSession}
                   aria-label={language.t("command.session.new")}
                 />
               </TooltipV2>

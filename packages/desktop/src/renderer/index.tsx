@@ -10,7 +10,6 @@ import {
   type Locale,
   type Platform,
   PlatformProvider,
-  ServerConnection,
   useCommand,
 } from "@yoma-desktop/app"
 import type { UpdaterState } from "@yoma-desktop/app/updater"
@@ -20,7 +19,6 @@ import { createEffect, createMemo, createResource, createSignal, onCleanup, onMo
 import { render } from "solid-js/web"
 import pkg from "../../package.json"
 import { initI18n, t } from "./i18n"
-import { initializationData, initializationReady } from "./initialization"
 import { resetZoom, setPinchZoomEnabled, webviewZoom, zoomIn, zoomOut } from "./webview-zoom"
 import "./styles.css"
 import { Splash } from "@yoma-desktop/ui/logo"
@@ -190,7 +188,6 @@ const createPlatform = (): Platform => {
     recordFatalRendererError: (error) => window.api.recordFatalRendererError(error),
 
     restart: async () => {
-      await window.api.killSidecar().catch(() => undefined)
       window.api.relaunch()
     },
 
@@ -212,16 +209,6 @@ const createPlatform = (): Platform => {
     fetch: (input, init) => {
       if (input instanceof Request) return fetch(input)
       return fetch(input, init)
-    },
-
-    getDefaultServer: async () => {
-      const url = await window.api.getDefaultServerUrl().catch(() => null)
-      if (!url) return null
-      return ServerConnection.Key.make(url)
-    },
-
-    setDefaultServer: async (url: string | null) => {
-      await window.api.setDefaultServerUrl(url)
     },
 
     manuals: window.api.manuals,
@@ -268,10 +255,6 @@ render(() => {
     return next satisfies Locale
   }
 
-  // Fetch sidecar credentials (available immediately, before health check)
-  const [sidecar] = createResource(() => window.api.awaitInitialization())
-
-  const [defaultServer] = createResource(() => platform.getDefaultServer?.())
   const [locale] = createResource(loadLocale)
 
   function handleClick(e: MouseEvent) {
@@ -307,35 +290,16 @@ render(() => {
       </div>
     )
 
-    const ready = createMemo(() => !defaultServer.loading && !sidecar.loading && !locale.loading)
-    const servers = createMemo(() => {
-      const data = initializationData(sidecar)
-      const list: ServerConnection.Any[] = []
-      if (data) {
-        list.push({
-          displayName: "Local Server",
-          type: "sidecar",
-          variant: "base",
-          http: {
-            url: data.url,
-            username: data.username ?? undefined,
-            password: data.password ?? undefined,
-          },
-        })
-      }
-      return list
-    })
-    const effectiveDefaultServer = createMemo(() => ServerConnection.Key.make(defaultServer.latest ?? "sidecar"))
+    // 启动只等一件事:语言字典。原来还要等 sidecar 的 awaitInitialization()(HTTP 服务端的
+    // 端口/密码)和 electron-store 里的"默认服务器" —— 两者都随多服务器概念一起删了,
+    // 内核的 MessagePort 由 preload 在窗口创建时牵好,renderer 不必等它。
+    const ready = createMemo(() => !locale.loading)
 
     return (
       <Show when={ready()} fallback={splash}>
-        <Show when={effectiveDefaultServer()} keyed>
-          {(key) => (
-            <AppInterface defaultServer={key} servers={servers()} router={DesktopMemoryRouter}>
-              <Inner />
-            </AppInterface>
-          )}
-        </Show>
+        <AppInterface router={DesktopMemoryRouter}>
+          <Inner />
+        </AppInterface>
       </Show>
     )
   }
@@ -350,7 +314,7 @@ render(() => {
   return (
     <PlatformProvider value={platform}>
       <AppBaseProviders locale={locale.latest}>
-        <Show when={true}>{(_) => <App />}</Show>
+        <App />
       </AppBaseProviders>
     </PlatformProvider>
   )

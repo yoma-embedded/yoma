@@ -126,8 +126,6 @@ const kernel = {
 
 const api: ElectronAPI = {
   kernel,
-  killSidecar: () => ipcRenderer.invoke("kill-sidecar"),
-  awaitInitialization: () => ipcRenderer.invoke("await-initialization"),
   manuals: {
     config: () => ipcRenderer.invoke("manuals-config"),
     list: () => ipcRenderer.invoke("manuals-list"),
@@ -183,8 +181,6 @@ const api: ElectronAPI = {
     getAutoCheck: () => ipcRenderer.invoke("updater-get-auto-check"),
     setAutoCheck: (value) => ipcRenderer.invoke("updater-set-auto-check", value),
   },
-  getDefaultServerUrl: () => ipcRenderer.invoke("get-default-server-url"),
-  setDefaultServerUrl: (url) => ipcRenderer.invoke("set-default-server-url", url),
   storeGet: (name, key) => ipcRenderer.invoke("store-get", name, key),
   storeSet: (name, key, value) => ipcRenderer.invoke("store-set", name, key, value),
   storeDelete: (name, key) => ipcRenderer.invoke("store-delete", name, key),

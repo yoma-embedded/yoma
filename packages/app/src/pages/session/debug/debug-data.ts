@@ -29,8 +29,8 @@ export interface Instrument {
   display: InstrumentDisplay
 }
 
-/** 右栏顶部三个模式：changes(审查) / debug(仪器调试) / file(文件) */
-export type DockMode = "changes" | "debug" | "file"
+/** 右栏顶部三个模式：tabs(打开的文件标签) / debug(仪器调试) / file(文件树) */
+export type DockMode = "tabs" | "debug" | "file"
 
 // ---------------------------------------------------------------- instruments
 

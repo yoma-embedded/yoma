@@ -253,7 +253,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     normalizeTab: (tab) => (tab.startsWith("file://") ? files.tab(tab) : tab),
   }).activeFileTab
 
-  const openComment = (item: { path: string; commentID?: string; commentOrigin?: "review" | "file" }) => {
+  const openComment = (item: { path: string; commentID?: string }) => {
     if (!item.commentID) return
 
     const focus = { file: item.path, id: item.commentID }
@@ -274,14 +274,6 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       }
 
       schedule(attempts)
-    }
-
-    if (item.commentOrigin === "review") {
-      if (!props.controls.session.reviewPanel.opened()) props.controls.session.reviewPanel.open()
-      layout.fileTree.setTab("changes")
-      tabs().setActive("review")
-      queueCommentFocus()
-      return
     }
 
     if (!props.controls.session.reviewPanel.opened()) props.controls.session.reviewPanel.open()

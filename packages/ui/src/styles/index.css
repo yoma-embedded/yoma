@@ -25,7 +25,6 @@
 @import "../components/list.css" layer(components);
 @import "../components/logo.css" layer(components);
 @import "../components/progress-circle.css" layer(components);
-@import "../components/radio-group.css" layer(components);
 @import "../components/resize-handle.css" layer(components);
 @import "../components/select.css" layer(components);
 @import "../components/spinner.css" layer(components);
