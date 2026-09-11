@@ -1,5 +1,4 @@
 import "@/index.css"
-import * as Sentry from "@sentry/solid"
 import { I18nProvider } from "@yoma-desktop/ui/context"
 import { DialogProvider } from "@yoma-desktop/ui/context/dialog"
 import { FileComponentProvider } from "@yoma-desktop/ui/context/file"
@@ -394,10 +393,7 @@ export function AppBaseProviders(props: ParentProps<{ locale?: Locale }>) {
         <LanguageProvider locale={props.locale}>
           <UiI18nBridge>
             <ErrorBoundary
-              fallback={(error) => {
-                Sentry.captureException(error)
-                return <ErrorPage error={error} />
-              }}
+              fallback={(error) => <ErrorPage error={error} />}
             >
               <QueryProvider>
                 <DialogProvider>

@@ -6,7 +6,6 @@ import { homedir, tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { getCACertificates, setDefaultCACertificates } from "node:tls"
-import type { Event } from "electron"
 import { app, BrowserWindow, Notification } from "electron"
 
 import { Deferred, Effect, Fiber } from "effect"
@@ -17,16 +16,13 @@ import contextMenu from "electron-context-menu"
 import { defaultConfigDir } from "@yoma-desktop/bench/mailbox/paths"
 
 import type { ServerReadyData } from "../preload/types"
-import { checkAppExists, resolveAppPath } from "./apps"
 import { CHANNEL } from "./constants"
-import { registerIpcHandlers, sendDeepLinks, sendMenuCommand } from "./ipc"
+import { registerIpcHandlers, sendMenuCommand } from "./ipc"
 import { spawnKernel, type KernelProcess } from "./kernel"
 import { createMailboxMain, type MailboxMain } from "./mailbox"
 import type { MailboxSettings } from "./mailbox-controller"
 import { getStore } from "./store"
-import { forwardInitializationFailure } from "./initialization"
 import { exportDebugLogs, initCrashReporter, initLogging, startNetLog, write as writeLog } from "./logging"
-import { parseMarkdown } from "./markdown"
 import { createMenu } from "./menu"
 import {
   getDefaultServerUrl,
@@ -65,8 +61,6 @@ let kernelProcess: KernelProcess | null = null
 /** 调试台托管。声明提到这里,是为了让 stopSidecars(定义在它被创建之前)能带走守护树。 */
 let mailboxMain: MailboxMain | null = null
 
-const pendingDeepLinks: string[] = []
-
 /**
  * engines/bin + engines/data 的位置。
  *
@@ -101,12 +95,6 @@ function useEnvProxy() {
   } catch (error) {
     logger.warn("failed to load proxy environment", error)
   }
-}
-
-function emitDeepLinks(urls: string[]) {
-  if (urls.length === 0) return
-  pendingDeepLinks.push(...urls)
-  if (mainWindow) sendDeepLinks(mainWindow, urls)
 }
 
 /** 保留只为兼容 renderer 还在调的 IPC 通道;HTTP sidecar 已经不存在了。 */
@@ -213,22 +201,11 @@ const main = Effect.gen(function* () {
 
   preferAppEnv(app.getPath("userData"))
 
-  app.on("second-instance", (_event: Event, argv: string[]) => {
-    const urls = argv.filter((arg: string) => arg.startsWith("yoma://"))
-    if (urls.length) {
-      logger.log("deep link received via second-instance", { urls })
-      emitDeepLinks(urls)
-    }
+  app.on("second-instance", () => {
     if (mainWindow) {
       mainWindow.show()
       mainWindow.focus()
     }
-  })
-
-  app.on("open-url", (event: Event, url: string) => {
-    event.preventDefault()
-    logger.log("deep link received via open-url", { url })
-    emitDeepLinks([url])
   })
 
   // 退出必须先把守护树与内核带走,**等它们真的死了**再退:electron-updater 的"退出时安装"
@@ -271,8 +248,6 @@ const main = Effect.gen(function* () {
 
   // tauri→electron 的 .dat 迁移已随运行时身份换成 Yoma 一起摘除:Yoma 从未发过 tauri 版,
   // 那套迁移只会把 opencode 时代的陈年草稿灌进全新的 userData(实测旧目录里真有 .dat)。
-  // 深链协议与 electron-builder 配置里声明的 protocols(yoma://)一致。
-  app.setAsDefaultProtocolClient("yoma")
   registerRendererProtocol()
   setDockIcon()
   const updater = setupAutoUpdater(stopSidecars)
@@ -322,14 +297,8 @@ const main = Effect.gen(function* () {
       },
       (e) => Effect.runPromise(e),
     ),
-    consumeInitialDeepLinks: () => pendingDeepLinks.splice(0),
     getDefaultServerUrl: () => getDefaultServerUrl(),
     setDefaultServerUrl: (url) => setDefaultServerUrl(url),
-    getDisplayBackend: async () => null,
-    setDisplayBackend: async () => undefined,
-    parseMarkdown: async (markdown) => parseMarkdown(markdown),
-    checkAppExists: (appName) => checkAppExists(appName),
-    resolveAppPath: async (appName) => resolveAppPath(appName),
     updater,
     updaterAutoCheck: updaterAutoCheckPrefs(),
     mailbox: {

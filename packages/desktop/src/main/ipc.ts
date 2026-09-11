@@ -1,7 +1,6 @@
-import { execFile } from "node:child_process"
 import { mkdir, stat, writeFile } from "node:fs/promises"
 import { basename, dirname, join, resolve, sep } from "node:path"
-import { app, BrowserWindow, Notification, clipboard, dialog, ipcMain, shell } from "electron"
+import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from "electron"
 import type { IpcMainEvent, IpcMainInvokeEvent } from "electron"
 import type { DesktopMenuAction } from "@yoma-desktop/app/desktop-menu"
 
@@ -28,14 +27,8 @@ type Deps = {
   attachKernel: (event: IpcMainInvokeEvent) => void
   relaunch: () => void
   awaitInitialization: () => Promise<ServerReadyData>
-  consumeInitialDeepLinks: () => Promise<string[]> | string[]
   getDefaultServerUrl: () => Promise<string | null> | string | null
   setDefaultServerUrl: (url: string | null) => Promise<void> | void
-  getDisplayBackend: () => Promise<string | null>
-  setDisplayBackend: (backend: string | null) => Promise<void> | void
-  parseMarkdown: (markdown: string) => Promise<string> | string
-  checkAppExists: (appName: string) => Promise<boolean> | boolean
-  resolveAppPath: (appName: string) => Promise<string | null>
   updater: UpdaterController
   /** "启动时 / 定时自动检查更新"的开关(yoma.updater store)。 */
   updaterAutoCheck: { get: () => boolean; set: (value: boolean) => void }
@@ -72,18 +65,10 @@ export function registerIpcHandlers(deps: Deps) {
   // renderer reload 之后端口失效,preload 主动来要一次重新牵线。
   ipcMain.handle("kernel-attach", (event: IpcMainInvokeEvent) => deps.attachKernel(event))
   ipcMain.handle("await-initialization", () => deps.awaitInitialization())
-  ipcMain.handle("consume-initial-deep-links", () => deps.consumeInitialDeepLinks())
   ipcMain.handle("get-default-server-url", () => deps.getDefaultServerUrl())
   ipcMain.handle("set-default-server-url", (_event: IpcMainInvokeEvent, url: string | null) =>
     deps.setDefaultServerUrl(url),
   )
-  ipcMain.handle("get-display-backend", () => deps.getDisplayBackend())
-  ipcMain.handle("set-display-backend", (_event: IpcMainInvokeEvent, backend: string | null) =>
-    deps.setDisplayBackend(backend),
-  )
-  ipcMain.handle("parse-markdown", (_event: IpcMainInvokeEvent, markdown: string) => deps.parseMarkdown(markdown))
-  ipcMain.handle("check-app-exists", (_event: IpcMainInvokeEvent, appName: string) => deps.checkAppExists(appName))
-  ipcMain.handle("resolve-app-path", (_event: IpcMainInvokeEvent, appName: string) => deps.resolveAppPath(appName))
   ipcMain.handle("updater-subscribe", (event) => {
     const id = event.sender.id
     updaterSubscriptions.set(
@@ -183,18 +168,6 @@ export function registerIpcHandlers(deps: Deps) {
   })
 
   ipcMain.handle(
-    "save-file-picker",
-    async (_event: IpcMainInvokeEvent, opts?: { title?: string; defaultPath?: string }) => {
-      const result = await dialog.showSaveDialog({
-        title: opts?.title ?? "Save file",
-        defaultPath: opts?.defaultPath,
-      })
-      if (result.canceled) return null
-      return result.filePath ?? null
-    },
-  )
-
-  ipcMain.handle(
     "create-directory",
     async (_event: IpcMainInvokeEvent, parent: string, name: string) => {
       const target = join(parent, name)
@@ -227,14 +200,7 @@ export function registerIpcHandlers(deps: Deps) {
     void shell.openExternal(url)
   })
 
-  ipcMain.handle("open-path", async (_event: IpcMainInvokeEvent, path: string, app?: string) => {
-    if (!app) return shell.openPath(path)
-    await new Promise<void>((resolve, reject) => {
-      const [cmd, args] =
-        process.platform === "darwin" ? (["open", ["-a", app, path]] as const) : ([app, [path]] as const)
-      execFile(cmd, args, (err) => (err ? reject(err) : resolve()))
-    })
-  })
+  ipcMain.handle("open-path", (_event: IpcMainInvokeEvent, path: string) => shell.openPath(path))
 
   ipcMain.handle("read-clipboard-image", () => {
     const image = clipboard.readImage()
@@ -243,12 +209,6 @@ export function registerIpcHandlers(deps: Deps) {
     const size = image.getSize()
     return { buffer, width: size.width, height: size.height }
   })
-
-  ipcMain.on("show-notification", (_event: IpcMainEvent, title: string, body?: string) => {
-    new Notification({ title, body }).show()
-  })
-
-  ipcMain.handle("get-window-count", () => BrowserWindow.getAllWindows().length)
 
   ipcMain.handle("get-window-focused", (event: IpcMainInvokeEvent) => {
     const win = BrowserWindow.fromWebContents(event.sender)
@@ -269,7 +229,6 @@ export function registerIpcHandlers(deps: Deps) {
     deps.relaunch()
   })
 
-  ipcMain.handle("get-zoom-factor", (event: IpcMainInvokeEvent) => event.sender.getZoomFactor())
   ipcMain.handle("set-zoom-factor", (event: IpcMainInvokeEvent, factor: number) => {
     event.sender.setZoomFactor(factor)
     const win = BrowserWindow.fromWebContents(event.sender)
@@ -295,8 +254,4 @@ export function registerIpcHandlers(deps: Deps) {
 
 export function sendMenuCommand(win: BrowserWindow, id: string) {
   win.webContents.send("menu-command", id)
-}
-
-export function sendDeepLinks(win: BrowserWindow, urls: string[]) {
-  win.webContents.send("deep-link", urls)
 }

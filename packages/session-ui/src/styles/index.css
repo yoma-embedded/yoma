@@ -4,7 +4,6 @@
 @import "../components/file.css" layer(components);
 @import "../components/markdown.css" layer(components);
 @import "../components/message-part.css" layer(components);
-@import "../components/message-nav.css" layer(components);
 @import "../components/session-review.css" layer(components);
 @import "../components/session-turn.css" layer(components);
 @import "../components/tool-error-card.css" layer(components);

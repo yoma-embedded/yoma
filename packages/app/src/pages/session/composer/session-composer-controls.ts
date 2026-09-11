@@ -12,7 +12,6 @@ import type { QueryOptionsApi } from "@/context/server-sync"
 import { useServerSDK } from "@/context/server-sdk"
 import { serverName, ServerConnection, useServer } from "@/context/server"
 import { useSDK } from "@/context/sdk"
-import { useSettings } from "@/context/settings"
 import { useTabs } from "@/context/tabs"
 import { pathKey } from "@/utils/path-key"
 
@@ -23,7 +22,6 @@ export function createPromptInputController(input: {
 }) {
   const layout = useLayout()
   const local = useLocal()
-  const settings = useSettings()
   const sdk = useSDK()
   const view = layout.view(input.sessionKey)
   const globalProvidersQuery = createQuery(() => input.queryOptions.providers(null))
@@ -39,7 +37,6 @@ export function createPromptInputController(input: {
       tabs: layout.tabs(input.sessionKey),
       reviewPanel: view.reviewPanel,
     },
-    newLayoutDesigns: settings.general.newLayoutDesigns(),
   }))
 }
 

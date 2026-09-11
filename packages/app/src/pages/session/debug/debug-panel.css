@@ -101,66 +101,11 @@
   color: var(--d-muted);
   margin-bottom: 7px;
 }
-.ydbg-flag {
-  margin-left: auto;
-  font-size: 10.5px;
-  color: var(--d-warn);
-  background: var(--d-warn-bg);
-  border: 1px solid color-mix(in srgb, var(--d-warn) 30%, transparent);
-  border-radius: 5px;
-  padding: 1px 6px;
-}
 .ydbg-win-caption {
   font-size: 11px;
   color: var(--d-faint);
   margin-top: 7px;
   line-height: 1.5;
-}
-
-/* ---- 显示体：波形 / 时序曲线 / 大读数 ---- */
-.ydbg-wave,
-.ydbg-ts {
-  width: 100%;
-  height: auto;
-  display: block;
-  background: var(--d-panel);
-  border: 1px solid var(--d-line);
-  border-radius: 8px;
-}
-.ydbg-wave-label {
-  fill: var(--d-faint);
-  font-size: 9px;
-  font-family: var(--d-mono);
-}
-
-.ydbg-big {
-  min-height: 84px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  text-align: center;
-  padding: 10px 0;
-}
-.ydbg-big-v {
-  font-size: 34px;
-  line-height: 1;
-  font-weight: 600;
-  color: var(--d-ink);
-}
-.ydbg-big-u {
-  font-size: 17px;
-  color: var(--d-muted);
-  margin-left: 4px;
-}
-.ydbg-big-sub {
-  font-size: 11px;
-  color: var(--d-faint);
-}
-.ydbg-off .ydbg-big-v {
-  color: var(--d-faint);
-  font-size: 22px;
 }
 
 /* ---- 逻辑分析仪波形(真仪器,la-waveform.tsx) ---- */

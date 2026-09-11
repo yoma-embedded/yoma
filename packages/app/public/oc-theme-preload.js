@@ -2,7 +2,9 @@
   var key = "yoma-theme-id"
   var themeId = localStorage.getItem(key) || "oc-2"
 
-  if (themeId === "oc-1") {
+  var shipped = ["oc-2", "github", "dracula"]
+
+  if (shipped.indexOf(themeId) === -1) {
     themeId = "oc-2"
     localStorage.setItem(key, themeId)
     localStorage.removeItem("yoma-theme-css-light")

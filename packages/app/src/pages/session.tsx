@@ -95,7 +95,6 @@ export default function Page() {
   const location = useLocation()
   const { params, sessionKey, workspaceKey, tabs, view } = useSessionLayout()
   const sessionOwnership = createSessionOwnership(sessionKey)
-  const newSessionDesign = createMemo(() => settings.general.newLayoutDesigns())
 
   createEffect(() => {
     if (!prompt.ready()) return
@@ -177,10 +176,10 @@ export default function Page() {
   )
   const desktopSidePanelOpen = createMemo(() => desktopReviewOpen() || desktopFileTreeOpen())
   // 右侧四模式面板的可见性 —— 与 SessionSidePanel 内的 Show 条件保持一致
-  const dockVisible = createMemo(() => isDesktop() && !(settings.general.newLayoutDesigns() && !params.id))
+  const dockVisible = createMemo(() => isDesktop() && !!params.id)
   // 新布局这一行有 gap-2(8px)：中间栏按百分比减宽时要把这道缝一起减掉，
   // 否则 中间 + 缝 + 右栏 会超出一格，右栏顶掉右侧 8px 留白（贴到窗口边）。
-  const rowGap = () => (settings.general.newLayoutDesigns() ? 8 : 0)
+  const rowGap = () => 8
   const sessionPanelWidth = createMemo(() => {
     if (dockVisible()) {
       if (!debugDock.opened()) return `calc(100% - ${36 + rowGap()}px)` // 收起态：给展开窄条(w-9)留位
@@ -711,11 +710,7 @@ export default function Page() {
 
   const reviewPanel = () => (
     <div
-      classList={{
-        "flex flex-col h-full overflow-hidden contain-strict": true,
-        "bg-v2-background-bg-base": settings.general.newLayoutDesigns(),
-        "bg-background-stronger": !settings.general.newLayoutDesigns(),
-      }}
+      class="flex flex-col h-full overflow-hidden contain-strict bg-v2-background-bg-base"
     >
       <div class="relative pt-2 flex-1 min-h-0 overflow-hidden">
         {reviewContent({
@@ -1311,7 +1306,7 @@ export default function Page() {
     </Tabs>
   )
   const mobileTabsBottom = createMemo(
-    () => !isDesktop() && settings.general.newLayoutDesigns() && settings.general.mobileTitlebarPosition() === "bottom",
+    () => !isDesktop() && settings.general.mobileTitlebarPosition() === "bottom",
   )
 
   return (
@@ -1319,13 +1314,8 @@ export default function Page() {
       {sessionSync() ?? ""}
       <SessionHeader />
       <div
-        class="flex-1 min-h-0 flex flex-col md:flex-row"
-        classList={{
-          "gap-2 p-2": settings.general.newLayoutDesigns(),
-        }}
+        class="flex-1 min-h-0 flex flex-col md:flex-row gap-2 p-2"
       >
-        <Show when={!isDesktop() && !!params.id && !settings.general.newLayoutDesigns()}>{mobileTabs()}</Show>
-
         <div
           classList={{
             "@container relative shrink-0 flex flex-col min-h-0 h-full flex-1 md:flex-none transition-[width]": true,
@@ -1340,14 +1330,11 @@ export default function Page() {
         >
           <div
             classList={{
-              "flex-1 min-h-0 flex flex-col": true,
-              "bg-v2-background-bg-base": settings.general.newLayoutDesigns(),
-              "bg-background-stronger": !settings.general.newLayoutDesigns(),
-              "rounded-[10px] overflow-hidden": settings.general.newLayoutDesigns(),
-              "shadow-[var(--v2-elevation-raised)]": settings.general.newLayoutDesigns() && !!params.id,
+              "flex-1 min-h-0 flex flex-col bg-v2-background-bg-base rounded-[10px] overflow-hidden": true,
+              "shadow-[var(--v2-elevation-raised)]": !!params.id,
             }}
           >
-            <Show when={!isDesktop() && !!params.id && settings.general.newLayoutDesigns() && !mobileTabsBottom()}>
+            <Show when={!isDesktop() && !!params.id && !mobileTabsBottom()}>
               {mobileTabs(true)}
             </Show>
             <div class="flex-1 min-h-0 overflow-hidden">
@@ -1413,7 +1400,7 @@ export default function Page() {
               </Switch>
             </div>
 
-            <Show when={(params.id || !newSessionDesign()) && !mobileChanges()}>{(_) => composerRegion()}</Show>
+            <Show when={params.id && !mobileChanges()}>{(_) => composerRegion()}</Show>
             <Show when={!!params.id && mobileTabsBottom()}>{mobileTabs(true, true)}</Show>
           </div>
 
@@ -1421,9 +1408,7 @@ export default function Page() {
           <Show when={!dockVisible() && desktopReviewOpen()}>
             <div onPointerDown={() => size.start()}>
               <ResizeHandle
-                classList={{
-                  "-right-1": settings.general.newLayoutDesigns(),
-                }}
+                class="-right-1"
                 direction="horizontal"
                 size={layout.session.width()}
                 min={450}

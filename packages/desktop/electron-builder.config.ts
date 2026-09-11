@@ -10,12 +10,6 @@ const execFileAsync = promisify(execFile)
 const packageDir = path.dirname(fileURLToPath(import.meta.url))
 const rootDir = path.resolve(packageDir, "../..")
 const signScript = path.join(rootDir, "script", "sign-windows.ps1")
-// The Electron 42 packaging update briefly installed Linux launchers/icons under
-// "opencode-desktop". Keep that hidden desktop entry around so existing GNOME/KDE
-// pins still resolve after the canonical app id changes back to ai.opencode.desktop.
-const legacyDesktopEntry = path.join(packageDir, "resources", "linux", "opencode-desktop.desktop")
-const legacyDesktopEntryFpm = `${legacyDesktopEntry}=/usr/share/applications/opencode-desktop.desktop`
-
 /**
  * Windows 代码签名。没有证书时**跳过而不是失败** —— 未签名包是当前已知且被文档
  * 承认的状态(用户装的时候 SmartScreen 会拦一下,点"仍要运行"即可)。
@@ -137,10 +131,6 @@ const getBase = (appId: string): Configuration => ({
     // Developer ID 证书的机器上会让整次打包直接失败。
     sign: false,
   },
-  protocols: {
-    name: "Yoma",
-    schemes: ["yoma"],
-  },
   win: {
     icon: `resources/icons/icon.ico`,
     signtoolOptions: {
@@ -190,7 +180,6 @@ function getConfig() {
         ...base,
         appId,
         productName: "Yoma Beta",
-        protocols: { name: "Yoma Beta", schemes: ["yoma"] },
         publish: { provider: "github", owner: GH_OWNER, repo: "yoma-beta", channel: "latest" },
         rpm: { packageName: "yoma-beta" },
       }
@@ -200,10 +189,8 @@ function getConfig() {
         ...base,
         appId,
         productName: "Yoma",
-        protocols: { name: "Yoma", schemes: ["yoma"] },
         publish: { provider: "github", owner: GH_OWNER, repo: "yoma", channel: "latest" },
-        deb: { fpm: [legacyDesktopEntryFpm] },
-        rpm: { packageName: "yoma", fpm: [legacyDesktopEntryFpm] },
+        rpm: { packageName: "yoma" },
       }
     }
   }

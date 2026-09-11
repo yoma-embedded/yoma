@@ -20,7 +20,6 @@ export interface Settings {
     autoSave: boolean
     followup: "queue" | "steer"
     showFileTree: boolean
-    showNavigation: boolean
     showSearch: boolean
     showReasoningSummaries: boolean
     shellToolPartsExpanded: boolean
@@ -83,7 +82,6 @@ const defaultSettings: Settings = {
     autoSave: true,
     followup: "steer",
     showFileTree: false,
-    showNavigation: false,
     showSearch: false,
     showReasoningSummaries: false,
     shellToolPartsExpanded: false,
@@ -119,9 +117,6 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
     const [store, setStore, _, ready] = persisted("settings.v3", createStore<Settings>(defaultSettings))
     const showFileTree = withFallback(() => store.general?.showFileTree, defaultSettings.general.showFileTree)
     const showSearch = withFallback(() => store.general?.showSearch, defaultSettings.general.showSearch)
-    // The legacy layout is gone; the flag is pinned on and kept only so the
-    // remaining `newLayoutDesigns()` call sites keep compiling until they are collapsed.
-    const newLayoutDesigns = () => true
     const visible = (preference: () => boolean) => createMemo(preference)
 
     createEffect(() => {
@@ -157,10 +152,6 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
         setShowFileTree(value: boolean) {
           setStore("general", "showFileTree", value)
         },
-        showNavigation: withFallback(() => store.general?.showNavigation, defaultSettings.general.showNavigation),
-        setShowNavigation(value: boolean) {
-          setStore("general", "showNavigation", value)
-        },
         showSearch,
         setShowSearch(value: boolean) {
           setStore("general", "showSearch", value)
@@ -193,7 +184,6 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
         setMobileTitlebarPosition(value: "top" | "bottom") {
           setStore("general", "mobileTitlebarPosition", value)
         },
-        newLayoutDesigns,
       },
       visibility: {
         fileTree: visible(showFileTree),

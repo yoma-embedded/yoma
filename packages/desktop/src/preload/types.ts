@@ -68,7 +68,6 @@ export type UpdaterAPI = {
   setAutoCheck: (value: boolean) => Promise<void>
 }
 
-export type LinuxDisplayBackend = "wayland" | "auto"
 export type TitlebarTheme = {
   mode: "light" | "dark"
 }
@@ -87,14 +86,8 @@ export type ElectronAPI = {
   manuals: ManualsAPI
   mailbox: MailboxAPI
   updater: UpdaterAPI
-  consumeInitialDeepLinks: () => Promise<string[]>
   getDefaultServerUrl: () => Promise<string | null>
   setDefaultServerUrl: (url: string | null) => Promise<void>
-  getDisplayBackend: () => Promise<LinuxDisplayBackend | null>
-  setDisplayBackend: (backend: LinuxDisplayBackend | null) => Promise<void>
-  parseMarkdownCommand: (markdown: string) => Promise<string>
-  checkAppExists: (appName: string) => Promise<boolean>
-  resolveAppPath: (appName: string) => Promise<string | null>
   storeGet: (name: string, key: string) => Promise<string | null>
   storeSet: (name: string, key: string, value: string) => Promise<void>
   storeDelete: (name: string, key: string) => Promise<void>
@@ -102,9 +95,7 @@ export type ElectronAPI = {
   storeKeys: (name: string) => Promise<string[]>
   storeLength: (name: string) => Promise<number>
 
-  getWindowCount: () => Promise<number>
   onMenuCommand: (cb: (id: string) => void) => () => void
-  onDeepLink: (cb: (urls: string[]) => void) => () => void
 
   openDirectoryPicker: (opts?: {
     multiple?: boolean
@@ -120,18 +111,15 @@ export type ElectronAPI = {
   readPickedFile: (token: string, path: string) => Promise<ArrayBuffer>
   releasePickedFiles: (token: string) => Promise<void>
   getPathForFile: (file: File) => string
-  saveFilePicker: (opts?: { title?: string; defaultPath?: string }) => Promise<string | null>
   createDirectory: (parent: string, name: string) => Promise<string>
   writeTextFile: (input: { root: string; path: string; content: string; exclusive?: boolean }) => Promise<string>
   openLink: (url: string) => void
-  openPath: (path: string, app?: string) => Promise<void>
+  openPath: (path: string) => Promise<void>
   readClipboardImage: () => Promise<{ buffer: ArrayBuffer; width: number; height: number } | null>
-  showNotification: (title: string, body?: string) => void
   getWindowFocused: () => Promise<boolean>
   setWindowFocus: () => Promise<void>
   showWindow: () => Promise<void>
   relaunch: () => void
-  getZoomFactor: () => Promise<number>
   setZoomFactor: (factor: number) => Promise<void>
   getPinchZoomEnabled: () => Promise<boolean>
   setPinchZoomEnabled: (enabled: boolean) => Promise<void>

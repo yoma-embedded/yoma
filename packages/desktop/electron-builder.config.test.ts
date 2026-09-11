@@ -1,9 +1,5 @@
 import { expect, test } from "vitest"
-import { readFile } from "node:fs/promises"
-import { join } from "node:path"
 import type { Configuration } from "electron-builder"
-
-const legacyDesktopEntry = "resources/linux/opencode-desktop.desktop"
 
 const channels = [
   { channel: "dev", appId: "com.yoma.desktop.dev" },
@@ -49,24 +45,4 @@ test("没有 Apple 公证凭据时降级为不公证、dmg 不签名,而不是�
 
   expect(config.mac?.notarize).toBe(false)
   expect(config.dmg?.sign).toBe(false)
-})
-
-test("keeps a hidden prod launcher for old Linux pins", async () => {
-  const previous = process.env.YOMA_CHANNEL
-  process.env.YOMA_CHANNEL = "prod"
-
-  const module = await import(/* @vite-ignore */ ("./electron-builder.config.ts?compat=prod" as string))
-  const config = module.default as Configuration
-
-  if (previous === undefined) delete process.env.YOMA_CHANNEL
-  else process.env.YOMA_CHANNEL = previous
-
-  expect(config.deb?.fpm?.[0].endsWith(`${legacyDesktopEntry}=/usr/share/applications/opencode-desktop.desktop`)).toBe(true)
-  expect(config.rpm?.fpm?.[0].endsWith(`${legacyDesktopEntry}=/usr/share/applications/opencode-desktop.desktop`)).toBe(true)
-
-  const desktop = await readFile(join(import.meta.dirname, legacyDesktopEntry), "utf8")
-  expect(desktop).toContain("Exec=/opt/OpenCode/ai.opencode.desktop %U")
-  expect(desktop).toContain("Icon=ai.opencode.desktop")
-  expect(desktop).toContain("StartupWMClass=ai.opencode.desktop")
-  expect(desktop).toContain("NoDisplay=true")
 })

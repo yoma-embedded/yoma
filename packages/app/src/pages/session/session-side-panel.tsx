@@ -20,7 +20,6 @@ import { useFile, type SelectedLineRange } from "@/context/file"
 import { useLanguage } from "@/context/language"
 import { useLayout } from "@/context/layout"
 import { useSDK } from "@/context/sdk"
-import { useSettings } from "@/context/settings"
 import { createFileTabListSync } from "@/pages/session/file-tab-scroll"
 import { FileTabContent } from "@/pages/session/file-tabs"
 import {
@@ -87,7 +86,6 @@ export function SessionSidePanel(props: {
   size: Sizing
 }) {
   const layout = useLayout()
-  const settings = useSettings()
   const file = useFile()
   const language = useLanguage()
   const command = useCommand()
@@ -293,14 +291,13 @@ export function SessionSidePanel(props: {
   })
 
   return (
-    <Show when={isDesktop() && !(settings.general.newLayoutDesigns() && !params.id)}>
+    <Show when={isDesktop() && !!params.id}>
       <Show
         when={open()}
         fallback={
           <div class="h-full w-9 shrink-0 flex flex-col items-center pt-1.5 bg-background-base"
             classList={{
-              "border-l border-border-weaker-base": !settings.general.newLayoutDesigns(),
-              "rounded-[10px] shadow-[var(--v2-elevation-raised)]": settings.general.newLayoutDesigns(),
+              "rounded-[10px] shadow-[var(--v2-elevation-raised)]": true,
             }}
           >
             <Tooltip placement="left" value="展开右侧栏">
@@ -322,8 +319,7 @@ export function SessionSidePanel(props: {
           classList={{
             "transition-[width] duration-[240ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none":
               !props.size.active() && !props.reviewSnap,
-            "rounded-[10px] shadow-[var(--v2-elevation-raised)]": settings.general.newLayoutDesigns(),
-            "border-l border-border-weaker-base": !settings.general.newLayoutDesigns(),
+            "rounded-[10px] shadow-[var(--v2-elevation-raised)]": true,
             "flex-1": dock.fullscreen(),
           }}
           style={{ width: panelWidth() }}

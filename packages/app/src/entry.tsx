@@ -1,6 +1,5 @@
 // @refresh reload
 
-import * as Sentry from "@sentry/solid"
 import { render } from "solid-js/web"
 import { AppBaseProviders, AppInterface } from "@/app"
 import { type Platform, PlatformProvider } from "@/context/platform"
@@ -130,25 +129,6 @@ const platform: Platform = {
     return stored ? ServerConnection.Key.make(stored) : null
   },
   setDefaultServer: writeDefaultServerUrl,
-}
-
-if (import.meta.env.VITE_SENTRY_DSN) {
-  Sentry.init({
-    dsn: import.meta.env.VITE_SENTRY_DSN,
-    environment: import.meta.env.VITE_SENTRY_ENVIRONMENT ?? import.meta.env.MODE,
-    release: import.meta.env.VITE_SENTRY_RELEASE ?? `web@${pkg.version}`,
-    initialScope: {
-      tags: {
-        platform: "web",
-      },
-    },
-    integrations: (integrations) => {
-      return integrations.filter(
-        (i) =>
-          i.name !== "Breadcrumbs" && !(import.meta.env.YOMA_CHANNEL === "prod" && i.name === "GlobalHandlers"),
-      )
-    },
-  })
 }
 
 if (root instanceof HTMLElement) {

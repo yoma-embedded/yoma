@@ -7,9 +7,6 @@ declare global {
 
   interface Window {
     api: ElectronAPI
-    __YOMA__?: {
-      deepLinks?: string[]
-    }
   }
 }
 

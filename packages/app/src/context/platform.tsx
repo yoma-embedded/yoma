@@ -36,7 +36,6 @@ type OpenAttachmentPickerOptions = {
   extensions?: string[]
   defaultPath?: string
 }
-type SaveFilePickerOptions = { title?: string; defaultPath?: string }
 type PlatformName = "web" | "desktop"
 type DesktopOS = "macos" | "windows" | "linux"
 
@@ -56,7 +55,7 @@ type PlatformBase = {
   openLink(url: string): void
 
   /** Open a local path in a local app (desktop only) */
-  openPath?(path: string, app?: string): Promise<void>
+  openPath?(path: string): Promise<void>
 
   /** Restart the app  */
   restart(): Promise<void>
@@ -78,9 +77,6 @@ type PlatformBase = {
 
   /** Resolve the native source path for a desktop File. */
   getPathForFile?(file: File): string
-
-  /** Open a native save file picker dialog (desktop only) */
-  saveFilePickerDialog?(opts?: SaveFilePickerOptions): Promise<string | null>
 
   /** Create a directory `<parent>/<name>` and return its absolute path (desktop only) */
   createDirectory?(parent: string, name: string): Promise<string>
@@ -109,15 +105,6 @@ type PlatformBase = {
   /** 信箱调试台:跨机器多轮调试闭环的托管入口(desktop only)。事件与错误全是普通对象。 */
   mailbox?: MailboxPlatform
 
-  /** Get the preferred display backend (desktop only) */
-  getDisplayBackend?(): Promise<DisplayBackend | null> | DisplayBackend | null
-
-  /** Set the preferred display backend (desktop only) */
-  setDisplayBackend?(backend: DisplayBackend): Promise<void>
-
-  /** Parse markdown to HTML using native parser (desktop only, returns unprocessed code blocks) */
-  parseMarkdown?(markdown: string): Promise<string>
-
   /** Webview zoom level (desktop only) */
   webviewZoom?: Accessor<number>
 
@@ -131,7 +118,6 @@ type PlatformBase = {
   runDesktopMenuAction?(action: DesktopMenuAction): Promise<void> | void
 
   /** Check if an editor app exists (desktop only) */
-  checkAppExists?(appName: string): Promise<boolean>
 
   /** Read image from clipboard (desktop only) */
   readClipboardImage?(): Promise<File | null>
@@ -153,7 +139,6 @@ export type Platform = PlatformBase &
       }
   )
 
-export type DisplayBackend = "auto" | "wayland"
 
 export const { use: usePlatform, provider: PlatformProvider } = createSimpleContext({
   name: "Platform",

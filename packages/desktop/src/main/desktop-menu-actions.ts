@@ -1,6 +1,6 @@
 import { BrowserWindow } from "electron"
 import type { DesktopMenuAction } from "@yoma-desktop/app/desktop-menu"
-import { createMainWindow, updateTitlebar } from "./windows"
+import { updateTitlebar } from "./windows"
 
 export type DesktopMenuActionHandlers = Partial<{
   checkForUpdates: () => void
@@ -18,9 +18,6 @@ export function runDesktopMenuAction(
       return
     case "app.relaunch":
       handlers.relaunch?.()
-      return
-    case "window.new":
-      createMainWindow()
       return
     case "window.close":
       win?.close()

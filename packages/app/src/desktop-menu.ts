@@ -16,7 +16,6 @@ export type DesktopMenuAction =
   | "view.zoomIn"
   | "view.zoomOut"
   | "view.toggleFullscreen"
-  | "window.new"
   | "window.close"
   | "window.minimize"
   | "window.toggleMaximize"
@@ -106,12 +105,6 @@ export const DESKTOP_MENU: DesktopMenu[] = [
         command: "settings.open",
         accelerator: { windows: "Ctrl+," },
         platforms: ["windows"],
-      },
-      {
-        type: "item",
-        label: "New Window",
-        action: "window.new",
-        accelerator: { macos: "Cmd+Shift+N", windows: "Ctrl+Shift+N" },
       },
       { type: "separator" },
       { type: "item", label: "Close Window", action: "window.close", role: "close" },

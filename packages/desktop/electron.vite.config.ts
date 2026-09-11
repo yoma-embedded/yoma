@@ -1,4 +1,3 @@
-import { sentryVitePlugin } from "@sentry/vite-plugin"
 import { defineConfig } from "electron-vite"
 import appPlugin from "@yoma-desktop/app/vite"
 
@@ -8,25 +7,6 @@ const channel = (() => {
   if (process.env.YOMA_CHANNEL === "latest") return "prod"
   return "dev"
 })()
-
-const nodePtyPkg = `@lydell/node-pty-${process.platform}-${process.arch}`
-
-const sentry =
-  process.env.SENTRY_AUTH_TOKEN && process.env.SENTRY_ORG && process.env.SENTRY_PROJECT
-    ? sentryVitePlugin({
-        authToken: process.env.SENTRY_AUTH_TOKEN,
-        org: process.env.SENTRY_ORG,
-        project: process.env.SENTRY_PROJECT,
-        telemetry: false,
-        release: {
-          name: process.env.SENTRY_RELEASE ?? process.env.VITE_SENTRY_RELEASE,
-        },
-        sourcemaps: {
-          assets: "./out/renderer/**",
-          filesToDeleteAfterUpload: "./out/renderer/**/*.map",
-        },
-      })
-    : false
 
 export default defineConfig({
   main: {
@@ -42,17 +22,7 @@ export default defineConfig({
           kernel: "src/main/kernel-entry.ts",
         },
       },
-      externalizeDeps: { include: [nodePtyPkg] },
     },
-    plugins: [
-      {
-        name: "yoma:node-pty-narrower",
-        enforce: "pre",
-        resolveId(s) {
-          if (s === "@lydell/node-pty") return nodePtyPkg
-        },
-      },
-    ],
   },
   preload: {
     build: {
@@ -66,7 +36,7 @@ export default defineConfig({
     },
   },
   renderer: {
-    plugins: [appPlugin, sentry],
+    plugins: [appPlugin],
     publicDir: "../../../app/public",
     root: "src/renderer",
     build: {

@@ -11,7 +11,6 @@ import { useSDK } from "./sdk"
 import { useTabs, type Tab } from "./tabs"
 import { ServerConnection } from "./server"
 import { requireServerKey } from "@/utils/session-route"
-import { useSettings } from "./settings"
 
 interface PartBase {
   content: string
@@ -297,7 +296,6 @@ export const { use: usePrompt, provider: PromptProvider } = createSimpleContext(
     const [search] = useSearchParams<{ draftId?: string }>()
     const serverSDK = useServerSDK()
     const tabs = useTabs()
-    const settings = useSettings()
     const cache = new Map<string, PromptCacheEntry>()
 
     const disposeAll = () => {
@@ -325,7 +323,7 @@ export const { use: usePrompt, provider: PromptProvider } = createSimpleContext(
     const scope = () =>
       search.draftId ? { draftID: search.draftId } : { dir: base64Encode(sdk().directory), id: params.id }
     const load = (scope: Scope) => {
-      const current = settings.general.newLayoutDesigns() ? selectPromptTab(tabs.store, scope, serverKey()) : undefined
+      const current = selectPromptTab(tabs.store, scope, serverKey())
       if (current) {
         return createTabPromptState(tabs, current, serverSDK().scope, scope)
       }

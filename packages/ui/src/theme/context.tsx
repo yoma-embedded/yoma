@@ -45,47 +45,20 @@ function knownThemes() {
 
 const names: Record<string, string> = {
   "oc-2": "OC-2",
-  amoled: "AMOLED",
-  aura: "Aura",
-  ayu: "Ayu",
-  carbonfox: "Carbonfox",
-  catppuccin: "Catppuccin",
-  "catppuccin-frappe": "Catppuccin Frappe",
-  "catppuccin-macchiato": "Catppuccin Macchiato",
-  cobalt2: "Cobalt2",
-  cursor: "Cursor",
   dracula: "Dracula",
-  everforest: "Everforest",
-  flexoki: "Flexoki",
   github: "GitHub",
-  gruvbox: "Gruvbox",
-  kanagawa: "Kanagawa",
-  "lucent-orng": "Lucent Orng",
-  material: "Material",
-  matrix: "Matrix",
-  mercury: "Mercury",
-  monokai: "Monokai",
-  nightowl: "Night Owl",
-  nord: "Nord",
-  "one-dark": "One Dark",
-  onedarkpro: "One Dark Pro",
-  opencode: "OpenCode",
-  orng: "Orng",
-  "osaka-jade": "Osaka Jade",
-  palenight: "Palenight",
-  rosepine: "Rose Pine",
-  shadesofpurple: "Shades of Purple",
-  solarized: "Solarized",
-  synthwave84: "Synthwave '84",
-  tokyonight: "Tokyonight",
-  vercel: "Vercel",
-  vesper: "Vesper",
-  zenburn: "Zenburn",
 }
 const oc2Theme = oc2ThemeJson as DesktopTheme
 
 function normalize(id: string | null | undefined) {
   return id === "oc-1" ? "oc-2" : id
+}
+
+function normalizeSaved(id: string | null | undefined) {
+  const next = normalize(id)
+  if (!next) return next
+  if (next !== "oc-2" && !knownThemes().has(next)) return "oc-2"
+  return next
 }
 
 function read(key: string) {
@@ -174,7 +147,7 @@ function cacheThemeVariants(theme: DesktopTheme, themeId: string) {
 export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
   name: "Theme",
   init: (props: { defaultTheme?: string; onThemeApplied?: (theme: DesktopTheme, mode: "light" | "dark") => void }) => {
-    const themeId = normalize(read(STORAGE_KEYS.THEME_ID) ?? props.defaultTheme) ?? "oc-2"
+    const themeId = normalizeSaved(read(STORAGE_KEYS.THEME_ID) ?? props.defaultTheme) ?? "oc-2"
     const colorScheme = (read(STORAGE_KEYS.COLOR_SCHEME) as ColorScheme | null) ?? "system"
     const mode = colorScheme === "system" ? getSystemMode() : colorScheme
     const [store, setStore] = createStore({
@@ -260,7 +233,7 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
       makeEventListener(mediaQuery, "change", onMedia)
 
       const rawTheme = read(STORAGE_KEYS.THEME_ID)
-      const savedTheme = normalize(rawTheme ?? props.defaultTheme) ?? "oc-2"
+      const savedTheme = normalizeSaved(rawTheme ?? props.defaultTheme) ?? "oc-2"
       const savedScheme = (read(STORAGE_KEYS.COLOR_SCHEME) as ColorScheme | null) ?? "system"
       if (rawTheme && rawTheme !== savedTheme) {
         write(STORAGE_KEYS.THEME_ID, savedTheme)

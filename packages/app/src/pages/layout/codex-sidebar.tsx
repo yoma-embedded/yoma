@@ -28,7 +28,7 @@ const ROW =
 const ROW_IDLE = "text-v2-text-text-muted hover:bg-v2-background-bg-layer-01 hover:text-v2-text-text-base"
 const ROW_ACTIVE = "bg-v2-background-bg-layer-03 text-v2-text-text-base"
 
-export function CodexSidebar(props: { onOpenSearch: () => void }) {
+export function CodexSidebar() {
   const server = useServer()
   const layout = useLayout()
   const tabs = useTabs()
@@ -117,7 +117,6 @@ export function CodexSidebar(props: { onOpenSearch: () => void }) {
     >
       <div class="flex flex-col gap-0.5 pt-1">
         <ActionRow icon="edit" label={language.t("codex.newChat")} onClick={() => newChat()} />
-        <ActionRow icon="magnifying-glass" label={language.t("codex.search")} onClick={props.onOpenSearch} />
         <Show when={platform.manuals}>
           <ActionRow icon="archive" label="手册库" onClick={() => navigate("/manuals")} />
         </Show>

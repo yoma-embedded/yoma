@@ -1,5 +1,4 @@
 import { Show, type JSX } from "solid-js"
-import { useSettings } from "@/context/settings"
 import { SessionFollowupDock } from "@/pages/session/composer/session-followup-dock"
 import type { SessionComposerRegionController } from "./session-composer-region-controller"
 
@@ -8,16 +7,13 @@ export function SessionComposerRegion(props: {
   promptInput: JSX.Element
 }) {
   const controller = props.controller
-  const settings = useSettings()
 
   return (
     <div
       ref={controller.setDockRef}
       data-component="session-prompt-dock"
       classList={{
-        "w-full shrink-0 flex flex-col justify-center items-center pb-3 pointer-events-none": true,
-        "bg-v2-background-bg-base": settings.general.newLayoutDesigns(),
-        "bg-background-stronger": !settings.general.newLayoutDesigns(),
+        "w-full shrink-0 flex flex-col justify-center items-center pb-3 pointer-events-none bg-v2-background-bg-base": true,
       }}
     >
       <div

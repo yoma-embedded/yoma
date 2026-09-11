@@ -14,7 +14,6 @@ import {
   useCommand,
 } from "@yoma-desktop/app"
 import type { UpdaterState } from "@yoma-desktop/app/updater"
-import * as Sentry from "@sentry/solid"
 import type { AsyncStorage } from "@solid-primitives/storage"
 import { createMemoryHistory, MemoryRouter, type BaseRouterProps } from "@solidjs/router"
 import { createEffect, createMemo, createResource, createSignal, onCleanup, onMount, Show } from "solid-js"
@@ -32,49 +31,12 @@ if (import.meta.env.DEV && !(root instanceof HTMLElement)) {
   throw new Error(t("error.dev.rootNotFound"))
 }
 
-if (import.meta.env.VITE_SENTRY_DSN) {
-  Sentry.init({
-    dsn: import.meta.env.VITE_SENTRY_DSN,
-    environment: import.meta.env.VITE_SENTRY_ENVIRONMENT ?? import.meta.env.MODE,
-    release: import.meta.env.VITE_SENTRY_RELEASE ?? `desktop@${pkg.version}`,
-    initialScope: {
-      tags: {
-        platform: "desktop",
-      },
-    },
-    integrations: (integrations) => {
-      return integrations.filter(
-        (i) =>
-          i.name !== "Breadcrumbs" &&
-          !(
-            import.meta.env.YOMA_CHANNEL === "prod" &&
-            (i.name === "GlobalHandlers" || i.name === "BrowserApiErrors")
-          ),
-      )
-    },
-  })
-}
-
 void initI18n()
 
 const [updaterState, setUpdaterState] = createSignal<UpdaterState>({ status: "disabled" })
 void window.api.updater.subscribe(setUpdaterState)
 
-const deepLinkEvent = "yoma:deep-link"
 const lastActiveUrlKey = "yoma.desktop.last-active-url"
-
-const emitDeepLinks = (urls: string[]) => {
-  if (urls.length === 0) return
-  window.__YOMA__ ??= {}
-  const pending = window.__YOMA__.deepLinks ?? []
-  window.__YOMA__.deepLinks = [...pending, ...urls]
-  window.dispatchEvent(new CustomEvent(deepLinkEvent, { detail: { urls } }))
-}
-
-const listenForDeepLinks = () => {
-  void window.api.consumeInitialDeepLinks().then((urls) => emitDeepLinks(urls))
-  return window.api.onDeepLink((urls) => emitDeepLinks(urls))
-}
 
 function getLastActiveUrl() {
   if (typeof localStorage !== "object") return "/"
@@ -188,13 +150,6 @@ const createPlatform = (): Platform => {
       return attachmentPaths.get(file) ?? window.api.getPathForFile(file)
     },
 
-    async saveFilePickerDialog(opts) {
-      return window.api.saveFilePicker({
-        title: opts?.title ?? t("desktop.dialog.saveFile"),
-        defaultPath: opts?.defaultPath,
-      })
-    },
-
     async createDirectory(parent, name) {
       return window.api.createDirectory(parent, name)
     },
@@ -206,12 +161,8 @@ const createPlatform = (): Platform => {
     openLink(url: string) {
       window.api.openLink(url)
     },
-    async openPath(path: string, app?: string) {
-      if (os === "windows") {
-        const resolvedApp = app ? await window.api.resolveAppPath(app).catch(() => null) : null
-        return window.api.openPath(path, resolvedApp ?? undefined)
-      }
-      return window.api.openPath(path, app)
+    async openPath(path: string) {
+      return window.api.openPath(path)
     },
 
     back() {
@@ -279,16 +230,6 @@ const createPlatform = (): Platform => {
     // 两边的一致性由 bench 的 view-check 闸门 + e2e 钉住,这里只是收窄。
     mailbox: window.api.mailbox as unknown as Platform["mailbox"],
 
-    getDisplayBackend: async () => {
-      return window.api.getDisplayBackend().catch(() => null)
-    },
-
-    setDisplayBackend: async (backend) => {
-      await window.api.setDisplayBackend(backend)
-    },
-
-    parseMarkdown: (markdown: string) => window.api.parseMarkdownCommand(markdown),
-
     webviewZoom,
 
     getPinchZoomEnabled: () => window.api.getPinchZoomEnabled(),
@@ -296,10 +237,6 @@ const createPlatform = (): Platform => {
     setPinchZoomEnabled,
 
     runDesktopMenuAction,
-
-    checkAppExists: async (appName: string) => {
-      return window.api.checkAppExists(appName)
-    },
 
     async readClipboardImage() {
       const image = await window.api.readClipboardImage().catch(() => null)
@@ -316,7 +253,6 @@ let menuTrigger = null as null | ((id: string) => void)
 window.api.onMenuCommand((id) => {
   menuTrigger?.(id)
 })
-listenForDeepLinks()
 
 render(() => {
   const platform = createPlatform()
@@ -331,8 +267,6 @@ render(() => {
     if (next !== "en") await loadLocaleDict(next)
     return next satisfies Locale
   }
-
-  const [windowCount] = createResource(() => window.api.getWindowCount())
 
   // Fetch sidecar credentials (available immediately, before health check)
   const [sidecar] = createResource(() => window.api.awaitInitialization())
@@ -373,9 +307,7 @@ render(() => {
       </div>
     )
 
-    const ready = createMemo(
-      () => !defaultServer.loading && !sidecar.loading && !windowCount.loading && !locale.loading,
-    )
+    const ready = createMemo(() => !defaultServer.loading && !sidecar.loading && !locale.loading)
     const servers = createMemo(() => {
       const data = initializationData(sidecar)
       const list: ServerConnection.Any[] = []

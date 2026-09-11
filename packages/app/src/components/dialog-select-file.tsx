@@ -15,7 +15,6 @@ import { useLayout } from "@/context/layout"
 import { useFile } from "@/context/file"
 import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
-import { useSettings } from "@/context/settings"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { createSessionTabs } from "@/pages/session/helpers"
 import { decode64 } from "@/utils/base64"
@@ -274,7 +273,6 @@ export function DialogSelectFile(props: {
   const command = useCommand()
   const language = useLanguage()
   const platform = usePlatform()
-  const settings = useSettings()
   const layout = useLayout()
   const file = useFile()
   const dialog = useDialog()
@@ -391,7 +389,7 @@ export function DialogSelectFile(props: {
     state.cleanup?.()
   })
 
-  if (filesOnly() && platform.platform === "desktop" && settings.general.newLayoutDesigns()) {
+  if (filesOnly() && platform.platform === "desktop") {
     return (
       <DialogSelectFileV2
         server={serverSDK().server}

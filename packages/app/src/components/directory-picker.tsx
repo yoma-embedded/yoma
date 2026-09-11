@@ -1,7 +1,6 @@
 import { useDialog } from "@yoma-desktop/ui/context/dialog"
 import { ServerConnection } from "@/context/server"
 import { usePlatform } from "@/context/platform"
-import { useSettings } from "@/context/settings"
 import { lazy } from "solid-js"
 import { DialogSelectDirectory } from "./dialog-select-directory"
 import { directoryPickerKind } from "./directory-picker-policy"
@@ -19,7 +18,6 @@ type DirectoryPickerInput = {
 
 export function useDirectoryPicker() {
   const platform = usePlatform()
-  const settings = useSettings()
   const dialog = useDialog()
 
   return (input: DirectoryPickerInput) => {
@@ -36,7 +34,7 @@ export function useDirectoryPicker() {
     const cancel = () => {
       if (!selected) input.onSelect(null)
     }
-    if (platform.platform === "desktop" && settings.general.newLayoutDesigns()) {
+    if (platform.platform === "desktop") {
       dialog.show(() => <DialogSelectDirectoryV2 {...input} onSelect={onSelect} />, cancel)
       return
     }
