@@ -76,3 +76,8 @@ jobs:
         run: npm run e2e:ipc -w packages/desktop
       - name: renderer contextBridge 端到端
         run: npm run e2e:renderer -w packages/desktop
+      # 上面那条窗口里 load 的是 about:blank —— renderer 包本体(路由 + 首页 + 会话页 + 右栏仪器)
+      # 一行都没跑过。这条真开窗口、接 CDP、把界面点一遍,顺带把 exceptionThrown / console.error /
+      # Log 错误(sprite 少个 symbol 这类 404)都当失败。
+      - name: 首屏 + 点一遍
+        run: npm run e2e:paint -w packages/desktop

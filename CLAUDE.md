@@ -120,6 +120,7 @@ kernel 接它 —— 从前那份自有 harness(`agent-legacy` / `@yoma/agent`)�
 | `npm run smoke -w packages/desktop` | 内核冒烟:对 **构建产物** 验证内核装配(内核自带的 4 个工具)+ 4 个引擎二进制 |
 | `npm run e2e:ipc -w packages/desktop` | 生产路径:真 utilityProcess + 真 MessagePort + 真协议帧(不开窗口) |
 | `npm run e2e:renderer -w packages/desktop` | 最后一跳:真窗口 + 真 preload + **真 contextBridge**(含 mailbox 桥三条) |
+| `npm run e2e:paint -w packages/desktop` | 真窗口首屏 + 点一遍:Electron 跑构建产物 + 接 CDP,首页 / 会话页(含逻辑分析仪面板)/ 草稿页 / 手册库 / 调试台全点一遍,零 `exceptionThrown` 零 `console.error` / Log 错误(含资源 404)(窗口会在屏幕上闪几秒,别去点它) |
 | `npm run smoke:mailbox -w packages/desktop` | 调试台冒烟:Electron RUN_AS_NODE 对打包产物跑完整**本机演练**(假模型,零 key 零硬件) |
 | `npm run e2e:mailbox -w packages/desktop` | main 托管端到端:真 kernel.js 的 `mailbox.setActive` 往返 + 假守护喂 `@@event` + 停止杀树 + 锁冲突人话 |
 | `tsx packages/bench/src/cli.ts check <job.json>` | 校验任务书 + 本机内核装配 |
@@ -127,7 +128,7 @@ kernel 接它 —— 从前那份自有 harness(`agent-legacy` / `@yoma/agent`)�
 | `tsx engines/logic-analyzer/build.ts [--dist --out DIR]` | 只构建/安装逻辑分析仪引擎 yoma-la(`engines/build.ts` 会顺带做;Windows 要 MSYS2 ucrt64) |
 | `engines/logic-analyzer/run.sh decode --in X.dsl --pd "i2c0=1:i2c:scl=1:sda=0"` | 开发期直接跑 build/ 里的引擎(把 ucrt64 的 DLL 放进 PATH) |
 
-`smoke` / `e2e:ipc` / `e2e:renderer` 是 CI(Windows 岗)里挡住"yoma 一次重构悄悄搞死桌面端"的东西 —— 我们是把它整个 inline
+`smoke` / `e2e:ipc` / `e2e:renderer` / `e2e:paint` 是 CI(Windows 岗)里挡住"yoma 一次重构悄悄搞死桌面端"的东西 —— 我们是把它整个 inline
 进 bundle 的,内核的改动可以在我们这边零编译错误地把 app 弄坏,直到用户点下去才发现。
 
 `e2e:renderer` 单独存在是因为 **contextBridge 是一道序列化边界**,而它的失效是运行时行为:
