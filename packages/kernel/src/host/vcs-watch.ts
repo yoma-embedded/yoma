@@ -14,11 +14,23 @@
  * agent 跑完一轮照旧会刷新,只是用户自己在终端提交后要等下一次刷新。
  */
 
-import { watch, type FSWatcher } from "node:fs"
+import { watch } from "node:fs"
 import path from "node:path"
 
 import type { VcsInfo } from "../types.ts"
 import { vcsInfo } from "./services.ts"
+
+/** node:fs.watch 的最小面:测试拿假监视器换掉它,直接喂事件。 */
+export interface WatchHandle {
+  on(event: "error", listener: () => void): unknown
+  close(): void
+}
+
+export type WatchFn = (
+  directory: string,
+  options: { recursive: true; persistent: false },
+  listener: (event: string, filename: string | null) => void,
+) => WatchHandle
 
 export interface VcsWatchOptions {
   emit(directory: string, info: VcsInfo): void
@@ -26,6 +38,8 @@ export interface VcsWatchOptions {
   debounceMs?: number
   /** 最多同时盯几个目录;超过按最久没用过的关掉。 */
   maxWatchers?: number
+  /** 只给测试换假监视器;产品代码不传,用 node:fs.watch。 */
+  watch?: WatchFn
 }
 
 /** 该不该因为这条(相对被监视目录的)路径的变化去刷新审查页。 */
@@ -47,7 +61,7 @@ export function shouldRefresh(relative: string | null | undefined): boolean {
 }
 
 interface Entry {
-  watcher: FSWatcher
+  watcher: WatchHandle
   timer?: ReturnType<typeof setTimeout>
   lastUsed: number
   /** 这个目录到来时的各种写法,事件按每种写法各回一条。 */
@@ -56,7 +70,8 @@ interface Entry {
 
 export class VcsWatchers {
   private readonly entries = new Map<string, Entry>()
-  private readonly options: Required<VcsWatchOptions>
+  private readonly options: Required<Omit<VcsWatchOptions, "watch">>
+  private readonly watchFn: WatchFn
   private closed = false
 
   constructor(options: VcsWatchOptions) {
@@ -65,6 +80,7 @@ export class VcsWatchers {
       debounceMs: options.debounceMs ?? 400,
       maxWatchers: options.maxWatchers ?? 16,
     }
+    this.watchFn = options.watch ?? watch
   }
 
   /**
@@ -94,9 +110,9 @@ export class VcsWatchers {
       if (oldest === undefined) break
       this.drop(oldest)
     }
-    let watcher: FSWatcher
+    let watcher: WatchHandle
     try {
-      watcher = watch(key, { recursive: true, persistent: false }, (_event, filename) => {
+      watcher = this.watchFn(key, { recursive: true, persistent: false }, (_event, filename) => {
         if (!shouldRefresh(filename)) return
         this.schedule(key)
       })
