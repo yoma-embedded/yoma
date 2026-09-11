@@ -1,1 +1,0 @@
-int hal_stub;

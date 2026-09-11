@@ -1,4 +1,0 @@
-dependencies:
-  espressif/mqtt: "^2.0.0"
-  idf:
-    version: ">=5.0"

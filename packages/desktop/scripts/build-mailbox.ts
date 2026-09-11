@@ -38,10 +38,7 @@ for (const bundle of bundles) {
     bundle: true,
     platform: "node",
     format: "esm",
-    // usb(node-usb 3)是 napi 原生模块:esbuild 打不了 .node,留给运行时解析。打包 app 里 mailbox-host 以
-    // RUN_AS_NODE 起、没有 asar 读法,解析不到就走 kernel 工具间 scope 里 loadUsb() 的退化路径("USB 不可用,走 LAN")
-    // —— 工位机的示波器本来就该走 LAN。
-    external: ["electron", "usb"],
+    external: ["electron"],
     logLevel: "warning",
     // 被 inline 的 CJS 依赖(yaml 等)会动态 require node 内置模块;ESM 产物里
     // esbuild 的 shim 只认作用域里的 `require`,不给它就是运行时直接 throw(实测)。

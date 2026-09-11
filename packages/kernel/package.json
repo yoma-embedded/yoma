@@ -16,8 +16,7 @@
   "dependencies": {
     "@earendil-works/pi-agent-core": "*",
     "@earendil-works/pi-ai": "*",
-    "@zip.js/zip.js": "2.7.62",
-    "usb": "3.1.0"
+    "@zip.js/zip.js": "2.7.62"
   },
   "scripts": {
     "typecheck": "tsgo --noEmit -p tsconfig.json",

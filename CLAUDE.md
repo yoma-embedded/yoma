@@ -10,7 +10,8 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
 - **内核**(`packages/{ai,agent}` 两个上游包 + `packages/kernel/src/host`)—— agent 循环、
   会话树、压缩、技能,以及嵌入式应用层(工具链解析 / 示例语料 / 引擎调用)。
   嵌入式工具组(烧录 / 日志 / gdb / 网表 / 数据手册 / STM32 配置 / 逻辑分析仪 / 示波器)2026-09-10
-  **归零**:旧实现搬到 `packages/kernel/attic/`(不编译、不跑),按新内核的工具接口一个个重写。
+  **归零**:旧实现搬到 `packages/kernel/attic/`(不编译、不跑),按新内核的工具接口一个个重写;
+  示波器与例程库 2026-09-11 整体停到仓库外 `../yoma-parked/`(功能还要,方案未定,先不拖累)。
 - **桌面端**(`packages/{desktop,app,kernel,ui,session-ui,util,bench}`)——
   Electron 外壳 + SolidJS UI,fork 自 opencode 的前端;`bench` 是无人值守调试台。
 
@@ -75,8 +76,8 @@ pi 上游包(`ai` / `agent` / `chord` / `telemetry`,包名保留 `@earendil-work
 kernel 接它 —— 从前那份自有 harness(`agent-legacy` / `@yoma/agent`)同日删除。
 
 嵌入式应用层**不再是单独的包**:2026-09-10 `@yoma/coding-agent` 并进 `kernel` —— 工具链解析、
-示例语料、引擎辅助、示波器 / 逻辑分析仪的语义进 `kernel/src/host/domain/`,系统提示词、资源发现、
-模型目录、数据手册地址解析进 `kernel/src/host/`,它那 25 个用例文件进 `packages/kernel/test/`
+引擎辅助、逻辑分析仪的语义进 `kernel/src/host/domain/`(示例语料与示波器 2026-09-11 停到仓库外
+`../yoma-parked/`),系统提示词、资源发现、模型目录、数据手册地址解析进 `kernel/src/host/`,用例文件进 `packages/kernel/test/`
 (单独一个 vitest 项目 `kernel-domain`),归零的工具实现进 `packages/kernel/attic/`。
 
 桌面端这 7 个:
@@ -513,52 +514,16 @@ TS 侧的纪律:
   25 MHz,I²C SDA=D0/SCL=D1、UART D5、SPI D12–15)。I²C 解出 **300 条注解 / 6 个事务**,UART 47 字节
   "DSLogic series USB-based LA from DreamSourceLab",SPI 5 次传输 288 字。smoke 与 `build.ts` 自检都钉这个数。
 
-### 示波器(`scope` 工具 / `host/domain/scope`)
+### 示波器(`host/domain/scope`,2026-09-11 停到仓库外)
 
-2026-09-03 起。Siglent **SDS824X HD**(SDS800X HD 一族:4 通道 / 200 MHz / 12 位)**原生集成**,纯 TypeScript,
-不经引擎:USB(USBTMC)或 LAN(SCPI 原始套接字 5025 口)。只在这一台上验证过;同一命令树的 SDS2000X HD 等
-大概率能用,但没验。
+Siglent **SDS824X HD**(SDS800X HD 一族:4 通道 / 200 MHz / 12 位)的原生集成,纯 TypeScript,不经引擎:
+USB(USBTMC)或 LAN(SCPI 原始套接字 5025 口),只在这一台上验证过。代码没有任何调用方,2026-09-11 连测试、
+夹具和旧工具壳一起原样搬到 `../yoma-parked/scope/`(目录内保留仓库相对路径,`cp -R` 即可搬回)。功能还要,
+方案想清楚再回来;回来时工具壳按 `host/tools/<name>/` 样板重写。样本落点 `<工程>/.yoma/scope/<id>/`、截图
+`.yoma/scope/screens/`、仪器地址 `.yoma/scope.json` 仍在 `YOMA_IGNORE` 里。
 
-**形态**:`packages/kernel/src/host/domain/scope/`(`scpi.ts` 传输与分帧、`preamble.ts` WAVEDESC 与换算、
-`analyze.ts` 统计/边沿/文本示意图、`store.ts` 落盘、`siglent.ts` 驱动)+ `attic/tools/scope.ts`(11 个动作,待重写:
-connect / status / setup / capture / arm / collect / measure / samples / screenshot / list / raw)。
-样本落在 `<工程>/.yoma/scope/<id>/`(`c<n>.i16` 原始 code + `capture.json`),截图在 `.yoma/scope/screens/`,
-本机仪器地址在 `.yoma/scope.json`;三样都在 `YOMA_IGNORE`。专用卡片已随卡片归零删除,目前走万能卡,
-截图 attachments 暂不显示 —— 用户说过不要花哨前端。
-
-**USB 走 node-usb 3**(`usb@3.1.0`:Rust nusb + napi-rs,各平台预编译包 `@node-usb/usb-<platform>` 作可选依赖,
-**不装 libusb、不编译**)。它在 `kernel` 与 `desktop` 的 `dependencies` 里都要在(两处同一个字面量版本):desktop 那份让
-electron-vite 把它外部化(否则 napi 的 `.node` 进不了 inline 的 kernel.js),kernel 那份给 typecheck。
-host 只**动态 import**(`loadUsb()`),平台包缺席时退化成"USB 不可用,走 LAN",不是崩。macOS 免驱直连;
-**Windows 要把仪器绑到 WinUSB(Zadig)**,与 Siglent/NI 的 USBTMC 驱动互斥 —— 那边的正路是 LAN;Linux 要 udev 规则。
-工位机多半是 Windows,所以 LAN 才是产品主路,USB 是开发机的便利。
-
-**真机核实过的怪癖**(固件 4.8.12.1.1.6.5;改协议层前先读):
-
-- 仪器**只接一个客户端**(USB 也算),响应按 FIFO 排队。查询超时之后那条响应仍在队里,下一条查询拿到的是
-  上一条的答案(实测截图超时后 `*IDN?` 读回 PNG),而且**跨进程残留**。USBTMC 的 INITIATE_CLEAR 在这台机器上
-  清不掉它。所以:连接时先 drain,超时后标 dirty 下次先 drain,工具每个动作按需连、闲置 90 s 断开。
-- WAVEDESC 的 VERTICAL_GAIN/OFFSET **不含探头衰减**(10× 探头要乘 10);CODE_PER_DIV 在 WORD 与 BYTE 下都报 7680,
-  BYTE 发的是高字节,不除 256 就小 256 倍(守则:永远 WORD);NOMINAL_BITS 报 16 不是 ADC 位数;COMM_ORDER 说
-  大端而数据是小端;TIMEBASE 枚举表按机型不同 —— 时基一律查 `:TIMebase:SCALe?`。时间轴
-  `t = delay − 5×tdiv + i×interval×stride`(手册公式,10 格)。
-- `:WAVeform:DATA?` 块尾是 `\n\n`,无波形时块前带 `C1:WF ` 前缀。**MAXPoint(5 M)截的是源点窗口**,与 stride 无关
-  (stride 5000 时一窗照样只覆盖 5 M 源点、回 1000 点),所以任何 stride 都按"已交付点数 × stride"推进 `:STARt`
-  分段读;`:STARt` 一旦越过实际数据末尾仪器**根本不回**(挂到超时)。**实际记录长度信 preamble 的
-  WAVE_ARRAY_COUNT**,`:ACQuire:POINts?` 是当前时基的配置值(改了时基还没重新采集时两者能差 5 倍)。
-  USB2 实测 ~11 MB/s(10 MB 波形 0.86 s)。
-- `:PRINt? PNG` 返回**裸 PNG,没有块头**:TCP 侧靠走 PNG chunk 到 IEND 判长(`pngComplete`),USB 侧靠 EOM。
-- 编程手册说没有错误队列,但这台固件的 `:SYSTem:ERRor?` 能用(-224 非法参数、-113 未定义命令头),驱动当
-  best-effort 用;老固件超时就当没有。**设了就读回**是硬规矩:触发源给关着的通道会被静默改成 LINE、非法
-  存储深度静默忽略。
-- 存储深度要先 `:ACQuire:MMANagement FMDepth` 且触发模式 AUTO 才生效;探头系数写法是 `:CHANnel1:PROBe VALue,10`;
-  这台没有外触发输入(AUX 是触发**输出**),触发源只有 C1–C4 / LINE;`:TIMebase:SCALe` 之后要等 ~500 ms。
-- 量测走 ADVanced 的 P1–P12 槽位(`:MEASure:ADVanced:P<n>:VALue?`),无值时回 `****`;SIMPle 子系统要先开 ITEM。
-
-**真机联调(2026-09-04,USB)**:11 个动作全走通;校准方波(1 kHz / 3 V)读出 1 kHz / 3.02 Vpp / 50%,与仪器自带
-量测一致;单次触发、arm/collect、边沿时刻(t=0 落在触发点)、存储深度切换、超时后残留响应的清理都在真机上验过。
-**还没验**:LAN 路径的真机、打包 app 里 `usb` 预编译包的加载、Windows 的 USB、卡片在真窗口里的样子、
-dock 面板(没有,也不打算先做)。
+真机核实过的协议怪癖、USB(node-usb 3)接法与 2026-09-04 的联调记录随代码一起搬到了 `../yoma-parked/scope/NOTES.md`;
+改协议层前先读那份。
 
 ### 工具链自动安装(`toolchain install` / `host/domain/toolchain/{catalog,install}.ts`)
 
@@ -573,7 +538,7 @@ dock 面板(没有,也不打算先做)。
   之前逐个试。ESP-IDF / Keil / CubeMX / CubeProgrammer / J-Link 不在目录里(账号 / 许可 / 安装器),只给人话指引。
   Arm 没有 darwin-x64 的 15.x 构建,Intel Mac 走 brew。
 - **落点 `<configDir>/toolchains/<包>/<版本>/`**(与账本 `toolchains.json` 同一个 configDir;bench / 信箱工位端
-  读同一处;app 升级不丢)。绝不落 `process.resourcesPath`。完整性纪律抄 examples/sync.ts:`downloads/*.part`
+  读同一处;app 升级不丢)。绝不落 `process.resourcesPath`。完整性纪律:`downloads/*.part`
   边写边算 sha、对不上就删;解压到 `<包目录>.extracting` 再整体 rename,包目录里写 `.yoma-toolchain.json`
   标记 —— 半个树不可能顶着最终名字出现;同一个包一把 pid 锁。zip 走 `@zip.js/zip.js`(进程内,
   Reader **必须继承 `zip.Reader`**,鸭子对象在 getData 里炸;挡 zip-slip;从 external attribute 恢复可执行位),
@@ -620,7 +585,7 @@ dock 面板(没有,也不打算先做)。
 `@yoma-desktop/kernel/host/datasheet-server` 这道叶子门可达,不再靠别名):**显式 > 环境变量
 `YOMA_DATASHEET_SERVER` > `<configDir>/.env`(或 `$YOMA_ENV_FILE`)> 内置默认**,值 off / none / false / 0 =
 显式关闭。datasheet 工具收 `{configDir, server, env, builtIn, timeoutMs}`(kernel 的 createEmbeddedTools
-传 configDir,bench 因此不再是盲区);examples 同步同解;desktop main 的手册库页经叶子模块解析,和内核
+传 configDir,bench 因此不再是盲区);desktop main 的手册库页经叶子模块解析,和内核
 说同一个地址。**每个请求都带超时**(API 20 s、产物 60 s):内置地址意味着所有安装都会去碰一台可能挂掉的
 机器,没有超时就是整轮吊死。2026-09-05 从开发机探默认地址连接超时 —— 维护者要确认或换掉这个常量。
 `ensureDatasheetServerEnv`(kernel-entry)现在只是把解析结果喂进 process.env 的薄壳。

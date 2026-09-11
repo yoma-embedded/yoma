@@ -13,10 +13,10 @@
 > 工具实现搬进 `packages/kernel/attic/tools/`(不编译、不跑,重写时按一个目录一个工具读),CLI 删除。
 > **并包**:`@yoma/coding-agent` 整个并进 `packages/kernel`,不再是独立的包。上游血缘的结论不变,
 > 只是路径换了 —— 以下一律按新路径写。仍在编译的是 `src/host/{system-prompt,resources,models,
-> datasheet-server}.ts` 与 `src/host/domain/{engines.ts,toolchain,examples,la,scope}/`。
+> datasheet-server}.ts` 与 `src/host/domain/{engines.ts,toolchain,la}/`(examples 与 scope 2026-09-11 停到仓库外 `../yoma-parked/`)。
 
 - 上游从未有的文件:嵌入式工具组(netlist / datasheet / stm32config / flash / log / gdb / gdb-mi /
-  serial / engines / examples / toolchain)、`host/domain/toolchain/`、`host/domain/examples/`。
+  serial / engines / examples / toolchain)、`host/domain/toolchain/`、`host/domain/examples/`(后者已停到仓库外)。
   (ACP 适配器曾属于这一类,已于 2026-09 删除。)
 - 从基线保留的 10 个文件(今天的 `attic/tools/{read,bash,edit,write,edit-diff,path-utils,file-mutation-queue,index}.ts`、
   `host/system-prompt.ts`、`host/resources.ts`)全部重写过:四件套手工剥掉 TUI 渲染器,接到内核**早已存在**的
