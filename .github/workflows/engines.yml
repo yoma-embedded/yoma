@@ -67,9 +67,8 @@ jobs:
           node-version: "24"
           cache: npm
 
-      # build.ts 从 @yoma/coding-agent 取 engineBin/exe(路径解析和运行时同一套,
-      # 报告才不会和真实行为漂移)。那是 workspace 包,不装就是
-      # "Cannot find module" —— 本机不报是因为早就装过。
+      # build.ts 从 packages/kernel/src/host/domain/engines.ts 取 engineBin/exe(路径解析和运行时同一套,
+      # 报告才不会和真实行为漂移)。那个文件只依赖 node 内建,npm ci 是为了 tsx 和引擎自己的依赖。
       #
       # 合库之后 lockfile 是全量的(含 electron、solid、5 个 patch),装机会慢一些。
       # 试过用 --filter 收窄到内核三包,实测**并没有真的收窄**(dry-run 里桌面端的包

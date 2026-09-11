@@ -13,7 +13,7 @@ import {
 } from "./la-preview"
 
 /**
- * 与内核 `columnBits`(coding-agent/src/core/la/dsl.ts)同一套算术的写入端 ——
+ * 与内核 `columnBits`(kernel/src/host/domain/la/dsl.ts)同一套算术的写入端 ——
  * 测试自己拼字节而不是 import 解码器的反函数,否则两边一起错就一起绿。
  */
 function encode(levels: number[]) {

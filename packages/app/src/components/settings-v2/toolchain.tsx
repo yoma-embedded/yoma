@@ -4,7 +4,7 @@
  * **本机工具链(按芯片平台)** —— 机器级,不需要打开工程。选平台(STM32 / ESP32 /
  * Nordic)→ 按预设逐工具核账 → 缺的手填路径,或者让 Yoma 自动装。后端是
  * `toolchain.families` / `familyStatus` / `familySet` / `install` / `installCancel`
- * 几个 RPC(kernel/src/host/toolchain.ts),预设本体在 coding-agent 的 families.ts;
+ * 几个 RPC(kernel/src/host/toolchain.ts),预设本体在 kernel/src/host/domain/toolchain/families.ts;
  * 填进去 / 装出来的路径落 `~/.yoma/toolchains.json`(机器账本),这台电脑上所有工程与
  * agent 会话全局认得 —— 工具链是电脑的属性,不是项目的属性。dir 型条目(CubeMX 安装
  * 目录 / ESP-IDF 根目录 / Zephyr SDK)占位文案要的是目录,验证也只验存在(pathKind 从

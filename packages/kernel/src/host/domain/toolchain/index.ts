@@ -1,0 +1,17 @@
+/**
+ * 工具链清单子系统的桶文件:把 schema / locations / ledger / version / resolve /
+ * actions / families 七个模块的公共导出汇总成一个入口。host 只认这一个文件,不用
+ * 知道 toolchain 内部按模块拆成了几个文件、以后拆合也不影响它。
+ *
+ * 七个模块的导出名字互不相撞(没有两个模块导出同名的类型或函数),`export *`
+ * 可以放心全量转发,不需要逐个具名。
+ */
+export * from "./actions.ts";
+export * from "./catalog.ts";
+export * from "./families.ts";
+export * from "./install.ts";
+export * from "./ledger.ts";
+export * from "./locations.ts";
+export * from "./resolve.ts";
+export * from "./schema.ts";
+export * from "./version.ts";

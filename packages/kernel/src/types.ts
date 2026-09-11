@@ -212,7 +212,7 @@ export const TOOL_NAMES = ["read", "bash", "edit", "write"] as const
 export type ToolName = (typeof TOOL_NAMES)[number]
 
 /**
- * resolveToolchain() 对单个声明工具的判定,从 coding-agent 的 ResolvedTool 结构化
+ * resolveToolchain() 对单个声明工具的判定,从 host/domain/toolchain 的 ResolvedTool 结构化
  * 复制(公共契约见 core/toolchain/resolve.ts)。还没有专门的工具卡片消费它 —— 现在
  * 只是渲染成一段文本追加进系统提示词(session-manager.ts 的 promptSectionFor) ——
  * 提前钉住这份形状是为了 P1 补渲染器时不用回头核对字段。
@@ -225,7 +225,7 @@ export interface ToolchainResolvedTool {
   version?: string
   wanted?: string
   candidates?: string[]
-  /** "managed" = Yoma 自己装进 ~/.yoma/toolchains 的(coding-agent 的 install.ts)。 */
+  /** "managed" = Yoma 自己装进 ~/.yoma/toolchains 的(domain/toolchain/install.ts)。 */
   source?: "local" | "ledger" | "managed" | "env" | "path" | "well-known" | "registry"
   hint?: string
   why?: string
@@ -233,7 +233,7 @@ export interface ToolchainResolvedTool {
   installable?: ToolchainInstallableView
 }
 
-/** coding-agent `Installable` 的结构化复制:能自动装什么、多大。 */
+/** domain/toolchain `Installable` 的结构化复制:能自动装什么、多大。 */
 export interface ToolchainInstallableView {
   packageId: string
   title: string
@@ -259,7 +259,7 @@ export interface ToolchainStatusView {
 }
 
 /**
- * 芯片平台预设目录里单个工具的浏览器安全视图,从 coding-agent 的
+ * 芯片平台预设目录里单个工具的浏览器安全视图,从 host/domain/toolchain 的
  * ToolchainFamilyTool 结构化复制(只取 UI 要的四个字段 —— bin/install/env 那些
  * 探测细节留在内核侧,核账结果里的 ResolvedTool 已经带回 UI 需要的部分)。
  */
@@ -288,7 +288,7 @@ export interface ToolchainFamiliesView {
   recordedIds: string[]
 }
 
-/** coding-agent `InstallPhase` 的结构化复制(install.ts)。 */
+/** domain/toolchain `InstallPhase` 的结构化复制(install.ts)。 */
 export type ToolchainInstallPhaseView =
   | "resolve"
   | "download"

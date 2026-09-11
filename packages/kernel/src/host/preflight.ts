@@ -9,7 +9,7 @@
 import { existsSync } from "node:fs"
 import path from "node:path"
 
-import { ENGINE_BINARIES, exe } from "@yoma/coding-agent"
+import { ENGINE_BINARIES, exe } from "./domain/engines.ts"
 
 import type { PreflightAuth, PreflightEngines, PreflightReport } from "../protocol.ts"
 import { authFilePath } from "./auth.ts"

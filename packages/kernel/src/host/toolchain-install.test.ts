@@ -2,7 +2,7 @@
  * 自动安装这一层胶水(host/toolchain.ts 的 createInstallRegistry / installProgressEvent /
  * toolchainInstall)的验证。
  *
- * 下载 / 校验 / 解压 / 记账本身在 coding-agent 的 toolchain/install.ts,这里一律注入假
+ * 下载 / 校验 / 解压 / 记账本身在 host/domain/toolchain/install.ts,这里一律注入假
  * installer —— 这一层要证明的只有四件事:一个 id 同时只装一次(第二次 reject)、取消能
  * 真的把 signal abort 掉、跑完注销;进度回调按序翻译成 `toolchain.install` 事件;
  * 失败与取消都补一条终态事件(UI 的进度行靠它收尾,不然停在最后一个百分比上);
@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import type { InstalledToolchain, installToolchain } from "@yoma/coding-agent"
+import type { InstalledToolchain, installToolchain } from "./domain/toolchain/index.ts"
 
 import type { KernelEvent } from "../protocol.ts"
 import { createKernelHost } from "./index.ts"

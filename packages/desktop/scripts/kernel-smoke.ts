@@ -2,7 +2,7 @@
  * 内核冒烟:对 **构建产物** 跑,不对源码跑。
  *
  * 为什么必须存在:yoma 现在约每天一次提交,而它的 packages/agent/src/index.ts 在近期
- * 十几个提交里改过多次。我们通过 alias 把它整个 inline 进 out/main/kernel.js —— 也就是说
+ * 十几个提交里改过多次。electron-vite 把它整个 inline 进 out/main/kernel.js(kernel 在 devDependencies 里,不被外部化) —— 也就是说
  * 内核的一次重构可以在我们这边零编译错误地把桌面端搞死,直到用户点下去才发现。
  * 这个脚本是唯一能在 CI 里挡住那种情况的东西。
  *

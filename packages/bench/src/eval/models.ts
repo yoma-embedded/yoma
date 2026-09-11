@@ -26,7 +26,7 @@ import {
   type Provider,
 } from "@earendil-works/pi-ai"
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all"
-import { FileCredentialStore } from "@yoma/coding-agent/models"
+import { FileCredentialStore } from "@yoma-desktop/kernel/host/models"
 
 /**
  * 不在 pi-ai 目录里、但评测要用的模型。键是 provider id。

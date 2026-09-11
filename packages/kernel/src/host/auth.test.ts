@@ -17,7 +17,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { homedir, tmpdir } from "node:os"
 import path from "node:path"
 
-import { configurableProviders, NO_AMBIENT_AUTH } from "@yoma/coding-agent/models"
+import { configurableProviders, NO_AMBIENT_AUTH } from "./models.ts"
 
 import {
   authFilePath,

@@ -7,20 +7,20 @@
 
 Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
 
-- **内核**(`packages/{agent,coding-agent}` + npm 的 `@earendil-works/pi-ai`)—— agent 循环、
+- **内核**(`packages/{ai,agent}` 两个上游包 + `packages/kernel/src/host`)—— agent 循环、
   会话树、压缩、技能,以及嵌入式应用层(工具链解析 / 示例语料 / 引擎调用)。
   嵌入式工具组(烧录 / 日志 / gdb / 网表 / 数据手册 / STM32 配置 / 逻辑分析仪 / 示波器)2026-09-10
-  **归零**:旧实现搬到 `packages/coding-agent/attic/`(不编译、不跑),按新内核的工具接口一个个重写。
+  **归零**:旧实现搬到 `packages/kernel/attic/`(不编译、不跑),按新内核的工具接口一个个重写。
 - **桌面端**(`packages/{desktop,app,kernel,ui,session-ui,util,bench}`)——
   Electron 外壳 + SolidJS UI,fork 自 opencode 的前端;`bench` 是无人值守调试台。
 
-**内核与上游 pi 的关系**(2026-08-21 核实;coding-agent 的细节在 `packages/coding-agent/UPSTREAM.md`):
-`coding-agent` 与当年那份 `agent` 分叉自上游 **2026-07-13 的快照 `f8f75544b`**(不是 `v0.80.6`)。
-`pi-ai` 是 npm 依赖(版本钉在 catalog;从前 vendored 的 `packages/ai` 零自改,已删);`agent`
+**内核与上游 pi 的关系**(2026-08-21 核实;嵌入式应用层的细节在 `packages/kernel/UPSTREAM.md`):
+应用层与当年那份 `agent` 分叉自上游 **2026-07-13 的快照 `f8f75544b`**(不是 `v0.80.6`)。
+`pi-ai` 现在是仓内上游包(`packages/ai`,0.85.1,哈希锁定);从前那份自有 harness
 建在上游的 v1 `AgentHarness` 上 —— **上游自己的 CLI 从没用过它**(生产路径是 `Agent` +
-coding-agent 的 `AgentSession`),2026-08-04 上游把它掏空成 v2 空壳、8-11 又定了 v3 规格。
+上游 coding-agent 的 `AgentSession`),2026-08-04 上游把它掏空成 v2 空壳、8-11 又定了 v3 规格。
 那份自有分叉(`agent-legacy`)已于 2026-09-10 删除,`agent` 现在是**哈希锁定的上游拷贝**;
-`coding-agent` 是产品,永久 fork。
+`kernel/src/host` 里的嵌入式应用层是产品,永久 fork。
 
 **2026-08 之前这是两个仓库**(`yoma` 和 `yoma-desktop`,兄弟目录 + alias 接缝)。
 合并的决定性理由是**它们从来不独立发布**:打包时 esbuild 把内核源码整个 inline 进
@@ -32,45 +32,52 @@ coding-agent 的 `AgentSession`),2026-08-04 上游把它掏空成 v2 空壳、8-
 以及**跨仓库的静默断裂** —— 一天之内撞过三次,其中"凭据路径 + 格式变了"那次
 类型系统根本抓不到,表现是用户配了 key 而内核静默读不到。
 
-## 内核接缝:为什么还留着 alias
+## 内核接缝:一个包、几道门
 
-内核现在就是本仓的 workspace 包,裸说明符已经能靠 node 解析。但**打包期仍然要显式别名**:
+内核就是本仓的 workspace 包 `@yoma-desktop/kernel`,裸说明符靠 **node_modules 里的软链 +
+它自己的 `exports`** 解析 —— typecheck(tsgo)、tsx、vitest、esbuild / electron-vite 全走这一条。
+**别名表没有了**(2026-09-10 删:`kernel-alias.ts`、四处 `paths`、各处 `resolve.alias`;
+守门的活交给 `packages/kernel/src/host/boundary.test.ts`)。
 
-- electron-vite 默认外部化 node_modules 里的东西,而内核必须被 **inline**:
-  它只发 raw TypeScript(`exports` 指向 `src/*.ts`,内部大量 `./x.ts` 后缀说明符),
-  外部化后 Node 的 strip-only 加载器报 `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`,
-  **无 flag 可关**;还有 TS 参数属性(从前 `core/tools/gdb.ts` 那处)会直接
-  `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`。inline 时这两样一起消失。
-- 别名指的是**真实路径**而不是 node_modules 里的软链,这是有意的:走软链时
-  TypeScript 会把同一个 `ProviderStreams` 当成两个类型(private 字段让它们名义上
-  不兼容),typecheck 直接红。踩过。
-- `coding-agent` 的 `exports` 里**没有** `/system-prompt`、`/models`、`/resources`
-  这三个深引用,它们只靠别名可达。改成 workspace 解析之前必须先补 exports。
+四个盒子(`boundary.test.ts` 的说法):**餐厅** = app / session-ui / ui / util / desktop,只认**菜单**
+(kernel 的门 `.`,浏览器安全);**厨房** = kernel 的门 `./host` + bench;**工具间** =
+`kernel/src/host/domain/` 与(将来)`host/tools/<名字>/{contract.ts,session.ts}`;
+**发动机** = `packages/{agent,ai,chord,telemetry}`(哈希锁定)。
 
-映射仍存在 **四份**(被工具链逼的,`packages/kernel/src/kernel-alias.test.ts` 钉住):
+门就是 `packages/kernel/package.json` 的 `exports`,六道(外加 `./package.json`):
 
-| 位置 | 谁用 |
+| 门 | 谁用 |
 |---|---|
-| `tsconfig.yoma.json` 的 `paths` | typecheck(tsgo),被 kernel/desktop 继承 —— **位置的真源** |
-| `packages/kernel/tsconfig.json` 里 **内联** 的同一份 | tsx 直跑源码时(bench 的 CLI)按最近的 tsconfig 解析 |
-| `packages/bench/tsconfig.json` 里同样的内联副本 | bench 直接跑源码,同理 |
-| `packages/kernel/kernel-alias.ts` 的 `KERNEL_ALIASES` | 打包期(electron-vite / esbuild),根目录从第一份反推 |
+| `.`(`src/index.ts`) | 餐厅:视图模型 / 协议 / 客户端,**浏览器安全** |
+| `./host`(`src/host/index.ts`) | 厨房大门:desktop 的 `kernel-entry.ts` 与 bench |
+| `./host/datasheet-server`、`./host/models`、`./host/toolchain-schema` | 三道**叶子**门:desktop main 的手册库页、bench 的模型目录与信箱工具链清单 —— main 走大门等于把整个 host inline 进 `out/main/index.js` |
+| `./tools/*/contract`(`src/host/tools/*/contract.ts`) | **契约门**:餐厅的工具卡片只从这里拿一个工具的名字 / 参数 / 结果格式,拿不到 `session.ts`。今天 `host/tools/` 还是空的,门先开着 |
 
-细节:paths 的值必须是**相对路径**(`./packages/...`),写成 `packages/...` 会 `TS5090`。
-`@earendil-works/pi-ai` **不在**表里:它是 npm 真包,交给 node 解析;它不在 desktop 的
-`dependencies` 里,electron-vite 不会外部化它,照样 inline(kernel.js 里 grep 不到它的 import)。
+- 内核必须被 electron-vite **inline**,所以它得留在 `packages/desktop` 的 **devDependencies** 里
+  (`externalizeDeps` 只外部化 `dependencies`)。它只发 raw TypeScript(`exports` 指向 `src/*.ts`,
+  内部大量 `./x.ts` 后缀说明符),外部化后 Node 的 strip-only 加载器报
+  `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`,**无 flag 可关**;`host/domain` 里还有约 9 处 TS
+  构造器参数属性(加上 `src/client.ts` 的 `KernelError`)会直接 `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`。
+  inline 时这两样一起消失 —— 也正因为这些参数属性,`tsconfig.yoma.json` 的
+  `erasableSyntaxOnly: false` 是**承重的**,别顺手收紧。
+- 新开一道深引用 = 改 `exports`(从前是改四份别名表)。`boundary.test.ts` 钉住五条:菜单里没有 Node;
+  工具间不反调会话间(`host/domain` 往外只拿 `host/models.ts`、`host/datasheet-server.ts`);餐厅只许走
+  `@yoma-desktop/kernel` 或 `@yoma-desktop/kernel/tools/<名字>/contract`;desktop 的 main 只有
+  `kernel-entry.ts` 能走 `./host`;`contract.ts` 不含 Node。
 
 ## 仓库结构
 
-npm workspace,`packages/` 下 12 个包 —— 四个 pi 上游包、一个应用层包、七个桌面端包。
+npm workspace,`packages/` 下 11 个包 —— 四个 pi 上游包、七个桌面端包。
 
 pi 上游包(`ai` / `agent` / `chord` / `telemetry`,包名保留 `@earendil-works/*`)由根目录的 `upstream-lock.json` +
 `npm run upstream:check|diff|update` 逐文件哈希锁定,**源码一个字都不改**,见 `UPSTREAM.md`。其中 `agent`
 (`@earendil-works/pi-agent-core`,pi `b2602be77` 的新 AgentHarness)2026-09-09 搬进来,2026-09-10 起
-kernel 与 coding-agent 都接它 —— 从前那份自有 harness(`agent-legacy` / `@yoma/agent`)同日删除。
+kernel 接它 —— 从前那份自有 harness(`agent-legacy` / `@yoma/agent`)同日删除。
 
-应用层一个包:`coding-agent`(`@yoma/coding-agent`,见上)—— 工具链解析、示例语料、引擎辅助、
-系统提示词与资源发现;工具实现归零后留在它的 `attic/`。
+嵌入式应用层**不再是单独的包**:2026-09-10 `@yoma/coding-agent` 并进 `kernel` —— 工具链解析、
+示例语料、引擎辅助、示波器 / 逻辑分析仪的语义进 `kernel/src/host/domain/`,系统提示词、资源发现、
+模型目录、数据手册地址解析进 `kernel/src/host/`,它那 25 个用例文件进 `packages/kernel/test/`
+(单独一个 vitest 项目 `kernel-domain`),归零的工具实现进 `packages/kernel/attic/`。
 
 桌面端这 7 个:
 
@@ -78,7 +85,7 @@ kernel 与 coding-agent 都接它 —— 从前那份自有 harness(`agent-legac
 |---|---|---|
 | `desktop` | `@yoma-desktop/desktop` | Electron 外壳:main/preload/renderer、内核进程、打包、自动更新 |
 | `app` | `@yoma-desktop/app` | SolidJS UI —— 一个**库**,两个宿主(web + desktop);页面、路由、状态、i18n |
-| `kernel` | `@yoma-desktop/kernel` | **内核接缝**:浏览器安全的视图模型/协议/客户端 + Node 侧 host |
+| `kernel` | `@yoma-desktop/kernel` | **内核接缝**:浏览器安全的视图模型/协议/客户端 + Node 侧 host + 嵌入式应用层(`host/domain`) |
 | `ui` | `@yoma-desktop/ui` | 领域无关的基础组件(Kobalte)、OKLCH 主题引擎、图标 |
 | `session-ui` | `@yoma-desktop/session-ui` | transcript 渲染:消息、工具卡片、流式 markdown、Pierre diff |
 | `util` | `@yoma-desktop/util` | 纯函数小工具 |
@@ -91,12 +98,14 @@ kernel 与 coding-agent 都接它 —— 从前那份自有 harness(`agent-legac
 `engines/data`。其中 `engines/logic-analyzer/` 是 **GPLv3**(vendored 自 DSView,见下文
 "逻辑分析仪"),目录自带 LICENSE;Yoma 主体只经命令行与它对话,保持 MIT。
 
-`packages/kernel` 的两个入口边界必须守住:
+`packages/kernel` 的门(见"内核接缝")必须守住:
 
-- `.`(`src/index.ts`)—— **浏览器安全**,不 import yoma、不 import `node:*`。
+- `.`(`src/index.ts`)—— **浏览器安全**,不 import `./host`、不 import `node:*`、不 import 发动机。
   视图模型不解释任何工具的结果:`ToolState` 的 `metadata` 是 `Record<string, unknown>`,
   界面对所有工具统一走 `GenericTool` 万能卡(2026-09-10 卡片归零,专用卡待重写工具时按名注册)。
-- `./host`(`src/host/`)—— 只跑在 utilityProcess 里,碰内核、碰文件系统。
+- `./host`(`src/host/`)—— 只跑在 utilityProcess(与 bench 的子进程)里,碰内核、碰文件系统。
+- `host/domain/`(工具间)—— 嵌入式领域代码,往外只拿 `host/models.ts` 与 `host/datasheet-server.ts`,
+  碰不到 session-manager / projector / protocol。
 
 ## 命令
 
@@ -105,10 +114,10 @@ kernel 与 coding-agent 都接它 —— 从前那份自有 harness(`agent-legac
 | `npm run dev:desktop` | 开发模式(renderer 有 HMR;**内核进程没有**) |
 | `npm run build:desktop` | 生产构建 → `packages/desktop/out/` |
 | `npm run package:mac` / `:win` / `:linux` | electron-builder 安装包 |
-| `npm run typecheck` | turbo 跑全部 12 个包 —— **必须常绿 12/12**(2026-08-21 起内核两包也有 `typecheck`:从前只有被 kernel 的 paths 拉到的内核源码受检,test 目录没人查) |
+| `npm run typecheck` | turbo 跑全部 11 个包,再加根 `tsconfig.json` —— **必须常绿 11/11 + 根**(`packages/kernel` 自己那份 include 的是 `src` + `test`;从前只有被 kernel 的 paths 拉到的内核源码受检,test 目录没人查) |
 | `npm run lint` | oxlint |
 | `npm test` | 全量单测:`vitest run`,项目清单在根 `vitest.config.ts`(每个包一份 `vitest.config.ts`,app 另有 browser / perf 两份)|
-| `npm run smoke -w packages/desktop` | 内核冒烟:对 **构建产物** 验证内核装配(2026-09-10 工具归零后不再逐个点名)+ 4 个引擎二进制 |
+| `npm run smoke -w packages/desktop` | 内核冒烟:对 **构建产物** 验证内核装配(内核自带的 4 个工具)+ 4 个引擎二进制 |
 | `npm run e2e:ipc -w packages/desktop` | 生产路径:真 utilityProcess + 真 MessagePort + 真协议帧(不开窗口) |
 | `npm run e2e:renderer -w packages/desktop` | 最后一跳:真窗口 + 真 preload + **真 contextBridge**(含 mailbox 桥三条) |
 | `npm run smoke:mailbox -w packages/desktop` | 调试台冒烟:Electron RUN_AS_NODE 对打包产物跑完整**本机演练**(假模型,零 key 零硬件) |
@@ -130,7 +139,10 @@ typecheck 全绿、单测全绿、`e2e:ipc` 全绿,照样可以在这一跳把�
 - 测试跑在 Node 上(vitest),不再用 `bun test`;`bun:test` 的 import 已全部换成 `vitest`
 - 全量:根目录 `npm test`;单包:`npx vitest run --project kernel`(项目名 = 包名;app 的浏览器条件用例是 `app-browser`)
 - 也可以进包目录直接 `vitest run`,用的是该包自己的 `vitest.config.ts`
-- `packages/kernel`:投影器不变式、事件流、权限门、自动压缩、端到端 host
+- `packages/kernel` 有**两个**项目:`kernel`(`src/**/*.test.ts` —— 投影器不变式、事件流、
+  边界闸门、端到端 host)与 `kernel-domain`(并包搬来的 `test/**`,25 个文件 546 个用例,
+  配置在 `vitest.domain.config.ts`,`fileParallelism: false` **串行**跑 —— 它们碰真实文件系统与子进程)。
+  根 `vitest.config.ts` 里显式列了第二份;CI 的 Windows 岗跑的就是 `--project kernel-domain`。
 
 ## 架构
 
@@ -209,16 +221,12 @@ v3 规格(`pi/packages/agent/docs/harness.md` §5.5/§5.6)的形状 —— hooks
 > 检出,不把脚本送过去它就跑不了(见"信箱闭环")。代价一并写在这:同机的交互会话与
 > 调试台任务可以同时抢探针,实测会撞 `0xe00002c5`。
 
-- **自动压缩**(`host/compaction.ts`)。内核只提供 `compact()`,什么时候压是应用层的事。
-  两个 guard 一个不能少:没有真实 usage 数据时不猜(否则新会话一开口就被压)、
-  刚压完不重压(否则一路压到没东西可压)。
-- **轮级自动重试**(`host/retry.ts`)。内核把 provider 失败当**数据**(stopReason:"error"
-  的 assistant 消息),重不重试是应用层的事;`harness.retryLastTurn()` 是机制。
-  3 次 / 2s 起指数退避。ACP 适配器已于 2026-09 删除,这里是**唯一实现** ——
-  以后新增消费方一律 import `host/retry.ts`,不要再抄一份:两份实现分叉过一次,
-  代价是"这边能自愈、那边不能"这种极难归因的差异。
-  重试期间 **idle 必须压住**(`entry.retryPending`):退避窗口里漏出 idle,bench 会
-  当真去跑判据,而 agent 正要重试,两边同时动板子。
+- **自动压缩与轮级重试**(2026-09-10 起**交回内核**:`host/compaction.ts` / `host/retry.ts` 已删)。
+  新 core 自己做阈值压缩与 provider 失败重试,`lane.drive({ waitForRetry: true })` 把整段退避留在
+  这一次调用里,于是重试对外是**一个连续的 busy** —— 这正是自己实现时最难的一条:退避窗口里
+  漏出 idle,bench 会当真去跑判据,而 agent 正要重试,两边同时动板子。压缩状态由内核的
+  `compaction_start`/`compaction_end` 事件出去;"这条分隔线是人手动按的"仍是我们自己补的
+  (`yoma/compaction` 自定义 entry,见"投影器")。
 - **模型目录**(`SessionManager.providers()`)。目录本身是 pi-ai 的内建目录
   (`@earendil-works/pi-ai/providers/all` 的 `builtinProviders()`,0.84.2 是 40 家),
   2026-08-23 起**不再手写 provider 表** —— 从前 `core/models.ts`(当时在 `acp/`)手抄两家、kernel 再抄一份
@@ -258,16 +266,16 @@ v3 规格(`pi/packages/agent/docs/harness.md` §5.5/§5.6)的形状 —— hooks
   两端模型印出来。faux 演练(`smoke:mailbox` / `sim`)例外:注入了 `resolveModels`
   时 `turn.ts` 不下发模型,否则演练会撞上"注册表里只有假模型"。
 
-项目上下文与技能走 yoma 的 `core/resources.ts`(`loadContextFiles` / `discoverSkills`),
+项目上下文与技能走 `host/resources.ts`(从上游 coding-agent 搬来的 `loadContextFiles` / `discoverSkills`),
 不重写:"从哪些目录找"是内核那边的产品决策,抄一份的结果是"Zed 读得到项目的 AGENTS.md、
 桌面端读不到"。全局目录默认 `~/.yoma`,与 ACP 同一份,于是同一份技能两处都生效;
 `configDir` 可注入,**测试必须传它**(否则读的是开发机真实的 `~/.yoma`,结果取决于
 跑测试的人装了什么技能)。快照式:建会话时读一次,改了技能文件重开会话即生效。
 
-模型凭据走 yoma 的 `resolveModel(configDir)` → `<configDir>/auth.json`,默认
-`~/.yoma/auth.json` —— **2026-08 起不再跟 pi 共用 `~/.pi/agent/auth.json`**,yoma
-那次把凭据独立了出去,同时把 `resolveModel` 改成必须显式收目录(在我们这边是编译期
-硬失败,alias 接缝的设计目的正是如此)。配过 Zed(yoma 的 ACP)的机器仍然零配置开跑。
+模型凭据走 `host/models.ts` 的 `resolveModel(configDir)` → `<configDir>/auth.json`,默认
+`~/.yoma/auth.json` —— **2026-08 起不再跟 pi 共用 `~/.pi/agent/auth.json`**,当时
+把凭据独立了出去,同时把 `resolveModel` 改成必须显式收目录(在我们这边是编译期
+硬失败,接缝的设计目的正是如此)。配过 Zed(当年那条 ACP 路径)的机器仍然零配置开跑。
 
 两个必须记住的点:
 
@@ -449,9 +457,9 @@ text part,不过滤的话提示词会原样出现在终报的"根因分析"里)�
 (内嵌 CPython 跑 150 个 `pd.py` 解码器)+ `res/`(固件与 FPGA 位流,MIT)+ 一个 `.dsl` 样例。
 `engines/logic-analyzer/vendor.ts --from <DSView 检出>` 重新 vendored,提交钉在 `vendor/UPSTREAM.json`,
 `patches/*.patch` 自动应用。引擎只做"碰硬件"和"跑解码器";**一切语义在 TS**:
-`packages/coding-agent/src/core/la/`(`.dsl` 读取与边沿列表、注解解析、事务模型、expect 差分、
+`packages/kernel/src/host/domain/la/`(`.dsl` 读取与边沿列表、注解解析、事务模型、expect 差分、
 `store.ts` 的采集缓存与落盘布局 —— 工具与 kernel 的 `la.view`/`la.captures` 共用这一份)+
-`tools/la.ts`(13 个动作)。浏览器侧的列位图编解码与格式化在 kernel 的 `la-codec.ts`,画法与
+`attic/tools/la.ts`(13 个动作,待重写)。浏览器侧的列位图编解码与格式化在 kernel 的 `la-codec.ts`,画法与
 主题读取在 session-ui 的 `la-preview.ts`,卡片与面板共用,不许有第二份读法。
 
 **在 DSView 的树里它们不是库**(全树唯一 `add_executable`),公共 API 是自家的 `ds_*` 单例门面,
@@ -504,23 +512,23 @@ TS 侧的纪律:
   25 MHz,I²C SDA=D0/SCL=D1、UART D5、SPI D12–15)。I²C 解出 **300 条注解 / 6 个事务**,UART 47 字节
   "DSLogic series USB-based LA from DreamSourceLab",SPI 5 次传输 288 字。smoke 与 `build.ts` 自检都钉这个数。
 
-### 示波器(`scope` 工具 / `core/scope`)
+### 示波器(`scope` 工具 / `host/domain/scope`)
 
 2026-09-03 起。Siglent **SDS824X HD**(SDS800X HD 一族:4 通道 / 200 MHz / 12 位)**原生集成**,纯 TypeScript,
 不经引擎:USB(USBTMC)或 LAN(SCPI 原始套接字 5025 口)。只在这一台上验证过;同一命令树的 SDS2000X HD 等
 大概率能用,但没验。
 
-**形态**:`packages/coding-agent/src/core/scope/`(`scpi.ts` 传输与分帧、`preamble.ts` WAVEDESC 与换算、
-`analyze.ts` 统计/边沿/文本示意图、`store.ts` 落盘、`siglent.ts` 驱动)+ `tools/scope.ts`(11 个动作:
+**形态**:`packages/kernel/src/host/domain/scope/`(`scpi.ts` 传输与分帧、`preamble.ts` WAVEDESC 与换算、
+`analyze.ts` 统计/边沿/文本示意图、`store.ts` 落盘、`siglent.ts` 驱动)+ `attic/tools/scope.ts`(11 个动作,待重写:
 connect / status / setup / capture / arm / collect / measure / samples / screenshot / list / raw)。
 样本落在 `<工程>/.yoma/scope/<id>/`(`c<n>.i16` 原始 code + `capture.json`),截图在 `.yoma/scope/screens/`,
 本机仪器地址在 `.yoma/scope.json`;三样都在 `YOMA_IGNORE`。专用卡片已随卡片归零删除,目前走万能卡,
 截图 attachments 暂不显示 —— 用户说过不要花哨前端。
 
 **USB 走 node-usb 3**(`usb@3.1.0`:Rust nusb + napi-rs,各平台预编译包 `@node-usb/usb-<platform>` 作可选依赖,
-**不装 libusb、不编译**)。它在根 catalog、`coding-agent` 与 `desktop` 的 `dependencies` 里都要在:desktop 那份让
-electron-vite 把它外部化(否则 napi 的 `.node` 进不了 inline 的 kernel.js),coding-agent 那份给 typecheck 与 ACP。
-coding-agent 只**动态 import**(`loadUsb()`),平台包缺席时退化成"USB 不可用,走 LAN",不是崩。macOS 免驱直连;
+**不装 libusb、不编译**)。它在 `kernel` 与 `desktop` 的 `dependencies` 里都要在(两处同一个字面量版本):desktop 那份让
+electron-vite 把它外部化(否则 napi 的 `.node` 进不了 inline 的 kernel.js),kernel 那份给 typecheck。
+host 只**动态 import**(`loadUsb()`),平台包缺席时退化成"USB 不可用,走 LAN",不是崩。macOS 免驱直连;
 **Windows 要把仪器绑到 WinUSB(Zadig)**,与 Siglent/NI 的 USBTMC 驱动互斥 —— 那边的正路是 LAN;Linux 要 udev 规则。
 工位机多半是 Windows,所以 LAN 才是产品主路,USB 是开发机的便利。
 
@@ -551,7 +559,7 @@ coding-agent 只**动态 import**(`loadUsb()`),平台包缺席时退化成"USB �
 **还没验**:LAN 路径的真机、打包 app 里 `usb` 预编译包的加载、Windows 的 USB、卡片在真窗口里的样子、
 dock 面板(没有,也不打算先做)。
 
-### 工具链自动安装(`toolchain install` / `core/toolchain/{catalog,install}.ts`)
+### 工具链自动安装(`toolchain install` / `host/domain/toolchain/{catalog,install}.ts`)
 
 2026-09-05 起。从前工具链只"核账"(装没装、在哪),装是用户的事;现在 catalog 里有包的工具
 (Arm GNU Toolchain 15.2.rel1 = arm-gcc + arm-gdb、CMake、Ninja、xpack OpenOCD、Windows 上的 MinGit)
@@ -604,11 +612,11 @@ dock 面板(没有,也不打算先做)。
   真装就炸。`locateRoot` 因此按 root → 根上直接有 binDir → 唯一顶层目录 四步试,改 catalog 时**以真实
   压缩包为准**。macOS / Linux 的 tar 路径还没在真机上跑过。
 
-### 数据手册服务器默认地址(`core/datasheet-server.ts`)
+### 数据手册服务器默认地址(`host/datasheet-server.ts`)
 
 2026-09-05 起**有内置默认**(`DEFAULT_DATASHEET_SERVER`,一处常量),推翻 ad6df94 的"公开仓不放地址":
 产品决定是用户装完即可查手册,防线在服务器侧(限流 / 反代)。解析规则只有这一份(叶子模块,经
-`@yoma/coding-agent/datasheet-server` 深引用 —— 四份别名表都加了):**显式 > 环境变量
+`@yoma-desktop/kernel/host/datasheet-server` 这道叶子门可达,不再靠别名):**显式 > 环境变量
 `YOMA_DATASHEET_SERVER` > `<configDir>/.env`(或 `$YOMA_ENV_FILE`)> 内置默认**,值 off / none / false / 0 =
 显式关闭。datasheet 工具收 `{configDir, server, env, builtIn, timeoutMs}`(kernel 的 createEmbeddedTools
 传 configDir,bench 因此不再是盲区);examples 同步同解;desktop main 的手册库页经叶子模块解析,和内核

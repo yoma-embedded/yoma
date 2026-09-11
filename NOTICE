@@ -7,24 +7,27 @@ This repository includes third-party software:
   `packages/session-ui`, `packages/util`): forked from
   [opencode](https://github.com/anomalyco/opencode) (MIT).
 - Agent kernel, from [pi](https://github.com/earendil-works/pi) by
-  Mario Zechner (MIT), snapshot `f8f75544b` (2026-07-13):
-  - `@earendil-works/pi-ai` is consumed as an npm dependency.
-  - `packages/agent`: derived from pi `packages/agent` (the v1
-    `AgentHarness` line), substantially modified and maintained here.
-  - `packages/coding-agent`: the built-in tools (`read`/`bash`/`edit`/
-    `write`, `edit-diff`, `path-utils`, `file-mutation-queue`),
-    `core/system-prompt.ts` and `core/resources.ts` derive from pi
-    `packages/coding-agent`; the embedded-debugging tools, toolchain,
-    examples index and the ACP adapter are Yoma's own
-    (see `packages/coding-agent/UPSTREAM.md`).
+  Mario Zechner (MIT):
+  - `packages/ai`, `packages/agent`, `packages/chord`,
+    `packages/telemetry`: vendored from pi, hash-locked against
+    `upstream-lock.json`, unmodified (see `UPSTREAM.md`).
+  - `packages/kernel/src/host`, from snapshot `f8f75544b` (2026-07-13):
+    `host/system-prompt.ts` and `host/resources.ts` derive from pi
+    `packages/coding-agent`; the embedded-debugging domain code
+    (toolchain, examples index, logic analyzer, oscilloscope) is
+    Yoma's own. The retired tool implementations in
+    `packages/kernel/attic/` (`read`/`bash`/`edit`/`write`,
+    `edit-diff`, `path-utils`, `file-mutation-queue`) also derive
+    from pi `packages/coding-agent`
+    (see `packages/kernel/UPSTREAM.md`).
 - `engines/stm32-config-kernel`: STM32 configuration / codegen kernel.
   `data/*.irpack` is a **build artifact**: parse the local STM32CubeMX
-  device database with `stm32ck-import` (`bun engines/build.ts` does this).
+  device database with `stm32ck-import` (`npm run engines:build` does this).
   Packs are not committed. ST HAL / CMSIS sources (`data/fw/`, ~1.1GB)
   are also not in this repository; fetch them locally with
   `tools/fetch-fw.ps1` if you need the compile-gate tests.
 - `engines/controller_map`: board netlist pin extraction.
-- `packages/coding-agent/test/fixtures/examples/cube-mini`: a stub
+- `packages/kernel/test/fixtures/examples/cube-mini`: a stub
   fixture that mimics an STM32Cube tree layout. It is not ST HAL source.
 
 See `LICENSE` for the MIT text that covers this repository.

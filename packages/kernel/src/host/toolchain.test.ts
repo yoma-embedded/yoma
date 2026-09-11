@@ -1,19 +1,19 @@
 /**
  * toolchain.status / toolchain.set RPC(host/toolchain.ts)的验证。
  *
- * 只测这一层胶水,不重测七档探测与验证本身 —— 那些在 coding-agent 的
+ * 只测这一层胶水,不重测七档探测与验证本身 —— 那些在 kernel/test 的
  * toolchain-{resolve,tool}.test.ts 里。这里要证明的是四件事:三种视图形态(没声明 /
  * 清单坏了 / 正常核账)折叠得对;fresh 真的绕过并写回账本;set 走的是与 agent 工具
  * 同一套验证(坏路径带清楚理由 reject);set 成功后返回的是落账后的真实状态。
  *
  * env 全程显式注入(PATH 空字符串起步)—— 不注入的话这台开发机上真装了什么会悄悄
- * 影响 missing 判定(coding-agent 那几个测试文件同一条纪律)。
+ * 影响 missing 判定(kernel/test 的 toolchain-*.test.ts 同一条纪律)。
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { readLedger } from "@yoma/coding-agent"
+import { readLedger } from "./domain/toolchain/index.ts"
 
 import { toolchainFamilies, toolchainFamilySet, toolchainFamilyStatus, toolchainSet, toolchainStatus } from "./toolchain.ts"
 
@@ -31,7 +31,7 @@ afterEach(() => {
   rmSync(projectDir, { recursive: true, force: true })
   rmSync(configDir, { recursive: true, force: true })
   // 被 probeVersion 起过的假工具在 Windows 上偶尔句柄释放慢一拍,直删撞 EBUSY
-  // (coding-agent 的 toolchain-*.test.ts 同一条注释)。
+  // (kernel/test 的 toolchain-*.test.ts 同一条注释)。
   rmSync(binDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
 })
 

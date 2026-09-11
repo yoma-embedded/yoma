@@ -2,9 +2,9 @@
  * 设置页"工具链"标签的后端:项目核账 `toolchain.status` / `toolchain.set` 两个 RPC,
  * 加上机器级(按芯片平台)的 `toolchain.families` / `familyStatus` / `familySet` 三个。
  *
- * 全部逻辑(七档探测、验证、写账本)都在 coding-agent 的 toolchain 子系统里,这里
+ * 全部逻辑(七档探测、验证、写账本)都在 host/domain/toolchain 子系统里,这里
  * 只是"参数 → 调用 → 折叠成浏览器安全的视图"这一层胶水 —— 与 agent 工具
- * (coding-agent 的 tools/toolchain.ts)共用同一组动作实现(resolveToolchain /
+ * (attic/tools/toolchain.ts,待重写)共用同一组动作实现(resolveToolchain /
  * rememberFreshResults / recordToolchainPath),UI 和 agent 两个入口的行为因此不可能
  * 分叉:同一套探测顺序、同一套拒绝理由、同一份账本形态。
  *
@@ -25,7 +25,7 @@ import {
   resolveToolchain,
   TOOLCHAIN_FAMILIES,
   type InstallProgress,
-} from "@yoma/coding-agent"
+} from "./domain/toolchain/index.ts"
 
 import type { KernelEvent } from "../protocol.ts"
 import type { ToolchainFamiliesView, ToolchainInstallResultView, ToolchainStatusView } from "../types.ts"
@@ -75,7 +75,7 @@ export async function toolchainSet(opts: ToolchainRpcOptions & { id: string; pat
 
 // ─── 机器级(按芯片平台)────────────────────────────────────────────────────────
 //
-// 与上面项目核账的差别只有清单从哪来:平台预设(coding-agent 的 families.ts)经
+// 与上面项目核账的差别只有清单从哪来:平台预设(domain/toolchain/families.ts)经
 // manifestText 注入,不需要打开任何工程 —— 设置页「本机工具链」面板从主页也能用。
 // 探测、验证、账本与项目路径完全同一套实现,预设的 pathKind 决定手填的验证档。
 
@@ -127,7 +127,7 @@ export async function toolchainFamilyStatus(
     if (opts.fresh) await rememberFreshResults(resolution, opts.configDir)
     return { declared: true, manifestPath: undefined, side: resolution.side, ok: resolution.ok, tools: resolution.tools }
   } catch (error) {
-    // 预设清单坏了理论上被 coding-agent 的 families 测试拦在合并前;真到这儿就如实
+    // 预设清单坏了理论上被 kernel/test 的 families 测试拦在合并前;真到这儿就如实
     // 摆出来,和项目清单坏了同一个排查面。
     return { declared: true, side: opts.side, ok: false, tools: [], error: (error as Error)?.message ?? String(error) }
   }
@@ -156,7 +156,7 @@ export async function toolchainFamilySet(
 
 // ─── 自动安装 ────────────────────────────────────────────────────────────────
 //
-// 下载 / 校验 / 解压 / 记账全在 coding-agent 的 toolchain/install.ts(与 agent 工具的
+// 下载 / 校验 / 解压 / 记账全在 domain/toolchain/install.ts(与 agent 工具的
 // install 动作同一份实现);这里只做三件事:一个 id 同时只允许一个安装(注册表 +
 // AbortController)、把进度回调翻译成 `toolchain.install` 事件、装完把机器级核账一并
 // 回给 UI。

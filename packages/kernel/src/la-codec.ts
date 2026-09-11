@@ -3,7 +3,7 @@
  * 画法与主题读取在 session-ui 的 la-preview.ts(那边才有 DOM)。
  *
  * 列位图:每列 2 bit,bit0 = 该列内出现过高电平、bit1 = 出现过低电平;4 列一字节(列 c 在
- * 字节 c>>2 的第 (c&3)*2 位)。写入端在 coding-agent 的 columnBits;这里是唯一的读法 ——
+ * 字节 c>>2 的第 (c&3)*2 位)。写入端在 domain/la/dsl.ts 的 columnBits;这里是唯一的读法 ——
  * 解错不会报错,只会画出一张看起来很合理的假波形,所以读法不许有第二份。
  */
 

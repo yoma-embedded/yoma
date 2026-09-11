@@ -84,4 +84,4 @@ npm run dev:desktop         # restart this command after changing the kernel
 
 ## License
 
-MIT. Third-party sources are listed in `NOTICE`: the desktop app is inherited from [opencode](https://github.com/anomalyco/opencode); the kernel is derived from [pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-ai` is an npm dependency; `packages/agent` and `packages/coding-agent` are derived works).
+MIT. Third-party sources are listed in `NOTICE`: the desktop app is inherited from [opencode](https://github.com/anomalyco/opencode); the kernel is derived from [pi](https://github.com/earendil-works/pi) (`packages/ai`, `packages/agent`, `packages/chord` and `packages/telemetry` are vendored from pi; `packages/kernel/src/host` is a derived work).

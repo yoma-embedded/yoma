@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
-import { NO_AMBIENT_AUTH } from "@yoma/coding-agent/models"
+import { NO_AMBIENT_AUTH } from "./models.ts"
 
 import { inspectEngines } from "./preflight.ts"
 import { createKernelHost } from "./index.ts"

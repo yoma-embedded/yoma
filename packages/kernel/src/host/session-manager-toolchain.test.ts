@@ -2,7 +2,7 @@
  * 工具链清单接入会话装配(session-manager.ts ensureOpen() 的那三行改动)的验证。
  *
  * 只测这一层的接线,不重测 resolve.ts / shellEnvFor 自身的判定逻辑 —— 那部分已经在
- * coding-agent/test/toolchain-resolve.test.ts 覆盖过。这里要证明的是三件事:
+ * kernel/test/toolchain-resolve.test.ts 覆盖过。这里要证明的是三件事:
  *
  * 1. 解析出的 PATH 前置 + exports 真的到了 NodeExecutionEnv 构造出来的 shellEnv,
  *    并且真的送进了后续 spawn 的子进程 —— 用 bash 工具跑一条真命令验证,不 mock

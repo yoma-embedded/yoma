@@ -1,0 +1,126 @@
+/**
+ * 例程库子系统的桶文件。外面只从这里拿,不深引用目录内文件 ——
+ * 与 ../toolchain/index.ts 同一纪律。
+ */
+export {
+	ENRICH_SCHEMA_TAG,
+	type EnrichmentCard,
+	type EnrichmentRecord,
+	isEnrichmentCard,
+	isEnrichmentRecord,
+	parseEnrichmentLines,
+	type PinUse,
+	type ResourceFootprint,
+	sanitizeEnrichmentCard,
+	serializeEnrichmentRecord,
+	type TaskDecl,
+} from "./enrich-schema.ts";
+export {
+	buildEnrichPrompt,
+	ENRICH_SYSTEM_PROMPT,
+	type EnrichCompletion,
+	enrichCorpus,
+	type EnrichCorpusOptions,
+	type EnrichCorpusResult,
+	enrichFileRank,
+	type EnrichProgress,
+	parseModelCardText,
+	pickEnrichFiles,
+} from "./enrich.ts";
+export {
+	capabilitiesFromSource,
+	ESPIDF_EXTRACTOR_VERSION,
+	extractEspIdfExamples,
+	normalizeEspTarget,
+	parseComponentDeps,
+	parseConfigKeys,
+	parseReadmeSummary,
+	parseSupportedTargets,
+} from "./espidf.ts";
+export { type RawExample } from "./extract-util.ts";
+export { type BuildIndexOptions, buildIndex, detectGitCommit, indexCorpus, type IndexCorpusResult } from "./indexer.ts";
+export {
+	type CorpusSource,
+	corpusSlug,
+	ECOSYSTEMS,
+	type Ecosystem,
+	emptySources,
+	ENTRY_KINDS,
+	type EntryKind,
+	type ExampleAcceptance,
+	type ExampleEntry,
+	type ExamplesIndex,
+	type ExamplesIndexHeader,
+	type ExamplesSources,
+	INDEX_SCHEMA_TAG,
+	INDEXERS,
+	type Indexer,
+	isEcosystem,
+	isEntryKind,
+	isExampleEntry,
+	isIndexer,
+	isIndexHeader,
+	isTargetSource,
+	isTier,
+	parseIndex,
+	parseSources,
+	serializeIndex,
+	SOURCES_SCHEMA_TAG,
+	TARGET_SOURCES,
+	type TargetSource,
+	type Tier,
+	TIERS,
+} from "./schema.ts";
+export {
+	checkMergeConflicts,
+	normalizePin,
+	type PreflightConflict,
+	type PreflightConflictKind,
+	type PreflightInput,
+	type PreflightReport,
+	type PreflightRole,
+} from "./preflight.ts";
+export {
+	describeQuery,
+	renderEntryCard,
+	renderHit,
+	renderNoIndexHelp,
+	renderPreflightReport,
+	renderSearchReport,
+} from "./render.ts";
+export { normalizeTarget, type ScoredExample, searchIndex, type SearchQuery, targetMatches } from "./search.ts";
+export {
+	SEED_PROVENANCE_FILE,
+	SEED_SCHEMA_TAG,
+	type SeedProvenance,
+	type SeedResult,
+	seedExample,
+	shouldCopy,
+} from "./seed.ts";
+export {
+	appendEnrichmentRecord,
+	enrichDir,
+	enrichmentMapFor,
+	enrichmentMapForAll,
+	enrichPathFor,
+	examplesDir,
+	findSource,
+	indexDir,
+	indexPathFor,
+	readAllIndexes,
+	readEnrichmentRecords,
+	readIndexFile,
+	readSources,
+	sourcesPath,
+	upsertSource,
+	writeIndexFile,
+} from "./store.ts";
+export {
+	cubeBuildState,
+	detectCubeFamily,
+	extractStm32CubeExamples,
+	parseCubeDescription,
+	parseCubeTitle,
+	peripheralsFromCubeSource,
+	STM32CUBE_EXTRACTOR_VERSION,
+} from "./stm32cube.ts";

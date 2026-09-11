@@ -3,9 +3,9 @@
  *
  * 用途:被 Harbor 这类跑批器上传进任务容器,`node yoma-eval-entry.mjs …` 跑一轮 agent。
  * 容器里只有 node、没有 tsx、没有本仓检出,所以内核必须整个 inline —— 与
- * `packages/desktop/scripts/build-mailbox.ts` 同一个道理、同一份别名表(`KERNEL_ALIASES`,
- * 不新增第五份映射)、同一个 createRequire banner(被 inline 的 CJS 依赖会动态 require
- * node 内置模块)。
+ * `packages/desktop/scripts/build-mailbox.ts` 同一个道理(@yoma-desktop/kernel 经 workspace
+ * 软链和它的 exports 解析,esbuild 直接吃 raw TS)、同一个 createRequire banner(被 inline
+ * 的 CJS 依赖会动态 require node 内置模块)。
  *
  *   npm run build:eval -w packages/bench
  *   node packages/bench/dist/yoma-eval-entry.mjs --help
@@ -16,14 +16,9 @@ import path from "node:path"
 
 import { build } from "esbuild"
 
-import { KERNEL_ALIASES } from "../../kernel/kernel-alias.ts"
-
 const benchDir = path.resolve(import.meta.dirname, "..")
 const entry = path.join(benchDir, "src", "eval", "entry.ts")
 const outfile = path.join(benchDir, "dist", "yoma-eval-entry.mjs")
-
-// 只别名 @yoma/* 裸源码树。pi-ai 是有 dist + exports 的真包,交给 node 解析(理由见 build-mailbox.ts)。
-const alias = Object.fromEntries(Object.entries(KERNEL_ALIASES).filter(([from]) => from.startsWith("@yoma/")))
 
 function stamp(): string {
   let sha = "unknown"
@@ -43,7 +38,6 @@ await build({
   target: "node22",
   format: "esm",
   external: ["electron"],
-  alias,
   logLevel: "warning",
   define: { "process.env.YOMA_EVAL_BUILD": JSON.stringify(stamp()) },
   banner: {

@@ -16,7 +16,7 @@ import { $, which } from "../../scripts/shell.ts";
 import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { exe } from "@yoma/coding-agent";
+import { exe } from "../../packages/kernel/src/host/domain/engines.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 

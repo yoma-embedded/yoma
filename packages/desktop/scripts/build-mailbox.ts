@@ -5,12 +5,12 @@
  *   out/main/mailbox-turn-entry.mjs  agent 轮子进程入口(一轮一进程,探针清理靠进程边界)
  *
  * 与 out/main/kernel.js 同一个道理:内核必须被 inline(raw TS 的 strip-only 报错、
- * TS 参数属性,见根 CLAUDE.md"内核接缝"),别名走 KERNEL_ALIASES 同一份 —— 不新增
- * 第五份映射。
+ * TS 参数属性,见根 CLAUDE.md"内核接缝")。@yoma-desktop/kernel 经 workspace 软链加
+ * 它自己的 package.json exports 解析,esbuild 直接吃 raw TS,不需要别名。
  *
  * 走 esbuild 的 **JS API** 而不是 `npx esbuild`:这条脚本进的是**发布产物管线**
  * (`npm run build` → CI 打包),npx 每次按 npm latest 解析,既不可复现(esbuild
- * 的 0.x minor 会做行为变更,而下面正好依赖 alias 解析与 CJS interop 两处),
+ * 的 0.x minor 会做行为变更,而下面正好依赖它的 CJS interop),
  * 离线打包机上还会因为冷缓存直接联网失败。版本钉在根 workspaces.catalog。
  *
  * 产物是 .mjs:desktop 的 package.json 没有 "type":"module",.js 会被 node 当 CJS,
@@ -23,17 +23,8 @@
 import { build } from "esbuild"
 import path from "node:path"
 
-import { KERNEL_ALIASES } from "../../kernel/kernel-alias.ts"
-
 const desktopDir = path.resolve(import.meta.dirname, "..")
 const benchSrc = path.resolve(desktopDir, "..", "bench", "src")
-
-// 只别名 @yoma/* 裸源码树(它们没有 package exports,非别名不可达)。
-// pi-ai 不别名:esbuild 的 alias 是**前缀匹配**,`@earendil-works/pi-ai` 的映射会把
-// 没列进表的子路径(如 /api/openai-completions.lazy)拼到 dist/index.js 后面直接炸掉;
-// 它是有 dist + exports 的真包,交给 node 解析天然全覆盖。
-// (vite 那份没这个问题 —— KERNEL_VITE_ALIAS 包的是精确 ^…$ 正则。)
-const alias = Object.fromEntries(Object.entries(KERNEL_ALIASES).filter(([from]) => from.startsWith("@yoma/")))
 
 const bundles = [
   { entry: path.join(benchSrc, "mailbox", "host-entry.ts"), outfile: path.join(desktopDir, "out/main/mailbox-host.mjs") },
@@ -48,10 +39,9 @@ for (const bundle of bundles) {
     platform: "node",
     format: "esm",
     // usb(node-usb 3)是 napi 原生模块:esbuild 打不了 .node,留给运行时解析。打包 app 里 mailbox-host 以
-    // RUN_AS_NODE 起、没有 asar 读法,解析不到就走 coding-agent 里 loadUsb() 的退化路径("USB 不可用,走 LAN")
+    // RUN_AS_NODE 起、没有 asar 读法,解析不到就走 kernel 工具间 scope 里 loadUsb() 的退化路径("USB 不可用,走 LAN")
     // —— 工位机的示波器本来就该走 LAN。
     external: ["electron", "usb"],
-    alias,
     logLevel: "warning",
     // 被 inline 的 CJS 依赖(yaml 等)会动态 require node 内置模块;ESM 产物里
     // esbuild 的 shim 只认作用域里的 `require`,不给它就是运行时直接 throw(实测)。

@@ -3,9 +3,9 @@
  *
  * 面板要的是"这 N 个像素列上每根线什么样 + 窗口里有哪些注解",不是原始样本。这里按视口做列聚合
  * (每列 2bit,复杂度 O(列数 + 边沿数)),注解按窗口二分取、按行分泳道、每条泳道封顶;跨进程一次
- * 几十 KB。缓存与布局都在 coding-agent 的 la.captureStore —— 与 `la` 工具同一份。
+ * 几十 KB。缓存与布局都在 domain/la 的 captureStore —— 与 `la` 工具同一份。
  */
-import { la } from "@yoma/coding-agent"
+import * as la from "./domain/la/index.ts"
 import type { LaCaptureInfo, LaViewLaneItem, LaViewParams, LaViewResult } from "../types.ts"
 
 const MAX_COLUMNS = 4096

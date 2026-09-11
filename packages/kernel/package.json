@@ -7,16 +7,21 @@
   "exports": {
     ".": "./src/index.ts",
     "./host": "./src/host/index.ts",
-    "./kernel-alias": "./kernel-alias.ts",
+    "./host/datasheet-server": "./src/host/datasheet-server.ts",
+    "./host/models": "./src/host/models.ts",
+    "./host/toolchain-schema": "./src/host/domain/toolchain/schema.ts",
+    "./tools/*/contract": "./src/host/tools/*/contract.ts",
     "./package.json": "./package.json"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "*",
-    "@earendil-works/pi-ai": "*"
+    "@earendil-works/pi-ai": "*",
+    "@zip.js/zip.js": "2.7.62",
+    "usb": "3.1.0"
   },
   "scripts": {
     "typecheck": "tsgo --noEmit -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run && vitest run --config vitest.domain.config.ts"
   },
   "devDependencies": {
     "@typescript/native-preview": "7.0.0-dev.20251207.1",

@@ -2,8 +2,8 @@ MIT License
 
 Copyright (c) 2026 Yoma contributors
 Copyright (c) 2025 opencode (packages/app, desktop, ui, session-ui, util: forked)
-Copyright (c) 2025 Mario Zechner (from pi: packages/ai vendored;
-    packages/agent and packages/coding-agent derived — see NOTICE)
+Copyright (c) 2025 Mario Zechner (from pi: packages/ai, agent, chord,
+    telemetry vendored; packages/kernel/src/host derived — see NOTICE)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

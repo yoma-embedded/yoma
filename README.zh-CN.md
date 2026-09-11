@@ -84,4 +84,4 @@ npm run dev:desktop         # 改内核要重启这条命令
 
 ## 许可
 
-MIT。第三方来源见 `NOTICE`：桌面端继承自 [opencode](https://github.com/anomalyco/opencode)；内核派生自 [pi](https://github.com/earendil-works/pi)（`@earendil-works/pi-ai` 为 npm 依赖，`packages/agent`、`packages/coding-agent` 为派生）。
+MIT。第三方来源见 `NOTICE`：桌面端继承自 [opencode](https://github.com/anomalyco/opencode)；内核派生自 [pi](https://github.com/earendil-works/pi)（`packages/ai`、`packages/agent`、`packages/chord`、`packages/telemetry` 为 vendored 上游拷贝，`packages/kernel/src/host` 为派生）。

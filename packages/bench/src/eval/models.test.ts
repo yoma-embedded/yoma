@@ -11,7 +11,7 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all"
-import { NO_AMBIENT_AUTH } from "@yoma/coding-agent/models"
+import { NO_AMBIENT_AUTH } from "@yoma-desktop/kernel/host/models"
 
 import { resolveEvalModels, withExtraModels } from "./models.ts"
 

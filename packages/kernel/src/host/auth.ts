@@ -5,7 +5,7 @@
  *
  * yoma 把凭据从 `~/.pi/agent/auth.json` 挪到了自己的 `<configDir>/auth.json`,并且
  * `resolveModel()` 现在**要求显式传 configDir**(这一改在我们这边是编译期硬失败,
- * 不是运行时惊喜 —— alias 接缝的设计目的正是如此)。同时格式收紧成 pi-ai 的
+ * 不是运行时惊喜 —— 内核接缝的设计目的正是如此)。同时格式收紧成 pi-ai 的
  * `Credential` 判别联合:条目**必须带 `type: "api_key"`**,少了这个字段
  * `resolveProviderAuth` 里 `stored.type === "api_key"` 匹配不上,key 会被**静默忽略**
  * —— 表现是"我明明配了 key 却说没配",最难查的那一类。
@@ -25,7 +25,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
 
-import { FileCredentialStore } from "@yoma/coding-agent/models"
+import { FileCredentialStore } from "./models.ts"
 
 /** yoma 的默认凭据目录。 */
 export function yomaConfigDir(): string {

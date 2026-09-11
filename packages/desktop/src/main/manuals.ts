@@ -15,7 +15,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, w
 import os from "node:os"
 import path from "node:path"
 // 叶子模块(只依赖 node 内建),不会把内核 inline 进 main 的 bundle —— 见该文件头。
-import { resolveDatasheetServer } from "@yoma/coding-agent/datasheet-server"
+import { resolveDatasheetServer } from "@yoma-desktop/kernel/host/datasheet-server"
 import { describeError, fetchToFile, pruneStaleParts, sha256File } from "./download"
 import { write as logWrite } from "./logging"
 import type {

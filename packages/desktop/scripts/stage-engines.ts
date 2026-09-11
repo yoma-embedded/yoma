@@ -31,7 +31,7 @@ const cacheDir = path.join(desktopDir, ".engines-cache")
  * 打包目标平台,由 package.json 的脚本传入(package:win → win32),缺省当前平台。
  * 引擎是原生二进制,mac 的 Mach-O 装进 Windows 安装包一样"打包成功",用户点开才炸 ——
  * 所以按魔数校验格式匹配。yoma 的内核在 win32 上按 `${name}.exe` 找引擎
- * (coding-agent/core/tools/engines.ts),所以 Windows 产物还必须带 .exe 后缀。
+ * (kernel/src/host/domain/engines.ts),所以 Windows 产物还必须带 .exe 后缀。
  *
  * YOMA_ALLOW_FOREIGN_ENGINES=1 是显式逃生口:只在"引擎还没有对应平台产物,
  * 但想先验证安装器机械流程"时用,产出的包引擎全坏,**不能分发**。

@@ -47,10 +47,10 @@ import {
   shellEnvFor,
   withMachineOnPath,
   type ToolchainResolution,
-} from "@yoma/coding-agent"
-import { buildSystemPrompt } from "@yoma/coding-agent/system-prompt"
-import { configurableProviders, resolveModel } from "@yoma/coding-agent/models"
-import { discoverSkills, loadContextFiles } from "@yoma/coding-agent/resources"
+} from "./domain/toolchain/index.ts"
+import { buildSystemPrompt } from "./system-prompt.ts"
+import { configurableProviders, resolveModel } from "./models.ts"
+import { discoverSkills, loadContextFiles } from "./resources.ts"
 import {
   clampThinkingLevel,
   getSupportedThinkingLevels,
@@ -126,7 +126,7 @@ function isOpen(entry: Entry): boolean {
  * 装配面的真源:内核自带的四件套,别的一个都不加。
  *
  * 嵌入式那一套(flash/gdb/la/scope/…)已于 2026-09-10 归零,旧实现留在
- * coding-agent/attic/tools 作重写参考。`TOOL_NAMES` 与 host 自检都按这里核对。
+ * kernel/attic/tools 作重写参考。`TOOL_NAMES` 与 host 自检都按这里核对。
  */
 export function createAgentTools(): AgentHarnessTool<ExecutionToolContext>[] {
   return [
@@ -590,7 +590,7 @@ export class SessionManager {
     let harness: AgentHarness<ExecutionToolContext> | undefined
     try {
       // 资源发现:项目的 AGENTS.md/CLAUDE.md(全局 + 祖先链)与技能(全局 + .agents/skills)。
-      // 走 coding-agent 的 resources.ts,不重写:"从哪些目录找"是产品决策,抄一份的结果
+      // 走 host/resources.ts,不重写:"从哪些目录找"是产品决策,抄一份的结果
       // 会是"某一端读得到项目上下文、另一端读不到"这种极难归因的差异。
       // 快照式:会话创建时读一次,改了技能文件重开会话即生效,不做热重载。
       const [contextFiles, discovered] = await Promise.all([
@@ -608,7 +608,7 @@ export class SessionManager {
       }
 
       // 工具链状态并进系统提示词:追加一条 contextFiles,不新增专门字段 ——
-      // BuildSystemPromptOptions 定义在 packages/coding-agent,加字段等于越界改别的包。
+      // 不给 BuildSystemPromptOptions 加专门字段:系统提示词的形状是产品决定,追加上下文文件是既有通道。
       // path 给一个不会真实存在的假名,模型才看得出这不是一份项目文件。promptSectionFor
       // 对"没有清单"和"清单存在但全部 ok"都返回 undefined,所以绝大多数项目不追加任何
       // 东西,系统提示词字节不变。
@@ -747,7 +747,7 @@ export class SessionManager {
 
   /**
    * 机器级目录:Yoma 装进 `<configDir>/toolchains/` 的 + 用户在设置页手指的(账本
-   * by:"user"),见 coding-agent install.ts 的 machinePathDirs。每次都重新扫 —— 这是
+   * by:"user"),见 domain/toolchain/install.ts 的 machinePathDirs。每次都重新扫 —— 这是
    * 会话开启 / 安装完成时才调的东西,不在热路径上。
    */
   private async machineDirs(): Promise<string[]> {
@@ -798,7 +798,7 @@ export class SessionManager {
 
   /**
    * 工具链清单解析失败(清单文件在,但内容坏了——`schema` 不对/JSON 损坏/写了绝对
-   * 路径等,见 coding-agent 的 parseManifest)绝不能让会话开不起来:会话开不起来
+   * 路径等,见 domain/toolchain 的 parseManifest)绝不能让会话开不起来:会话开不起来
    * 比工具链没配好严重得多。resolveToolchain() 本身对"项目根本没有清单文件"已经是
    * 静默返回一个空结果;这里只是把"清单存在但解析炸了"这一种情况也吞掉异常、发一条
    * kernel.error 诊断,折叠回同一种空结果 —— 调用方(shellEnvFor / promptSectionFor)

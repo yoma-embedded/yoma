@@ -62,7 +62,7 @@ import path from "node:path"
 
 // 清单在工程里的相对位置只有一个真源 —— 抄一份的结果会是"研发端读 .yoma/toolchain.json、
 // 信箱复制的是别处",而两边都不报错。
-import { MANIFEST_RELATIVE } from "@yoma/coding-agent"
+import { MANIFEST_RELATIVE } from "@yoma-desktop/kernel/host/toolchain-schema"
 
 import { fileExists, readJsonFile } from "../fsx.ts"
 

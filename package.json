@@ -24,9 +24,6 @@
   "workspaces": [
     "packages/*"
   ],
-  "dependencies": {
-    "@yoma/coding-agent": "*"
-  },
   "devDependencies": {
     "tsx": "^4.23.1",
     "typescript": "5.8.2",

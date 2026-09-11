@@ -5,6 +5,6 @@
     "**/out/**",
     "**/dist/**",
     "packages/agent/docs/**",
-    "packages/coding-agent/attic/**"
+    "packages/kernel/attic/**"
   ]
 }
