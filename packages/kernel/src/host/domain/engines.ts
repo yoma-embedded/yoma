@@ -545,3 +545,158 @@ export function runEngine(bin: string, args: string[], options: EngineRunOptions
 		});
 	});
 }
+
+// ─── 流式子进程 ──────────────────────────────────────────────────────────────
+
+export interface EngineLinesOptions extends EngineRunOptions {
+	/**
+	 * 每收满一行回调一次(不含行尾的 \n 与 \r)。返回 "stop" 表示"够了":子进程立刻被杀树,
+	 * 之后的行不再回调。回调里抛错等同于 stop,错误会从 runEngineLines 抛出去。
+	 */
+	onLine(line: string): "stop" | void;
+}
+
+export interface EngineLinesResult {
+	exitCode: number | null;
+	/** stderr 仍整份收集:它是给人看的错误文本,量小,而且只有它能说清"glob 写坏了"。 */
+	stderr: string;
+	timedOut: boolean;
+	aborted: boolean;
+	/** onLine 要求停下:子进程被杀,退出码此时无意义(多半是 null),非零也不该当错误。 */
+	stopped: boolean;
+}
+
+/**
+ * runEngine 的流式版本:stdout 逐行交给 onLine,而且 onLine 能叫停。
+ *
+ * 为什么不复用 runEngine:它把 stdout 全量攒成一个字符串再 resolve。grep / find 的 rg 在一个
+ * 真工程上能吐几十 MB(`rg --json` 每个匹配一行 JSON),而模型只要头 100 行 —— 全量收集等于
+ * 先把上下文预算烧掉一遍,再丢掉 99% 的数据。"数到 limit 就杀掉 rg"只有在流式读的时候才做得到。
+ *
+ * 除了这一点,纪律与 runEngine 逐条相同(argv 直传不过 shell、PYTHON* 钉子、detached 建进程组
+ * 让 killTree 够得着孙进程、windowsHide、超时/中断先 SIGTERM 后 SIGKILL、exit 之后有界冲刷),
+ * 改其中任何一条请连 runEngine 一起改 —— 两份纪律走散的代价是"孤儿进程攥着资源不放"那条老疤。
+ */
+/** 流式版只把 stderr 留作"说清哪里错了"的文本,8 KB 足够;超出的丢掉。 */
+const MAX_LINES_STDERR_CHARS = 8 * 1024;
+
+export function runEngineLines(bin: string, args: string[], options: EngineLinesOptions): Promise<EngineLinesResult> {
+	const timeoutMs = options.timeoutMs ?? DEFAULT_ENGINE_TIMEOUT_MS;
+	return new Promise((resolve, reject) => {
+		const child = spawn(bin, args, {
+			cwd: options.cwd,
+			stdio: ["ignore", "pipe", "pipe"],
+			env: {
+				...process.env,
+				PYTHONIOENCODING: process.env.PYTHONIOENCODING || "utf-8",
+				PYTHONUTF8: process.env.PYTHONUTF8 || "1",
+			},
+			detached: process.platform !== "win32",
+			windowsHide: true,
+		});
+
+		let stderr = "";
+		let buffer = "";
+		let timedOut = false;
+		let aborted = false;
+		let stopped = false;
+		let settled = false;
+		/** onLine 自己抛的错:不能在回调里直接 reject(子进程还活着),先记下,结算时抛。 */
+		let lineError: Error | undefined;
+
+		const deliver = (line: string) => {
+			if (stopped) return;
+			try {
+				if (options.onLine(line) === "stop") {
+					stopped = true;
+					terminate(child);
+				}
+			} catch (error) {
+				lineError = error instanceof Error ? error : new Error(String(error));
+				stopped = true;
+				terminate(child);
+			}
+		};
+
+		child.stdout.setEncoding("utf8");
+		child.stderr.setEncoding("utf8");
+		child.stdout.on("data", (chunk: string) => {
+			if (stopped) return;
+			// 一次 data 事件不等于一行:chunk 边界会落在行中间,也可能一次带来上百行。
+			buffer += chunk;
+			let newline = buffer.indexOf("\n");
+			while (newline >= 0) {
+				const line = buffer.slice(0, newline);
+				buffer = buffer.slice(newline + 1);
+				deliver(line.endsWith("\r") ? line.slice(0, -1) : line);
+				if (stopped) return;
+				newline = buffer.indexOf("\n");
+			}
+		});
+		child.stderr.on("data", (chunk: string) => {
+			// 有界:一棵有几千个读不动文件的树能刷出几十 KB 报错,而调用方会把它原样抛进对话。
+			if (stderr.length < MAX_LINES_STDERR_CHARS) stderr += chunk.slice(0, MAX_LINES_STDERR_CHARS - stderr.length);
+		});
+
+		const timeout = setTimeout(() => {
+			timedOut = true;
+			terminate(child);
+		}, timeoutMs);
+
+		const onAbort = () => {
+			aborted = true;
+			terminate(child);
+		};
+		if (options.signal) {
+			if (options.signal.aborted) onAbort();
+			else options.signal.addEventListener("abort", onAbort, { once: true });
+		}
+
+		const cleanup = () => {
+			clearTimeout(timeout);
+			options.signal?.removeEventListener("abort", onAbort);
+			killTree(child, "SIGKILL");
+		};
+
+		/** 最后一行可能没有换行符(rg 正常会给,但别赌);停过之后一律不再交付。 */
+		const flush = () => {
+			if (!stopped && buffer.length > 0) {
+				const line = buffer;
+				buffer = "";
+				deliver(line);
+			}
+		};
+
+		const finish = (exitCode: number | null) => {
+			settled = true;
+			cleanup();
+			flush();
+			if (lineError) reject(lineError);
+			else resolve({ exitCode, stderr, timedOut, aborted, stopped });
+		};
+
+		child.on("error", (error) => {
+			if (settled) return;
+			settled = true;
+			cleanup();
+			reject(new Error(`failed to run ${bin}: ${String(error)}`));
+		});
+
+		child.on("close", (code) => {
+			if (settled) return;
+			finish(code);
+		});
+
+		// 与 runEngine 同一条兜底:进程本体已死,close 可能被继承管道的孙进程无限拖住。
+		child.on("exit", (code) => {
+			if (settled) return;
+			const flushGrace = setTimeout(() => {
+				if (settled) return;
+				child.stdout.destroy();
+				child.stderr.destroy();
+				finish(code);
+			}, STREAM_FLUSH_GRACE_MS);
+			flushGrace.unref();
+		});
+	});
+}

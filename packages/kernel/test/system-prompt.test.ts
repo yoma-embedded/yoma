@@ -3,6 +3,8 @@
 // 2026-09-10 工具归零后提示词只认 selectedTools 这一份名字清单,工具摘要 /
 // 使用守则那两组用例随 collectToolPromptData 一起删了。
 import { describe, expect, it } from "vitest";
+import { TOOL_NAMES } from "../src/types.ts";
+import { toolGuidelines } from "../src/host/tools/contracts.ts";
 import { buildSystemPrompt } from "../src/host/system-prompt.ts";
 
 describe("buildSystemPrompt", () => {
@@ -176,5 +178,15 @@ describe("buildSystemPrompt", () => {
 			expect(prompt).not.toContain("Available tools:");
 			expect(prompt).toContain("Current working directory: /tmp/x");
 		});
+	});
+});
+
+describe("全装配面的提示词", () => {
+	it("有 grep / find / ls 时不再建议用 bash 做文件操作,且每个契约的守则都进了", () => {
+		const prompt = buildSystemPrompt({ cwd: "/tmp/p", selectedTools: [...TOOL_NAMES] });
+		expect(prompt).not.toContain("Use bash for file operations");
+		for (const name of TOOL_NAMES) expect(prompt).toContain(`- ${name}`);
+		for (const guideline of toolGuidelines(TOOL_NAMES)) expect(prompt).toContain(guideline);
+		expect(toolGuidelines(TOOL_NAMES).length).toBeGreaterThan(2);
 	});
 });

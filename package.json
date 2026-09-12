@@ -10,6 +10,7 @@
     "dev:web": "npm run dev -w packages/app",
     "build:desktop": "npm run build -w packages/desktop",
     "engines:build": "tsx engines/build.ts",
+    "engines:rg": "tsx engines/build.ts --rg-only",
     "package:win": "npm run package:win -w packages/desktop",
     "package:mac": "npm run package:mac -w packages/desktop",
     "package:linux": "npm run package:linux -w packages/desktop",

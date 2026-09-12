@@ -234,10 +234,11 @@ export interface ToolConfirmView {
  * 三处各写一份的年代里,清单漂移报出来的样子和"构建产物坏了"一模一样。
  *
  * 嵌入式那一套(flash/gdb/la/scope/…)2026-09-10 归零;2026-09-11 起按样板
- * host/tools/<名字>/{contract.ts,session.ts} 逐个重写,首个是 flash。
+ * host/tools/<名字>/{contract.ts,session.ts} 逐个重写,首个是 flash;2026-09-12 从 pi 移植了
+ * grep / find / ls / powershell(四件套之后先放文件工具,硬件最后)。
  * 退役的名字**不必**留在这里:界面按任意工具名走万能卡,旧会话重放照样画得出来。
  */
-export const TOOL_NAMES = ["read", "bash", "edit", "write", "flash"] as const
+export const TOOL_NAMES = ["read", "bash", "edit", "write", "grep", "find", "ls", "powershell", "flash"] as const
 
 export type ToolName = (typeof TOOL_NAMES)[number]
 

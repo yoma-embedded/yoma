@@ -6,9 +6,20 @@
  */
 
 import type { ToolContract } from "./contract-types.ts"
+import { FIND_CONTRACT } from "./find/contract.ts"
 import { FLASH_CONTRACT } from "./flash/contract.ts"
+import { GREP_CONTRACT } from "./grep/contract.ts"
+import { LS_CONTRACT } from "./ls/contract.ts"
+import { POWERSHELL_CONTRACT } from "./powershell/contract.ts"
 
-export const TOOL_CONTRACTS = [FLASH_CONTRACT] as const satisfies readonly ToolContract[]
+/** 四件套之后先放文件工具,硬件最后;顺序与 index.ts 的装配、types.ts 的 TOOL_NAMES 逐字同序。 */
+export const TOOL_CONTRACTS = [
+  GREP_CONTRACT,
+  FIND_CONTRACT,
+  LS_CONTRACT,
+  POWERSHELL_CONTRACT,
+  FLASH_CONTRACT,
+] as const satisfies readonly ToolContract[]
 
 export function toolContract(name: string): ToolContract | undefined {
   return TOOL_CONTRACTS.find((contract) => contract.name === name)

@@ -11,7 +11,8 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
   会话树、压缩、技能,以及嵌入式应用层(工具链解析 / 示例语料 / 引擎调用)。
   嵌入式工具组(烧录 / 日志 / gdb / 网表 / 数据手册 / STM32 配置 / 逻辑分析仪 / 示波器)2026-09-10
   **归零**:旧实现搬到 `packages/kernel/attic/`(不编译、不跑),按新内核的工具接口一个个重写 ——
-  2026-09-11 起按样板 `host/tools/<名字>/{contract.ts,session.ts}` 逐个重写,首个是 flash;
+  2026-09-11 起按样板 `host/tools/<名字>/{contract.ts,session.ts}` 逐个重写,首个是 flash;2026-09-12 从 pi 的
+  coding-agent 移植了 grep / find / ls / powershell(清单:四件套 + grep / find / ls / powershell + flash);
   示波器与例程库 2026-09-11 整体停到仓库外 `../yoma-parked/`(功能还要,方案未定,先不拖累)。
 - **桌面端**(`packages/{desktop,app,kernel,ui,session-ui,util,bench}`)——
   Electron 外壳 + SolidJS UI,fork 自 opencode 的前端;`bench` 是无人值守调试台。
@@ -70,10 +71,22 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
   图片走 attachments。`session.ts` 是厨房:相对路径的工具间(`host/domain/` 的发动机与路径)加 `node:*`
   加发动机包的类型,真去起子进程。餐厅走两道门拿契约:`@yoma-desktop/kernel/tools/<名字>/contract` 与
   总表 `@yoma-desktop/kernel/tools/contracts`(只 import 各 contract.ts)。装配在 `host/tools/index.ts`
-  (`createHardwareTools()`),总表与装配面同名同序由 tool-names.test.ts 钉着。工具清单的真源是
+  (`createRegisteredTools()`),总表与装配面同名同序由 tool-names.test.ts 钉着。工具清单的真源是
   `kernel/src/types.ts` 的 `TOOL_NAMES`:desktop 的自检、`kernel-smoke.ts`、bench 的 `check` 三处走同一个
   `diffToolNames` 逐字同序比;系统提示词里 `selectedTools` 缺省时的四件套字面量只是兜底,不参与真源。
   boundary.test.ts 第 5 条按白名单扫契约文件,并要求每个工具目录都有 contract.ts。
+- **从 pi 移植的四个文件工具**(2026-09-12):grep / find 用自带的 rg(`engineBin("rg")` 绝对路径,内核进程的
+  PATH 上没有它;`runEngineLines` 流式逐行、到 limit 就杀树)。用户的 glob **不交给 rg**:rg 的 `--glob` 是
+  override 层,压在 .gitignore 之上(实测 `--glob '*'` 把 node_modules/ 整个放回来),所以 rg 只带 `!.git/`,
+  glob 在 JS 侧按 gitignore 语义挑(`domain/paths.ts` 的 matchesToolGlob,**全平台不分大小写**);rg 在搜索根里
+  跑、不带路径参数(给它绝对路径时锚定 glob 一个都匹不到);仓库外加 `--no-require-git`(共用 insideGitRepo);
+  rg 退 2 但有命中时结果照给、尾部标 partial(一个读不动的目录不该让 grep 永久不可用)。find 用 `rg --files`,
+  **只出文件不出目录**(pi 用 fd 会出目录)。ls 用 readdir(withFileTypes)而不是 env.listDir:后者对字符设备 /
+  FIFO / socket 静默丢弃,`ls /dev` 会看不见 cu.* 串口。powershell 全平台恒定登记(清单平台无关),非 Windows
+  没有 pwsh 时 execute 报未安装;Windows 上用 SystemRoot 绝对路径的 5.1,`-NoProfile -NonInteractive
+  -ExecutionPolicy Bypass -EncodedCommand`,脚本头两行关进度条与置 UTF-8 输出,stderr 上的 CLIXML 块**解码**
+  (取出 Error 记录,丢进度)而不是整块删 —— Write-Error 退出码是 0,整块删掉模型就以为成功了。CI 两岗测试前
+  `npm run engines:rg` 只装 rg,grep / find 的集成用例在 CI 上缺 rg 直接红而不是跳过。
 - 新开一道深引用 = 改 `exports`(从前是改四份别名表)。`boundary.test.ts` 钉住五条:菜单里没有 Node;
   工具间不反调会话间(`host/domain` 往外只拿 `host/models.ts`、`host/datasheet-server.ts`);餐厅只许走
   `@yoma-desktop/kernel`、`@yoma-desktop/kernel/tools/<名字>/contract` 或 `@yoma-desktop/kernel/tools/contracts`;

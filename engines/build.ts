@@ -41,6 +41,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const checkOnly = process.argv.includes("--check");
 const dist = process.argv.includes("--dist");
 const allowMissingIrpacks = process.argv.includes("--allow-missing-irpacks");
+const rgOnly = process.argv.includes("--rg-only");
 const distDir = (() => {
 	const at = process.argv.indexOf("--out");
 	return at >= 0 && process.argv[at + 1] ? path.resolve(process.argv[at + 1]!) : path.join(here, "dist");
@@ -376,6 +377,12 @@ if (dist) {
 		process.exit(1);
 	}
 	console.log("\n✓ 分发自检通过:全是真文件,没有 shebang 脚本,没有 venv 引用");
+	process.exit(0);
+}
+
+if (rgOnly) {
+	// CI 的测试岗只要 rg(grep / find 工具的集成用例要真跑它),不装 Rust / uv / CMake。
+	await ensureRipgrep(path.join(here, "bin"));
 	process.exit(0);
 }
 

@@ -53,6 +53,11 @@
 
 唯一值得单独跟踪的是内核的 `harness/utils/shell-output.ts`(与上游 HEAD 只差 28 行)。
 
+> **2026-09-12 补**:上游 TUI 那份里 yoma 缺的四个(grep / find / ls / powershell)按 `host/tools/<名字>/`
+> 样板**移植**(不是复制):改成六参 `AgentHarnessTool`、子进程走 `runEngine` / `runEngineLines`、rg 用自带的
+> engines/bin 不下载、find 用 `rg --files` 不打包 fd、glob 在 JS 侧按 gitignore 语义挑、不跟渲染器与
+> `promptSnippet`(守则进契约的 guidelines)。上游那四个文件的后续改动看 git log 手工对。
+
 ## 待接的三件(各自独立)
 
 | 优先 | 事项 | 出处 | 状态 |

@@ -251,7 +251,7 @@ export function kernelSelfCheck(options: { enginesDir?: string } = {}) {
     electron: process.versions.electron ?? null,
     // 整个内核依赖图真的加载起来了才有这个 "function"(AgentHarness 本身只是个对象)。
     harness: typeof AgentHarness.create,
-    tools: createAgentTools().map((tool) => tool.name),
+    tools: createAgentTools({ enginesDir: options.enginesDir }).map((tool) => tool.name),
     engines,
   }
 }

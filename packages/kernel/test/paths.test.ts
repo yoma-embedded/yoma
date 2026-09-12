@@ -10,7 +10,11 @@ import { afterEach, describe, expect, it } from "vitest"
 import os from "node:os"
 import path from "node:path"
 
-import { fromMsysPath, resolveToCwd } from "../src/host/domain/paths.ts"
+import { execFileSync } from "node:child_process"
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+
+import { fromMsysPath, insideGitRepo, matchesToolGlob, resolveToCwd } from "../src/host/domain/paths.ts"
 
 const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform")!
 
@@ -83,5 +87,40 @@ describe("resolveToCwd", () => {
     expect(resolveToCwd("D:\\proj", "/d/proj/build/fw.elf")).toBe("D:\\proj\\build\\fw.elf")
     expect(resolveToCwd("D:\\proj", "build/fw.elf")).toBe("D:\\proj\\build\\fw.elf")
     expect(resolveToCwd("D:\\proj", "C:\\tools\\fw.elf")).toBe("C:\\tools\\fw.elf")
+  })
+})
+
+describe("matchesToolGlob(gitignore 味)", () => {
+  it("不含斜杠只看文件名、任意深度;含斜杠锚在搜索根;** 跨目录", () => {
+    expect(matchesToolGlob("src/deep/main.c", "*.c")).toBe(true)
+    expect(matchesToolGlob("src/deep/main.c", "src/*.c")).toBe(false)
+    expect(matchesToolGlob("src/deep/main.c", "src/**/*.c")).toBe(true)
+    expect(matchesToolGlob("src/deep/x.spec.ts", "**/x.spec.ts")).toBe(true)
+    expect(matchesToolGlob("src/main.c", "src/**")).toBe(true)
+    expect(matchesToolGlob("lib/main.c", "./lib/*.c")).toBe(true)
+  })
+
+  it("没闭合的 [ 不抛,当作匹不到", () => {
+    expect(() => matchesToolGlob("a.c", "[")).not.toThrow()
+    expect(matchesToolGlob("a.c", "[")).toBe(false)
+  })
+
+  it("全平台都不分大小写(Node 的 matchesGlob 在 Linux 上分、mac / Windows 上不分)", () => {
+    expect(matchesToolGlob("MAIN.C", "*.c")).toBe(true)
+    expect(matchesToolGlob("Core/Src/main.c", "core/src/*.C")).toBe(true)
+  })
+})
+
+describe("insideGitRepo", () => {
+  it("向上找 .git,子目录也算在仓库里;没有 .git 的临时目录不算", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "yoma-ingit-"))
+    try {
+      mkdirSync(path.join(root, "a", "b"), { recursive: true })
+      expect(insideGitRepo(path.join(root, "a", "b"))).toBe(false)
+      execFileSync("git", ["init", "-q"], { cwd: root, stdio: "pipe" })
+      expect(insideGitRepo(path.join(root, "a", "b"))).toBe(true)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })

@@ -49,6 +49,11 @@ const FLASH_TIMEOUT_MS = 2 * 60 * 1000
 const MIN_TIMEOUT_MS = 5 * 1000
 const MAX_TIMEOUT_MS = 10 * 60 * 1000
 
+/** 超时钳位单独成函数:纯函数可测,不必为了钉"下界 5 秒"真起一个子进程去赌计时。 */
+export function flashTimeoutMs(timeoutMs: number | undefined): number {
+  return clamp(timeoutMs, FLASH_TIMEOUT_MS, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS)
+}
+
 /**
  * 最后一次成功烧录的记录。gdb 会话靠它判断"手里的 ELF 是不是就是片子里跑的那个"。
  *
@@ -126,7 +131,7 @@ export function createFlashTool(): AgentHarnessTool<ExecutionToolContext, typeof
         result = await runEngine(command[0], command.slice(1), {
           cwd,
           signal: context.abortSignal,
-          timeoutMs: clamp(params.timeoutMs, FLASH_TIMEOUT_MS, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS),
+          timeoutMs: flashTimeoutMs(params.timeoutMs),
         })
       } finally {
         releaseProbe("flash")

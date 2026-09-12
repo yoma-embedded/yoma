@@ -26,6 +26,8 @@ jobs:
         run: npm ci
       - name: 类型检查
         run: npm run typecheck
+      - name: 准备 ripgrep(grep / find 的集成用例要真跑它)
+        run: npm run engines:rg
       - name: 单测
         run: npm test
 
@@ -46,6 +48,8 @@ jobs:
       # 这类回归的岗(scope 驱动 unref 定时器那次就是它没跑才漏的)。
       # bench 还有 5 个依赖 POSIX shell 的 mailbox 用例(路径断言、autocrlf、5 s 超时),先不加。
       # desktop 的单测(更新器状态机、信箱控制器等)是纯 Node 逻辑,Windows 上照跑。
+      - name: 准备 ripgrep(grep / find 的集成用例要真跑它)
+        run: npm run engines:rg
       - name: 内核单测(agent + kernel + kernel-domain + desktop,Windows 岗)
         run: npx vitest run --project agent --project kernel --project kernel-domain --project desktop
       - name: 下载 Electron 二进制

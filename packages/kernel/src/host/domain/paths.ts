@@ -11,6 +11,7 @@
  * 多一层 Result + await 换不来任何可移植性。
  */
 
+import { existsSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -28,6 +29,38 @@ export function fromMsysPath(filePath: string): string {
   if (process.platform !== "win32") return filePath
   const m = /^\/([a-zA-Z])(\/.*)?$/.exec(filePath)
   return m ? `${m[1].toUpperCase()}:${m[2] ?? "/"}` : filePath
+}
+
+/**
+ * gitignore 味的 glob:不含 `/` 的 pattern 只看文件名(任意深度都算),含 `/` 的锚在搜索根,`**` 跨目录。
+ *
+ * 为什么不把 glob 交给 rg 的 --glob:那是 override 层,压在 .gitignore 之上 —— 2026-09-12 实测
+ * `rg --files --glob '*'` 会把 node_modules/ 与 *.log 整个放回来。所以 rg 只负责"尊重 .gitignore 地
+ * 列文件",挑哪些留下在这里做。坏 pattern(没闭合的 `[`)不抛,当作匹不到。
+ *
+ * **全平台都不分大小写**:Node 的 matchesGlob 在 mac / Windows 上不分、Linux 上分,同一条 pattern 两个
+ * CI 岗给不同结果;而模型手里的文件名本来就大小写混杂(Keil 工程的 Main.C、Core/Src)。两边都小写后比。
+ */
+export function matchesToolGlob(relativePosixPath: string, pattern: string): boolean {
+  const cleaned = (pattern.startsWith("./") ? pattern.slice(2) : pattern).toLowerCase()
+  const target = relativePosixPath.toLowerCase()
+  if (!cleaned.includes("/")) return path.posix.matchesGlob(path.posix.basename(target), cleaned)
+  return path.posix.matchesGlob(target, cleaned)
+}
+
+/**
+ * 目录在不在 git 仓库里(向上找 .git)。rg 跟 fd 一样:仓库外默认**不**读 .gitignore,要 --no-require-git
+ * 才读;仓库内用默认行为,父级 .gitignore 会停在嵌套子仓库的边界上。grep 与 find 共用这一条判断 ——
+ * 2026-09-12 审稿抓到 grep 漏了它,于是解压的 SDK 目录里 node_modules 把 limit 吃满。
+ */
+export function insideGitRepo(start: string): boolean {
+  let current = start
+  while (true) {
+    if (existsSync(path.join(current, ".git"))) return true
+    const parent = path.dirname(current)
+    if (parent === current) return false
+    current = parent
+  }
 }
 
 /**

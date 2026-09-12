@@ -51,7 +51,7 @@ import {
 import { buildSystemPrompt } from "./system-prompt.ts"
 import { ConfirmDesk } from "./confirm.ts"
 import { confirmNeeded } from "./tools/contracts.ts"
-import { createHardwareTools } from "./tools/index.ts"
+import { createRegisteredTools, type RegisteredToolOptions } from "./tools/index.ts"
 import { configurableProviders, resolveModel } from "./models.ts"
 import { discoverSkills, loadContextFiles } from "./resources.ts"
 import {
@@ -131,7 +131,7 @@ function isOpen(entry: Entry): boolean {
  * 嵌入式那一套(flash/gdb/la/scope/…)2026-09-10 归零,旧实现留在 kernel/attic/tools
  * 作重写参考;2026-09-11 起按 host/tools/<名字>/ 的样板逐个回来。host 自检也走这里。
  */
-export function createAgentTools(): AgentHarnessTool<ExecutionToolContext>[] {
+export function createAgentTools(options: RegisteredToolOptions = {}): AgentHarnessTool<ExecutionToolContext>[] {
   return [
     createReadTool(),
     // 内核的 bash 不管 Python 的编码:Windows 的 GBK 控制台会把例程脚本的 UTF-8 输出
@@ -144,7 +144,7 @@ export function createAgentTools(): AgentHarnessTool<ExecutionToolContext>[] {
     }),
     createEditTool(),
     createWriteTool(),
-    ...createHardwareTools(),
+    ...createRegisteredTools(options),
   ]
 }
 
@@ -637,7 +637,7 @@ export class SessionManager {
         ? [...contextFiles, { path: "<toolchain>", content: toolchainSection }]
         : contextFiles
 
-      const tools = createAgentTools()
+      const tools = createAgentTools({ enginesDir: this.options.enginesDir })
       const created = await AgentHarness.create<ExecutionToolContext>(
         {
           session,

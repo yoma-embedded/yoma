@@ -18,7 +18,7 @@ import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node"
 
 import { claimProbe, releaseProbe } from "../src/host/domain/engines.ts"
 import { FLASH_CONTRACT, type FlashDetails, type FlashInput } from "../src/host/tools/flash/contract.ts"
-import { createFlashTool } from "../src/host/tools/flash/session.ts"
+import { createFlashTool, flashTimeoutMs } from "../src/host/tools/flash/session.ts"
 import { ECHO_ARGV_JS } from "./fixtures/fake-exe.ts"
 
 const tempDirs: string[] = []
@@ -147,11 +147,12 @@ describe("flash 工具", () => {
     await expect(run({ command: [] })).rejects.toThrow(/requires command/)
   })
 
-  it("超时有下界:timeoutMs 给 1 也钳到 5 秒,半秒的烧录照样跑完", async () => {
-    const { run, flasher } = makeTool(`setTimeout(() => {}, 500);`)
-    // 没有钳位时 1ms 就超时,assertEngineSettled 抛 "timed out"。
-    const result = await run({ command: [...flasher, "program"], timeoutMs: 1 })
-    expect(result.details.exitCode).toBe(0)
+  it("超时钳位:缺省 2 分钟,下界 5 秒,上界 10 分钟,非数回落缺省", () => {
+    // 曾经用真子进程赌"半秒的烧录在 1ms 超时下也跑完",全量测试满载时它 29 秒才结束、红了一次。
+    expect(flashTimeoutMs(undefined)).toBe(120_000)
+    expect(flashTimeoutMs(1)).toBe(5_000)
+    expect(flashTimeoutMs(1e9)).toBe(600_000)
+    expect(flashTimeoutMs(Number.NaN)).toBe(120_000)
   })
 
   it("跑到一半被停:烧录器被杀、抛 aborted,而且探针租约还回去了", async () => {
