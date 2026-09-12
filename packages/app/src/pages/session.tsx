@@ -1,4 +1,4 @@
-import type { UserMessage } from "@yoma-desktop/kernel"
+import type { ToolConfirmView, UserMessage } from "@yoma-desktop/kernel"
 import { useDialog } from "@yoma-desktop/ui/context/dialog"
 import { createQuery, useMutation, useQueryClient } from "@tanstack/solid-query"
 import {
@@ -23,6 +23,7 @@ import { createStore } from "solid-js/store"
 import { ResizeHandle } from "@yoma-desktop/ui/resize-handle"
 import { createAutoScroll } from "@yoma-desktop/ui/hooks"
 import { showToast } from "@/utils/toast"
+import { kernel } from "@/utils/kernel"
 import { base64Encode } from "@yoma-desktop/util/encode"
 import { useLocation, useSearchParams } from "@solidjs/router"
 import { NewSessionView, SessionHeader } from "@/components/session"
@@ -918,12 +919,79 @@ export default function Page() {
     if (fillFrame !== undefined) cancelAnimationFrame(fillFrame)
   })
 
+  // ── 工具确认条(烧录前先问一声)────────────────────────────────────────────
+  // 会话内容 store 里不放它:确认是内核里一条挂起中的询问,不是 transcript 的一部分。事件不重放,
+  // 所以进会话页(以及内核重连时)先问一次现状(session.confirms),之后靠 tool.confirm 事件增删 ——
+  // 与设置页的工具链安装进度同一套路。种子按 id 合并而不是整表替换:RPC 往返期间到达的结算事件
+  // 不能被快照复活成一条答不掉的行。
+  const [confirms, setConfirms] = createStore<{ items: ToolConfirmView[]; replying?: string }>({ items: [] })
+  const seedConfirms = (sessionID: string) => {
+    void kernel.session
+      .confirms({ sessionID })
+      .then((list) => {
+        if (params.id !== sessionID) return
+        const pending = list.filter((item) => item.status === "pending")
+        setConfirms("items", (items) => {
+          const known = new Set(items.map((item) => item.id))
+          return [...items, ...pending.filter((item) => !known.has(item.id))]
+        })
+      })
+      .catch(() => {})
+  }
+  createEffect(
+    on(
+      () => params.id,
+      (sessionID) => {
+        // 换会话:旧会话的行与"正在回复"一起清掉,否则一条残留的 replying 会把新会话的按钮全锁死。
+        setConfirms({ items: [], replying: undefined })
+        if (sessionID) seedConfirms(sessionID)
+      },
+    ),
+  )
+  onMount(() => {
+    const stop = serverSDK().event.listen((event) => {
+      if (event.type === "kernel.connected") {
+        if (params.id) seedConfirms(params.id)
+        return
+      }
+      if (event.type !== "tool.confirm") return
+      const view = event.confirm
+      // 解锁按 id,与会话归属无关:在 A 点了允许立刻切到 B,A 的结算事件也得把按钮解开。
+      if (confirms.replying === view.id) setConfirms("replying", undefined)
+      if (view.sessionID !== params.id) return
+      setConfirms("items", (items) => {
+        const rest = items.filter((item) => item.id !== view.id)
+        return view.status === "pending" ? [...rest, view] : rest
+      })
+    })
+    onCleanup(stop)
+  })
+  const replyConfirm = (id: string, allow: boolean) => {
+    setConfirms("replying", id)
+    void kernel.session
+      .confirmReply({ id, allow })
+      .then(({ accepted }) => {
+        // 解锁交给 RPC,删行交给事件(两件事别绑在同一条消息上)。没被接受 = 那条询问已经不在了
+        // (超时 / 会话关了 / 内核重启过):结算事件可能永远不来,这里直接把行删掉。
+        setConfirms("replying", undefined)
+        if (!accepted) setConfirms("items", (items) => items.filter((item) => item.id !== id))
+      })
+      .catch(() => {
+        setConfirms("replying", undefined)
+        showToast({ variant: "error", title: language.t("session.confirmDock.replyFailed") })
+      })
+  }
+
   const composerRegion = () => {
     const controller = createSessionComposerRegionController({
       sessionKey,
       sessionID: () => params.id,
       prompt,
       centered,
+      confirms: () =>
+        params.id && confirms.items.length
+          ? { items: confirms.items, replying: confirms.replying, onReply: replyConfirm }
+          : undefined,
       followup: () =>
         params.id
           ? {

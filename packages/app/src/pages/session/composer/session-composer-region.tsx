@@ -1,4 +1,5 @@
 import { Show, type JSX } from "solid-js"
+import { SessionConfirmDock } from "@/pages/session/composer/session-confirm-dock"
 import { SessionFollowupDock } from "@/pages/session/composer/session-followup-dock"
 import type { SessionComposerRegionController } from "./session-composer-region-controller"
 
@@ -27,6 +28,14 @@ export function SessionComposerRegion(props: {
             "relative z-[70]": true,
           }}
         >
+          <Show when={controller.confirms()?.items.length}>
+            <SessionConfirmDock
+              items={controller.confirms()!.items}
+              replying={controller.confirms()!.replying}
+              onReply={controller.confirms()!.onReply}
+              attached={!controller.followup()?.items.length}
+            />
+          </Show>
           <Show when={controller.followup()?.items.length}>
             <SessionFollowupDock
               items={controller.followup()!.items}

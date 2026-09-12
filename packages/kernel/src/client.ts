@@ -24,6 +24,7 @@ import type {
   ProviderInfo,
   Session,
   SessionStatus,
+  ToolConfirmView,
   ToolchainFamiliesView,
   ToolchainInstallResultView,
   ToolchainStatusView,
@@ -54,6 +55,10 @@ export interface KernelClient {
     preflight(): Promise<KernelResult<"app.preflight">>
   }
   session: {
+    /** 回答一条工具确认。`accepted:false` = 这条询问已经不在了(超时 / 会话关了),不是错误。 */
+    confirmReply(params: { id: string; allow: boolean }): Promise<{ accepted: boolean }>
+    /** 未决的工具确认。事件不重放:进会话页与 reload 之后都得问一次。 */
+    confirms(params?: { sessionID?: string }): Promise<ToolConfirmView[]>
     list(params?: { directory?: string }): Promise<Session[]>
     get(sessionID: string): Promise<Session>
     create(params: { directory: string; title?: string }): Promise<Session>
@@ -132,6 +137,8 @@ export function createKernelClient(transport: KernelTransport): KernelClient {
       preflight: () => call("app.preflight", undefined),
     },
     session: {
+      confirmReply: (params) => call("session.confirmReply", params),
+      confirms: (params) => call("session.confirms", { sessionID: params?.sessionID }),
       list: (params) => call("session.list", { directory: params?.directory }),
       get: (sessionID) => call("session.get", { sessionID }),
       create: (params) => call("session.create", params),

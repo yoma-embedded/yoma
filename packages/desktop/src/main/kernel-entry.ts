@@ -118,6 +118,9 @@ if (parentPort) {
         version: command.version,
         // 没人选档时不要落到 harness 的 "off"。
         defaultThinkingLevel: DEFAULT_THINKING_LEVEL,
+        // 烧录这类契约声明要问的工具,跑之前挂起等用户点允许。桌面端永远开 —— 屏幕前有人,
+        // 所以不进 StartCommand(那是"这台机器上的路径"那一类参数,不是产品决定)。
+        confirmTools: true,
         onEvents: broadcast,
       })
       hostReady?.()

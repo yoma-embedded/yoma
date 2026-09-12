@@ -197,6 +197,32 @@ export interface ToolStateError {
 
 export type ToolState = ToolStatePending | ToolStateRunning | ToolStateCompleted | ToolStateError
 
+/**
+ * 工具跑之前那一问的结局。`cancelled` 是会话被关/被停掉,`expired` 是没人答(十分钟)——
+ * 对模型来说这两种和 `denied` 一样都是拒绝,分开只是为了前端能说清"它为什么自己没了"。
+ */
+export type ToolConfirmStatus = "pending" | "allowed" | "denied" | "cancelled" | "expired"
+
+/**
+ * 确认条的一条:契约说要问的工具(flash)挂起中的那次询问。
+ *
+ * 跨进程的东西,所以字段只放能 JSON 往返的。`label` 是契约给的界面短名(`ToolContract.label`),
+ * `summary` 是契约拼出来的那一行命令 —— 前端别自己再拼一遍,两边拼法分叉的后果是
+ * 确认条上显示的命令和真跑的不是一条。
+ */
+export interface ToolConfirmView {
+  id: string
+  sessionID: string
+  /** 对应的工具调用 id(transcript 里那张卡片的同一个 id)。 */
+  toolCallId: string
+  tool: string
+  label: string
+  summary: string
+  input: Record<string, unknown>
+  askedAt: number
+  status: ToolConfirmStatus
+}
+
 // ---------------------------------------------------------------------------
 // 工具名与工具链 / la 的 RPC 视图模型
 // ---------------------------------------------------------------------------

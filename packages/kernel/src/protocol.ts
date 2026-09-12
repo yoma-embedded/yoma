@@ -25,6 +25,7 @@ import type {
   ProviderInfo,
   Session,
   SessionStatus,
+  ToolConfirmView,
   ToolchainFamiliesView,
   ToolchainInstallPhaseView,
   ToolchainInstallResultView,
@@ -162,6 +163,17 @@ export interface KernelMethods {
   "toolchain.installsActive": { params: void; result: string[] }
 
   /**
+   * 回答一条工具确认(允许 / 拒绝)。`accepted:false` 不是错误 —— 那条询问已经不在了
+   * (会话关了、或者十分钟没人答已按拒绝结算),前端把它从确认条上删掉就对了。
+   */
+  "session.confirmReply": { params: { id: string; allow: boolean }; result: { accepted: boolean } }
+  /**
+   * 未决的工具确认。`tool.confirm` 事件不重放,所以进会话页与 reload 之后都要问一次现状 ——
+   * 不问的表现是模型在等人答,而屏幕上什么都没有。
+   */
+  "session.confirms": { params: { sessionID?: string }; result: ToolConfirmView[] }
+
+  /**
    * 逻辑分析仪波形视口:Node 侧按列聚合 + 注解泳道,跨进程只传视口大小(几十 KB)。
    * 不走 file.read(2 MB utf8),不把原始样本塞 details(会进 JSONL 且每次开会话整批重传)。
    */
@@ -215,6 +227,11 @@ export type KernelEvent =
    */
   | { type: "message.part.delta"; sessionID: string; messageID: string; partID: string; field: "text"; delta: string }
   | { type: "vcs.updated"; directory: string; info: VcsInfo }
+  /**
+   * 工具跑之前那一问的每一次状态变化:`status:"pending"` 是新挂起一条,其余 status 都是
+   * "这条结算了,从确认条上删掉"。按 `confirm.sessionID` 归属会话。
+   */
+  | { type: "tool.confirm"; confirm: ToolConfirmView }
   /**
    * 工具链自动安装的进度(`toolchain.install` RPC 期间,也包括 agent 自己跑 install 动作时)。
    * download 阶段按字节反复发;StreamSink 把同一个 id 的相邻进度折叠成最后一条。

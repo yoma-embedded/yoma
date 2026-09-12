@@ -155,6 +155,9 @@ export async function runTurn(options: TurnOptions): Promise<TurnResult> {
     defaultThinkingLevel: options.job.model?.thinking ?? DEFAULT_THINKING_LEVEL,
     toolchainSide: options.toolchainSide,
     toolchainManifestText: options.toolchainManifestText,
+    // confirmTools **不开**:调试台无人值守,没人点"允许"。开了的话一条烧录调用会挂在确认台上
+    // 一直到它十分钟的超时,而这一轮结束的判据是"idle 静默 700ms" —— 挂起期间 lane 一直 busy,
+    // 于是整轮只能等到一小时硬超时才收场,报告里看到的是"agent 卡住了"。
     onEvents: (batch) => {
       for (const event of batch) handleEvent(event)
     },

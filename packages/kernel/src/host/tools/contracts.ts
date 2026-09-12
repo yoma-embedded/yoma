@@ -20,3 +20,15 @@ export function toolGuidelines(toolNames: readonly string[]): string[] {
     ...contract.guidelines,
   ])
 }
+
+/**
+ * 这一次调用跑之前要不要问用户:要问就把契约交出来(界面短名与那行 summary 都在它身上)。
+ *
+ * 判断留在总表而不是钩子里:钩子手上只有工具名和参数,"问不问"是契约的事 —— toolchain 只在
+ * install 时问、gdb 只在写内存时问,所以它是函数不是布尔。没登记契约的工具一律不问。
+ */
+export function confirmNeeded(name: string, input: Record<string, unknown>): ToolContract | undefined {
+  const contract = toolContract(name)
+  if (!contract) return undefined
+  return contract.confirm?.(input) ? contract : undefined
+}

@@ -17,6 +17,8 @@ const PREFIXES = {
   session: "ses",
   message: "msg",
   part: "prt",
+  // 工具确认。它不进 transcript,字典序只被用来"最早提的那条摆最上面"。
+  confirm: "cfm",
 } as const
 
 export type IdPrefix = keyof typeof PREFIXES

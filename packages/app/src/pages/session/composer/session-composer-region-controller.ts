@@ -1,4 +1,5 @@
 import { type Accessor, createEffect, createResource } from "solid-js"
+import type { ToolConfirmView } from "@yoma-desktop/kernel"
 import type { PromptInputState } from "@/components/prompt-input"
 import { getSessionHandoff, setSessionHandoff } from "@/pages/session/handoff"
 
@@ -7,6 +8,13 @@ export type SessionComposerFollowupDock = {
   sending?: string
   onSend: (id: string) => void
   onEdit: (id: string) => void
+}
+
+/** 工具确认条(烧录前先问一声):未决的询问 + 正在回复的那条 + 回复动作。 */
+export type SessionComposerConfirmDock = {
+  items: ToolConfirmView[]
+  replying?: string
+  onReply: (id: string, allow: boolean) => void
 }
 
 /**
@@ -24,6 +32,7 @@ export function createSessionComposerRegionController(input: {
   prompt: PromptInputState
   centered: Accessor<boolean>
   followup: Accessor<SessionComposerFollowupDock | undefined>
+  confirms: Accessor<SessionComposerConfirmDock | undefined>
   setPromptRef: (el: HTMLDivElement) => void
   setDockRef: (el: HTMLDivElement) => void
 }) {
@@ -51,6 +60,7 @@ export function createSessionComposerRegionController(input: {
   return {
     centered: input.centered,
     followup: input.followup,
+    confirms: input.confirms,
     setPromptRef: input.setPromptRef,
     setDockRef: input.setDockRef,
     handoffPrompt: () => getSessionHandoff(input.sessionKey())?.prompt,

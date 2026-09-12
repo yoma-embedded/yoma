@@ -132,6 +132,25 @@ app.whenReady().then(async () => {
     `)
     check("窗口里能真的建会话", typeof created?.id === "string" && created.id.length > 0, JSON.stringify(created))
 
+    // 确认条要用的那条新 RPC 也走一遍这座桥:它的结果是**数组**(上面两条都是对象),而前端
+    // 每次进会话页与 reload 都会调它一次 —— 这里断言"刚起的内核没有未决确认"。
+    const confirmsPending = await win.webContents.executeJavaScript(`
+      window.api.kernel.request("session.confirms", {}).then(
+        (list) => ({ length: Array.isArray(list) ? list.length : -1 }),
+        (e) => ({ error: e && e.message }),
+      )
+    `)
+    check("session.confirms 穿桥回一个空数组", confirmsPending?.length === 0, JSON.stringify(confirmsPending))
+
+    // 按钮真正要走的那条:未知 id 回 { accepted: false } 而不是抛 —— 点慢了不是错误。
+    const confirmReply = await win.webContents.executeJavaScript(`
+      window.api.kernel.request("session.confirmReply", { id: "cfm_nobody", allow: false }).then(
+        (r) => r,
+        (e) => ({ error: e && e.message }),
+      )
+    `)
+    check("session.confirmReply 穿桥,未知 id 回 accepted:false", confirmReply?.accepted === false, JSON.stringify(confirmReply))
+
     // 事件推送也得能到 renderer world,否则流式回答在 UI 上是死的。
     const events = await win.webContents.executeJavaScript(`
       new Promise((resolve) => {

@@ -223,7 +223,7 @@ v3 规格(`pi/packages/agent/docs/harness.md` §5.5/§5.6)的形状 —— hooks
 3. `prompt()` 在 abort 后是 **resolve 而不是 reject**(中断是数据不是异常),
    要区分"取消"和"完成"只能自己拿 AbortController。
 
-### 我们补的、内核只给了机制的四件事
+### 我们补的、内核只给了机制的五件事
 
 > "内核只给了机制"说的是 `packages/agent` 的 harness。上游**有**策略层,住在 coding-agent 的
 > `AgentSession`(`pi/packages/coding-agent/src/core/agent-session.ts`,0.80.6 就在,3400+ 行),
@@ -236,6 +236,9 @@ v3 规格(`pi/packages/agent/docs/harness.md` §5.5/§5.6)的形状 —— hooks
 > 调什么工具,不问不拦。约束 agent 能做什么靠的是**它手上有什么**:工位端没有项目
 > 检出,不把脚本送过去它就跑不了(见"信箱闭环")。代价一并写在这:同机的交互会话与
 > 调试台任务可以同时抢探针,实测会撞 `0xe00002c5`。
+>
+> 2026-09-12 回来的**不是**它:下面第五条那条"烧录前先问"只有一条规则(契约自己声明
+> `confirm`)、不记住选择、没有策略档位、没有角色边界,而且只在有人看着屏幕的宿主上开。
 
 - **自动压缩与轮级重试**(2026-09-10 起**交回内核**:`host/compaction.ts` / `host/retry.ts` 已删)。
   新 core 自己做阈值压缩与 provider 失败重试,`lane.drive({ waitForRetry: true })` 把整段退避留在
@@ -281,6 +284,33 @@ v3 规格(`pi/packages/agent/docs/harness.md` §5.5/§5.6)的形状 —— hooks
   —— 这是有意的,任务书里写 `model` 或配 key 就好;`yoma-bench check` 会把落定后的
   两端模型印出来。faux 演练(`smoke:mailbox` / `sim`)例外:注入了 `resolveModels`
   时 `turn.ts` 不下发模型,否则演练会撞上"注册表里只有假模型"。
+
+- **烧录前先问用户**(`host/confirm.ts` 的确认台 + `host/session-manager.ts` 的 `before_tool` 钩子)。
+  内核只给了钩子:`before_tool` 的 handler 可以异步,返回 `{ block: { reason } }` 就是"这次别跑",
+  reason 原样变成模型看到的工具结果。"问谁、问什么、没人答怎么办"全在我们这边:
+  - **问不问是契约的事**,不是钩子的事。`host/tools/contracts.ts` 的 `confirmNeeded(name, args)`
+    问契约的 `confirm?(input)`(今天只有 flash,每次都问;toolchain 将来只在 install 时问,
+    所以它是函数不是布尔),界面短名与确认条那行命令都用契约的 `label` / `summary(input)` ——
+    前端再拼一遍的后果是确认条上显示的命令和真跑的那条不是一条。
+  - **四种结局都得 emit 一条 `tool.confirm` 事件**(`pending` 进、`allowed`/`denied`/`cancelled`/
+    `expired` 出)。前端的确认条按 id 加、按"status 不是 pending"删;漏发一条的表现不是报错,
+    是输入框上永远挂着一条答不掉的确认,而模型早就收到拒绝走了。
+  - **桌面端开(`confirmTools: true`),bench 与信箱不开**。无人值守的宿主没人点"允许":挂起会
+    一路等到确认台的十分钟超时,而 bench 判一轮结束看的是 idle 静默 700ms,整轮只能等到
+    一小时硬超时才收场,报告里看起来是"agent 卡住了"。
+  - **十分钟没人答按拒绝**。不设上限的代价是一条挂死的确认把会话永久钉在 busy 上,
+    而那条确认条可能早被一次 reload 刷掉了。
+  - **`stop()`、`closeEntry()`、`fail()`、`run_end` 各自先 `desk.cancel()` 再往下走**。挂起中的钩子
+    占着这一轮的 drive,取消与 `waitForIdle` 都要等它先回来;内核交给 handler 的 gate 信号是另一条路,
+    `cancel()` 覆盖的是信号不会来的路径(fail 把状态打回 idle、操作已不在飞、会话被关)。两条路各自
+    成立,别互相指望。钩子本身**不**并进 `entry.unsubscribes`:closeEntry 先摘订阅再 stop,而 cancel
+    结算掉第一条之后同一批里的第二条工具会立刻轮到 before_tool —— 钩子要活到 stop 之后再摘。
+  - **三种拒绝给模型三段话**(`beforeTool`):用户拒绝 → "别在问过用户之前重试";十分钟没人答 →
+    "没人批准,问了再试"(说成"用户拒绝"会让模型换招绕开,而用户只是没看屏幕);会话被停 → "没跑"。
+  - **钩子里绝不 throw**。抛出去会被内核先转成一条错误上报、再当作拒绝(`harness/hooks.ts` 的
+    `beforeTool` catch 分支),于是用户点一下"拒绝",屏幕上多一条"内核出错"。
+  - **事件不重放**,所以 `resync()` 把未决的确认整批再推一遍,另有 `session.confirms` 给首屏
+    / reload 问现状(同 `toolchain.installsActive` 的存在理由)。
 
 项目上下文与技能走 `host/resources.ts`(从上游 coding-agent 搬来的 `loadContextFiles` / `discoverSkills`),
 不重写:"从哪些目录找"是内核那边的产品决策,抄一份的结果是"Zed 读得到项目的 AGENTS.md、

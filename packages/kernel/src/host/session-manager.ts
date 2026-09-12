@@ -49,6 +49,8 @@ import {
   type ToolchainResolution,
 } from "./domain/toolchain/index.ts"
 import { buildSystemPrompt } from "./system-prompt.ts"
+import { ConfirmDesk } from "./confirm.ts"
+import { confirmNeeded } from "./tools/contracts.ts"
 import { createHardwareTools } from "./tools/index.ts"
 import { configurableProviders, resolveModel } from "./models.ts"
 import { discoverSkills, loadContextFiles } from "./resources.ts"
@@ -62,7 +64,7 @@ import {
 } from "@earendil-works/pi-ai"
 
 import type { KernelEvent, PromptInput } from "../protocol.ts"
-import type { ProviderInfo, Session as ViewSession, SessionStatus } from "../types.ts"
+import type { ProviderInfo, Session as ViewSession, SessionStatus, ToolConfirmView } from "../types.ts"
 import { Identifier } from "../ids.ts"
 import { pickThinkingLevel } from "../thinking.ts"
 import { sessionNotFound } from "../types.ts"
@@ -189,6 +191,8 @@ interface Entry {
   lane?: AgentLane
   projection?: SessionProjection
   unsubscribes?: Array<() => void>
+  /** 确认钩子的取消函数。单独放:它必须活到 stop() 之后才能摘(见 closeEntry)。 */
+  unhook?: () => void
   /**
    * 正在打开。**每个调用方都 await 这同一个 Promise** —— 两个并发的 ensureOpen 各自
    * 去 repo.open 的话,其中一个必然撞上内核的 `Session is already open`,而另一种时序
@@ -267,6 +271,13 @@ export interface SessionManagerOptions {
    * projectDir / configDir 读 —— 那两样本来就是本机事实,不该跟着信箱走。
    */
   toolchainManifestText?: string
+  /**
+   * 契约说要问的工具(今天只有 flash)跑之前先问用户。**不传 = 不挂钩子 = 谁都不问**。
+   *
+   * 桌面端传 true;bench 与信箱工位端**不能传** —— 那两个宿主无人值守,挂起只会一路等到
+   * 确认台的十分钟超时,而 bench 判一轮结束看的是 idle 700ms,中间这十分钟没有任何人在看。
+   */
+  confirmTools?: boolean
 }
 
 export class SessionManager {
@@ -286,8 +297,15 @@ export class SessionManager {
   private defaultModel?: Model<string>
   private modelError?: string
 
+  /**
+   * 确认台。只有 confirmTools 开着才有人往里放东西(钩子在 openEntry 里挂),
+   * 所以关着的宿主连事件都不会多一条。
+   */
+  private readonly desk: ConfirmDesk
+
   constructor(options: SessionManagerOptions) {
     this.options = options
+    this.desk = new ConfirmDesk({ emit: (confirm) => options.emit([{ type: "tool.confirm", confirm }]) })
     this.configDir = options.configDir ?? yomaConfigDir()
     this.env = new NodeExecutionEnv({ cwd: process.cwd() })
     this.repo = new JsonlSessionRepo({ fileSystem: this.env, sessionsRoot: options.sessionsRoot })
@@ -695,6 +713,12 @@ export class SessionManager {
       entry.harness = harness
       entry.projection = projection
       entry.unsubscribes = this.subscribe(entry, harness)
+      // 确认钩子**不**并进 unsubscribes:closeEntry 先摘订阅再 stop,而 desk.cancel 结算掉第一条之后,
+      // 同一批里的第二条工具会立刻轮到 before_tool —— 钩子已摘,它就无人确认地起跑了。所以钩子
+      // 要活到 stop() 之后,由 closeEntry 单独摘。
+      if (this.options.confirmTools) {
+        entry.unhook = harness.hooks.on("before_tool", (event, context) => this.beforeTool(entry, event, context))
+      }
       entry.lane = lane
     } catch (error) {
       // 关干净再把错抛出去:留着半开的 harness,repo 不让这个会话再开第二次,
@@ -854,6 +878,7 @@ export class SessionManager {
         emit(this.setStatus(entry, { type: "busy" }))
       }),
       harness.events.on("run_end", () => {
+        this.desk.cancel(entry.id)
         entry.running = false
         entry.operationId = undefined
         entry.updatedAt = Date.now()
@@ -933,6 +958,67 @@ export class SessionManager {
     ]
   }
 
+  // -------------------------------------------------------------------------
+  // 工具确认
+  // -------------------------------------------------------------------------
+
+  /**
+   * before_tool 钩子:契约说要问的工具跑之前挂起等人。不用问的工具一步都不绕。
+   *
+   * **绝不 throw**。钩子抛出去的异常会被内核先转成一条错误上报、再当作拒绝
+   * (harness/hooks.ts 的 beforeTool catch 分支),于是用户点一下"拒绝"屏幕上多一条"内核出错";
+   * 超时与会话关闭同理。所以四种拒绝全都走 `return { block }`。
+   *
+   * 挂起期间唯一的取消通道是内核交给钩子的 `context.abortSignal`(lane 的 abort 会点它),
+   * 原样传给确认台 —— 少传的后果是"点停止没反应"。
+   */
+  private async beforeTool(
+    entry: Entry,
+    event: { toolCallId: string; toolName: string; args: Record<string, unknown> },
+    context: Context,
+  ): Promise<{ block: { reason: string } } | undefined> {
+    const contract = confirmNeeded(event.toolName, event.args)
+    if (!contract) return undefined
+    const summary = contract.summary(event.args)
+    const settled = await this.desk.ask(
+      {
+        id: Identifier.ascending("confirm"),
+        sessionID: entry.id,
+        toolCallId: event.toolCallId,
+        tool: event.toolName,
+        label: contract.label,
+        summary,
+        input: event.args,
+        askedAt: Date.now(),
+      },
+      context.abortSignal,
+    )
+    if (settled === "allowed") return undefined
+    // 这段话原样进模型的工具结果,三种结局要说清是哪一种:拒绝必须带上"别在问过用户之前重试",
+    // 否则模型会立刻同样再调一次,用户得连点好几次;超时若也说成"用户拒绝",模型会换招绕开,
+    // 而用户只是没看屏幕。
+    // 三段都要堵死绕行:只禁 flash 的话,模型会改用 bash 起同一条 openocd —— bash 不过这道门。
+    const what = `${event.toolName}: ${summary}`
+    const noBypass = "Do not run this or an equivalent probe command through bash or any other tool."
+    const reason =
+      settled === "denied"
+        ? `The user declined to run ${what}. Do not retry without asking the user first. ${noBypass}`
+        : settled === "expired"
+          ? `The confirmation request for ${what} timed out after 10 minutes; nobody approved it. Ask the user before retrying. ${noBypass}`
+          : `The session was stopped before ${what} was approved; it did not run. ${noBypass}`
+    return { block: { reason } }
+  }
+
+  /** 未决的确认。`tool.confirm` 事件不重放,首屏与 resync 都靠这个问现状。 */
+  pendingConfirms(sessionID?: string): ToolConfirmView[] {
+    return this.desk.pending(sessionID)
+  }
+
+  /** 前端的回答。false = 这条询问已经不在了(超时 / 会话关了),不是错误。 */
+  replyConfirm(id: string, allow: boolean): boolean {
+    return this.desk.reply(id, allow)
+  }
+
   private setStatus(entry: Entry, status: SessionStatus): KernelEvent[] {
     if (entry.status.type === status.type) return []
     entry.status = status
@@ -946,6 +1032,9 @@ export class SessionManager {
    * **不包括 handler_error**:那条只说某个监听器抛了,对这一轮什么都没说。
    */
   private fail(entry: Entry, message: string): void {
+    // 状态回 idle 与确认台清空必须是同一个事实:界面显示空闲却顶着一条确认,用户点"允许"会让
+    // 一条已宣告失败的轮次真的去烧板。
+    this.desk.cancel(entry.id)
     entry.running = false
     entry.operationId = undefined
     this.options.emit([
@@ -1028,6 +1117,9 @@ export class SessionManager {
    * waitForIdle 就会永远停在那里(cli 的 abort() 是同一套动作)。
    */
   private async stop(entry: Entry): Promise<void> {
+    // **先结算未决的确认**:挂起中的钩子占着这一轮的 drive,requestAbort 与 waitForIdle 都要等它
+    // 先回来。顺序反了的表现是"点停止没反应",一直到确认台十分钟超时才动。
+    this.desk.cancel(entry.id)
     const lane = entry.lane
     if (!lane) return
     const operationId = entry.operationId
@@ -1140,12 +1232,18 @@ export class SessionManager {
   }
 
   private async closeEntry(entry: Entry): Promise<void> {
+    // 先结算未决的确认:下面摘订阅并不会结算已在飞的 ask,而 stop 被 `if (entry.lane)` 挡住时
+    // 确认台会一直挂到十分钟超时。
+    this.desk.cancel(entry.id)
     // 装配还在飞就先等它:不等的话那次 open 会在我们关完之后把 lane 又挂回去。
     if (entry.opening) await entry.opening.catch(() => {})
     for (const unsubscribe of entry.unsubscribes ?? []) unsubscribe()
     entry.unsubscribes = undefined
     // 在飞轮次先中断:**硬件安全**优先,别把板子停在半条命令上。
     if (entry.lane) await this.stop(entry).catch(() => {})
+    // 钩子在 stop 之后才摘:中断落地前再挂起的询问仍要过门,它们会被 stop 的取消信号结算掉。
+    entry.unhook?.()
+    entry.unhook = undefined
     // harness.close() 连会话一起关 —— 必须关,repo 不允许同一个会话开两次。
     if (entry.harness) await entry.harness.close(this.context).catch(() => {})
     else if (entry.session) await entry.session.close(this.context).catch(() => {})

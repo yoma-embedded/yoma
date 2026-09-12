@@ -19,6 +19,7 @@ import type { ToolContract } from "../contract-types.ts"
 
 const flashParameters = Type.Object({
   command: Type.Array(Type.String(), {
+    minItems: 1,
     description:
       'The flasher argv (no shell), e.g. ["openocd","-f","interface/stlink.cfg","-f","target/stm32g4x.cfg","-c","program build/fw.elf verify reset exit"].',
   }),

@@ -9,7 +9,7 @@ const keys = ["command.session.previous.unseen", "command.session.next.unseen"] 
  * 就是一个原样的 key(i18n 没有回落到英文,漏了就是漏了)。所以这两个前缀下的键
  * 必须双向齐平 —— 不是"zh 覆盖 en",两个方向都查。
  */
-const PARITY_PREFIXES = ["settings.updates.", "settings.toolchain."] as const
+const PARITY_PREFIXES = ["settings.updates.", "settings.toolchain.", "session.confirmDock."] as const
 
 /**
  * 工具链自动安装 + 更新状态展示这两块 UI 的**契约键**。UI 落地之前它们都不存在,

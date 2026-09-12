@@ -61,7 +61,13 @@ function harnessWith(steps: unknown[], reasoningModel = false) {
 
 function makeHost(
   steps: unknown[],
-  options: { enginesDir?: string; workspace?: string; reasoningModel?: boolean; defaultThinkingLevel?: string } = {},
+  options: {
+    enginesDir?: string
+    workspace?: string
+    reasoningModel?: boolean
+    defaultThinkingLevel?: string
+    confirmTools?: boolean
+  } = {},
 ) {
   const events: KernelEvent[] = []
   const workspace = options.workspace ?? tempDir("yoma-ws-")
@@ -75,6 +81,7 @@ function makeHost(
     configDir: tempDir("yoma-config-"),
     version: "test",
     defaultThinkingLevel: options.defaultThinkingLevel,
+    confirmTools: options.confirmTools,
     onEvents: (batch) => events.push(...batch),
     // 全放行,免得冒烟测试卡在权限弹窗上。权限本身有独立测试。
     resolveModels: async () => harnessWith(steps, options.reasoningModel),
@@ -246,6 +253,88 @@ describe("内核宿主端到端", () => {
 
     await host.dispose()
   }, 20_000)
+
+  /**
+   * 确认钩子的整条线:契约说 flash 要问 → 钩子挂起 → 事件出去 → RPC 回一个"拒绝" → 模型收到
+   * 一条错误的工具结果。**只测拒绝**:允许那条会真的去起烧录器(确认台本身的允许路径在
+   * confirm.test.ts 里)。
+   */
+  test("flash 跑之前先问用户:拒绝 → 工具不执行,模型收到一条说明为什么的错误", async () => {
+    const { host, events, workspace } = makeHost(
+      [
+        fauxAssistantMessage([fauxToolCall("flash", { command: ["openocd", "-c", "program fw.elf"] })]),
+        fauxAssistantMessage([fauxText("好,那我先不烧")]),
+      ],
+      { confirmTools: true },
+    )
+    const session = (await host.handle("session.create", { directory: workspace })) as Session
+    await host.handle("session.prompt", { sessionID: session.id, input: { text: "烧进去" } })
+
+    const confirms = () => events.flatMap((e) => (e.type === "tool.confirm" ? [e.confirm] : []))
+    await waitFor(() => confirms().length > 0, 10_000)
+    const asked = confirms()[0]!
+    expect(asked).toMatchObject({ status: "pending", tool: "flash", label: "烧录", sessionID: session.id })
+    // summary 是契约拼的那一行命令(含空格的参数带引号),确认条直接显示它。
+    expect(asked.summary).toBe('openocd -c "program fw.elf"')
+
+    // 事件不重放,所以首屏/reload 必须能问到同一条。
+    expect(await host.handle("session.confirms", { sessionID: session.id })).toEqual([asked])
+    expect(await host.handle("session.confirms", { sessionID: "ses_nobody" })).toEqual([])
+
+    expect(await host.handle("session.confirmReply", { id: asked.id, allow: false })).toEqual({ accepted: true })
+    // 同一条答第二次:accepted false,不抛 —— 两个窗口各点一下就是这个情形。
+    expect(await host.handle("session.confirmReply", { id: asked.id, allow: false })).toEqual({ accepted: false })
+    await waitFor(() => confirms().some((confirm) => confirm.status === "denied"), 5000)
+    expect(await host.handle("session.confirms", {})).toEqual([])
+
+    await waitFor(() => {
+      const tools = events.flatMap((e) =>
+        e.type === "message.part.updated" && e.part.type === "tool" ? [e.part as ToolPart] : [],
+      )
+      return tools.some((part) => part.state.status === "error")
+    }, 10_000)
+    const tools = events.flatMap((e) =>
+      e.type === "message.part.updated" && e.part.type === "tool" ? [e.part as ToolPart] : [],
+    )
+    const flash = tools.filter((part) => part.tool === "flash")
+    // 一次都没 running 过:挂起发生在执行之前,板子没被碰。
+    expect(flash.some((part) => part.state.status === "running")).toBe(false)
+    const failed = flash.find((part) => part.state.status === "error")!
+    expect(failed.state.status === "error" && failed.state.error).toContain("declined")
+    // 没有 kernel.error:拒绝是数据,不是故障(钩子里 throw 就会在这里冒出来)。
+    expect(events.filter((e) => e.type === "kernel.error")).toEqual([])
+
+    await host.dispose()
+  }, 30_000)
+
+  test("flash 跑之前先问用户:允许 → 工具真跑、确认台清空、没有 kernel.error", async () => {
+    const { host, events, workspace } = makeHost(
+      [
+        // argv 由模型自带,这里给一条什么都不干的 node 命令:走完整条"确认 → 起子进程"的路而不碰板子。
+        fauxAssistantMessage([fauxToolCall("flash", { command: [process.execPath, "-e", ""] })]),
+        fauxAssistantMessage([fauxText("烧完了")]),
+      ],
+      { confirmTools: true },
+    )
+    const session = (await host.handle("session.create", { directory: workspace })) as Session
+    await host.handle("session.prompt", { sessionID: session.id, input: { text: "烧进去" } })
+
+    const confirms = () => events.flatMap((e) => (e.type === "tool.confirm" ? [e.confirm] : []))
+    await waitFor(() => confirms().length > 0, 10_000)
+    const asked = confirms()[0]!
+    const toolParts = () =>
+      events.flatMap((e) => (e.type === "message.part.updated" && e.part.type === "tool" ? [e.part as ToolPart] : []))
+    // 挂起期间一次都没 running 过。
+    expect(toolParts().some((part) => part.tool === "flash" && part.state.status === "running")).toBe(false)
+
+    expect(await host.handle("session.confirmReply", { id: asked.id, allow: true })).toEqual({ accepted: true })
+    await waitFor(() => confirms().some((confirm) => confirm.status === "allowed"), 5000)
+    await waitFor(() => toolParts().some((part) => part.tool === "flash" && part.state.status === "completed"), 15_000)
+    expect(await host.handle("session.confirms", {})).toEqual([])
+    expect(events.filter((e) => e.type === "kernel.error")).toEqual([])
+
+    await host.dispose()
+  }, 30_000)
 
   test("一轮结束后 transcript 落盘且能再读回来", async () => {
     const { host, events, workspace } = makeHost([fauxAssistantMessage([fauxText("记住了")])])

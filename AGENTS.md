@@ -185,7 +185,7 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
 3. `prompt()` 在 abort 后是 **resolve 而不是 reject**(中断是数据不是异常),
    要区分"取消"和"完成"只能自己拿 AbortController。
 
-### 我们补的、内核只给了机制的四件事
+### 我们补的、内核只给了机制的五件事
 
 > **没有权限系统。**2026-08-10 起整套权限保护(内核权限门、bench 三档策略与角色边界、
 > 桌面弹窗 UI、探针互斥锁)全部删除 —— 这是产品决定,不是遗漏。agent 想调什么工具就
@@ -228,6 +228,11 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
   —— 这是有意的,任务书里写 `model` 或配 key 就好;`yoma-bench check` 会把落定后的
   两端模型印出来。faux 演练(`smoke:mailbox` / `sim`)例外:注入了 `resolveModels`
   时 `turn.ts` 不下发模型,否则演练会撞上"注册表里只有假模型"。
+- **烧录前先问用户**(`host/confirm.ts` 的确认台 + `session-manager.ts` 挂在 `before_tool` 的钩子)。
+  内核只给了钩子:"问不问"由工具契约的 `confirm(input)` 说、确认条那行命令由契约的 `summary(input)` 拼;
+  **桌面端开(`confirmTools: true`),bench 与信箱不开**(无人值守,挂起一路等到十分钟超时才按拒绝结算);
+  钩子里绝不 throw(抛出去是"内核出错"红字而不是"用户拒绝"),`stop()` 必须先结算确认再 `requestAbort`。
+  详见 CLAUDE.md 同名那条。
 
 项目上下文与技能走 `host/resources.ts`(从上游 coding-agent 搬来的 `loadContextFiles` / `discoverSkills`),
 不重写:"从哪些目录找"是内核那边的产品决策,抄一份的结果是"Zed 读得到项目的 AGENTS.md、

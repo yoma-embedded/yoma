@@ -62,6 +62,11 @@ export interface KernelHostOptions {
    * 得经信箱送过来。详见 SessionManagerOptions。
    */
   toolchainManifestText?: SessionManagerOptions["toolchainManifestText"]
+  /**
+   * 契约说要问的工具(今天只有 flash)跑之前先问用户。**桌面端传 true,bench 与信箱不传**
+   * (无人值守,挂起只会等到十分钟超时)。详见 SessionManagerOptions。
+   */
+  confirmTools?: SessionManagerOptions["confirmTools"]
   /** 成批推事件出去。host 已经做过合并,这里拿到的就是最终批次。 */
   onEvents(events: KernelEvent[]): void
 }
@@ -84,6 +89,7 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     defaultThinkingLevel: options.defaultThinkingLevel,
     toolchainSide: options.toolchainSide,
     toolchainManifestText: options.toolchainManifestText,
+    confirmTools: options.confirmTools,
     emit: (events) => sink.push(events),
   })
   const projects = new ProjectStore(path.join(options.stateDir, "projects.json"))
@@ -203,6 +209,9 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     },
     "toolchain.installsActive": async () => installs.active(),
 
+    "session.confirmReply": async ({ id, allow }) => ({ accepted: sessions.replyConfirm(id, allow) }),
+    "session.confirms": async ({ sessionID }) => sessions.pendingConfirms(sessionID),
+
     "project.list": async () => projects.list(),
     "project.add": ({ directory }) => projects.add(directory),
     "project.remove": ({ directory }) => projects.remove(directory),
@@ -219,6 +228,9 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     // 不重发的表现不是报错,是"点什么都没反应"。
     resync() {
       sink.push([{ type: "kernel.connected", version: options.version ?? "0.0.0" }])
+      // 事件不重放:窗口 reload 之后,挂起中的那条工具确认只能靠这里再推一遍 ——
+      // 不推的表现是模型在等人答(会话一直 busy),而屏幕上一条确认条都没有。
+      sink.push(sessions.pendingConfirms().map((confirm) => ({ type: "tool.confirm" as const, confirm })))
       sink.flushNow()
     },
     async dispose() {
