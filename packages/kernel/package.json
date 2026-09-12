@@ -11,12 +11,14 @@
     "./host/models": "./src/host/models.ts",
     "./host/toolchain-schema": "./src/host/domain/toolchain/schema.ts",
     "./tools/*/contract": "./src/host/tools/*/contract.ts",
+    "./tools/contracts": "./src/host/tools/contracts.ts",
     "./package.json": "./package.json"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "*",
     "@earendil-works/pi-ai": "*",
-    "@zip.js/zip.js": "2.7.62"
+    "@zip.js/zip.js": "2.7.62",
+    "typebox": "1.3.7"
   },
   "scripts": {
     "typecheck": "tsgo --noEmit -p tsconfig.json",

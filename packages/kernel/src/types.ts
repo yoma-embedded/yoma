@@ -204,12 +204,27 @@ export type ToolState = ToolStatePending | ToolStateRunning | ToolStateCompleted
 /**
  * host 真正装配出来的工具名,逐字相同(host/tool-names.test.ts 钉住)。
  *
- * 嵌入式那一套(flash/gdb/la/scope/…)已于 2026-09-10 归零,只剩内核自带的四件套。
+ * 这是工具清单的**唯一**真源:desktop 的内核冒烟与 bench 的 check 都拿它逐字同序比,
+ * 三处各写一份的年代里,清单漂移报出来的样子和"构建产物坏了"一模一样。
+ *
+ * 嵌入式那一套(flash/gdb/la/scope/…)2026-09-10 归零;2026-09-11 起按样板
+ * host/tools/<名字>/{contract.ts,session.ts} 逐个重写,首个是 flash。
  * 退役的名字**不必**留在这里:界面按任意工具名走万能卡,旧会话重放照样画得出来。
  */
-export const TOOL_NAMES = ["read", "bash", "edit", "write"] as const
+export const TOOL_NAMES = ["read", "bash", "edit", "write", "flash"] as const
 
 export type ToolName = (typeof TOOL_NAMES)[number]
+
+/**
+ * 三处消费者(desktop 的自检与 kernel-smoke、bench 的 check)共用的比对:逐字同序,
+ * 不一致时返回两行差异文本,一致返回 undefined。各写一份的年代里,一处数个数、一处
+ * 只查缺不查多,清单漂移能悄悄过 CI。
+ */
+export function diffToolNames(actual: readonly string[]): string | undefined {
+  const expected: readonly string[] = TOOL_NAMES
+  const same = actual.length === expected.length && actual.every((name, i) => name === expected[i])
+  return same ? undefined : `  装配面:${actual.join(", ") || "(空)"}\n  TOOL_NAMES:${expected.join(", ")}`
+}
 
 /**
  * resolveToolchain() 对单个声明工具的判定,从 host/domain/toolchain 的 ResolvedTool 结构化

@@ -10,7 +10,8 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
 - **内核**(`packages/{ai,agent}` 两个上游包 + `packages/kernel/src/host`)—— agent 循环、会话树、
   压缩、技能,以及嵌入式应用层(工具链解析 / 示例语料 / 引擎调用)。嵌入式工具组(烧录 / 日志 / gdb /
   网表 / 数据手册 / STM32 配置 / 逻辑分析仪 / 示波器)2026-09-10 **归零**:旧实现搬到
-  `packages/kernel/attic/`(不编译、不跑),按新内核的工具接口一个个重写;示波器与例程库 2026-09-11
+  `packages/kernel/attic/`(不编译、不跑),按新内核的工具接口一个个重写 —— 2026-09-11 起按样板
+  `host/tools/<名字>/{contract.ts,session.ts}` 逐个重写,首个是 flash;示波器与例程库 2026-09-11
   整体停到仓库外 `../yoma-parked/`(功能还要,方案未定,先不拖累)。
 - **桌面端**(`packages/{desktop,app,kernel,ui,session-ui,util,bench}`)——
   Electron 外壳 + SolidJS UI,fork 自 opencode 的前端;`bench` 是无人值守调试台。
@@ -34,17 +35,18 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
 
 四个盒子(`boundary.test.ts` 的说法):**餐厅** = app / session-ui / ui / util / desktop,只认**菜单**
 (kernel 的门 `.`,浏览器安全);**厨房** = kernel 的门 `./host` + bench;**工具间** =
-`kernel/src/host/domain/` 与(将来)`host/tools/<名字>/{contract.ts,session.ts}`;
+`kernel/src/host/domain/` 与 `host/tools/<名字>/{contract.ts,session.ts}`(2026-09-11 起有住户:flash);
 **发动机** = `packages/{agent,ai,chord,telemetry}`(哈希锁定)。
 
-门就是 `packages/kernel/package.json` 的 `exports`,六道(外加 `./package.json`):
+门就是 `packages/kernel/package.json` 的 `exports`,七道(外加 `./package.json`):
 
 | 门 | 谁用 |
 |---|---|
 | `.`(`src/index.ts`) | 餐厅:视图模型 / 协议 / 客户端,**浏览器安全** |
 | `./host`(`src/host/index.ts`) | 厨房大门:desktop 的 `kernel-entry.ts` 与 bench |
 | `./host/datasheet-server`、`./host/models`、`./host/toolchain-schema` | 三道**叶子**门:desktop main 的手册库页、bench 的模型目录与信箱工具链清单 —— main 走大门等于把整个 host inline 进 `out/main/index.js` |
-| `./tools/*/contract`(`src/host/tools/*/contract.ts`) | **契约门**:餐厅的工具卡片只从这里拿一个工具的名字 / 参数 / 结果格式,拿不到 `session.ts`。今天 `host/tools/` 还是空的,门先开着 |
+| `./tools/*/contract`(`src/host/tools/*/contract.ts`) | **契约门**:餐厅的工具卡片只从这里拿一个工具的名字 / 参数 / 结果格式 / 副标题函数,拿不到 `session.ts`。2026-09-11 起有住户了(flash) |
+| `./tools/contracts`(`src/host/tools/contracts.ts`) | **契约总表**:餐厅按工具名找契约(只 import 各 `contract.ts`);装配在 `host/tools/index.ts`,那是厨房 |
 
 - 内核必须被 electron-vite **inline**,所以它得留在 `packages/desktop` 的 **devDependencies** 里
   (`externalizeDeps` 只外部化 `dependencies`)。它只发 raw TypeScript(`exports` 指向 `src/*.ts`,
@@ -55,8 +57,9 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
   `erasableSyntaxOnly: false` 是**承重的**,别顺手收紧。
 - 新开一道深引用 = 改 `exports`(从前是改四份别名表)。`boundary.test.ts` 钉住五条:菜单里没有 Node;
   工具间不反调会话间(`host/domain` 往外只拿 `host/models.ts`、`host/datasheet-server.ts`);餐厅只许走
-  `@yoma-desktop/kernel` 或 `@yoma-desktop/kernel/tools/<名字>/contract`;desktop 的 main 只有
-  `kernel-entry.ts` 能走 `./host`;`contract.ts` 不含 Node。
+  `@yoma-desktop/kernel`、`@yoma-desktop/kernel/tools/<名字>/contract` 或 `@yoma-desktop/kernel/tools/contracts`;
+  desktop 的 main 只有 `kernel-entry.ts` 能走 `./host`;契约文件按白名单只许 `typebox` 与工具间内部的相对路径
+  (不含 `session.ts`),且每个工具目录都得有 `contract.ts`。
 
 ## 仓库结构
 

@@ -146,7 +146,7 @@ describe("四个盒子的边界", () => {
     for (const d of dirs) expect(existsSync(d), d).toBe(true)
     const files = dirs.flatMap((d) => walk(d))
     expect(files.length).toBeGreaterThan(50)
-    const door = /^@yoma-desktop\/kernel(\/tools\/[^/]+\/contract)?$/
+    const door = /^@yoma-desktop\/kernel(\/tools\/contracts|\/tools\/[^/]+\/contract)?$/
     const bad = violations(files, (spec, file) =>
       (spec.startsWith("@yoma-desktop/kernel") && !door.test(spec)) ||
       spec.startsWith("@yoma-desktop/bench") ||
@@ -167,14 +167,28 @@ describe("四个盒子的边界", () => {
     expect(bad).toEqual([])
   })
 
-  it("契约文件不含 Node:host/tools/*/contract.ts 不 import node:*、electron、发动机", () => {
+  it("契约文件只许 typebox 与工具间内部的相对路径;每个工具目录都得有 contract.ts", () => {
     if (!existsSync(toolsDir)) {
       expect(walk(toolsDir)).toEqual([])
       return
     }
-    const files = walk(toolsDir).filter((f) => /[\\/]tools[\\/][^\\/]+[\\/]contract\.ts$/.test(f))
-    expect(files.length).toBeGreaterThan(0)
-    const bad = violations(closure(files), (spec) => isNodeish(spec) || spec.startsWith("@earendil-works/"))
+    // 白名单而不是黑名单:黑名单挡不住 `@yoma-desktop/kernel/host` 或 ../../types.ts 这种绕道回自家门口。
+    const toolDirs = readdirSync(toolsDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+    expect(toolDirs.length).toBeGreaterThan(0)
+    for (const name of toolDirs) expect(existsSync(path.join(toolsDir, name, "contract.ts")), name).toBe(true)
+    const roots = [
+      ...toolDirs.map((name) => path.join(toolsDir, name, "contract.ts")),
+      path.join(toolsDir, "contracts.ts"),
+      path.join(toolsDir, "contract-types.ts"),
+    ].filter((f) => existsSync(f))
+    const bad = violations(closure(roots), (spec, file) => {
+      if (spec === "typebox") return false
+      if (!spec.startsWith(".")) return true
+      const target = path.resolve(path.dirname(file), spec)
+      return !target.startsWith(toolsDir + path.sep) || /[\\/]session\.ts$/.test(target)
+    })
     expect(bad).toEqual([])
   })
 })

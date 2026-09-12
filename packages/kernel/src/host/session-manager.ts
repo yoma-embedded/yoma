@@ -49,6 +49,7 @@ import {
   type ToolchainResolution,
 } from "./domain/toolchain/index.ts"
 import { buildSystemPrompt } from "./system-prompt.ts"
+import { createHardwareTools } from "./tools/index.ts"
 import { configurableProviders, resolveModel } from "./models.ts"
 import { discoverSkills, loadContextFiles } from "./resources.ts"
 import {
@@ -123,10 +124,10 @@ function isOpen(entry: Entry): boolean {
 }
 
 /**
- * 装配面的真源:内核自带的四件套,别的一个都不加。
+ * 装配面的真源:内核自带的四件套 + host/tools 下的硬件工具,顺序与 `TOOL_NAMES` 一致。
  *
- * 嵌入式那一套(flash/gdb/la/scope/…)已于 2026-09-10 归零,旧实现留在
- * kernel/attic/tools 作重写参考。`TOOL_NAMES` 与 host 自检都按这里核对。
+ * 嵌入式那一套(flash/gdb/la/scope/…)2026-09-10 归零,旧实现留在 kernel/attic/tools
+ * 作重写参考;2026-09-11 起按 host/tools/<名字>/ 的样板逐个回来。host 自检也走这里。
  */
 export function createAgentTools(): AgentHarnessTool<ExecutionToolContext>[] {
   return [
@@ -141,6 +142,7 @@ export function createAgentTools(): AgentHarnessTool<ExecutionToolContext>[] {
     }),
     createEditTool(),
     createWriteTool(),
+    ...createHardwareTools(),
   ]
 }
 

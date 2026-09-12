@@ -68,6 +68,35 @@ describe("buildSystemPrompt", () => {
 		});
 	});
 
+	// 工具定义已经没有 promptGuidelines 字段了(新内核的 AgentTool 不收),flash 的两条守则
+	// 只能挂在这里。落不进去的代价不是文档不全:模型会继续用 bash 起 openocd,而那条路在
+	// 探针租约体系里是隐形的。
+	describe("flash guidelines", () => {
+		const PROBE_RULE =
+			"- Run every command that touches the debug probe through the flash tool, not bash — the probe lease and hung-flasher cleanup live there.";
+		const RESET_RULE = "- Never claim firmware is running on hardware unless flashing and a reset both succeeded.";
+
+		it("adds both probe rules when flash is available", () => {
+			const prompt = buildSystemPrompt({
+				selectedTools: ["read", "bash", "edit", "write", "flash"],
+				cwd: process.cwd(),
+			});
+
+			expect(prompt).toContain(PROBE_RULE);
+			expect(prompt).toContain(RESET_RULE);
+		});
+
+		it("says nothing about the probe when only the coding tools are present", () => {
+			const prompt = buildSystemPrompt({
+				selectedTools: ["read", "bash", "edit", "write"],
+				cwd: process.cwd(),
+			});
+
+			expect(prompt).not.toContain(PROBE_RULE);
+			expect(prompt).not.toContain(RESET_RULE);
+		});
+	});
+
 	describe("custom tools", () => {
 		it("lists whatever selectedTools names, not just the default four", () => {
 			const prompt = buildSystemPrompt({

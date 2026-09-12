@@ -7,11 +7,19 @@
 
 import { describe, expect, test } from "vitest"
 
-import { TOOL_NAMES } from "../types.ts"
+import { TOOL_NAMES, diffToolNames } from "../types.ts"
 import { createAgentTools } from "./session-manager.ts"
+import { TOOL_CONTRACTS } from "./tools/contracts.ts"
+import { createHardwareTools } from "./tools/index.ts"
 
 describe("工具名集合", () => {
   test("host 装配面 = TOOL_NAMES,逐字相同(连顺序)", () => {
     expect(createAgentTools().map((tool) => tool.name)).toEqual([...TOOL_NAMES])
+    expect(diffToolNames(createAgentTools().map((tool) => tool.name))).toBeUndefined()
+    expect(diffToolNames(["read", "bash", "edit", "write"])).toContain("TOOL_NAMES")
+  })
+
+  test("契约总表 = 硬件装配面,逐字相同(连顺序):漏登记契约的代价是守则静默不进提示词", () => {
+    expect(TOOL_CONTRACTS.map((contract) => contract.name)).toEqual(createHardwareTools().map((tool) => tool.name))
   })
 })

@@ -10,7 +10,7 @@
  */
 
 import { createKernelHost, kernelSelfCheck, type KernelHost } from "@yoma-desktop/kernel/host"
-import { DEFAULT_THINKING_LEVEL, TOOL_NAMES, type KernelEvent, type KernelFrame } from "@yoma-desktop/kernel"
+import { DEFAULT_THINKING_LEVEL, diffToolNames, type KernelEvent, type KernelFrame } from "@yoma-desktop/kernel"
 import { ensureDatasheetServerEnv } from "./datasheet-server.ts"
 
 // 把解析出的数据手册服务器地址(环境变量 > ~/.yoma/.env > 内置默认)喂进 process.env,
@@ -142,11 +142,9 @@ if (parentPort) {
 if (process.env.YOMA_KERNEL_SELFCHECK === "1") {
   const report = kernelSelfCheck({ enginesDir: process.env.YOMA_ENGINES_DIR })
   console.log(JSON.stringify(report, null, 2))
-  // 期望值**从工具名词汇表推**,不写魔数:写死过一个数字,内核改了工具集之后它就一直
+  // 期望值**从工具名词汇表推**,逐字同序,不写魔数:写死过一个数字,内核改了工具集之后它就一直
   // 是错的,而且只有跑 smoke 才暴露 —— 单测和 typecheck 都碰不到。
-  const expected = TOOL_NAMES.length
-  if (report.tools.length !== expected) {
-    console.error(`自检:装配出 ${report.tools.length} 个工具,期望 ${expected} 个`)
-  }
-  process.exit(report.tools.length === expected ? 0 : 1)
+  const diff = diffToolNames(report.tools)
+  if (diff) console.error(`自检:装配面与 TOOL_NAMES 不一致\n${diff}`)
+  process.exit(diff ? 1 : 0)
 }

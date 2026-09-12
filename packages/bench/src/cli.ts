@@ -8,6 +8,7 @@
 import { homedir, userInfo } from "node:os"
 import path from "node:path"
 
+import { diffToolNames } from "@yoma-desktop/kernel"
 import { kernelSelfCheck } from "@yoma-desktop/kernel/host"
 
 import { JobSpecError, type JobModel } from "./job.ts"
@@ -69,7 +70,11 @@ async function commandCheck(jobFile: string): Promise<void> {
   const enginesDir = defaultEnginesDir()
   try {
     const report = kernelSelfCheck({ enginesDir })
-    if (report.tools.length < 14) fail(`内核只装配出 ${report.tools.length} 个工具,预期 14 个`)
+    // 从前这里数个数(预期 14 个),于是每加一个工具都要改常数,而工具归零那天它直接变成
+    // 一条永远红的闸门。改成与 TOOL_NAMES 逐字同序比(与 desktop 的自检、kernel-smoke 同一个
+    // diffToolNames):清单只有一处真源,差异当场列出来。
+    const diff = diffToolNames(report.tools)
+    if (diff) fail(`内核装配面与 TOOL_NAMES 不一致\n${diff}`)
     say(`${GREEN}✓${RESET} 内核装配出 ${report.tools.length} 个工具`)
   } catch (error) {
     fail(`内核加载失败:${(error as Error).message}`)

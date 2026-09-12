@@ -15,6 +15,7 @@ import { execFileSync } from "node:child_process"
 import { existsSync, readdirSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { diffToolNames } from "@yoma-desktop/kernel"
 import { resolveElectron } from "./electron-bin.ts"
 import { selfCheckLa } from "../../../engines/logic-analyzer/build.ts"
 
@@ -58,18 +59,11 @@ try {
   fail(`内核自检失败:\n${(error as { stdout?: string; message?: string }).stdout ?? (error as Error).message}`)
 }
 
-// 嵌入式那一套已于 2026-09-10 归零,只剩内核自带的四件套。
-// 对着**构建产物**核对:这个清单落后于内核装配面时,旧 out/ 会在这里如实报缺。
-const EXPECTED = ["read", "bash", "edit", "write"]
-
-const missing = EXPECTED.filter((tool) => !report.tools.includes(tool))
-if (missing.length) fail(`工具缺失:${missing.join(", ")}(内核改了工具集?)`)
-
-const extra = report.tools.filter((tool) => !EXPECTED.includes(tool))
-if (extra.length) {
-  // 不算失败,但要大声说 —— 界面按万能卡画得出来,可 TOOL_NAMES 与这份清单得跟上。
-  console.warn(`⚠ 内核新增了工具:${extra.join(", ")} —— 去对一下 kernel 的 TOOL_NAMES`)
-}
+// 期望清单不再手写:TOOL_NAMES 是工具清单的唯一真源(kernel/src/types.ts),这里拿**构建产物**
+// 自检报上来的装配面与它逐字同序比(与 kernel-entry 的自检、bench 的 check 走同一个 diffToolNames)。
+// 清单已同源之后,"多出来的工具"也是漂移(源码装配面与 out/ 不是同一版),所以不再只 warn。
+const diff = diffToolNames(report.tools)
+if (diff) fail(`工具清单与 TOOL_NAMES 不一致(旧 out/?先 npm run build -w packages/desktop;还是 TOOL_NAMES 没跟上装配面?)\n${diff}`)
 
 console.log(`✓ 内核加载正常 (node ${report.node} / electron ${report.electron ?? "n/a"}),${report.tools.length} 个工具`)
 

@@ -10,6 +10,8 @@
  */
 import { formatSkillsForSystemPrompt, type Skill } from "@earendil-works/pi-agent-core";
 
+import { toolGuidelines } from "./tools/contracts.ts";
+
 export interface BuildSystemPromptOptions {
 	/** Custom system prompt (replaces default). */
 	customPrompt?: string;
@@ -68,6 +70,10 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 		if (hasBash && !hasGrep && !hasFind && !hasLs) {
 			guidelinesSet.add("Use bash for file operations like ls, rg, find");
 		}
+
+		// 硬件工具各自的守则写在它们的契约里(host/tools/<name>/contract.ts 的 guidelines),
+		// 新内核的 AgentTool 没有 promptGuidelines 字段,所以由这里按装配出的工具名收集。
+		for (const guideline of toolGuidelines(tools)) guidelinesSet.add(guideline);
 
 		// Always include these
 		guidelinesSet.add("Be concise in your responses");
