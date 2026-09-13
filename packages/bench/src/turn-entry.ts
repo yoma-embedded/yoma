@@ -32,6 +32,8 @@ function say(message: string): void {
   process.stdout.write(`${message}\n`)
 }
 
+const seenStatus = new Map<string, string>()
+
 const result: TurnResult = await runTurn({
   ...input,
   // 假模型脚本以数据形态穿进来(本机演练/打包冒烟)—— 不联网、不要 key,其余全真。
@@ -39,6 +41,10 @@ const result: TurnResult = await runTurn({
   onEvent: (event) => {
     if (event.type === "message.part.updated" && event.part.type === "tool") {
       const part = event.part
+      // 只在状态**变化**时打一行:running 态现在每 100ms 带着进度快照重发一次(工具进度链路),
+      // 不去重的话一条 60s 的烧录会刷 600 行 "→ flash",把面板的 200 行环形日志全挤掉。
+      if (seenStatus.get(part.id) === part.state.status) return
+      seenStatus.set(part.id, part.state.status)
       if (part.state.status === "running") say(`  → ${part.tool}`)
       if (part.state.status === "error") say(`  ✗ ${part.tool}:${part.state.error}`)
     }

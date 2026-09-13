@@ -75,6 +75,16 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
   `kernel/src/types.ts` 的 `TOOL_NAMES`:desktop 的自检、`kernel-smoke.ts`、bench 的 `check` 三处走同一个
   `diffToolNames` 逐字同序比;系统提示词里 `selectedTools` 缺省时的四件套字面量只是兜底,不参与真源。
   boundary.test.ts 第 5 条按白名单扫契约文件,并要求每个工具目录都有 contract.ts。
+- **工具进度链路**(2026-09-14):execute 的第三个参数 `onUpdate(partial)` 是工具边跑边上卡片的口。发动机把它
+  转成 `tool_update` 事件;`host/session-manager.ts` 的 subscribe 里过一道 `host/tool-progress.ts` 的
+  `ToolProgressThrottle`(按调用节流:前沿立即、之后每 100ms 一次、尾沿补发,`tool_end` 时丢掉尾沿),
+  再交 `projector.updateToolProgress` 挂到 `ToolStateRunning.output / metadata` 上,走的还是
+  `message.part.updated`。为什么必须节流:每一拍投影的是**整张卡片**(part 带着全部输出),不节流就是
+  O(n²) 字节过 IPC。投影器对 completed / error 一律 no-op,晚到的一拍倒不回 running;进度不落 transcript。
+  `runEngine` 的 `onOutput` 钩子是给 flash / powershell 喂活尾巴的(`appendTail`),内核 bash 自带流式;
+  投影器把 running 态的 output 封在 8 KB(卡片是窗口不是记录,全文在 completed 态里),空快照在 subscribe
+  里就丢掉(否则白花节流器的前沿)。bench 的 turn-entry 只在状态变化时打 "→ 工具" 行。
+  卡片在 running 态可以展开(`session-ui/basic-tool.tsx`,pending 仍锁着)。
 - **从 pi 移植的四个文件工具**(2026-09-12):grep / find 用自带的 rg(`engineBin("rg")` 绝对路径,内核进程的
   PATH 上没有它;`runEngineLines` 流式逐行、到 limit 就杀树)。用户的 glob **不交给 rg**:rg 的 `--glob` 是
   override 层,压在 .gitignore 之上(实测 `--glob '*'` 把 node_modules/ 整个放回来),所以 rg 只带 `!.git/`,

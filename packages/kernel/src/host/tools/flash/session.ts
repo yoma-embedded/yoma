@@ -41,6 +41,7 @@ import {
   releaseProbe,
   runEngine,
 } from "../../domain/engines.ts"
+import { appendTail } from "../../domain/engines.ts"
 import { resolveToCwd } from "../../domain/paths.ts"
 import { FLASH_CONTRACT, type FlashDetails } from "./contract.ts"
 
@@ -107,7 +108,7 @@ export function createFlashTool(): AgentHarnessTool<ExecutionToolContext, typeof
     executionMode: "sequential",
     // replay 不声明(默认 never):崩溃恢复绝不自动重烧 —— 有副作用的硬件动作重放一次
     // 的代价可能是一块砖,而"上次烧到哪一步"内核并不知道。
-    execute: async (_toolCallId, params, _onUpdate, toolContext, _invocation, context) => {
+    execute: async (_toolCallId, params, onUpdate, toolContext, _invocation, context) => {
       const cwd = toolContext.env.cwd
       const command = params.command
       if (command.length === 0 || !command[0]?.trim()) {
@@ -127,11 +128,19 @@ export function createFlashTool(): AgentHarnessTool<ExecutionToolContext, typeof
       const holder = claimProbe("flash", label)
       if (holder) throw new Error(`flash: ${describeProbeConflict(holder)}`)
       let result: Awaited<ReturnType<typeof runEngine>>
+      // 烧录器的输出边跑边上卡片:"** Programming Started **" 该在它出现的那一秒被看见,
+      // 而不是几十秒后整条命令结束时。快照只是活尾巴,全文仍在结果里。
+      let live = ""
       try {
         result = await runEngine(command[0], command.slice(1), {
           cwd,
           signal: context.abortSignal,
           timeoutMs: flashTimeoutMs(params.timeoutMs),
+          onOutput: ({ text }) => {
+            live = appendTail(live, text)
+            // running 态的 exitCode 恒为 null,不是"被信号杀掉":将来的烧录卡片按 state.status 判,别看这一格。
+            onUpdate({ content: [{ type: "text", text: live }], details: { command, exitCode: null } })
+          },
         })
       } finally {
         releaseProbe("flash")

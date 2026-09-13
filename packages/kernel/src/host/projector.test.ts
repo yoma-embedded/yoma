@@ -376,6 +376,44 @@ describe("工具", () => {
     expect(p.markToolRunning("nope")).toEqual([])
   })
 
+  test("tool_update 把已吐出的输出挂到 running 态;空快照不动卡片;终态之后再来是 no-op", () => {
+    const p = projection()
+    p.applyMessage(user("跑"))
+    p.applyMessage(
+      assistant([{ type: "toolCall", id: "c1", name: "bash", arguments: { command: "make" } }], { stopReason: "toolUse" }),
+    )
+    // pending 直接收进度:提升为 running 并带输出(tool_start 与第一条 update 可能同批到)。
+    const first = partsOf(p.updateToolProgress("c1", { content: [{ type: "text", text: "compiling" }], details: undefined }))
+    expect(first).toHaveLength(1)
+    expect(first[0]!.type === "tool" && first[0]!.state.status === "running" ? first[0]!.state.output : null).toBe("compiling")
+    expect(p.updateToolProgress("c1", { content: [], details: undefined })).toEqual([])
+    const second = partsOf(
+      p.updateToolProgress("c1", { content: [{ type: "text", text: "compiling\nlinking" }], details: { fullOutputPath: "/tmp/x" } }),
+    )
+    const running = second[0]!.type === "tool" && second[0]!.state.status === "running" ? second[0]!.state : null
+    expect(running?.output).toBe("compiling\nlinking")
+    expect(running?.metadata).toEqual({ fullOutputPath: "/tmp/x" })
+    p.applyMessage(toolResult("c1", "done"))
+    // 节流器晚到的那一拍:终态不倒回 running。
+    expect(p.updateToolProgress("c1", { content: [{ type: "text", text: "late" }], details: undefined })).toEqual([])
+    expect(p.updateToolProgress("nope", { content: [{ type: "text", text: "x" }], details: undefined })).toEqual([])
+  })
+
+  test("空快照不把 pending 翻成 running(否则随后的 tool_start 被跳过,卡片永远 pending);活尾巴封顶", () => {
+    const p = projection()
+    p.applyMessage(user("跑"))
+    p.applyMessage(
+      assistant([{ type: "toolCall", id: "c1", name: "bash", arguments: { command: "make" } }], { stopReason: "toolUse" }),
+    )
+    expect(p.updateToolProgress("c1", { content: [], details: undefined })).toEqual([])
+    const started = partsOf(p.markToolRunning("c1"))
+    expect(started[0]!.type === "tool" ? started[0]!.state.status : null).toBe("running")
+    const big = "x".repeat(20_000)
+    const capped = partsOf(p.updateToolProgress("c1", { content: [{ type: "text", text: big }], details: undefined }))
+    const state = capped[0]!.type === "tool" && capped[0]!.state.status === "running" ? capped[0]!.state : null
+    expect(state?.output?.length).toBe(8_000)
+  })
+
   test("重算快照不会把已完成的工具倒回 pending", () => {
     const p = projection()
     p.applyMessage(user("读文件"))

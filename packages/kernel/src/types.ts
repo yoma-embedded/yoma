@@ -172,6 +172,10 @@ export interface ToolStateRunning {
   input: Record<string, unknown>
   title?: string
   time: { start: number }
+  /** 还在跑时已经吐出的输出(尾部快照)。只有走进度通道的工具(bash / flash / powershell)才有。 */
+  output?: string
+  /** 进度快照里的结构化细节(bash 的 truncation / fullOutputPath)。UI 不解释它。 */
+  metadata?: ToolDetails
 }
 
 export interface ToolStateCompleted {

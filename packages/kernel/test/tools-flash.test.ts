@@ -78,12 +78,37 @@ function textOf(result: AgentToolResult<FlashDetails>): string {
   return result.content.map((part) => (part.type === "text" ? part.text : "")).join("\n")
 }
 
+/** 进度快照里的文本。 */
+function textOfPartial(partial: { content: Array<{ type: string; text?: string }> }): string {
+  return partial.content.map((part) => (part.type === "text" ? (part.text ?? "") : "")).join("")
+}
+
 /** 已经 abort 的信号:runEngine 进门就走中断分支,不必跟计时赛跑。 */
 function aborted(): Context {
   return withAbortSignal(AbortSignal.abort(), BACKGROUND_CONTEXT)
 }
 
 describe("flash 工具", () => {
+  it("烧录器的输出边跑边喂进度:onUpdate 收到活尾巴,先看到 Started 再看到 Verified", async () => {
+    const flasher = fakeFlasher(
+      `console.log("** Programming Started **"); setTimeout(() => { console.log("** Verified OK **") }, 80)`,
+    )
+    const updates: string[] = []
+    const tool = createFlashTool()
+    await tool.execute(
+      "c1",
+      { command: flasher },
+      (partial) => updates.push(textOfPartial(partial)),
+      { env: new NodeExecutionEnv({ cwd: createTempDir() }) },
+      invocation,
+      BACKGROUND_CONTEXT,
+    )
+    expect(updates.length).toBeGreaterThanOrEqual(2)
+    expect(updates[0]).toContain("** Programming Started **")
+    expect(updates[0]).not.toContain("** Verified OK **")
+    expect(updates.at(-1)).toContain("** Verified OK **")
+  })
+
   it("argv 原样跑,输出与退出码照实返回", async () => {
     const { run, flasher } = makeTool(ECHO_ARGV_JS)
     const result = await run({ command: [...flasher, "program", "fw.elf"] })

@@ -50,6 +50,7 @@ import {
 } from "./domain/toolchain/index.ts"
 import { buildSystemPrompt } from "./system-prompt.ts"
 import { ConfirmDesk } from "./confirm.ts"
+import { ToolProgressThrottle } from "./tool-progress.ts"
 import { confirmNeeded } from "./tools/contracts.ts"
 import { createRegisteredTools, type RegisteredToolOptions } from "./tools/index.ts"
 import { configurableProviders, resolveModel } from "./models.ts"
@@ -871,7 +872,12 @@ export class SessionManager {
       const projection = entry.projection
       if (projection) emit(project(projection))
     }
+    // 工具进度:每块输出投影一整张卡片,所以按调用节流(前沿立即、之后每 100ms 一次、尾沿补发)。
+    const progress = new ToolProgressThrottle((toolCallId, partial) =>
+      apply((projection) => projection.updateToolProgress(toolCallId, partial)),
+    )
     return [
+      () => progress.dispose(),
       harness.events.on("run_start", (event) => {
         entry.running = true
         entry.operationId = event.runId
@@ -911,6 +917,15 @@ export class SessionManager {
         )
       }),
       harness.events.on("tool_start", (event) => apply((projection) => projection.markToolRunning(event.toolCallId))),
+      harness.events.on("tool_update", (event) => {
+        // 空快照(内核 bash 开跑先发一条 {content:[]})不进节流器:它会白白花掉前沿,真正的第一块输出
+        // 就得等尾沿,每条 bash 的第一个字都晚一个间隔。
+        const partial = event.partialResult
+        if (partial.content.length === 0 && (partial.details === undefined || partial.details === null)) return
+        progress.push(event.toolCallId, partial)
+      }),
+      // 终态由 message_end 的工具结果消息投影;这里只把还没发的尾沿丢掉。
+      harness.events.on("tool_end", (event) => progress.settle(event.toolCallId)),
       harness.events.on("entry_added", (event) => {
         entry.updatedAt = Date.now()
         const added = event.entry

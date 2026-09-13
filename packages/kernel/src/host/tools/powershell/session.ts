@@ -36,7 +36,7 @@ import {
 
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core/harness/context"
 
-import { clamp, runEngine } from "../../domain/engines.ts"
+import { appendTail, clamp, runEngine } from "../../domain/engines.ts"
 import { POWERSHELL_CONTRACT, type PowerShellDetails } from "./contract.ts"
 
 const DEFAULT_TIMEOUT_MS = 2 * 60 * 1000
@@ -169,7 +169,7 @@ export function createPowerShellTool(
     label: POWERSHELL_CONTRACT.label,
     description: POWERSHELL_CONTRACT.description,
     parameters: POWERSHELL_CONTRACT.parameters,
-    execute: async (_toolCallId, params, _onUpdate, toolContext, _invocation, context) => {
+    execute: async (_toolCallId, params, onUpdate, toolContext, _invocation, context) => {
       const env = toolContext.env
       // 这一轮已经被用户停掉:不要再起一个进程。runEngine 要到 spawn 之后才看信号。
       if (context.abortSignal?.aborted) throw new Error("powershell was aborted")
@@ -183,7 +183,20 @@ export function createPowerShellTool(
         MAX_TIMEOUT_MS,
       )
 
-      const result = await runEngine(exe, argv, { cwd: env.cwd, signal: context.abortSignal, timeoutMs })
+      // 边跑边上卡片:两条流各留一段活尾巴,合流时照样剥 CLIXML(块没写完时只掉标记行)。
+      let liveOut = ""
+      let liveErr = ""
+      const result = await runEngine(exe, argv, {
+        cwd: env.cwd,
+        signal: context.abortSignal,
+        timeoutMs,
+        onOutput: ({ stream, text }) => {
+          if (stream === "stdout") liveOut = appendTail(liveOut, text)
+          else liveErr = appendTail(liveErr, text)
+          // running 态的 exitCode 恒为 null,不是"被信号杀掉":卡片按 state.status 判,别看这一格。
+          onUpdate({ content: [{ type: "text", text: mergeOutput(liveOut, liveErr) }], details: { exitCode: null } })
+        },
+      })
 
       // 超时 / 中止**不在这里抛**:先把已经收到的输出整理好,带着它一起抛(下面),形状照内核 bash。
       // 上一版先抛 "powershell timed out" 六个字,脚本在卡住之前打出的几千行全丢 —— 模型分不清它做了

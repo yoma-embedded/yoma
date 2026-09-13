@@ -6,6 +6,8 @@
  * 这一条如果绿,说明"能聊天"这件事在数据面上已经成立,剩下的只是前端接线。
  */
 import { afterEach, describe, expect, test, vi } from "vitest"
+
+import { SessionProjection } from "./projector.ts"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
@@ -305,6 +307,40 @@ describe("内核宿主端到端", () => {
     expect(events.filter((e) => e.type === "kernel.error")).toEqual([])
 
     await host.dispose()
+  }, 30_000)
+
+  test("工具边跑边出字:bash 的输出在 running 态就投影到卡片上", async () => {
+    // 事件数组里的 part 是同一个对象引用(测试里没有 IPC 那层序列化),看不到"当时"的状态,
+    // 所以盯投影器的进度入口:它必须在工具结束前就收到 "first"、且真的投影出了一张 running 卡片。
+    const progressed: Array<{ text: string; emitted: number }> = []
+    const original = SessionProjection.prototype.updateToolProgress
+    const spy = vi
+      .spyOn(SessionProjection.prototype, "updateToolProgress")
+      .mockImplementation(function (this: SessionProjection, id, partial) {
+        const events = original.call(this, id, partial)
+        progressed.push({
+          text: partial.content.map((c) => (c.type === "text" ? (c.text ?? "") : "")).join(""),
+          emitted: events.length,
+        })
+        return events
+      })
+    try {
+      const { host, events, workspace } = makeHost([
+        fauxAssistantMessage([fauxToolCall("bash", { command: "echo first; sleep 0.5; echo second" })]),
+        fauxAssistantMessage([fauxText("好")]),
+      ])
+      const session = (await host.handle("session.create", { directory: workspace })) as Session
+      await host.handle("session.prompt", { sessionID: session.id, input: { text: "跑" } })
+      const toolParts = () =>
+        events.flatMap((e) => (e.type === "message.part.updated" && e.part.type === "tool" ? [e.part as ToolPart] : []))
+      await waitFor(() => toolParts().some((part) => part.tool === "bash" && part.state.status === "completed"), 20_000)
+      // "first" 单独到过一次(second 还没出来),并且那一次真的投影出了事件。
+      expect(progressed.some((p) => p.text.includes("first") && !p.text.includes("second") && p.emitted > 0)).toBe(true)
+      expect(events.filter((e) => e.type === "kernel.error")).toEqual([])
+      await host.dispose()
+    } finally {
+      spy.mockRestore()
+    }
   }, 30_000)
 
   test("bash 里起 openocd 也要先问:门按程序名判,不按工具名判(拒绝 → bash 没跑)", async () => {

@@ -647,11 +647,48 @@ export class SessionProjection {
     part.state = { status: "running", input: part.state.input, title: part.tool, time: { start: ref.startedAt } }
     return [partEvent(part)]
   }
+
+  /**
+   * tool_update:工具还在跑,把已经吐出的输出挂到 running 态上(卡片就能边跑边看)。
+   *
+   * pending 也接受:极短的工具 tool_start 和第一条 update 可能同一批到,顺序不保证。completed / error
+   * 一律 no-op —— 节流器晚到的那一拍不能把终态倒回 running。空快照(bash 开跑先发一条空的)不动卡片。
+   */
+  updateToolProgress(toolCallId: string, partial: { content: Array<{ type: string; text?: string }>; details?: unknown }): KernelEvent[] {
+    const ref = this.toolRefs.get(toolCallId)
+    if (!ref) return []
+    const part = this.messages.get(ref.messageID)?.parts[ref.index]
+    if (!part || part.type !== "tool") return []
+    if (part.state.status !== "pending" && part.state.status !== "running") return []
+    // 先算快照再动状态:空快照(bash 开跑先发一条空的)什么都不该改 —— 若先把 pending 翻成 running 再
+    // 因为空而不发事件,随后的 tool_start 会当它已经 running 而跳过,卡片就永远停在 pending。
+    const joined = partial.content
+      .flatMap((block) => (block.type === "text" && typeof block.text === "string" ? [block.text] : []))
+      .join("\n")
+    // 活尾巴封顶:每一拍投影的是整张卡片,bash 的快照本身封在 50 KB,不切的话一条一直在吐的 make
+    // 会以 10 拍/秒 × 50 KB 无限期地过 IPC。全文在 completed 态里,running 态是窗口不是记录。
+    const output = joined.length > LIVE_OUTPUT_CHARS ? joined.slice(joined.length - LIVE_OUTPUT_CHARS) : joined
+    const metadata = partial.details !== undefined && partial.details !== null ? asDetails(partial.details) : undefined
+    if (!output && !metadata) return []
+    if (part.state.status === "pending") {
+      ref.startedAt = Date.now()
+      part.state = { status: "running", input: part.state.input, title: part.tool, time: { start: ref.startedAt } }
+    }
+    part.state = {
+      ...part.state,
+      ...(output ? { output } : {}),
+      ...(metadata ? { metadata } : {}),
+    }
+    return [partEvent(part)]
+  }
 }
 
 // ---------------------------------------------------------------------------
 // 纯辅助
 // ---------------------------------------------------------------------------
+
+/** running 态 output 的上限(字符)。与 flash / powershell 那头 appendTail 的默认值同一个数。 */
+const LIVE_OUTPUT_CHARS = 8_000
 
 function partEvent(part: Part): KernelEvent {
   return { type: "message.part.updated", part }

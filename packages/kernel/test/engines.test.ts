@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
+	appendTail,
 	claimProbe,
 	describeProbeConflict,
 	describeProbeHardwareError,
@@ -121,6 +122,22 @@ describe("runEngine", () => {
 		expect(result.exitCode).toBe(3);
 		expect(result.timedOut).toBe(false);
 		expect(result.aborted).toBe(false);
+	});
+
+	it("onOutput sees every chunk as it arrives, tagged by stream", async () => {
+		const chunks: string[] = [];
+		const result = await runEngine(process.execPath, ["-e", "console.log('one'); console.error('two')"], {
+			onOutput: (chunk) => chunks.push(`${chunk.stream}:${chunk.text.trim()}`),
+		});
+		expect(result.exitCode).toBe(0);
+		expect(chunks).toContain("stdout:one");
+		expect(chunks).toContain("stderr:two");
+		expect(result.stdout.trim()).toBe("one");
+	});
+
+	it("appendTail keeps only the last maxChars", () => {
+		expect(appendTail("abc", "def", 4)).toBe("cdef");
+		expect(appendTail("", "xy", 4)).toBe("xy");
 	});
 
 	it("passes argv without shell interpretation", async () => {

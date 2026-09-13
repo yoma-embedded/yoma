@@ -224,6 +224,24 @@ console.error("Get-PnpDevice : real failure")
     await expect(run({ command: "x" })).rejects.toThrow("partial output")
   })
 
+  it("输出边跑边喂进度:onUpdate 收到活尾巴", async () => {
+    const exe = fakePowerShell(`console.log("step 1"); setTimeout(() => { console.log("step 2") }, 80)`)
+    const tool = createPowerShellTool({ exe })
+    const updates: string[] = []
+    await tool.execute(
+      "c1",
+      { command: "x" },
+      (partial) => updates.push(partial.content.map((part) => (part.type === "text" ? part.text : "")).join("")),
+      { env: new NodeExecutionEnv({ cwd: createTempDir() }) },
+      invocation,
+      BACKGROUND_CONTEXT,
+    )
+    expect(updates.length).toBeGreaterThanOrEqual(2)
+    expect(updates[0]).toContain("step 1")
+    expect(updates[0]).not.toContain("step 2")
+    expect(updates.at(-1)).toContain("step 2")
+  })
+
   it("超时抛 timed out(进程树被杀)", async () => {
     const { run } = makeTool(`setInterval(() => {}, 1000)`)
     await expect(run({ command: "Start-Sleep 60", timeout: 1 })).rejects.toThrow(/timed out/)

@@ -174,8 +174,10 @@ export function BasicTool(props: BasicToolProps) {
     heightAnim?.stop()
   })
 
+  // running 态可以展开:走进度通道的工具(bash / flash / powershell)边跑边有输出,用户要看烧录器
+  // 此刻打到第几段。pending 仍锁着 —— 参数还没拼完,没有任何东西可看。
   const handleOpenChange = (value: boolean) => {
-    if (pending()) return
+    if (props.status === "pending") return
     if (props.locked && !value) return
     setOpen(value)
   }
@@ -246,7 +248,7 @@ export function BasicTool(props: BasicToolProps) {
           </Switch>
         </div>
       </div>
-      <Show when={hasChildren() && !props.hideDetails && !props.locked && !pending()}>
+      <Show when={hasChildren() && !props.hideDetails && !props.locked && props.status !== "pending"}>
         <Collapsible.Arrow />
       </Show>
     </div>

@@ -367,6 +367,11 @@ export interface EngineRunOptions {
 	cwd?: string;
 	signal?: AbortSignal;
 	timeoutMs?: number;
+	/**
+	 * 每收到一块输出就叫一次(已按 UTF-8 解码)。给工具喂进度卡片用:烧录器的 "** Programming Started **"
+	 * 该在它出现的那一秒上屏,而不是整条命令跑完之后。结果里的 stdout / stderr 照旧全量收集。
+	 */
+	onOutput?: (chunk: { stream: "stdout" | "stderr"; text: string }) => void;
 }
 
 /**
@@ -477,6 +482,15 @@ export function assertEngineSettled(result: EngineRunResult, label: string): Eng
 	return result;
 }
 
+/**
+ * 进度卡片用的活尾巴:只留最后 maxChars 个字符。卡片是边跑边看的窗口,不是记录 —— 全文在结果里。
+ * 从中间切断一行没关系,烧录器的进度条本来就是一行行覆盖写的。
+ */
+export function appendTail(buffer: string, chunk: string, maxChars = 8_000): string {
+	const joined = buffer + chunk;
+	return joined.length > maxChars ? joined.slice(joined.length - maxChars) : joined;
+}
+
 export function runEngine(bin: string, args: string[], options: EngineRunOptions = {}): Promise<EngineRunResult> {
 	const timeoutMs = options.timeoutMs ?? DEFAULT_ENGINE_TIMEOUT_MS;
 	return new Promise((resolve, reject) => {
@@ -505,9 +519,11 @@ export function runEngine(bin: string, args: string[], options: EngineRunOptions
 		child.stderr.setEncoding("utf8");
 		child.stdout.on("data", (chunk: string) => {
 			stdout += chunk;
+			options.onOutput?.({ stream: "stdout", text: chunk });
 		});
 		child.stderr.on("data", (chunk: string) => {
 			stderr += chunk;
+			options.onOutput?.({ stream: "stderr", text: chunk });
 		});
 
 		const timeout = setTimeout(() => {
