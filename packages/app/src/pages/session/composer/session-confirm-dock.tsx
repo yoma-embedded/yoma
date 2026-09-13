@@ -5,11 +5,14 @@ import { DockTray } from "@yoma-desktop/ui/dock-surface"
 import { useLanguage } from "@/context/language"
 
 /**
- * 工具确认条:模型想跑一个契约说"要先问"的工具(今天只有烧录),内核把它挂起,这里显示
- * "烧录 想执行:<那一行命令>",用户点允许才真跑。
+ * 工具确认条:模型想跑一个契约说"要先问"的工具(烧录,以及 bash / PowerShell 里命令位站着
+ * openocd / JLink 之类探针程序的那一次),内核把它挂起,这里显示"烧录 想执行:<命令>",
+ * 用户点允许才真跑。
  *
- * 两个刻意的不做:不绑 Enter / Esc(误触一下就是往板子里写东西);不自己拼命令行 ——
- * summary 是内核按契约拼好的,前端再拼一遍的后果是屏幕上的命令和真跑的不是一条。
+ * 三个刻意的不做:不绑 Enter / Esc(误触一下就是往板子里写东西);不自己拼命令行 ——
+ * summary 是内核按契约拼好的,前端再拼一遍的后果是屏幕上的命令和真跑的不是一条;
+ * **不截断命令**:一条 140 字的 openocd 命令用 truncate 只剩前 60 字,mass_erase 藏在省略号后面
+ * 用户就点了允许(2026-09-13 猎漏确认),所以整段换行显示,超高时在框内滚动。
  * 多条未决时按提问顺序堆叠,最早的在最上面(内核给的顺序)。
  */
 export function SessionConfirmDock(props: {
@@ -40,11 +43,14 @@ export function SessionConfirmDock(props: {
       <div class="px-3 pt-2 flex flex-col gap-1.5" classList={{ "pb-7": props.attached, "pb-2": !props.attached }}>
         <For each={props.items}>
           {(item) => (
-            <div class="flex items-center gap-2 min-w-0 py-1">
-              <span class="shrink-0 text-13-medium text-text-strong">
+            <div class="flex items-start gap-2 min-w-0 py-1">
+              <span class="shrink-0 pt-0.5 text-13-medium text-text-strong">
                 {language.t("session.confirmDock.wants", { tool: toolName(item) })}
               </span>
-              <span class="min-w-0 flex-1 truncate font-mono text-12-regular text-text-base" title={item.summary}>
+              <span
+                data-slot="confirm-summary"
+                class="min-w-0 flex-1 max-h-64 overflow-y-auto whitespace-pre-wrap break-all font-mono text-12-regular text-text-base"
+              >
                 {item.summary}
               </span>
               <Button

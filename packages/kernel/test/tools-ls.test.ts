@@ -123,6 +123,28 @@ describe("ls 工具", () => {
     await expect(makeTool(cwd)({}, context)).rejects.toThrow("ls was aborted")
   })
 
+  it("开跑之后点停止也要立刻结算:lstat 堵在死掉的网络盘上时用户不该等操作系统放弃", async () => {
+    const cwd = createTempDir()
+    // 一个永远不回来的 exists():冒充挂死的 SMB 映射盘。
+    class HangingEnv extends NodeExecutionEnv {
+      override exists(): ReturnType<NodeExecutionEnv["exists"]> {
+        return new Promise(() => {})
+      }
+    }
+    const controller = new AbortController()
+    const context = withAbortSignal(controller.signal, BACKGROUND_CONTEXT)
+    const pending = createLsTool().execute("c1", {}, () => {}, { env: new HangingEnv({ cwd }) }, invocation, context)
+    setTimeout(() => controller.abort(), 50)
+    const settled = await Promise.race([
+      pending.then(
+        () => "resolved",
+        (error: Error) => error.message,
+      ),
+      new Promise<string>((resolve) => setTimeout(() => resolve("still hanging after 1s"), 1000)),
+    ])
+    expect(settled).toBe("ls was aborted")
+  })
+
   // Windows 上建目录符号链接要特权(开发者模式或管理员),建不了的机器会假红。
   describe.skipIf(process.platform === "win32")("符号链接", () => {
     it("指向目录的 symlink 不加任何后缀", async () => {

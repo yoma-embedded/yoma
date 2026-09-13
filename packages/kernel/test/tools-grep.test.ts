@@ -8,7 +8,7 @@
 
 import { afterEach, describe, expect, it } from "vitest"
 import { execFileSync } from "node:child_process"
-import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path, { join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -183,6 +183,18 @@ describe.skipIf(!rgAvailable)("grep 工具(真 rg)", () => {
     writeFileSync(join(root, ".gitignore"), "node_modules/\n")
     const run = makeTool(root)
     expect(matchLines(await run({ pattern: "hello" }))).toEqual(["app.js:1: hello app"])
+  })
+
+  // Windows 上建目录符号链接要特权,建不了的机器会假红。
+  it.skipIf(process.platform === "win32")("path 是指向目录的符号链接:当目录搜,路径相对会话 cwd", async () => {
+    const root = makeRepo()
+    symlinkSync(join(root, "src"), join(root, "link"), "dir")
+    const run = makeTool(root)
+    // 上一版 lstat 答 "symlink" → 当单文件搜:rg 拿到一个目录参数照样递归,但 glob 锚点挪到会话 cwd,
+    // 这里 glob 写成相对 link 的形状就匹不到了。
+    expect(matchLines(await run({ pattern: "hello", path: "link", glob: "deep/*.ts" }))).toEqual([
+      "link/deep/x.spec.ts:1: describe('hello')",
+    ])
   })
 
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(

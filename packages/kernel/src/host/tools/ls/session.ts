@@ -16,8 +16,12 @@
  *   链接会被印成 "name/",于是模型以为能 cd 进去;这里按字面呈现,不跟随,也不加 "@"
  *   之类的装饰 —— 多一种后缀就多一种要模型学的约定,而它最需要的是"这个名字能不能
  *   直接喂给 read"。
- * - 入口是 lstat 语义,所以一个指向目录的 symlink 被当成 path 传进来时要先 canonicalPath
- *   再判类型,否则 `ls some-link` 会答"Not a directory" —— pi 那版是能列的,这是回归。
+ * - 入口是 lstat 语义,所以一个指向目录的 symlink 被当成 path 传进来时要先跟随一次再判类型
+ *   (domain/file-kind.ts,grep / find 共用),否则 `ls some-link` 会答"Not a directory" ——
+ *   pi 那版是能列的,这是回归。
+ *
+ * 中止:readdir / lstat 不收信号,死掉的网络盘会把它们堵几十秒;每一步都包进 abortable,
+ * 用户点停止时工具先按中止结算,系统调用之后自己完成、自己被丢掉。
  */
 
 import { readdir } from "node:fs/promises"
@@ -30,6 +34,8 @@ import {
   truncateHead,
 } from "@earendil-works/pi-agent-core"
 
+import { abortable } from "../../domain/abortable.ts"
+import { fileKindFollowingLinks } from "../../domain/file-kind.ts"
 import { resolveToCwd } from "../../domain/paths.ts"
 import { LS_CONTRACT, type LsDetails } from "./contract.ts"
 
@@ -66,34 +72,29 @@ export function createLsTool(
     parameters: LS_CONTRACT.parameters,
     execute: async (_toolCallId, params, _onUpdate, toolContext, _invocation, context) => {
       const env = toolContext.env
-      if (context.abortSignal?.aborted) throw new Error("ls was aborted")
+      const signal = context.abortSignal
+      const ABORTED = "ls was aborted"
+      if (signal?.aborted) throw new Error(ABORTED)
       const dir = resolveToCwd(env.cwd, params.path?.trim() || ".")
       const limit = entryLimit(params.limit)
 
       // 三句错误文本逐字照 pi:模型已经学会了它们的形状,换措辞等于换一套它没见过的信号。
-      const exists = await env.exists(dir, context)
+      const exists = await abortable(env.exists(dir, context), signal, ABORTED)
       if (!exists.ok) throw new Error(`Cannot read directory: ${exists.error.message}`)
       if (!exists.value) throw new Error(`Path not found: ${dir}`)
-      const info = await env.fileInfo(dir, context)
-      if (!info.ok) throw new Error(`Cannot read directory: ${info.error.message}`)
-      let kind = info.value.kind
-      if (kind === "symlink") {
-        // fileInfo 是 lstat 语义;不跟随一次的话,指向目录的链接会被拒成 "Not a directory"。
-        const target = await env.canonicalPath(dir, context)
-        if (!target.ok) throw new Error(`Cannot read directory: ${target.error.message}`)
-        const targetInfo = await env.fileInfo(target.value, context)
-        if (!targetInfo.ok) throw new Error(`Cannot read directory: ${targetInfo.error.message}`)
-        kind = targetInfo.value.kind
-      }
-      if (kind !== "directory") throw new Error(`Not a directory: ${dir}`)
+      const kind = await abortable(fileKindFollowingLinks(env, dir, context), signal, ABORTED)
+      if (!kind.ok) throw new Error(`Cannot read directory: ${kind.error.message}`)
+      if (kind.kind !== "directory") throw new Error(`Not a directory: ${dir}`)
 
       let entries: Array<{ name: string; kind: string }>
       try {
-        entries = (await readdir(dir, { withFileTypes: true })).map((entry) => ({
+        const dirents = await abortable(readdir(dir, { withFileTypes: true }), signal, ABORTED)
+        entries = dirents.map((entry) => ({
           name: entry.name,
           kind: entry.isDirectory() ? "directory" : entry.isSymbolicLink() ? "symlink" : "file",
         }))
       } catch (error) {
+        if (error instanceof Error && error.message === ABORTED) throw error
         throw new Error(`Cannot read directory: ${error instanceof Error ? error.message : String(error)}`)
       }
 

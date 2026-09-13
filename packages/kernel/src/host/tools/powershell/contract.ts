@@ -16,6 +16,7 @@
 import { type Static, Type } from "typebox"
 
 import type { ToolContract } from "../contract-types.ts"
+import { probeCommandIn } from "../flash/contract.ts"
 
 const powershellParameters = Type.Object({
   command: Type.String({ description: "PowerShell command or script to execute" }),
@@ -69,11 +70,16 @@ export const POWERSHELL_CONTRACT = {
     "Use powershell only on Windows; on macOS and Linux use bash.",
     "Each powershell call is a fresh process — cd, $env: changes and imported modules do not carry over to the next call.",
   ],
+  // 与 flash 同一道门:脚本里的命令位站着 openocd / JLink / STM32_Programmer_CLI 就先问用户。
+  // 只认工具名的门在 2026-09-13 猎漏里被证明是假门 —— 模型改用 powershell 起同一条 openocd 就绕过去了。
+  confirm: (input: PowerShellInput) => probeCommandIn(input.command) !== undefined,
   summary: powershellSummary,
 } as const satisfies ToolContract<typeof powershellParameters>
 
-/** 卡片副标题:命令的首行(脚本常常是多行的,卡片只有一行)。 */
+/**
+ * 确认条上那段:整段脚本,不只首行。用户点"允许"之前必须看得见 mass_erase 藏在第几行 ——
+ * 确认条会换行、超高时滚动,不再靠省略号。
+ */
 export function powershellSummary(input: Partial<PowerShellInput>): string {
-  const first = input.command?.split("\n", 1)[0]?.trim() ?? ""
-  return first
+  return input.command?.trim() ?? ""
 }

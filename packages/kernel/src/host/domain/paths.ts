@@ -16,6 +16,8 @@ import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
+import { minimatch } from "minimatch"
+
 /** 按 process.platform 取实现,而不是宿主的 path:测试才能在 macOS 上真跑 Windows 分支。 */
 function platformPath(): path.PlatformPath {
   return process.platform === "win32" ? path.win32 : path.posix
@@ -32,20 +34,29 @@ export function fromMsysPath(filePath: string): string {
 }
 
 /**
- * gitignore 味的 glob:不含 `/` 的 pattern 只看文件名(任意深度都算),含 `/` 的锚在搜索根,`**` 跨目录。
+ * gitignore 味的 glob:不含 `/` 的 pattern 只看文件名(任意深度都算),含 `/` 的锚在搜索根,`**` 跨目录,
+ * 以 `/` 收尾的 pattern 是"这个目录下的全部"(gitignore 里 `Core/Src/` 就是这个意思)。
  *
  * 为什么不把 glob 交给 rg 的 --glob:那是 override 层,压在 .gitignore 之上 —— 2026-09-12 实测
  * `rg --files --glob '*'` 会把 node_modules/ 与 *.log 整个放回来。所以 rg 只负责"尊重 .gitignore 地
  * 列文件",挑哪些留下在这里做。坏 pattern(没闭合的 `[`)不抛,当作匹不到。
  *
- * **全平台都不分大小写**:Node 的 matchesGlob 在 mac / Windows 上不分、Linux 上分,同一条 pattern 两个
- * CI 岗给不同结果;而模型手里的文件名本来就大小写混杂(Keil 工程的 Main.C、Core/Src)。两边都小写后比。
+ * 用 minimatch 而不是 Node 自带的 path.matchesGlob:后者是 dot:false 的 —— `*` 与 `**` 永远匹不到
+ * 点开头的名字,于是 STM32CubeIDE 工程里 `find *.cproject` 答"没有这个文件"(2026-09-13 猎漏实测),
+ * 而 rg / fd / gitignore 的 `*` 都匹得到点文件。dot:true 把它们对齐。
+ *
+ * **全平台都不分大小写**(nocase):模型手里的文件名本来就大小写混杂(Keil 工程的 Main.C、Core/Src),
+ * 而两个 CI 岗的文件系统一个分一个不分。Windows 上反斜杠当路径分隔符而不是转义符 —— 模型在
+ * Windows 上会写 `Core\Src\*.c`。
  */
 export function matchesToolGlob(relativePosixPath: string, pattern: string): boolean {
-  const cleaned = (pattern.startsWith("./") ? pattern.slice(2) : pattern).toLowerCase()
-  const target = relativePosixPath.toLowerCase()
-  if (!cleaned.includes("/")) return path.posix.matchesGlob(path.posix.basename(target), cleaned)
-  return path.posix.matchesGlob(target, cleaned)
+  let cleaned = pattern.startsWith("./") ? pattern.slice(2) : pattern
+  const options = { dot: true, nocase: true, windowsPathsNoEscape: process.platform === "win32" }
+  if (cleaned.endsWith("/") || (options.windowsPathsNoEscape && cleaned.endsWith("\\"))) cleaned += "**"
+  if (!cleaned.includes("/") && !(options.windowsPathsNoEscape && cleaned.includes("\\"))) {
+    return minimatch(path.posix.basename(relativePosixPath), cleaned, options)
+  }
+  return minimatch(relativePosixPath, cleaned, options)
 }
 
 /**

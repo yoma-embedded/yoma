@@ -307,6 +307,42 @@ describe("内核宿主端到端", () => {
     await host.dispose()
   }, 30_000)
 
+  test("bash 里起 openocd 也要先问:门按程序名判,不按工具名判(拒绝 → bash 没跑)", async () => {
+    const command = "cd build && openocd -f interface/stlink.cfg -c 'init; stm32g4x mass_erase 0; exit'"
+    const { host, events, workspace } = makeHost(
+      [
+        fauxAssistantMessage([fauxToolCall("bash", { command })]),
+        fauxAssistantMessage([fauxText("好,那我先不擦")]),
+      ],
+      { confirmTools: true },
+    )
+    const session = (await host.handle("session.create", { directory: workspace })) as Session
+    await host.handle("session.prompt", { sessionID: session.id, input: { text: "把片子擦了" } })
+
+    const confirms = () => events.flatMap((e) => (e.type === "tool.confirm" ? [e.confirm] : []))
+    await waitFor(() => confirms().length > 0, 10_000)
+    const asked = confirms()[0]!
+    // summary 是整条命令:mass_erase 在第二段,确认条上必须看得见。
+    expect(asked).toMatchObject({ status: "pending", tool: "bash", label: "命令", summary: command })
+
+    expect(await host.handle("session.confirmReply", { id: asked.id, allow: false })).toEqual({ accepted: true })
+    await waitFor(() => {
+      const tools = events.flatMap((e) =>
+        e.type === "message.part.updated" && e.part.type === "tool" ? [e.part as ToolPart] : [],
+      )
+      return tools.some((part) => part.tool === "bash" && part.state.status === "error")
+    }, 10_000)
+    const bash = events.flatMap((e) =>
+      e.type === "message.part.updated" && e.part.type === "tool" && e.part.tool === "bash" ? [e.part as ToolPart] : [],
+    )
+    expect(bash.some((part) => part.state.status === "running")).toBe(false)
+    const failed = bash.find((part) => part.state.status === "error")!
+    expect(failed.state.status === "error" && failed.state.error).toContain("declined")
+    expect(events.filter((e) => e.type === "kernel.error")).toEqual([])
+
+    await host.dispose()
+  }, 30_000)
+
   test("flash 跑之前先问用户:允许 → 工具真跑、确认台清空、没有 kernel.error", async () => {
     const { host, events, workspace } = makeHost(
       [

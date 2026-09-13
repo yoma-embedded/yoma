@@ -69,7 +69,7 @@ export interface GrepDetails {
 const GREP_DESCRIPTION = `Search file contents for a pattern using the bundled ripgrep. Returns matching lines as \`<path>:<line>: <text>\`; context lines use \`<path>-<line>- <text>\`.
 
 - Paths are relative to the session working directory, so any result can be passed straight to the read tool.
-- Respects .gitignore, searches hidden files, and never descends into .git/. glob narrows the search within what .gitignore allows (without a "/" it matches file names at any depth, with a "/" it is anchored at path).
+- Respects .gitignore, searches hidden files, and never descends into .git/. glob narrows the search within what .gitignore allows (without a "/" it matches file names at any depth, with a "/" it is anchored at path, a trailing "/" means everything under that directory); matching is case-insensitive and wildcards match dotfiles.
 - Output is capped at 100 matches (raise with limit) and 50KB, whichever comes first. Single lines longer than 500 chars are cut with "... [truncated]" — use read for the full line.
 - Prefer this over running grep or rg through bash: the search is killed as soon as the match limit is reached instead of streaming a whole repository into the conversation.
 - pattern never reaches a shell, so a flag-shaped pattern such as "--pre=./x.sh" is searched as literal text.

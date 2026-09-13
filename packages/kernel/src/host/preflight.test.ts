@@ -38,10 +38,24 @@ describe("inspectEngines", () => {
     const bin = path.join(ok, "bin")
     mkdirSync(bin, { recursive: true })
     const exe = process.platform === "win32" ? ".exe" : ""
-    for (const name of ["stm32kernel", "controller_map", "board_ir", "connections"]) {
+    for (const name of ["stm32kernel", "controller_map", "board_ir", "connections", "rg"]) {
       writeFileSync(path.join(bin, name + exe), "")
     }
     expect(inspectEngines(ok)).toEqual({ ok: true, code: "ok", dir: ok, missing: [] })
+  })
+
+  test("只缺 rg 也算缺:grep / find 靠它,自检报 ok 会让两个工具在用户机器上静默死掉", () => {
+    const dir = tempDir("yoma-eng-norg-")
+    const bin = path.join(dir, "bin")
+    mkdirSync(bin, { recursive: true })
+    const exe = process.platform === "win32" ? ".exe" : ""
+    for (const name of ["stm32kernel", "controller_map", "board_ir", "connections"]) {
+      writeFileSync(path.join(bin, name + exe), "")
+    }
+    const report = inspectEngines(dir)
+    expect(report.ok).toBe(false)
+    expect(report.code).toBe("missingBin")
+    expect(report.missing).toEqual(["rg"])
   })
 })
 

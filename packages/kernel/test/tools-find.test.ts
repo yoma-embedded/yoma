@@ -8,7 +8,7 @@
 
 import { afterEach, describe, expect, it } from "vitest"
 import { execFileSync } from "node:child_process"
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path, { join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -61,6 +61,10 @@ function makeRepo(): string {
   writeFileSync(join(root, "src", "main.c"), "int main;\n")
   writeFileSync(join(root, "src", "deep", "x.spec.ts"), "x\n")
   writeFileSync(join(root, ".hidden", "h.txt"), "h\n")
+  // 点开头的**文件名**(不是点目录里的普通名):CubeIDE 工程的 .cproject,以及点目录下再一层的 xml。
+  writeFileSync(join(root, ".cproject"), "<cproject/>\n")
+  mkdirSync(join(root, ".settings"), { recursive: true })
+  writeFileSync(join(root, ".settings", "language.settings.xml"), "<x/>\n")
   writeFileSync(join(root, "node_modules", "pkg", "index.js"), "m\n")
   writeFileSync(join(root, ".gitignore"), "node_modules/\n*.log\n")
   writeFileSync(join(root, "debug.log"), "log\n")
@@ -125,12 +129,45 @@ describe.skipIf(!rgAvailable)("find 工具(真 rg --files)", () => {
     const run = makeTool(makeRepo())
     const lines = resultLines(await run({ pattern: "*" }))
     expect(lines).toContain(".hidden/h.txt")
+    // 上一版靠 Node 的 matchesGlob(dot:false),这三条都不在 —— 而 "隐藏文件进" 那条断言只靠
+    // .hidden/h.txt 的非点 basename 偶然通过。
+    expect(lines).toContain(".cproject")
+    expect(lines).toContain(".gitignore")
+    expect(resultLines(await run({ pattern: "*.cproject" }))).toEqual([".cproject"])
+    expect(resultLines(await run({ pattern: "**/*.xml" }))).toEqual([".settings/language.settings.xml"])
     expect(lines).toContain("app.js")
     expect(lines.some((line) => line.startsWith(".git/"))).toBe(false)
     expect(lines.some((line) => line.startsWith("node_modules/"))).toBe(false)
     expect(lines).not.toContain("debug.log")
     expect([...lines].sort()).toEqual(lines)
   })
+
+  // Windows 上建目录符号链接要特权,建不了的机器会假红。
+  it.skipIf(process.platform === "win32")("path 是指向目录的符号链接:当目录搜,不报 got a file", async () => {
+    const root = makeRepo()
+    symlinkSync(join(root, "src"), join(root, "link"), "dir")
+    const run = makeTool(root)
+    expect(resultLines(await run({ pattern: "*.c", path: "link" }))).toEqual(["link/main.c"])
+  })
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "一个读不动的目录不该让清单冒充完整:结果照给,尾部说明不全,details.partial",
+    async () => {
+      const root = makeRepo()
+      mkdirSync(join(root, "locked"))
+      writeFileSync(join(root, "locked", "secret.txt"), "s\n")
+      chmodSync(join(root, "locked"), 0o000)
+      try {
+        const run = makeTool(root)
+        const result = await run({ pattern: "*" })
+        expect(resultLines(result)).toContain("a.txt")
+        expect(textOf(result)).toContain("partial results:")
+        expect(result.details.partial).toBe(true)
+      } finally {
+        chmodSync(join(root, "locked"), 0o755)
+      }
+    },
+  )
 
   it("嵌套子仓库(3303):子仓库自己的 .gitignore 生效,父级的规则不越界进去", async () => {
     const run = makeTool(makeRepo())

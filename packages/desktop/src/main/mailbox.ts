@@ -25,6 +25,7 @@ import type { MailboxHostConfig } from "@yoma-desktop/bench"
 // devDependencies 里,electron-vite 会把它 inline,走主入口等于把整个内核拖进
 // out/main/index.js。理由写在 paths.ts 顶部。
 import { cloneDirFor } from "@yoma-desktop/bench/mailbox/paths"
+import { killTree } from "@yoma-desktop/kernel/host/engines"
 import {
   MailboxController,
   type MailboxLaunchHandle,
@@ -163,8 +164,9 @@ export function createMailboxMain(options: MailboxMainOptions): MailboxMain {
       if (!child || child.pid === undefined) return
       if (process.platform === "win32") {
         // Windows 没有优雅信号:child.kill() 只杀得死守护本体,正在跑的 agent 轮
-        // 会变成孤儿继续驱动硬件(施工指南硬约束 5)。taskkill /T 杀整棵树。
-        spawn("taskkill", ["/pid", String(child.pid), "/f", "/t"], { stdio: "ignore" })
+        // 会变成孤儿继续驱动硬件(施工指南硬约束 5)。killTree 用 taskkill /T 杀整棵树,
+        // 并且挂着 'error' 监听 —— 裸 spawn 的 taskkill 起不来时是未捕获异常,整个主进程跟着死。
+        killTree(child, "SIGKILL")
         return
       }
       child.kill(force ? "SIGKILL" : "SIGTERM")
@@ -219,7 +221,7 @@ export function createMailboxMain(options: MailboxMainOptions): MailboxMain {
 function killHandle(children: Map<MailboxLaunchHandle, ChildProcess>, handle: MailboxLaunchHandle): void {
   const child = children.get(handle)
   if (!child || child.pid === undefined) return
-  if (process.platform === "win32") spawn("taskkill", ["/pid", String(child.pid), "/f", "/t"], { stdio: "ignore" })
+  if (process.platform === "win32") killTree(child, "SIGKILL")
   else child.kill("SIGKILL")
   children.delete(handle)
 }

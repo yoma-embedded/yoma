@@ -30,6 +30,7 @@ import {
 } from "@earendil-works/pi-agent-core"
 
 import { clamp, engineBin, runEngineLines } from "../../domain/engines.ts"
+import { fileKindFollowingLinks } from "../../domain/file-kind.ts"
 import { insideGitRepo, matchesToolGlob, resolveToCwd } from "../../domain/paths.ts"
 import { GREP_CONTRACT, type GrepDetails } from "./contract.ts"
 
@@ -100,9 +101,11 @@ export function createGrepTool(
       // 这一轮已经被用户停掉:不起子进程。runEngineLines 要到 spawn 之后才看信号。
       if (context.abortSignal?.aborted) throw new Error("grep was aborted")
       const searchPath = resolveToCwd(cwd, params.path ?? ".")
-      const info = await env.fileInfo(searchPath, context)
-      if (!info.ok) throw new Error(`Path not found: ${searchPath}`)
-      const searchingDirectory = info.value.kind === "directory"
+      // 跟随符号链接 / Windows junction:env.fileInfo 是 lstat 语义,链接到目录只答 "symlink",
+      // 不跟随的话这里会退化成"搜单个文件"—— 丢 --no-require-git、glob 锚点也挪到会话 cwd。
+      const kind = await fileKindFollowingLinks(env, searchPath, context)
+      if (!kind.ok) throw new Error(`Path not found: ${searchPath}`)
+      const searchingDirectory = kind.kind === "directory"
       // 缺席时 engineBin 自己抛带修复指引的错(重装 / npm run engines:build),比 ENOENT 有用得多。
       const rg = engineBin("rg", { enginesDir: options.enginesDir })
 

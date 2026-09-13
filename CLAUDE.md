@@ -53,7 +53,7 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
 |---|---|
 | `.`(`src/index.ts`) | 餐厅:视图模型 / 协议 / 客户端,**浏览器安全** |
 | `./host`(`src/host/index.ts`) | 厨房大门:desktop 的 `kernel-entry.ts` 与 bench |
-| `./host/datasheet-server`、`./host/models`、`./host/toolchain-schema` | 三道**叶子**门:desktop main 的手册库页、bench 的模型目录与信箱工具链清单 —— main 走大门等于把整个 host inline 进 `out/main/index.js` |
+| `./host/datasheet-server`、`./host/models`、`./host/toolchain-schema`、`./host/engines` | 四道**叶子**门:desktop main 的手册库页、bench 的模型目录与信箱工具链清单、main 的信箱守护杀进程树(`killTree`)—— main 走大门等于把整个 host inline 进 `out/main/index.js` |
 | `./tools/*/contract`(`src/host/tools/*/contract.ts`) | **契约门**:餐厅的工具卡片只从这里拿一个工具的名字 / 参数 / 结果格式 / 副标题函数,拿不到 `session.ts`。2026-09-11 起有住户了(flash) |
 | `./tools/contracts`(`src/host/tools/contracts.ts`) | **契约总表**:餐厅按工具名找契约(只 import 各 `contract.ts`);装配在 `host/tools/index.ts`,那是厨房 |
 
@@ -302,9 +302,16 @@ v3 规格(`pi/packages/agent/docs/harness.md` §5.5/§5.6)的形状 —— hooks
   内核只给了钩子:`before_tool` 的 handler 可以异步,返回 `{ block: { reason } }` 就是"这次别跑",
   reason 原样变成模型看到的工具结果。"问谁、问什么、没人答怎么办"全在我们这边:
   - **问不问是契约的事**,不是钩子的事。`host/tools/contracts.ts` 的 `confirmNeeded(name, args)`
-    问契约的 `confirm?(input)`(今天只有 flash,每次都问;toolchain 将来只在 install 时问,
-    所以它是函数不是布尔),界面短名与确认条那行命令都用契约的 `label` / `summary(input)` ——
-    前端再拼一遍的后果是确认条上显示的命令和真跑的那条不是一条。
+    问契约的 `confirm?(input)`(flash 每次都问;toolchain 将来只在 install 时问,所以它是函数不是
+    布尔),界面短名与确认条那段命令都用契约的 `label` / `summary(input)` —— 前端再拼一遍的后果是
+    确认条上显示的命令和真跑的那条不是一条。
+  - **门按"跑了哪个程序"判,不按工具名判**。只认 flash 的门是假门:模型被拒之后改用 bash /
+    powershell 起同一条 openocd,一个字都不问(2026-09-13 猎漏确认)。所以 `flash/contract.ts` 的
+    `probeCommandIn(commandLine)` 扫命令位(跳过 sudo / & / python -m 这类包装,不扫参数 ——
+    `grep openocd log` 不该问)找 openocd / JLink / STM32_Programmer_CLI / esptool / `west flash` 等,
+    powershell 的契约与 bash 的 `BASH_GATE` 都接它。这是纱窗不是墙:故意把程序名拼进变量再执行的
+    写法拦不住,那一层靠 guidelines。确认条整段显示命令(换行、超高滚动),不再 truncate ——
+    mass_erase 藏在省略号后面用户就点了允许。
   - **四种结局都得 emit 一条 `tool.confirm` 事件**(`pending` 进、`allowed`/`denied`/`cancelled`/
     `expired` 出)。前端的确认条按 id 加、按"status 不是 pending"删;漏发一条的表现不是报错,
     是输入框上永远挂着一条答不掉的确认,而模型早就收到拒绝走了。

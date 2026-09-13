@@ -264,6 +264,8 @@ export const dict = {
   "session.confirmDock.allow": "允许",
   "session.confirmDock.deny": "拒绝",
   "session.confirmDock.tool.flash": "烧录",
+  "session.confirmDock.tool.bash": "命令",
+  "session.confirmDock.tool.powershell": "PowerShell",
   "session.confirmDock.replyFailed": "回复没送到内核,请再点一次",
   "session.new.title": "构建任何东西",
   "session.new.lastModified": "最后修改",

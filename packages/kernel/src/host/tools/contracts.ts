@@ -7,7 +7,7 @@
 
 import type { ToolContract } from "./contract-types.ts"
 import { FIND_CONTRACT } from "./find/contract.ts"
-import { FLASH_CONTRACT } from "./flash/contract.ts"
+import { FLASH_CONTRACT, probeCommandIn } from "./flash/contract.ts"
 import { GREP_CONTRACT } from "./grep/contract.ts"
 import { LS_CONTRACT } from "./ls/contract.ts"
 import { POWERSHELL_CONTRACT } from "./powershell/contract.ts"
@@ -32,14 +32,30 @@ export function toolGuidelines(toolNames: readonly string[]): string[] {
   ])
 }
 
+/** 确认条要的两样:界面短名 + 那段命令。契约本身就满足它;bash 没契约,下面单独给一个。 */
+export type ConfirmGate = Pick<ToolContract, "label" | "summary">
+
 /**
- * 这一次调用跑之前要不要问用户:要问就把契约交出来(界面短名与那行 summary 都在它身上)。
+ * 内核自带的 bash 来自发动机,没有契约,但它能起 openocd —— 与 flash / powershell 同一道门。
+ * 只认工具名的门是假门:模型被拒之后改用 bash 跑同一条命令,一个字都不问(2026-09-13 猎漏确认)。
+ */
+const BASH_GATE = {
+  name: "bash",
+  label: "命令",
+  confirm: (input: Record<string, unknown>) =>
+    typeof input.command === "string" && probeCommandIn(input.command) !== undefined,
+  summary: (input: Record<string, unknown>) => (typeof input.command === "string" ? input.command.trim() : ""),
+} as const
+
+/**
+ * 这一次调用跑之前要不要问用户:要问就把门交出来(界面短名与那段 summary 都在它身上)。
  *
  * 判断留在总表而不是钩子里:钩子手上只有工具名和参数,"问不问"是契约的事 —— toolchain 只在
- * install 时问、gdb 只在写内存时问,所以它是函数不是布尔。没登记契约的工具一律不问。
+ * install 时问、gdb 只在写内存时问,所以它是函数不是布尔。没登记契约的工具只有 bash 例外(上面)。
  */
-export function confirmNeeded(name: string, input: Record<string, unknown>): ToolContract | undefined {
+export function confirmNeeded(name: string, input: Record<string, unknown>): ConfirmGate | undefined {
   const contract = toolContract(name)
-  if (!contract) return undefined
-  return contract.confirm?.(input) ? contract : undefined
+  if (contract) return contract.confirm?.(input) ? contract : undefined
+  if (name === BASH_GATE.name) return BASH_GATE.confirm(input) ? BASH_GATE : undefined
+  return undefined
 }

@@ -34,7 +34,9 @@ import {
   truncateTail,
 } from "@earendil-works/pi-agent-core"
 
-import { assertEngineSettled, clamp, runEngine } from "../../domain/engines.ts"
+import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core/harness/context"
+
+import { clamp, runEngine } from "../../domain/engines.ts"
 import { POWERSHELL_CONTRACT, type PowerShellDetails } from "./contract.ts"
 
 const DEFAULT_TIMEOUT_MS = 2 * 60 * 1000
@@ -120,16 +122,19 @@ export function powershellArgv(command: string): string[] {
 /**
  * 把 stderr 上的 CLIXML 块**解码**成人能读的文本,而不是整块删掉。
  *
- * PS 5.1 在 stderr 被重定向时,把进度记录**和错误记录**都序列化进同一个 `<Objs…</Objs>`:
+ * PS 5.1 在 stderr 被重定向时,把进度记录**和所有宿主流的记录**都序列化进同一个 `<Objs…</Objs>`:
  * Write-Error 是非终止错误、退出码 0,整块删掉就是"(no output)",模型认定成功 —— 2026-09-12 审稿实测。
- * 所以只丢进度,把 `<S S="Error">…</S>` 里的文本取出来(_x000D__x000A_ 还原成换行,XML 实体反转义)。
+ * Write-Verbose / Write-Debug / Write-Information 也在这同一个块里(`<S S="Verbose">` …),2026-09-13
+ * 猎漏抓到上一版只认 Error / Warning,于是 `$VerbosePreference='Continue'; Write-Verbose "probe on COM3"`
+ * 整段消失。所以**凡是带流名的 `<S S="…">` 都取出来**,只丢进度记录(那是 `<Obj S="progress">`,
+ * 不是 `<S>`);_x000D__x000A_ 还原成换行,XML 实体反转义。
  * 只处理"标记行 + 紧跟其后的一整段",不剥到文末:块外还有脚本真正的报错;块没写完就被杀掉时只掉标记行。
  */
 export function stripClixml(text: string): string {
   return text.replace(/#< CLIXML\r?\n?(<Objs\b[\s\S]*?<\/Objs>\r?\n?)?/g, (_whole, block: string | undefined) => {
     if (!block) return ""
     const messages: string[] = []
-    for (const match of block.matchAll(/<S S="(?:Error|error|Warning|warning)">([\s\S]*?)<\/S>/g)) {
+    for (const match of block.matchAll(/<S S="[A-Za-z]+">([\s\S]*?)<\/S>/g)) {
       const decoded = decodeClixmlText(match[1] ?? "").replace(/\s+$/, "")
       if (decoded) messages.push(decoded)
     }
@@ -171,20 +176,18 @@ export function createPowerShellTool(
       const exe = powershellExe(options.exe)
       if (!exe) throw new Error(POWERSHELL_MISSING)
       const argv = powershellArgv(params.command)
+      const timeoutMs = clamp(
+        params.timeout === undefined ? undefined : params.timeout * 1000,
+        DEFAULT_TIMEOUT_MS,
+        MIN_TIMEOUT_MS,
+        MAX_TIMEOUT_MS,
+      )
 
-      const result = await runEngine(exe, argv, {
-        cwd: env.cwd,
-        signal: context.abortSignal,
-        timeoutMs: clamp(
-          params.timeout === undefined ? undefined : params.timeout * 1000,
-          DEFAULT_TIMEOUT_MS,
-          MIN_TIMEOUT_MS,
-          MAX_TIMEOUT_MS,
-        ),
-      })
-      // 超时/中断先抛(文本带 "timed out" / "was aborted");非零退出的策略在下面,与内核 bash 一致。
-      assertEngineSettled(result, "powershell")
+      const result = await runEngine(exe, argv, { cwd: env.cwd, signal: context.abortSignal, timeoutMs })
 
+      // 超时 / 中止**不在这里抛**:先把已经收到的输出整理好,带着它一起抛(下面),形状照内核 bash。
+      // 上一版先抛 "powershell timed out" 六个字,脚本在卡住之前打出的几千行全丢 —— 模型分不清它做了
+      // 零件事还是做完了 99%,于是原样重跑同一条会卡的命令(2026-09-13 猎漏确认)。
       const raw = mergeOutput(result.stdout, result.stderr)
       const truncation = truncateTail(raw, { maxLines: DEFAULT_MAX_LINES, maxBytes: DEFAULT_MAX_BYTES })
       let text = truncation.content
@@ -200,15 +203,23 @@ export function createPowerShellTool(
           outputBytes: truncation.outputBytes,
         }
         // 全文落临时文件:被截掉的往往正是最前面那条真报错,只给尾巴等于让模型看不见根因。
-        // 落盘失败不算这次调用失败(没权限、磁盘满),只是少一个路径。
-        const spilled = await env.createTempFile({ prefix: "yoma-powershell-", suffix: ".log" }, context)
+        // 落盘失败不算这次调用失败(没权限、磁盘满),只是少一个路径。用户点了停止时 context 已经中止,
+        // env 会直接拒掉写文件 —— 那正是最需要保住头部的时候,所以落盘用不带信号的上下文。
+        const spillContext = result.aborted ? BACKGROUND_CONTEXT : context
+        const spilled = await env.createTempFile({ prefix: "yoma-powershell-", suffix: ".log" }, spillContext)
         let fullOutputPath: string | undefined
         if (spilled.ok) {
-          const written = await env.writeFile(spilled.value, raw, context)
+          const written = await env.writeFile(spilled.value, raw, spillContext)
           if (written.ok) fullOutputPath = spilled.value
         }
         if (fullOutputPath) details.fullOutputPath = fullOutputPath
         text += `\n\n[${truncationNotice(truncation, fullOutputPath)}]`
+      }
+      if (result.timedOut || result.aborted) {
+        const why = result.timedOut
+          ? `powershell timed out after ${Math.round(timeoutMs / 1000)} seconds; the process tree was killed. The output above is everything it printed before that.`
+          : "powershell was aborted"
+        throw new Error(text ? `${text}\n\n${why}` : why)
       }
       if (result.exitCode !== 0) {
         // exitCode 为 null = 被信号杀掉而两面旗(超时 / 中止)都没举:别报成 "code null"。

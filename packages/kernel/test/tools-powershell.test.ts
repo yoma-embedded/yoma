@@ -79,6 +79,27 @@ function textOf(result: AgentToolResult<PowerShellDetails>): string {
   return result.content.map((part) => (part.type === "text" ? part.text : "")).join("\n")
 }
 
+/**
+ * 一段"打 N 行然后卡住"的假脚本:行全部交给管道之后才在 cwd 落一个 ready.txt。中止类用例等这个文件
+ * 出现再点停止 —— 按固定毫秒数等的话,满载的 CI 上进程还没起来就被停了,断言"输出还在"会假红。
+ */
+function printThenHang(lines: number): string {
+  return [
+    `import { writeFileSync } from "node:fs"`,
+    `const text = Array.from({ length: ${lines} }, (_, i) => "line " + i).join("\\n") + "\\n"`,
+    `process.stdout.write(text, () => writeFileSync("ready.txt", "1"))`,
+    `setInterval(() => {}, 1000)`,
+  ].join("\n")
+}
+
+async function waitForFile(file: string, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!existsSync(file)) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${file}`)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+}
+
 /** 把 argv 与解回来的脚本一起打出来的假货:前者验开关,后者验两行头。 */
 const ECHO_ENCODED_JS = `
 const args = process.argv.slice(2)
@@ -122,6 +143,17 @@ describe("powershell 纯函数", () => {
       '<Objs Version="1.1.0.1"><Obj S="progress" RefId="0"><TN RefId="0"><T>p</T></TN></Obj><S S="Error">Get-PnpDevice : boom &lt;x&gt;_x000D__x000A_</S><S S="Error">second_x000D__x000A_</S></Objs>',
     ].join("\n")
     expect(stripClixml(stderr)).toBe("Get-PnpDevice : boom <x>\nsecond\n")
+  })
+
+  it("stripClixml 把 Verbose / Debug / Information 流也解出来,只丢进度记录", () => {
+    // 上一版只认 Error / Warning:`$VerbosePreference='Continue'; Write-Verbose "probe on COM3"` 退出码 0、
+    // stdout 空、stderr 就是这一块 —— 整块删掉后模型看到 "(no output)",认定"脚本跑了、什么都没找到"。
+    const stderr = [
+      "#< CLIXML",
+      '<Objs Version="1.1.0.1"><Obj S="progress" RefId="0"><TN RefId="0"><T>p</T></TN><MS><PR N="Record"><AV>Preparing modules</AV></PR></MS></Obj>' +
+        '<S S="Verbose">probe attached on COM3_x000D__x000A_</S><S S="Debug">d</S><S S="Information">i</S><S S="Warning">w</S></Objs>',
+    ].join("\n")
+    expect(stripClixml(stderr)).toBe("probe attached on COM3\nd\ni\nw\n")
   })
 
   it("stripClixml 对多块、对只有标记行的情况都成立", () => {
@@ -195,6 +227,41 @@ console.error("Get-PnpDevice : real failure")
   it("超时抛 timed out(进程树被杀)", async () => {
     const { run } = makeTool(`setInterval(() => {}, 1000)`)
     await expect(run({ command: "Start-Sleep 60", timeout: 1 })).rejects.toThrow(/timed out/)
+  })
+
+  it("超时 / 中止时已经打出的输出跟着错误一起给,不只六个字", async () => {
+    // 打 50 行再卡住:模型要能看到 "line 49",否则分不清脚本做了零件事还是做完了 99%。
+    const { run, cwd } = makeTool(printThenHang(50))
+    let message = ""
+    await run({ command: "x", timeout: 1 }).catch((error: Error) => (message = error.message))
+    expect(message).toContain("line 49")
+    expect(message).toMatch(/timed out after 1 seconds/)
+
+    rmSync(join(cwd, "ready.txt"), { force: true })
+    const controller = new AbortController()
+    const context = withAbortSignal(controller.signal, BACKGROUND_CONTEXT)
+    const pending = run({ command: "x" }, context)
+    await waitForFile(join(cwd, "ready.txt"))
+    controller.abort()
+    message = ""
+    await pending.catch((error: Error) => (message = error.message))
+    expect(message).toContain("line 49")
+    expect(message).toContain("powershell was aborted")
+  })
+
+  it("中止时超长输出照样落临时文件:头部(往往是真报错)不能因为上下文已中止就丢", async () => {
+    const { run, cwd } = makeTool(printThenHang(3000))
+    const controller = new AbortController()
+    const context = withAbortSignal(controller.signal, BACKGROUND_CONTEXT)
+    const pending = run({ command: "x" }, context)
+    await waitForFile(join(cwd, "ready.txt"))
+    controller.abort()
+    let message = ""
+    await pending.catch((error: Error) => (message = error.message))
+    expect(message).toContain("powershell was aborted")
+    const spilled = /Full output: (\S+\.log)/.exec(message)?.[1]
+    expect(spilled).toBeDefined()
+    expect(readFileSync(spilled!, "utf8")).toContain("line 0\n")
   })
 
   it("截断时只留尾部,并把全文写进临时文件", async () => {

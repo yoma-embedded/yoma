@@ -53,7 +53,7 @@ export interface EnginePathOptions {
 }
 
 /** engines/bin 下必须有的可执行文件。 */
-export const ENGINE_BINARIES = ["stm32kernel", "controller_map", "board_ir", "connections"] as const;
+export const ENGINE_BINARIES = ["stm32kernel", "controller_map", "board_ir", "connections", "rg"] as const;
 
 /** 向上找带 bin/ 的 engines 目录,跳过空壳。 */
 export function findEnginesDir(start: string): string {
@@ -381,10 +381,30 @@ export function killTree(child: ChildProcess, signal: NodeJS.Signals): void {
 	const pid = child.pid;
 	if (pid === undefined) return;
 	if (process.platform === "win32") {
+		// 绝对路径而不是靠 PATH:会话 shell 的 PATH 被人改过、或 System32 不在内核进程的 PATH 上时,裸名字
+		// 会 ENOENT(pi 的 env/nodejs.ts 同一处理)。
+		const taskkill = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe");
+		const fallback = () => {
+			try {
+				child.kill(signal);
+			} catch {
+				// 进程已经没了。
+			}
+		};
 		try {
-			spawn("taskkill", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore", detached: true, windowsHide: true });
+			const killer = spawn(taskkill, ["/F", "/T", "/PID", String(pid)], {
+				stdio: "ignore",
+				detached: true,
+				windowsHide: true,
+			});
+			// spawn 失败(taskkill 被杀毒拦、句柄用尽)是**异步**送到 'error' 事件的,上面的 try 接不住;
+			// 而一个没人听的 'error' 是未捕获异常 —— 整个内核进程跟着死,所有会话一起没。每次工具结束都会
+			// 走到这里(cleanup 无条件杀树),所以这行监听是 Windows 上的承重墙。听到之后**退一步杀直接子进程**,
+			// 而不是什么都不做:引擎多半没有孙进程,杀掉本体就够了;什么都不做则是探针被孤儿攥着的那条老路。
+			killer.on("error", fallback);
+			killer.unref();
 		} catch {
-			// 进程可能已经没了。
+			fallback();
 		}
 		return;
 	}

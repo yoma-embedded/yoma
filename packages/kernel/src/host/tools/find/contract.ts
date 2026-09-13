@@ -45,13 +45,15 @@ export interface FindDetails {
   truncation?: FindTruncation
   /** 到顶的那个 limit 值(不是命中总数 —— 被杀掉的 rg 并不知道总数)。 */
   resultLimitReached?: number
+  /** rg 中途报过错(某个目录读不动)但仍列出了文件:清单不全,尾部通知带着第一条报错。 */
+  partial?: boolean
 }
 
 const FIND_DESCRIPTION = `Find files by glob pattern using the bundled ripgrep. Returns one path per line, sorted, relative to the session working directory, so any result can be passed straight to the read tool.
 
 - Only files are returned, never directories. To look at directory structure, use the ls tool.
 - Lists hidden files, never descends into .git/, and respects .gitignore (build/, node_modules/, *.log stay out even when pattern would match them).
-- pattern follows gitignore glob rules: without a "/" it matches the file name at any depth ('*.c' finds src/main.c), with a "/" it is anchored at the search root ('src/**/*.spec.ts'); "**" crosses directories.
+- pattern follows gitignore glob rules: without a "/" it matches the file name at any depth ('*.c' finds src/main.c), with a "/" it is anchored at the search root ('src/**/*.spec.ts'); "**" crosses directories; a trailing "/" means everything under that directory ('Core/Src/'). Matching is case-insensitive and wildcards match dotfiles ('*.cproject' finds .cproject).
 - Output is capped at 1000 results (raise with limit) and 50KB, whichever comes first.
 - The search is killed after 60 seconds (raise with timeout). On a timeout, narrow path or pattern instead of repeating the same call.`
 

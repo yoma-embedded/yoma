@@ -73,7 +73,7 @@ console.log(`✓ 内核加载正常 (node ${report.node} / electron ${report.ele
 
 const bin = join(enginesDir, "bin")
 const stm32Data = join(enginesDir, "data", "stm32")
-const REQUIRED_BINS = ["stm32kernel", "controller_map", "board_ir", "connections"].map(exe)
+const REQUIRED_BINS = ["stm32kernel", "controller_map", "board_ir", "connections", "rg"].map(exe)
 
 if (!existsSync(bin)) {
   fail(`${bin} 不存在 —— 跑 \`npm run engines:build\`(在仓库根)。\n` + `注意:yoma 的 enginesDir() 是向上查找 + existsSync,会"找到"一个没有 bin/ 的空壳然后报"去跑 build.ts",别被那条信息带偏。`)

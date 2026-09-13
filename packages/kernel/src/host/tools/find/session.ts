@@ -32,6 +32,7 @@ import {
 } from "@earendil-works/pi-agent-core"
 
 import { clamp, engineBin, runEngineLines } from "../../domain/engines.ts"
+import { fileKindFollowingLinks } from "../../domain/file-kind.ts"
 import { insideGitRepo, matchesToolGlob, resolveToCwd } from "../../domain/paths.ts"
 import { FIND_CONTRACT, type FindDetails } from "./contract.ts"
 
@@ -84,10 +85,11 @@ export function createFindTool(
         throw new Error("find: pattern must be relative; put the directory in path and a relative glob in pattern")
       }
       const searchPath = resolveToCwd(cwd, params.path ?? ".")
-      const info = await env.fileInfo(searchPath, context)
-      if (!info.ok) throw new Error(`Path not found: ${searchPath}`)
+      // 跟随符号链接 / Windows junction:env.fileInfo 是 lstat 语义,链接到目录只答 "symlink"。
+      const kind = await fileKindFollowingLinks(env, searchPath, context)
+      if (!kind.ok) throw new Error(`Path not found: ${searchPath}`)
       // rg 以搜索根为 cwd 跑,给它一个文件会 spawn 同步抛 ENOTDIR,报出来像 rg 坏了。
-      if (info.value.kind !== "directory") {
+      if (kind.kind !== "directory") {
         throw new Error(`find: path must be a directory (got a file) — use grep to search inside one file`)
       }
       const rg = engineBin("rg", { enginesDir: options.enginesDir })
@@ -136,9 +138,12 @@ export function createFindTool(
         )
       }
       if (result.aborted) throw new Error("find was aborted")
-      // rg: 0 = 有命中,1 = 没命中(两者都正常),其余是真错(搜索根读不了之类)。已经拿到行时不报错 ——
-      // 半份结果比一条 "exited with code 2" 有用,而被我们杀掉的那一次退出码没有意义。
-      if (!result.stopped && result.exitCode !== 0 && result.exitCode !== 1 && found.length === 0) {
+      // rg: 0 = 有命中,1 = 没命中(两者都正常),其余是真错(搜索根读不了之类)。已经拿到行时不报错,
+      // 但要**说明不全**:一棵树里一个读不动的目录(Windows 上 ACL 拒掉的漫游配置目录、OneDrive 占位)
+      // 也会让 rg 退 2,清单照样吐了出来 —— 不标的话模型把这份短清单当成"那个文件不存在"的证据。
+      // 被我们杀掉的那一次退出码没有意义。grep 同一条纪律。
+      const partial = !result.stopped && result.exitCode !== 0 && result.exitCode !== 1
+      if (partial && found.length === 0) {
         throw new Error(result.stderr.trim() || `ripgrep exited with code ${result.exitCode}`)
       }
       if (found.length === 0) {
@@ -150,6 +155,11 @@ export function createFindTool(
       let output = truncation.content
       const details: FindDetails = {}
       const notices: string[] = []
+      if (partial) {
+        const firstError = result.stderr.trim().split("\n")[0] ?? ""
+        notices.push(`partial results: ${firstError || `ripgrep exited with code ${result.exitCode}`}`)
+        details.partial = true
+      }
       if (resultLimitReached) {
         notices.push(`${limit} results limit reached. Use limit=${limit * 2} for more, or refine pattern`)
         details.resultLimitReached = limit

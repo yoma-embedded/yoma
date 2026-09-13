@@ -109,6 +109,27 @@ describe("matchesToolGlob(gitignore 味)", () => {
     expect(matchesToolGlob("MAIN.C", "*.c")).toBe(true)
     expect(matchesToolGlob("Core/Src/main.c", "core/src/*.C")).toBe(true)
   })
+
+  it("通配符匹得到点开头的名字(Node 的 matchesGlob 是 dot:false,于是 find *.cproject 答没有)", () => {
+    expect(matchesToolGlob(".cproject", "*")).toBe(true)
+    expect(matchesToolGlob(".cproject", "*.cproject")).toBe(true)
+    expect(matchesToolGlob(".gitignore", "*")).toBe(true)
+    expect(matchesToolGlob(".settings/language.settings.xml", "**/*.xml")).toBe(true)
+    expect(matchesToolGlob("src/.env", "src/**")).toBe(true)
+    expect(matchesToolGlob(".vscode/settings.json", "**/*.json")).toBe(true)
+  })
+
+  it("以 / 收尾的 pattern 是那个目录下的全部(gitignore 里 Core/Src/ 的意思)", () => {
+    expect(matchesToolGlob("core/src/main.c", "Core/Src/")).toBe(true)
+    expect(matchesToolGlob("core/inc/main.h", "Core/Src/")).toBe(false)
+  })
+
+  it("Windows 上 pattern 里的反斜杠是路径分隔符,不是转义符;以反斜杠收尾同样是目录", () => {
+    setPlatform("win32")
+    expect(matchesToolGlob("core/src/main.c", "Core\\Src\\*.c")).toBe(true)
+    expect(matchesToolGlob("core/src/main.c", "Core\\**\\*.c")).toBe(true)
+    expect(matchesToolGlob("core/src/main.c", "Core\\Src\\")).toBe(true)
+  })
 })
 
 describe("insideGitRepo", () => {

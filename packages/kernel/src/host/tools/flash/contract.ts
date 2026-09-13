@@ -81,6 +81,208 @@ export const FLASH_CONTRACT = {
 } as const satisfies ToolContract<typeof flashParameters>
 
 /**
+ * 会碰调试探针的程序名:小写、不带路径、不带 .exe / .py,SEGGER 那族再去掉尾巴上的 Exe
+ * (`JLinkExe` / `JLinkGDBServerCLExe` / `JFlashExe` 是 macOS / Linux 上的真实文件名)。
+ *
+ * 这份清单是 bash / powershell 那两道门的纱窗:确认门原本只认工具名叫 flash,模型改用 bash 起同一条
+ * openocd 就一个字都不问(2026-09-13 猎漏确认)。纱窗不是墙 —— 它拦的是模型顺手写的那种命令行,
+ * 故意绕的写法(把程序名拼进变量再执行、-EncodedCommand、-File 指向一个 .ps1)拦不住,那一层靠
+ * guidelines 里的规矩。
+ */
+export const PROBE_COMMANDS = [
+  "openocd",
+  "pyocd",
+  "jlink",
+  "jlinkgdbserver",
+  "jlinkgdbservercl",
+  "jflash",
+  "stm32_programmer_cli",
+  "st-flash",
+  "st-util",
+  "st-info",
+  "esptool",
+  "probe-rs",
+  "nrfjprog",
+  "dfu-util",
+  "avrdude",
+  "bossac",
+  "stm32flash",
+  "picotool",
+  "mspdebug",
+  "lm4flash",
+  "teensy_loader_cli",
+] as const
+
+/**
+ * 程序本身无害、带上某个子命令才碰探针的。子命令在各家语法里的位置不同,所以是四种定位而不是一张表:
+ * - first:程序后第一个位置参数(`cargo embed`、`west flash`;`cargo build --features embed` 不算);
+ * - positional:任一位置参数,但不能是某个开关的值(`idf.py -p COM3 flash`);
+ * - target:`-t` / `--target` 的值(`pio run -t upload`);
+ * - any:任一个词(`make -j8 flash`、`npm run flash` —— Makefile / package.json 的 flash 目标是嵌入式工程
+ *   最常见的烧录入口,目标名本身就是意图)。
+ */
+const PROBE_SUBCOMMANDS: Readonly<
+  Record<string, { where: "first" | "positional" | "target" | "any"; names: readonly string[] }>
+> = {
+  west: { where: "first", names: ["flash", "debug", "attach", "debugserver"] },
+  cargo: { where: "first", names: ["flash", "embed"] },
+  // programName 剥掉了 .py,所以键是 idf 不是 idf.py。
+  idf: { where: "positional", names: ["flash", "erase-flash", "erase_flash", "monitor"] },
+  pio: { where: "target", names: ["upload"] },
+  platformio: { where: "target", names: ["upload"] },
+  make: { where: "any", names: ["flash", "erase", "program", "upload"] },
+  npm: { where: "any", names: ["flash", "erase"] },
+  pnpm: { where: "any", names: ["flash", "erase"] },
+  yarn: { where: "any", names: ["flash", "erase"] },
+  bun: { where: "any", names: ["flash", "erase"] },
+}
+
+/**
+ * 站在命令位前面的包装:`sudo openocd`、`& openocd`、`python -m esptool`、`Start-Process -FilePath openocd`。
+ * 见到包装之后**整段都扫**而不是只看下一个词 —— 包装自己的开关(`sudo -E`、`start /wait`、`-FilePath`)
+ * 会站在程序名前面,只看下一个词就漏了(2026-09-13 审稿实测)。
+ */
+const COMMAND_WRAPPERS = new Set([
+  "sudo",
+  "doas",
+  "nohup",
+  "time",
+  "timeout",
+  "exec",
+  "env",
+  "&",
+  "start",
+  "start-process",
+  "python",
+  "python3",
+  "py",
+  "uv",
+  "uvx",
+  "pipx",
+  "npx",
+  "poetry",
+  "call",
+])
+
+/** 把某个词当成一整条命令行再看一遍的开关:`bash -c "…"`(也含 -lc / -xc)、`cmd /c "…"`、`pwsh -Command "…"`。 */
+const NESTED_COMMAND_FLAGS = new Set(["/c", "/k", "-command"])
+const NESTED_COMMAND_VERBS = new Set(["invoke-expression", "iex"])
+const SHELLS = new Set(["bash", "sh", "zsh", "dash", "cmd", "powershell", "pwsh"])
+
+/**
+ * 先按引号分词,再在词流上切段:`;`、`&&`、`||`、`|`、换行与花括号是段界。先切段再分词的话引号里的 `;`
+ * 会把 `bash -c "openocd …; exit"` 从中间剪断,而 `sed 's|openocd|pyocd|'` 会被剪出一个假命令位。
+ * 花括号算段界是为了 PowerShell 的脚本块:`Start-Job { openocd … }`、`if ($x) { openocd }`、
+ * `foreach ($f in $files) { STM32_Programmer_CLI -w $f }` 里程序名站在块的第一个位置 —— 把块当一段,
+ * 它就回到命令位上(2026-09-13 审稿实测这些全漏)。bash 的 `*.{c,h}` 被切出的碎段里没有程序名,无害。
+ */
+function tokenizeSegments(line: string): string[][] {
+  const segments: string[][] = [[]]
+  const re = /"([^"]*)"|'([^']*)'|(&&|\|\||[|;{}]|\r?\n)|([^\s;|{}"']+)/g
+  for (const match of line.matchAll(re)) {
+    if (match[3] !== undefined) {
+      segments.push([])
+      continue
+    }
+    const token = match[1] ?? match[2] ?? match[4] ?? ""
+    if (token === "") continue
+    segments[segments.length - 1]!.push(token)
+  }
+  return segments.filter((segment) => segment.length > 0)
+}
+
+/** 一个词的程序名:剥引号、剥子 shell 的括号、剥路径、剥 .exe / .py,SEGGER 那族再剥尾巴上的 Exe,小写。 */
+function programName(token: string): string {
+  const stripped = token.replace(/^["'$(`{]+/, "").replace(/["')}`]+$/, "").replace(/^\.[\\/]/, "")
+  const base = stripped.split(/[\\/]/).pop() ?? ""
+  const name = base.replace(/\.(exe|py)$/i, "").toLowerCase()
+  return /^(jlink|jflash)/.test(name) ? name.replace(/exe$/, "") : name
+}
+
+function isFlag(token: string): boolean {
+  return token.startsWith("-") || token.startsWith("/") || token.startsWith("+")
+}
+
+/** 从某个词起当命令位看:它本身是探针程序,或者是"程序 + 子命令"里的程序。 */
+function probeAt(tokens: string[], at: number): string | undefined {
+  const name = programName(tokens[at]!)
+  if ((PROBE_COMMANDS as readonly string[]).includes(name)) return name
+  const rule = PROBE_SUBCOMMANDS[name]
+  if (!rule) return undefined
+  const rest = tokens.slice(at + 1)
+  const lower = rest.map((token) => token.toLowerCase())
+  let hit: string | undefined
+  if (rule.where === "first") {
+    const first = lower.find((token) => !isFlag(token))
+    hit = first !== undefined && rule.names.includes(first) ? first : undefined
+  } else if (rule.where === "positional") {
+    hit = lower.find((token, index) => rule.names.includes(token) && (index === 0 || !isFlag(lower[index - 1]!)))
+  } else if (rule.where === "any") {
+    hit = lower.find((token) => rule.names.includes(token))
+  } else {
+    hit = lower.find((token, index) => rule.names.includes(token) && index > 0 && /^(-t|--target)$/.test(lower[index - 1]!))
+  }
+  return hit ? `${name} ${hit}` : undefined
+}
+
+/**
+ * 这条命令行会不会碰调试探针;会就给出那个程序名,不会给 undefined。
+ *
+ * 只看每一段的**命令位**,不扫参数:`grep openocd log.txt` 与 `cat openocd.cfg` 都不该问,问多了用户
+ * 会习惯性点允许,门就白立了。命令位前面站着包装(sudo / & / python -m / Start-Process)时扫完整段;
+ * `bash -c "…"` 这种把命令藏在字符串里的写法,把那段字符串再看一遍。
+ */
+export function probeCommandIn(commandLine: string, depth = 0): string | undefined {
+  if (depth > 3) return undefined
+  for (const tokens of tokenizeSegments(commandLine)) {
+    let index = 0
+    let wrapped = false
+    // PowerShell 的赋值 `$p = Start-Process openocd -PassThru`(拿进程对象以便稍后停掉 gdbserver,是惯用
+    // 写法不是绕门):跳过 `$名字 =` 或 `$名字=…`,后面照常看命令位。
+    if (index + 1 < tokens.length && /^\$[A-Za-z_][\w:]*$/.test(tokens[index]!) && tokens[index + 1] === "=") index += 2
+    else if (/^\$[A-Za-z_][\w:]*=/.test(tokens[index] ?? "")) index += 1
+    while (index < tokens.length) {
+      const lower = tokens[index]!.toLowerCase()
+      if (COMMAND_WRAPPERS.has(lower) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index]!)) {
+        wrapped = true
+        index++
+        continue
+      }
+      if (wrapped && lower === "-m") {
+        index++
+        continue
+      }
+      break
+    }
+    if (index >= tokens.length) continue
+    const head = programName(tokens[index]!)
+    if (SHELLS.has(head) || NESTED_COMMAND_VERBS.has(head)) {
+      // 开关后面的**全部**再看一遍,不只下一个词:`cmd.exe /c start openocd` 的程序名在第二个词上。
+      const nestedAt = NESTED_COMMAND_VERBS.has(head)
+        ? index
+        : tokens.findIndex((token, at) => at > index && (NESTED_COMMAND_FLAGS.has(token.toLowerCase()) || /^-[A-Za-z]*c$/i.test(token)))
+      const nested = nestedAt >= 0 ? tokens.slice(nestedAt + 1).join(" ") : ""
+      if (nested) {
+        const inner = probeCommandIn(nested, depth + 1)
+        if (inner) return inner
+      }
+      continue
+    }
+    if (!wrapped) {
+      const hit = probeAt(tokens, index)
+      if (hit) return hit
+      continue
+    }
+    for (let at = index; at < tokens.length; at++) {
+      if (isFlag(tokens[at]!)) continue
+      const hit = probeAt(tokens, at)
+      if (hit) return hit
+    }
+  }
+  return undefined
+}
+
+/**
  * 卡片副标题:把 argv 拼回一行人能读的命令。含空格的参数加双引号 —— 不加的话
  * `-c "program fw.elf verify reset exit"` 在卡片上会散成五个词,看着像五个参数。
  * 这是给人看的展示串,不是能回放的 shell 命令(不转义引号本身)。
