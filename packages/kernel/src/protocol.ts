@@ -106,6 +106,14 @@ export interface KernelMethods {
 
 
   "model.list": { params: void; result: ProviderInfo[] }
+  /**
+   * 联网刷新模型目录并落盘缓存(`<configDir>/models-store.json`),返回刷新后的完整列表。
+   *
+   * 需要它的理由:内建目录是随版本冻结的快照,而厂商上新比我们发版快 —— 2026-09-14 实测,
+   * 同一个 DeepSeek,pi 的命令行有 `deepseek-flash`,yoma 没有,因为那个模型从来没进过任何一份
+   * 内建目录。开会话只恢复磁盘缓存(不联网),所以"拿到新模型"必须有这条显式的路。
+   */
+  "model.refresh": { params: void; result: ProviderInfo[] }
   "auth.set": { params: { providerID: string; apiKey: string }; result: ProviderInfo[] }
   "auth.remove": { params: { providerID: string }; result: ProviderInfo[] }
 
@@ -211,6 +219,8 @@ export type KernelEvent =
   /** host 就绪或重连成功。前端收到就重新 bootstrap。 */
   | { type: "kernel.connected"; version: string }
   | { type: "kernel.error"; message: string; sessionID?: string }
+  /** 后台那次联网刷新**真的改变了**模型列表(多了/少了模型)。没变化不推。 */
+  | { type: "model.updated"; providers: ProviderInfo[] }
   | { type: "session.created"; session: Session }
   | { type: "session.updated"; session: Session }
   | { type: "session.deleted"; sessionID: string }

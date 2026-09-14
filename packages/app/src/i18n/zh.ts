@@ -384,6 +384,8 @@ export const dict = {
   "settings.providers.connected.empty": "没有已连接的提供商",
   "settings.providers.section.popular": "热门提供商",
   "settings.models.title": "模型",
+  "settings.models.refresh": "刷新模型列表",
+  "settings.models.refreshing": "正在刷新…",
   "settings.toolchain.title": "工具链",
   "settings.toolchain.machine.title": "本机工具链(按芯片平台)",
   "settings.toolchain.machine.description":

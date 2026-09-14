@@ -79,6 +79,8 @@ export interface KernelClient {
   }
   model: {
     list(): Promise<ProviderInfo[]>
+    /** 联网刷新模型目录(几秒);列表里出现新模型靠它。 */
+    refresh(): Promise<ProviderInfo[]>
     setAuth(providerID: string, apiKey: string): Promise<ProviderInfo[]>
     removeAuth(providerID: string): Promise<ProviderInfo[]>
   }
@@ -154,6 +156,8 @@ export function createKernelClient(transport: KernelTransport): KernelClient {
     },
     model: {
       list: () => call("model.list", undefined),
+      /** 联网刷新模型目录(几秒);列表里出现新模型靠它。 */
+      refresh: () => call("model.refresh", undefined),
       setAuth: (providerID, apiKey) => call("auth.set", { providerID, apiKey }),
       removeAuth: (providerID) => call("auth.remove", { providerID }),
     },

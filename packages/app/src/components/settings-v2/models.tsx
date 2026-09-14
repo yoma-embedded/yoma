@@ -3,10 +3,12 @@ import { ProviderIcon } from "@yoma-desktop/ui/provider-icon"
 import { Switch } from "@yoma-desktop/ui/v2/switch-v2"
 import { Icon as IconV2 } from "@yoma-desktop/ui/v2/icon"
 import { IconButtonV2 } from "@yoma-desktop/ui/v2/icon-button-v2"
+import { ButtonV2 } from "@yoma-desktop/ui/v2/button-v2"
 import { TextInputV2 } from "@yoma-desktop/ui/v2/text-input-v2"
-import { type Component, For, Show } from "solid-js"
+import { type Component, createSignal, For, Show } from "solid-js"
 import { useLanguage } from "@/context/language"
 import { useModels } from "@/context/models"
+import { refreshProviderCatalog } from "@/components/kernel-providers"
 import { SettingsListV2 } from "./parts/list"
 import { SettingsRowV2 } from "./parts/row"
 import "./settings-v2.css"
@@ -33,6 +35,24 @@ const popularProviders = [
 export const SettingsModelsV2: Component = () => {
   const language = useLanguage()
   const models = useModels()
+  const [refreshing, setRefreshing] = createSignal(false)
+
+  /**
+   * 联网重新拉各家的模型目录。
+   *
+   * 需要这个按钮的理由:内建目录是随版本冻结的快照,厂商上新比我们发版快 —— 不点它,新出的模型
+   * 永远不会自己出现在列表里(开会话只恢复磁盘缓存,不联网)。失败不弹错:一家的目录接口挂了
+   * 不影响别家,内核那边已经逐条发过诊断。
+   */
+  const refresh = async () => {
+    if (refreshing()) return
+    setRefreshing(true)
+    try {
+      await refreshProviderCatalog()
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   const list = useFilteredList<ModelItem>({
     items: (_filter) => models.list(),
@@ -59,7 +79,13 @@ export const SettingsModelsV2: Component = () => {
   return (
     <>
       <div class="settings-v2-tab-header settings-v2-tab-header--stacked">
-        <h2 class="settings-v2-tab-title">{language.t("settings.models.title")}</h2>
+        <div class="flex items-center justify-between gap-2">
+          <h2 class="settings-v2-tab-title">{language.t("settings.models.title")}</h2>
+          {/* 图标集里没有 refresh,用文字按钮 —— 这个动作本来也值得一句话说清它会联网。 */}
+          <ButtonV2 size="normal" variant="ghost-muted" disabled={refreshing()} onClick={() => void refresh()}>
+            {language.t(refreshing() ? "settings.models.refreshing" : "settings.models.refresh")}
+          </ButtonV2>
+        </div>
         <div class="settings-v2-tab-search">
           <TextInputV2
             type="search"

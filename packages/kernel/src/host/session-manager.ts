@@ -303,6 +303,8 @@ export interface SessionManagerOptions {
 export class SessionManager {
   private readonly env: NodeExecutionEnv
   private readonly repo: JsonlSessionRepo
+  /** 后台那次联网刷新每个进程只发一次。 */
+  private modelRefreshStarted = false
   private readonly entries = new Map<string, Entry>()
   private readonly options: SessionManagerOptions
   /** 凭据、技能、上下文文件共用的一个目录。 */
@@ -421,7 +423,55 @@ export class SessionManager {
       if (!out.some((provider) => provider.id === spec.id))
         out.push({ id: spec.id, name: spec.name, authenticated: false, models: [] })
     }
+    this.kickModelCatalogRefresh(out)
     return out
+  }
+
+  /**
+   * 联网刷新模型目录,刷完的结果落进 `<configDir>/models-store.json`(FileModelsStore)。
+   *
+   * **这是整个内核里唯一一条主动碰模型目录网络的路。** 开会话那条只恢复磁盘缓存(见 models.ts),
+   * 所以断网、机场、厂商挂了都不影响开会话 —— 代价只是模型列表停在上一次刷新。
+   *
+   * 单个 provider 失败不算整次失败:一家的目录接口挂了,不该让别家的新模型也拿不到。失败逐条发
+   * kernel.error 诊断,列表照常返回。
+   */
+  async refreshModels(options: { force?: boolean } = {}): Promise<ProviderInfo[]> {
+    try {
+      const { models } = await this.ensureModels()
+      const result = await models.refresh({ allowNetwork: true, force: options.force ?? true })
+      for (const [providerID, error] of result.errors) {
+        this.options.emit([
+          { type: "kernel.error", message: `刷新 ${providerID} 的模型目录失败:${error?.message ?? String(error)}` },
+        ])
+      }
+    } catch {
+      // 一个 key 都没配时 ensureModels() 抛 —— 那时本来也没有 provider 可刷,
+      // 下面的 providers() 会走"未配置"那条路,交出可连接的目录。
+    }
+    return this.providers()
+  }
+
+  /** 模型列表的指纹:只有真的多/少了模型才值得推给界面。 */
+  private static signatureOf(providers: ProviderInfo[]): string {
+    return providers.map((provider) => `${provider.id}:${provider.models.map((model) => model.id).join(",")}`).join("|")
+  }
+
+  /**
+   * 首次有人问模型列表时,在后台联网刷一次。
+   *
+   * 放在这里而不是开会话时:开会话在关键路径上,而"看一眼模型下拉"不是。fire-and-forget,
+   * 刷完只有**真的变了**才推事件 —— 每次开界面都推一次空更新,只会让前端白重渲染。
+   */
+  private kickModelCatalogRefresh(current: ProviderInfo[]): void {
+    if (this.modelRefreshStarted) return
+    this.modelRefreshStarted = true
+    const before = SessionManager.signatureOf(current)
+    void (async () => {
+      const after = await this.refreshModels({ force: false }).catch(() => undefined)
+      if (!after || SessionManager.signatureOf(after) === before) return
+      this.options.emit([{ type: "model.updated", providers: after }])
+    })()
   }
 
   // -------------------------------------------------------------------------

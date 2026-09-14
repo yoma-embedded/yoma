@@ -202,6 +202,25 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
      那个文件**永远不出现**。而断言窗口必须**比采集自己跑完还长** —— 窗口短于采集时长的话,"杀掉了"和
      "还没跑完"长得一模一样,用例就是空的(第一版 1500/400 就是这个毛病,变异验证时才露出来)。
 
+- **模型目录会过期,而且同步救不了**(2026-09-14):内建目录(`builtinProviders()`)是**随版本冻结的快照**,
+  跟着 pi 的生成数据进仓,而上游同步工具明确不动那份数据;更要命的是绝大多数 provider 在 pi-ai 里是
+  **静态的**(`createProvider({models:[...]})`,没有联网拉目录的口子)。所以"同步到最新的 pi"也带不来新模型。
+  查这件事的全过程值得记:同一个 DeepSeek,pi 的命令行有 `deepseek-flash`,yoma 没有。我先后排除了
+  三个地方(yoma 的目录、pi 源码检出的目录、brew 装的 pi 产物)—— 三处都没有这个模型。最后在
+  `~/.pi/agent/models-store.json` 找到它,而那条记录带着 `etag` 与 `lastModified`,说明是**从某个 HTTP 目录
+  拉来的**。顺着装好的 pi 产物挖出地址:`https://pi.dev/api/models/providers/<id>`,直接请求验证 ——
+  返回的正是 `deepseek-flash`,etag 与本机存的一字不差。那一层(`withRemoteCatalog`)住在 pi 的
+  **coding-agent 包**里,而我们只同步 ai / agent / chord / telemetry 四个包,所以从来没跟过来。
+  yoma 的对应实现:`host/model-catalog.ts`(包装层)+ `host/models-store.ts`(落盘缓存)。三条纪律:
+  1. **远端只在比内建数据新时才采用**(比 `lastModified` 与 `getBuiltinModelDataGeneratedAt()`)。合并是
+     按 id 覆盖的,一份过期目录会把内建里更新过的条目改回旧值,而"变旧了"没有任何报错。
+  2. **不在关键路径上联网**:开会话只 `refresh({allowNetwork:false})` 恢复磁盘缓存;联网只发生在后台那
+     一次(首次有人问模型列表时)和用户手点"刷新模型列表"。4 小时节流 + If-None-Match,没变就是 304,
+     而 **304 必须保留原有模型和 etag** —— 丢了就等于每 4 小时清空一次列表。
+  3. `YOMA_MODEL_CATALOG_URL` 能换成自建镜像或设 `off` 整个关掉(那时就只有内建 + 缓存)。
+  教训的形状:**"我的清单比别人少"先问"别人那一条是从哪来的",别默认是同步落后。** 这次如果直接去补同步,
+  再同步一百次也补不出那个模型。
+
 - 新开一道深引用 = 改 `exports`(从前是改四份别名表)。`boundary.test.ts` 钉住五条:菜单里没有 Node;
   工具间不反调会话间(`host/domain` 往外只拿 `host/models.ts`、`host/datasheet-server.ts`);餐厅只许走
   `@yoma-desktop/kernel`、`@yoma-desktop/kernel/tools/<名字>/contract` 或 `@yoma-desktop/kernel/tools/contracts`;

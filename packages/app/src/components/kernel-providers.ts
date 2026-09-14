@@ -21,6 +21,19 @@ export function invalidateProviders() {
   for (const listener of [...listeners]) listener()
 }
 
+/**
+ * 联网刷新模型目录,再让所有订阅者重新拉一次。
+ *
+ * 内建目录是随版本冻结的快照,而厂商上新比我们发版快 —— 不走这一步,新模型永远不会自己出现
+ * (2026-09-14 实测:同一个 DeepSeek,pi 的命令行有 deepseek-flash,yoma 没有)。
+ * 内核那边开会话时只恢复磁盘缓存、不联网,所以这是用户手动拿到新模型的那条路。
+ */
+export async function refreshProviderCatalog(): Promise<void> {
+  if (!kernelAvailable()) return
+  await kernel.model.refresh()
+  invalidateProviders()
+}
+
 async function load(): Promise<ProviderInfo[]> {
   // web host / 单测里没有内核通道,给空目录而不是让 resource 进 error 态。
   if (!kernelAvailable()) return []

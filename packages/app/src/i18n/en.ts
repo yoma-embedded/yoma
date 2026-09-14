@@ -424,6 +424,8 @@ export const dict = {
   "settings.providers.connected.empty": "No connected providers",
   "settings.providers.section.popular": "Popular providers",
   "settings.models.title": "Models",
+  "settings.models.refresh": "Refresh models",
+  "settings.models.refreshing": "Refreshing…",
   "settings.toolchain.title": "Toolchain",
   "settings.toolchain.machine.title": "This machine's toolchains (by chip family)",
   "settings.toolchain.machine.description":

@@ -33,7 +33,9 @@ import {
 	type Models,
 	type Provider,
 } from "@earendil-works/pi-ai";
-import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
+import { builtinProviders, getBuiltinModelDataGeneratedAt } from "@earendil-works/pi-ai/providers/all";
+import { catalogBaseUrlFromEnv, withRemoteCatalog } from "./model-catalog.ts";
+import { FileModelsStore } from "./models-store.ts";
 
 function readJson(path: string): any {
 	try {
@@ -155,15 +157,28 @@ export interface ResolvedModel {
 export async function resolveModel(configDir: string, options?: ResolveModelOptions): Promise<ResolvedModel> {
 	const authPath = join(configDir, "auth.json");
 	const settings = readJson(join(configDir, "settings.json")) ?? {};
-	const models = createModels({ credentials: new FileCredentialStore(authPath), authContext: options?.authContext });
+	const models = createModels({
+		credentials: new FileCredentialStore(authPath),
+		authContext: options?.authContext,
+		// 模型目录的本机缓存。内建目录是随版本冻结的快照,厂商上新比我们发版快 —— 见 models-store.ts。
+		modelsStore: new FileModelsStore(configDir),
+	});
 
-	const builtin = builtinProviders();
+	// 每个 provider 都包一层远端目录(自带 refreshModels 的原样返回)。不包的话,静态 provider
+	// 的模型表就是随版本冻结的那一份,厂商新出的模型永远不会出现 —— 见 model-catalog.ts。
+	const remoteCatalog = { baseUrl: catalogBaseUrlFromEnv(), builtinGeneratedAt: getBuiltinModelDataGeneratedAt() };
+	const builtin = builtinProviders().map((provider) => withRemoteCatalog(provider, remoteCatalog));
 	for (const provider of builtin) models.setProvider(provider);
 	const configured: string[] = [];
 	for (const provider of builtin) {
 		if (await models.checkAuth(provider.id)) configured.push(provider.id);
 		else models.deleteProvider(provider.id);
 	}
+
+	// 先把磁盘上的缓存恢复回来:**不联网**,所以既不拖慢开会话,也不会因为断网而失败。
+	// 联网那一次由宿主在后台单独发起(SessionManager.refreshModels),或用户在设置页手动点。
+	// 整个过程绝不能抛:模型目录旧了只是少几个新模型,而这里抛出去就是会话开不起来。
+	await models.refresh({ allowNetwork: false }).catch(() => undefined);
 
 	const knownIds = builtin.map((p) => p.id);
 	const providerId: string | undefined =

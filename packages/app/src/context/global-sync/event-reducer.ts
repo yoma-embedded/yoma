@@ -4,6 +4,7 @@ import type { KernelEvent, Session } from "@yoma-desktop/kernel"
 import type { State, VcsCache } from "./types"
 import { trimSessions } from "./session-trim"
 import { dropSessionCaches } from "./session-cache"
+import { invalidateProviders } from "@/components/kernel-providers"
 
 /**
  * 只在"这个目录当前不渲染会话内容"时才跳过的事件。
@@ -29,6 +30,11 @@ export function applyGlobalEvent(input: { event: KernelEvent; refresh: () => voi
   if (input.event.type === "kernel.connected") {
     input.refresh()
   }
+  // 后台那次联网刷新真的改变了模型列表:模型目录不走 bootstrap 的 query(它自己一份 resource),
+  // 所以这里要单独叫它重拉,否则用户要重开应用才看得见新模型。
+  if (input.event.type === "model.updated") {
+    invalidateProviders()
+  }
 }
 
 function cleanupSessionCaches(setStore: SetStoreFunction<State>, sessionID: string) {
@@ -40,11 +46,7 @@ function cleanupSessionCaches(setStore: SetStoreFunction<State>, sessionID: stri
   )
 }
 
-export function cleanupDroppedSessionCaches(
-  store: Store<State>,
-  setStore: SetStoreFunction<State>,
-  next: Session[],
-) {
+export function cleanupDroppedSessionCaches(store: Store<State>, setStore: SetStoreFunction<State>, next: Session[]) {
   const keep = new Set(next.map((item) => item.id))
   const stale = [
     ...Object.keys(store.message),
@@ -246,11 +248,7 @@ export function applyDirectoryEvent(input: {
       const target = parts[result.index]
       if (!target || !("text" in target)) break
       const current = target.text
-      input.setStore(
-        "part_text_accum_delta",
-        event.partID,
-        (existing) => (existing ?? current ?? "") + event.delta,
-      )
+      input.setStore("part_text_accum_delta", event.partID, (existing) => (existing ?? current ?? "") + event.delta)
       input.setStore(
         "part",
         event.messageID,

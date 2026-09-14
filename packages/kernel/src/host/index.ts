@@ -133,6 +133,8 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
 
 
     "model.list": () => sessions.providers(),
+    // 唯一一条主动碰模型目录网络的 RPC(开会话只恢复磁盘缓存)。设置页的"刷新模型列表"走它。
+    "model.refresh": () => sessions.refreshModels(),
     // 凭据落在 yoma 读的那份 ~/.pi/agent/auth.json —— 应用内配的 key 和命令行配 pi /
     // 配 Zed 的是同一份,互相可见。见 host/auth.ts。
     "auth.set": ({ providerID, apiKey }) => sessions.setAuth(providerID, apiKey),
