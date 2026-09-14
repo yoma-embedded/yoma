@@ -80,6 +80,9 @@ export interface KernelHost {
 
 export function createKernelHost(options: KernelHostOptions): KernelHost {
   const sink = new StreamSink({ flush: options.onEvents })
+  // 一个包同时只装一次;取消走这里的 AbortController。设置页的 RPC 与 agent 的 toolchain 工具
+  // 共用这一个 —— 两边同时装同一个包会往同一棵目录树里解压,所以它必须在 SessionManager 之前建好。
+  const installs = createInstallRegistry()
   const sessions = new SessionManager({
     sessionsRoot: options.sessionsRoot,
     enginesDir: options.enginesDir,
@@ -90,6 +93,7 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     toolchainSide: options.toolchainSide,
     toolchainManifestText: options.toolchainManifestText,
     confirmTools: options.confirmTools,
+    installRegistry: installs,
     emit: (events) => sink.push(events),
   })
   const projects = new ProjectStore(path.join(options.stateDir, "projects.json"))
@@ -98,9 +102,6 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
   const vcsWatchers = new VcsWatchers({
     emit: (directory, info) => sink.push([{ type: "vcs.updated", directory, info }]),
   })
-
-  // 一个 id 同时只装一次;取消走这里的 AbortController。
-  const installs = createInstallRegistry()
 
   const handlers = {
     "app.info": async () => ({

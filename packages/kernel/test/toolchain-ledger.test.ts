@@ -228,3 +228,14 @@ describe("readLocalOverrides", () => {
 		expect(await readLocalOverrides(dir)).toEqual({ "arm-gcc": armGcc() });
 	});
 });
+
+describe("并发写", () => {
+	it("同时写多条不互相踩掉 —— 整份文件是读—改—写,中间隔着一个 await", async () => {
+		// 真会同时进来:模型可以在同一批工具调用里 set 两个工具(用户一口气报了两个路径),
+		// 设置页的手填与 agent 的 set 也可能撞在一起 —— 那是两条完全不同的调用路径,
+		// 谁在自己那边排队都拦不住另一边,所以队列必须在 writeLedgerEntry 身上。
+		const ids = ["arm-gcc", "cmake", "ninja", "openocd", "python"];
+		await Promise.all(ids.map((id) => writeLedgerEntry(armGcc({ id }), dir)));
+		expect(Object.keys((await readLedger(dir)).entries).sort()).toEqual([...ids].sort());
+	});
+});

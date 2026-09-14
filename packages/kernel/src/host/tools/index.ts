@@ -15,10 +15,16 @@ import { createGrepTool } from "./grep/session.ts"
 import { createLogTool } from "./log/session.ts"
 import { createLsTool } from "./ls/session.ts"
 import { createPowerShellTool } from "./powershell/session.ts"
+import { createToolchainTool, type ToolchainToolOptions } from "./toolchain/session.ts"
 
 export interface RegisteredToolOptions {
   /** engines/ 根目录(bin/rg 在里面)。空串也算没给:kernel-entry 把未设的路径透传成 ""。 */
   enginesDir?: string
+  /**
+   * toolchain 工具的接线:账本目录、清单来源、安装注册表、装完刷 PATH 的钩子。
+   * **不传也能装配出工具**(自检那条路就不传),只是它会去读真实的 ~/.yoma、装完不刷在飞会话的 PATH。
+   */
+  toolchain?: ToolchainToolOptions
 }
 
 /**
@@ -34,6 +40,7 @@ export function createRegisteredTools(options: RegisteredToolOptions = {}): Regi
     createFindTool(shared),
     createLsTool(shared),
     createPowerShellTool(shared),
+    createToolchainTool(options.toolchain),
     createFlashTool(),
     createLogTool(),
   ]

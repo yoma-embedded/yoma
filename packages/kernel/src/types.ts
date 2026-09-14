@@ -239,10 +239,23 @@ export interface ToolConfirmView {
  *
  * 嵌入式那一套(flash/gdb/la/scope/…)2026-09-10 归零;2026-09-11 起按样板
  * host/tools/<名字>/{contract.ts,session.ts} 逐个重写,首个是 flash;2026-09-12 从 pi 移植了
- * grep / find / ls / powershell(四件套之后先放文件工具,硬件最后)。
+ * grep / find / ls / powershell;2026-09-14 回来的是 log 与 toolchain
+ * (四件套之后先放文件工具,再是这台机器本身,硬件最后)。
  * 退役的名字**不必**留在这里:界面按任意工具名走万能卡,旧会话重放照样画得出来。
  */
-export const TOOL_NAMES = ["read", "bash", "edit", "write", "grep", "find", "ls", "powershell", "flash", "log"] as const
+export const TOOL_NAMES = [
+  "read",
+  "bash",
+  "edit",
+  "write",
+  "grep",
+  "find",
+  "ls",
+  "powershell",
+  "toolchain",
+  "flash",
+  "log",
+] as const
 
 export type ToolName = (typeof TOOL_NAMES)[number]
 

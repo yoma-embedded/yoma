@@ -45,8 +45,10 @@ import {
   resolveToolchain,
   shellEnvFor,
   withMachineOnPath,
+  type InstallRegistry,
   type ToolchainResolution,
 } from "./domain/toolchain/index.ts"
+import { installProgressEvent } from "./toolchain.ts"
 import { buildSystemPrompt } from "./system-prompt.ts"
 import { ConfirmDesk } from "./confirm.ts"
 import { ToolProgressThrottle } from "./tool-progress.ts"
@@ -291,6 +293,11 @@ export interface SessionManagerOptions {
    * 确认台的十分钟超时,而 bench 判一轮结束看的是 idle 700ms,中间这十分钟没有任何人在看。
    */
   confirmTools?: boolean
+  /**
+   * 工具链安装的在飞注册表,与设置页的 `toolchain.install` RPC 共用同一个 —— agent 自己装和用户点着装
+   * 是两条调用路径,同一个包同时跑两路会往同一棵目录树里解压。**不传 = 两边各装各的**,所以桌面端必须传。
+   */
+  installRegistry?: InstallRegistry
 }
 
 export class SessionManager {
@@ -650,7 +657,18 @@ export class SessionManager {
         ? [...contextFiles, { path: "<toolchain>", content: toolchainSection }]
         : contextFiles
 
-      const tools = createAgentTools({ enginesDir: this.options.enginesDir })
+      const tools = createAgentTools({
+        enginesDir: this.options.enginesDir,
+        toolchain: {
+          configDir: this.configDir,
+          side: this.options.toolchainSide ?? "mother",
+          manifestText: this.options.toolchainManifestText,
+          // agent 装的和用户在设置页点着装的走同一条进度事件,于是 UI 上长得一样、注册表也拦得住对方。
+          onInstallProgress: (progress) => this.options.emit([installProgressEvent(progress)]),
+          onInstalled: () => this.refreshMachineEnv(),
+          installRegistry: this.options.installRegistry,
+        },
+      })
       const created = await AgentHarness.create<ExecutionToolContext>(
         {
           session,
@@ -1026,8 +1044,11 @@ export class SessionManager {
     // 否则模型会立刻同样再调一次,用户得连点好几次;超时若也说成"用户拒绝",模型会换招绕开,
     // 而用户只是没看屏幕。
     // 三段都要堵死绕行:只禁 flash 的话,模型会改用 bash 起同一条 openocd —— bash 不过这道门。
+    // 措辞必须**对所有会问的工具都成立**:被拒的可能是烧录(改用 bash 起 openocd),也可能是
+    // toolchain install(改用 bash curl | tar 把同一个包拉下来)。写死"探针命令"就只堵住了前一种。
     const what = `${event.toolName}: ${summary}`
-    const noBypass = "Do not run this or an equivalent probe command through bash or any other tool."
+    const noBypass =
+      "Do not work around this with bash or any other tool — that includes running an equivalent command yourself."
     const reason =
       settled === "denied"
         ? `The user declined to run ${what}. Do not retry without asking the user first. ${noBypass}`

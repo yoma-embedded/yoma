@@ -168,10 +168,33 @@ function writeJsonAtomic(file: string, value: unknown): void {
 
 /** 写入 / 覆盖账本里的一条(读改写整份文件,按 entry.id 覆盖)。原子写见 writeJsonAtomic。 */
 export async function writeLedgerEntry(entry: LedgerEntry, configDir?: string): Promise<void> {
-	const file = ledgerPath(configDir);
-	const current = await readLedger(configDir);
-	const next: Ledger = { schema: SCHEMA_TAG, entries: { ...current.entries, [entry.id]: entry } };
-	writeJsonAtomic(file, next);
+	return serializeWrite(async () => {
+		const file = ledgerPath(configDir);
+		const current = await readLedger(configDir);
+		const next: Ledger = { schema: SCHEMA_TAG, entries: { ...current.entries, [entry.id]: entry } };
+		writeJsonAtomic(file, next);
+	});
+}
+
+/**
+ * 整份文件是读—改—写,中间隔着一个 await:同时进来两条写就会各自拿到写前的快照,
+ * 后落地的那条把先落地的那条抹掉(写本身是 rename,不会写出半份文件,丢的是**别人那一条**)。
+ *
+ * 真会同时进来:模型可以在同一批工具调用里 set 两个工具(用户一口气报了两个路径),
+ * 设置页的手填与 agent 的 set 也可能撞在一起 —— 那是两条完全不同的调用路径,谁在自己那边排队
+ * 都拦不住另一边,所以队列必须在这个函数身上。跨进程(桌面端与 bench 同时开着)仍然会丢,
+ * 那要文件锁,不在这一刀的范围里。
+ */
+let writeQueue: Promise<unknown> = Promise.resolve();
+
+function serializeWrite<T>(task: () => Promise<T>): Promise<T> {
+	// then(task, task):前一条写失败也要接着跑下一条,否则一次失败会永久堵死队列。
+	const run = writeQueue.then(task, task);
+	writeQueue = run.then(
+		() => undefined,
+		() => undefined,
+	);
+	return run;
 }
 
 /**

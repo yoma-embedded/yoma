@@ -14,10 +14,10 @@
  * set 的路径验证失败则直接 reject:那是用户刚敲进输入框的东西,拒绝理由要原地报。
  */
 import {
-  catalogPackageFor,
   declaredToolBins,
   familyManifestText,
   findToolchainFamily,
+  installKey,
   installToolchain,
   readLedger,
   recordToolchainPath,
@@ -25,6 +25,7 @@ import {
   resolveToolchain,
   TOOLCHAIN_FAMILIES,
   type InstallProgress,
+  type InstallRegistry,
 } from "./domain/toolchain/index.ts"
 
 import type { KernelEvent } from "../protocol.ts"
@@ -161,52 +162,12 @@ export async function toolchainFamilySet(
 // AbortController)、把进度回调翻译成 `toolchain.install` 事件、装完把机器级核账一并
 // 回给 UI。
 
-export interface InstallRegistry {
-  /**
-   * 同一个 key 已在装 ⇒ reject(message 含 "already");否则登记并跑到结束(成功失败都注销)。
-   * key 是包 id(arm-gcc 与 arm-gdb 同一个包,不该一个在装另一个还能点);label 是给 UI 看的
-   * 工具 id,active() 返回的是它。
-   */
-  start<T>(key: string, run: (signal: AbortSignal) => Promise<T>, label?: string): Promise<T>
-  /** 有在装的就 abort 并返回 true;没有返回 false。 */
-  cancel(key: string): boolean
-  /** 在装的工具 id(label)。 */
-  active(): string[]
-}
-
-export function createInstallRegistry(): InstallRegistry {
-  const inflight = new Map<string, { controller: AbortController; label: string }>()
-  return {
-    async start(key, run, label = key) {
-      const current = inflight.get(key)
-      if (current) throw new Error(`${current.label} is already installing — wait for it or cancel it first`)
-      const controller = new AbortController()
-      const record = { controller, label }
-      inflight.set(key, record)
-      try {
-        return await run(controller.signal)
-      } finally {
-        if (inflight.get(key) === record) inflight.delete(key)
-      }
-    },
-    cancel(keyOrLabel) {
-      // 键(包 id)或标签(工具 id)都认:UI 手里只有工具 id。
-      const record =
-        inflight.get(keyOrLabel) ?? [...inflight.values()].find((candidate) => candidate.label === keyOrLabel)
-      if (!record) return false
-      record.controller.abort()
-      return true
-    },
-    active() {
-      return [...inflight.values()].map((record) => record.label)
-    },
-  }
-}
-
-/** 注册表的键:工具所属的包 id(目录里没有的工具就用它自己的 id)。 */
-export function installKey(toolId: string): string {
-  return catalogPackageFor(toolId)?.id ?? toolId
-}
+/**
+ * 注册表本身搬去了 domain/toolchain/install.ts:设置页的「安装」按钮与 agent 的 `toolchain install`
+ * 是两条完全不同的调用路径,而它们下载解压到**同一个目录**,锁必须放在两边都够得着的那个盒子里
+ * (工具那一半按守门测试够不到 host/*.ts)。这里原样转发,既有调用方(host/index.ts、测试)不必改。
+ */
+export { createInstallRegistry, installKey, type InstallRegistry } from "./domain/toolchain/index.ts"
 
 export function installProgressEvent(progress: InstallProgress): KernelEvent {
   return {

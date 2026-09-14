@@ -12,13 +12,15 @@ import { GREP_CONTRACT } from "./grep/contract.ts"
 import { LOG_CONTRACT } from "./log/contract.ts"
 import { LS_CONTRACT } from "./ls/contract.ts"
 import { POWERSHELL_CONTRACT } from "./powershell/contract.ts"
+import { TOOLCHAIN_CONTRACT } from "./toolchain/contract.ts"
 
-/** 四件套之后先放文件工具,硬件最后;顺序与 index.ts 的装配、types.ts 的 TOOL_NAMES 逐字同序。 */
+/** 四件套之后先放文件工具,再是这台机器本身(工具链),硬件最后;顺序与 index.ts 的装配、types.ts 的 TOOL_NAMES 逐字同序。 */
 export const TOOL_CONTRACTS = [
   GREP_CONTRACT,
   FIND_CONTRACT,
   LS_CONTRACT,
   POWERSHELL_CONTRACT,
+  TOOLCHAIN_CONTRACT,
   FLASH_CONTRACT,
   LOG_CONTRACT,
 ] as const satisfies readonly ToolContract[]

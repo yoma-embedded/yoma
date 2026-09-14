@@ -913,3 +913,57 @@ export async function installToolchain(opts: InstallToolchainOptions): Promise<I
 		release();
 	}
 }
+
+// ─── 在飞安装的注册表 ────────────────────────────────────────────────────────
+//
+// 一个包同时只许装一路。两个入口共用它:设置页的 toolchain.install RPC,以及 agent 的
+// toolchain 工具 —— 两条路都往 <configDir>/toolchains/<包> 里下载解压,同时跑就是两路
+// 往同一棵目录树里写,而失败长得像「下载损坏」。放在 domain 是因为工具那一半按守门
+// 测试只拿得到 domain,拿不到 host/toolchain.ts。
+
+export interface InstallRegistry {
+	/**
+	 * 同一个 key 已在装 ⇒ reject(message 含 "already");否则登记并跑到结束(成功失败都注销)。
+	 * key 是包 id(arm-gcc 与 arm-gdb 同一个包,不该一个在装另一个还能点);label 是给 UI 看的
+	 * 工具 id,active() 返回的是它。
+	 */
+	start<T>(key: string, run: (signal: AbortSignal) => Promise<T>, label?: string): Promise<T>
+	/** 有在装的就 abort 并返回 true;没有返回 false。 */
+	cancel(key: string): boolean
+	/** 在装的工具 id(label)。 */
+	active(): string[]
+}
+
+export function createInstallRegistry(): InstallRegistry {
+	const inflight = new Map<string, { controller: AbortController; label: string }>()
+	return {
+		async start(key, run, label = key) {
+			const current = inflight.get(key)
+			if (current) throw new Error(`${current.label} is already installing — wait for it or cancel it first`)
+			const controller = new AbortController()
+			const record = { controller, label }
+			inflight.set(key, record)
+			try {
+				return await run(controller.signal)
+			} finally {
+				if (inflight.get(key) === record) inflight.delete(key)
+			}
+		},
+		cancel(keyOrLabel) {
+			// 键(包 id)或标签(工具 id)都认:UI 手里只有工具 id。
+			const record =
+				inflight.get(keyOrLabel) ?? [...inflight.values()].find((candidate) => candidate.label === keyOrLabel)
+			if (!record) return false
+			record.controller.abort()
+			return true
+		},
+		active() {
+			return [...inflight.values()].map((record) => record.label)
+		},
+	}
+}
+
+/** 注册表的键:工具所属的包 id(目录里没有的工具就用它自己的 id)。 */
+export function installKey(toolId: string): string {
+	return catalogPackageFor(toolId)?.id ?? toolId
+}

@@ -141,6 +141,34 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
      `prompt()` 在 accept 之前回头看一眼。
   6. 说明(转过格式、缩过多少)**跟着消息进模型**,不只弹界面提示:模型看不到原图,不说它就会按缩略图的
      坐标回答。`read` 那条路由发动机拼进工具结果,输入框这条由 `prompt()` 拼进正文。
+- **toolchain 工具**(2026-09-14,第 6 步第 5 刀,从 attic/tools/toolchain.ts 重写):`host/tools/toolchain/`
+  两个文件,四个动作 check / resolve / set / install。探测、账本、下载解压**一行都没重写** —— 全在
+  `host/domain/toolchain/` 里,那套实现同时被设置页的 RPC(`host/toolchain.ts`)用着,所以这一刀真正写的
+  只是"参数 → 调用 → 人话"。
+  这一刀的三条经验都不在工具本身,而在"同一件事有两个入口"这件事上:
+  1. **锁要放在两个入口都够得着的盒子里。** agent 的 `toolchain install` 与设置页的「安装」按钮下载解压到
+     **同一棵目录树**,同时跑不会报错,只会解出一棵交错的树。原来的 `InstallRegistry` 住在 `host/toolchain.ts`,
+     而工具那一半按 `boundary.test.ts` 第 2 条够不到 `host/*.ts` —— 所以把它搬进 `domain/toolchain/install.ts`,
+     `host/index.ts` 在建 SessionManager **之前**建好注册表、两边共用。副作用是白赚的:设置页的取消按钮
+     现在能停掉 agent 正在跑的那次下载(两个中止信号在工具里合成一个)。
+  2. **读—改—写的队列要长在被写的那个函数身上。** `writeLedgerEntry` 是读整份 JSON、改一条、写回去,中间
+     隔着一个 await;同一批工具调用里 set 两个工具(用户一口气报了两个路径)就会丢掉一条。测出来的样子是
+     五条并发写只活下来一条。队列放在工具里没用 —— 设置页那条调用路径根本不经过工具。
+  3. **确认条的话术不能写死某一个工具。** 被拒时那句 "Do not run this or an equivalent probe command through
+     bash" 是为烧录写的;toolchain install 被拒时,模型绕行的办法是 `curl | tar`,不是探针命令。多一个会问的
+     工具,那句话就得改成对所有会问的工具都成立的说法。
+  4. **一个包可能满足好几个工具**(Arm 那个包同时给 arm-gcc 和 arm-gdb),而锁按**包**去重。两条 MISSING
+     行各喊各的 `install id=...`,模型就会在同一批里发两次调用,第二次必然收到 "already installing" ——
+     而这正是最常见的那条路(两个都缺)。所以提示行里两条都指向同一个 id,并写明这一次装覆盖了谁。
+  5. **描述里不许写"会先问用户"。** 挂不挂确认钩子是宿主的事:只有桌面端传 `confirmTools`,bench 与信箱
+     工位端都不传。写了的话,对那两个无人值守的宿主就是假话,而模型据此以为有人把关。`FLASH_CONTRACT`
+     一个字都不提自己的门,正是这个原因。
+  另外:这个工具**不需要** log 那样的自排队(发动机忽略 `executionMode` 那条教训)—— 账本自己排了队、安装
+  由注册表挡着,而 install 要几分钟,真串起来的话装 arm-gcc 期间一句 check 都要等几分钟。
+  确认条的短名按工具名查 i18n(`session.confirmDock.tool.<名字>`),**缺键不是回落到工具名而是渲染出
+  `undefined`**(solid 的 translator 对缺键返回 undefined,组件里那句 `text === key` 的兜底永远不成立):
+  以后每加一个会问的工具,两份 i18n 都要跟着加一条。
+
 - 新开一道深引用 = 改 `exports`(从前是改四份别名表)。`boundary.test.ts` 钉住五条:菜单里没有 Node;
   工具间不反调会话间(`host/domain` 往外只拿 `host/models.ts`、`host/datasheet-server.ts`);餐厅只许走
   `@yoma-desktop/kernel`、`@yoma-desktop/kernel/tools/<名字>/contract` 或 `@yoma-desktop/kernel/tools/contracts`;
