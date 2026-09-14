@@ -5,3 +5,5 @@
 *.o
 # 由 fixture.ld.in 生成的链接脚本(.ld.in 后缀不同,不会被误伤)
 *.ld
+# gdb 工具在这里当 cwd 跑端到端用例时的会话产物
+.yoma/

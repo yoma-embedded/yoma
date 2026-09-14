@@ -255,6 +255,50 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
      decodeStackedFrame)对了一遍:pc=0x080003c6 = main.c:200 的那条 store,与固件自己打印的 hardfault_report
      逐字段一致;读 `$msp` 得到的是垃圾 —— 正是 EXC_RETURN 选栈那段注释在防的事。
 
+- **gdb 第二刀:会话与工具壳**(2026-09-14,第 6 步第 8 刀,从 attic/tools/gdb.ts 重写):`host/tools/gdb/` 五个文件 ——
+  `contract.ts`(菜单:六个动作 start / break / exec / eval / status / stop,确认门只在 `eval` 带 `write:true` 时问)、
+  `servers.ts`(OpenOCD / J-Link / QEMU 的 argv、就绪判据、能力表,`connect` 解析,空闲端口)、`mi-session.ts`(gdb 子进程 +
+  MI 收发状态机:token 派发、先装 waiter 再 resume、停止落盘)、`target.ts`(认核、`$psp`/`$msp` 上的异常帧、停止报告、
+  源码路径映射、镜像校验、按 ELF 架构挑 gdb)、`session.ts`(六个动作 + 一条队列 + dispose)。TOOL_NAMES 末尾加 "gdb",
+  共 13 个工具。测试 `test/tools-gdb.test.ts`:假 gdb(一段说 MI3 的 JS,行为从 mode 文件读)跑整条链,加上**真 QEMU +
+  真 gdb 的端到端**(本机有 arm-none-eabi-gdb 与 qemu-system-arm 时才跑:attach、断点、continue、badptr 的故障现场、
+  单步表、按停止时 interrupt、收尸)。
+  1. **全部动作排一条队列**,不像 la 只排有状态的:gdb 是单个 REPL、探针是独占设备,没有一个动作适合并发;两条
+     `start` 并发时第二条要看到"already attached"而不是起第二个 gdb。
+  2. **等停止的那几十秒要能被停止按钮打断,打断时把目标 interrupt 住**:停住的目标能恢复,悄悄跑着的不能。
+     `dispose()` 也走同一条路(一个 closing 信号并进每一轮的 abortSignal),否则关会话要等满 waitMs。
+  3. **`show` 表达式每次停止都会被求值**,所以 `x=1` 这种写目标的表达式在 exec 入口就拒(与 eval 同一把尺
+     `expressionWrites`);`load` 成功后更新 flash-state,否则下一次 start 会把刚 load 进去的镜像报成"不符"。
+  4. **QEMU 的 FP_CTRL 读出来是 0**:预算按"不知道"处理(`total || undefined`),报告里明说,让 gdb 的 Z0 回复决定。
+  5. **报告里的文件名优先 `fullname`**:`set substitute-path` 映射之后它才是本机路径、能剥掉工程根;`file` 是编译机上
+     写的名字,永远剥不掉。编辑器位置(details.path)只在文件本机存在时才给。
+  6. 夹具 ELF 的 DWARF 路径是编译它的那台机器的(`…/my-pi/…`),本机可能存在也可能不存在 —— 端到端断言按存不存在
+     分两支,映射那一支由假 gdb 钉死(假的报一个不存在的 fullname、cwd 里放同名文件,断言 `set substitute-path` 真发了)。
+  7. hello 场景 500 ms 内就跑完退出,"按停止"的用例要先把 `g_scenario` 改成 infloop(8)再 continue。
+  审稿(两位,一个跑真 QEMU 对每个动作做实验、一个做生命周期变异)抓到 20 条,全部属实、全部修了。挑几条以后
+  还会再踩的:
+  8. **MI 对软件与硬件的写观察点都回 `wpt=`**(只有 console 文本不同),硬/软只能看 `-break-info` 的 `type`。阁楼
+     那套"没有 hw- 前缀就是软件"把每一个写观察点都报成 SOFTWARE —— 假 gdb 回 `hw-awpt` 所以套件看不见。
+  9. **断点表要跟着 gdb 的通知走**:临时断点命中后 gdb 发 `=breakpoint-deleted`,不处理的话预算表里留着幽灵单元,
+     "没断点别 continue"的门也被幽灵放行。
+  10. **对已经停住的目标发 `-exec-interrupt`,gdb 回 `^done` 但永远不来 `*stopped`** —— 等下去就是一份假的
+      WFI / SWD 掉线诊断;目标退出后 gdb 照样回答 `p x`(值来自 ELF 的 .data 初值),`start` 也照样"复用"那个没有
+      目标的会话。运行控制前先看 `state`:halted 就给现状,exited / connection-lost 就明说并让它 stop + start。
+  11. **宿主退出只收了 gdb 没收 server**:SIGTERM 内核之后 qemu 被 launchd 接管继续跑(openocd 就是攥着探针)。
+      `spawnServer` 现在也挂 `killOnHostExit`;gdb 崩了再 `start` 也要先 teardown —— 否则新起的 openocd 和旧的
+      抢同一个探针,而旧的再也没人认。
+  12. **确认门按效果判,不按动作判**(与 bash / powershell / log 的探针门同一条规矩):`start server:"openocd"`
+      起的正是 bash 里会被问的那个程序,`exec reset-*` 发的正是 eval 要 write:true 才肯发的 `monitor reset`。
+  13. **QEMU 上固件的 semihosting 打印只在 server 的 stdout 上**:落到 `.yoma/gdb/server-<tag>.log`,目标退出 /
+      掉线的报告里带最后几行,status 里 server 死了要说 EXITED 而不是报一个 pid。
+  14. OpenOCD 的 `monitor reset` 失败不走 `^error`("Error: timed out …" 是 `^done` 下面的普通文本):按文本判,
+      没成功就别宣布"复位了"、别 bump epoch;成功但没等到 `*stopped` 时要说旧报告已过期。
+  15. `info line` 要写 `*addr`(不带星号是行号);`info symbol` 不用。审稿人对着固件自己打印的 hardfault_report
+      逐字段核了工具的故障报告,加上 xPSR(IPSR + T 位)之后两边一致。
+  16. 探针租约与 server 收尸原本零覆盖(删掉 `releaseProbe` 或杀树全绿):假 openocd(打就绪串、真的在端口上听、
+      写 pid、活到被杀)一条用例同时钉住租约、收尸、崩溃重起、keepServer;宿主退出那条用子进程 `node --import tsx`
+      跑 spawnServer 再 SIGTERM 自己。
+
 - 新开一道深引用 = 改 `exports`(从前是改四份别名表)。`boundary.test.ts` 钉住五条:菜单里没有 Node;
   工具间不反调会话间(`host/domain` 往外只拿 `host/models.ts`、`host/datasheet-server.ts`);餐厅只许走
   `@yoma-desktop/kernel`、`@yoma-desktop/kernel/tools/<名字>/contract` 或 `@yoma-desktop/kernel/tools/contracts`;

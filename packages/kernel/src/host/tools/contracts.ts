@@ -8,6 +8,7 @@
 import type { ToolContract } from "./contract-types.ts"
 import { FIND_CONTRACT } from "./find/contract.ts"
 import { FLASH_CONTRACT, probeCommandIn } from "./flash/contract.ts"
+import { GDB_CONTRACT } from "./gdb/contract.ts"
 import { GREP_CONTRACT } from "./grep/contract.ts"
 import { LA_CONTRACT } from "./la/contract.ts"
 import { LOG_CONTRACT } from "./log/contract.ts"
@@ -25,6 +26,7 @@ export const TOOL_CONTRACTS = [
   FLASH_CONTRACT,
   LOG_CONTRACT,
   LA_CONTRACT,
+  GDB_CONTRACT,
 ] as const satisfies readonly ToolContract[]
 
 export function toolContract(name: string): ToolContract | undefined {

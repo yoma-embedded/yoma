@@ -35,6 +35,12 @@ const BLOCKED_RE =
   /^\s*(?:[!|]|(?:shell|pipe|python|py|python-interactive|pi|run|r|start|starti|attach|detach|target|file|exec-file|symbol-file|add-symbol-file|remove-symbol-file|core-file|quit|q|kill|source|define|document|compile|tui|layout)\b)/i
 /** 工具自己拥有的设置。 */
 const BLOCKED_SET_RE = /^\s*set\s+(logging|confirm|pagination|height|width|editing|mi-async|non-stop)\b/i
+/**
+ * 只影响显示的设置,放行:模型想把结构体打平、换反汇编风格、改进制,都不碰目标。
+ * 白名单而不是"gdb 认识的都放":`set <未知名字> = 值` 真的会当表达式写内存,认识不认识只有 gdb 知道。
+ */
+const DISPLAY_SET_RE =
+  /^\s*set\s+(print|listsize|disassembly-flavor|language|output-radix|input-radix|charset|style)\b/i
 /** 断点表由 break 动作维护(硬件预算按它算),从这里下的断点它看不见。 */
 const BREAKPOINT_RE = /^\s*(break|b|br|tbreak|hbreak|thbreak|watch|rwatch|awatch|delete|d|clear)\b/i
 /** 会让目标跑起来、但 exec 没有对应动作的动词。 */
@@ -111,6 +117,7 @@ export function classifyEval(command: string): EvalVerdict {
         "this setting is owned by the tool (logging/confirm/pagination/height/width/editing/mi-async/non-stop); changing it breaks the driver.",
     }
   }
+  if (DISPLAY_SET_RE.test(trimmed)) return { kind: "read" }
   if (MUTATING_RE.test(trimmed) || MONITOR_RE.test(trimmed)) {
     return {
       kind: "mutating",

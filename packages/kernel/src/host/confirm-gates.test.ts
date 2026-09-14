@@ -41,6 +41,29 @@ describe("confirmNeeded", () => {
     expect(confirmNeeded("log", { action: "wait", pattern: "openocd" })).toBeUndefined()
   })
 
+  it("gdb 按效果问:写目标的 eval、起探针程序的 start、复位的 exec;qemu / connect 的 start、断点、单步、只读 eval 不问", () => {
+    const gate = confirmNeeded("gdb", { action: "eval", command: "set variable g_scenario = 6", write: true })
+    expect(gate?.label).toBe("调试器")
+    expect(gate?.summary({ action: "eval", command: "set variable g_scenario = 6", write: true })).toBe(
+      "eval set variable g_scenario = 6 (write)",
+    )
+    expect(confirmNeeded("gdb", { action: "eval", command: "p/x *cfg" })).toBeUndefined()
+    expect(confirmNeeded("gdb", { action: "eval", command: "monitor reset halt", write: false })).toBeUndefined()
+    // bash 里起 openocd 要问,gdb start 起同一个程序也要问 —— 门按跑了哪个程序判,不按工具名判
+    const start = confirmNeeded("gdb", { action: "start", server: "openocd", config: ["target/stm32g4x.cfg"] })
+    expect(start?.label).toBe("调试器")
+    expect(start?.summary({ action: "start", server: "openocd", elfPath: "build/fw.elf" })).toBe(
+      "start openocd build/fw.elf",
+    )
+    expect(confirmNeeded("gdb", { action: "start", server: "qemu", machine: "netduinoplus2" })).toBeUndefined()
+    expect(confirmNeeded("gdb", { action: "start", connect: "localhost:3333" })).toBeUndefined()
+    expect(
+      confirmNeeded("gdb", { action: "exec", op: "reset-halt" })?.summary({ action: "exec", op: "reset-halt" }),
+    ).toBe("exec reset-halt")
+    expect(confirmNeeded("gdb", { action: "break", at: "main" })).toBeUndefined()
+    expect(confirmNeeded("gdb", { action: "exec", op: "continue" })).toBeUndefined()
+  })
+
   it("无害命令、没登记的工具、参数形状不对的都不问", () => {
     expect(confirmNeeded("bash", { command: "ls -la && grep -rn openocd src/" })).toBeUndefined()
     expect(confirmNeeded("powershell", { command: "Get-PnpDevice -Class Ports" })).toBeUndefined()

@@ -85,7 +85,8 @@ export async function readFlashState(cwd: string): Promise<FlashState | undefine
   }
 }
 
-async function writeFlashState(cwd: string, state: FlashState): Promise<void> {
+/** gdb 的 `load` 也会改写片子里的镜像,所以它也要记这本账(否则下一次 gdb start 会把它报成"镜像不符")。 */
+export async function writeFlashState(cwd: string, state: FlashState): Promise<void> {
   const file = path.join(cwd, FLASH_STATE_FILE)
   await mkdir(path.dirname(file), { recursive: true })
   await writeFile(file, `${JSON.stringify(state, null, "\t")}\n`)

@@ -11,6 +11,7 @@ import type { AgentHarnessTool, ExecutionToolContext } from "@earendil-works/pi-
 
 import { createFindTool } from "./find/session.ts"
 import { createFlashTool } from "./flash/session.ts"
+import { createGdbTool } from "./gdb/session.ts"
 import { createGrepTool } from "./grep/session.ts"
 import { createLaTool } from "./la/session.ts"
 import { createLogTool } from "./log/session.ts"
@@ -45,5 +46,6 @@ export function createRegisteredTools(options: RegisteredToolOptions = {}): Regi
     createFlashTool(),
     createLogTool(),
     createLaTool(shared),
+    createGdbTool(),
   ]
 }

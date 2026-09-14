@@ -142,7 +142,23 @@ describe("classifyEval", () => {
     const v = classifyEval("set startup-with-shell off")
     expect(v.kind).toBe("blocked")
     expect(v.kind === "blocked" && v.reason).toContain("EXPRESSION")
-    expect(classifyEval("set listsize 20").kind).toBe("blocked")
+    expect(classifyEval("set remotetimeout 5").kind).toBe("blocked")
+  })
+
+  it("只影响显示的设置放行(审稿实测:`set print pretty off` 被拒还说它'不是设置',理由是假的)", () => {
+    for (const cmd of [
+      "set print pretty off",
+      "set print elements 200",
+      "set listsize 20",
+      "set disassembly-flavor intel",
+      "set output-radix 16",
+      "set language c",
+    ]) {
+      expect(classifyEval(cmd).kind, cmd).toBe("read")
+    }
+    // 工具自己拥有的仍然拦
+    expect(classifyEval("set pagination on").kind).toBe("blocked")
+    expect(classifyEval("set mi-async off").kind).toBe("blocked")
   })
 
   it("只读命令放行", () => {
