@@ -169,6 +169,39 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
   `undefined`**(solid 的 translator 对缺键返回 undefined,组件里那句 `text === key` 的兜底永远不成立):
   以后每加一个会问的工具,两份 i18n 都要跟着加一条。
 
+- **la 工具**(2026-09-14,第 6 步第 6 刀,从 attic/tools/la.ts 重写):`host/tools/la/{contract,stats,session}.ts`,
+  13 个动作。语义(事务聚合、期望差分、时序统计)早在 `host/domain/la` 里 —— 界面的波形图一直在用它,
+  这一刀只是把**同一份厨房**也开给 agent。
+  1. **有状态的工具第二次踩同一个坑:自排队。** arm 武装着一次采集活在闭包里,而发动机的 AgentHarness
+     不读 `executionMode` —— 同一批里两条 `arm` 能同时通过"已经武装了吗"的检查、各起一个子进程,而引擎
+     的采集库是全局单例 + 单活动设备。队列同 log。
+  2. **dispose 收设备。** 会话关掉时武装着的采集要 abort,否则 DSLogic 被占到内核退出(与 log 还串口同理)。
+  3. **数学搬进 `stats.ts` 是为了本机能测。** `yoma-la` 要 cmake + pkg-config + glib + libusb(Windows 上是
+     MSYS2 ucrt64)才编得出来,开发机上常常没有;而脉宽 / 周期 / 毛刺算错**不会报错**,只会让模型自信地
+     给出错误的根因("时钟是 400 kHz")。测试用**假引擎**(一段 JS,capture 时把仓里的 demo 波形拷成
+     capture.dsl)让"采集 → 解析 .dsl → 统计 → 渲染"整条链真跑,只有碰 USB 那一步是假的;假引擎还记下
+     自己收到的 argv,于是"通道名翻成通道号"这种拼错了不报错只出垃圾的事成了可断言的东西。
+  4. **可选引擎缺席时不许说"重装"。** `engineBin` 那句通用报错是"重装 Yoma / 跑 engines:build",而 yoma-la
+     本来就是构建脚本探不到工具链就跳过的可选件 —— 重装一百次也不会多出这个文件。而且少了它这个工具
+     **还有一半能用**(别人存的 .dsl 照样 import / summary / timing / events),话术必须把那半条路指出来。
+     同 image 那条"没装这功能"与"这张没弄成"要分开说。
+  5. **收子进程要看"还没结束的",不能只看"武装着的"。** `collect` 一上来就把 `armed` 清掉,然后 await 那个
+     子进程(缺省 30 秒,timeoutMs 能到一小时)—— 那段时间它还攥着 DSLogic,却谁都够不着:dispose 看不见、
+     `killOnHostExit` 也不认,而 `runEngine` 是 detached,宿主这时退出就是个孤儿。所以闭包里有一个
+     `owned` 集合,一次性的 `capture` 也登记进去;`collect` 不再提前摘,由采集自己结束时摘。
+     (审稿实测:dispose 1 ms 返回,子进程 2 秒后才跑完。)
+  6. **"会话正在关"的闸门要放在队列里面。** 放外面的话,排在一次采集后面的 `arm` 会在 dispose 之后照跑,
+     起一个谁也收不走的子进程;dispose 还要等队列排空再返回。
+  7. **只有会动状态的动作该排队。** 13 个动作全塞进一条队列的代价是 `la list` 跟在一次采集后面干等
+     (实测 1.7 秒,生产里就是整个触发超时)。排队的只有 capture / arm / collect / stop;另外 `collect`
+     要把这一轮的 abortSignal 接到那次采集的 controller 上,否则"永不触发 + 一小时超时"会把工具钉死,
+     而停止按钮毫无反应。
+  8. 假引擎的坑:分支体是异步的(慢采集要等定时器)时**不能**在它后面补 `process.exit(0)` —— 那会在定时器
+     开火前杀掉进程,症状是"引擎退出码 0 但没有输出"。arm 不 await 子进程,所以断言 argv 之前要轮询等它起来。
+  9. **"子进程被杀掉了"要用完成标记来断言**:让假引擎跑到最后写一个文件,然后断言 stop / dispose 之后
+     那个文件**永远不出现**。而断言窗口必须**比采集自己跑完还长** —— 窗口短于采集时长的话,"杀掉了"和
+     "还没跑完"长得一模一样,用例就是空的(第一版 1500/400 就是这个毛病,变异验证时才露出来)。
+
 - 新开一道深引用 = 改 `exports`(从前是改四份别名表)。`boundary.test.ts` 钉住五条:菜单里没有 Node;
   工具间不反调会话间(`host/domain` 往外只拿 `host/models.ts`、`host/datasheet-server.ts`);餐厅只许走
   `@yoma-desktop/kernel`、`@yoma-desktop/kernel/tools/<名字>/contract` 或 `@yoma-desktop/kernel/tools/contracts`;
