@@ -1,0 +1,49 @@
+=thread-group-added,id="i1"
+(gdb) 
+~"GNU gdb (Arm GNU Toolchain 15.2.Rel1 (Build arm-15.86)) 16.3.90.20250906-git\n"
+~"Copyright (C) 2024 Free Software Foundation, Inc.\n"
+~"License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>\nThis is free software: you are free to change and redistribute it.\nThere is NO WARRANTY, to the extent permitted by law."
+~"\nType \""
+~"show copying\" and \"show warranty\" for details.\n"
+~"This GDB was configured as \"--host=aarch64-apple-darwin20.6.0 --target=arm-none-eabi\".\n"
+~"Type \"show configuration\" for configuration details.\n"
+~"For bug reporting instructions, please see:\n"
+~"<https://gitlab.arm.com/tooling/gnu-devtools-for-arm/-/issues/>.\n"
+~"Find the GDB manual and other documentation resources online at:\n    <"
+~"http://www.gnu.org/software/gdb/documentation/>.\n\n"
+~"For help, type \"help\".\n"
+~"Type \"apropos word\" to search for commands related to \"word\".\n"
+1^done
+(gdb) 
+2^done,features=["frozen-varobjs","pending-breakpoints","thread-info","data-read-memory-bytes","breakpoint-notifications","ada-task-info","language-option","info-gdb-mi-command","undefined-command-error-code","exec-run-start-option","data-disassemble-a-option","simple-values-ref-types"]
+(gdb) 
+3^done
+(gdb) 
+4^done,value="on"
+(gdb) 
+5^done,value="2"
+(gdb) 
+6^error,msg="Undefined MI command: no-such-command",code="undefined-command"
+(gdb) 
+~"\346\210\221\n"
+7^done
+(gdb) 
+8^done
+(gdb) 
+9^done,bkpt={number="1",type="breakpoint",disp="keep",enabled="y",addr="0x08000274",func="main",file="/Users/ben/embedded_agents/my-pi/packages/coding-agent/test/fixtures/gdb/main.c",fullname="/Users/ben/embedded_agents/my-pi/packages/coding-agent/test/fixtures/gdb/main.c",line="148",thread-groups=["i1"],times="0",original-location="main"}
+(gdb) 
+10^done,BreakpointTable={nr_rows="1",nr_cols="6",hdr=[{width="7",alignment="-1",col_name="number",colhdr="Num"},{width="14",alignment="-1",col_name="type",colhdr="Type"},{width="4",alignment="-1",col_name="disp",colhdr="Disp"},{width="3",alignment="-1",col_name="enabled",colhdr="Enb"},{width="10",alignment="-1",col_name="addr",colhdr="Address"},{width="40",alignment="2",col_name="what",colhdr="What"}],body=[bkpt={number="1",type="breakpoint",disp="keep",enabled="y",addr="0x08000274",func="main",file="/Users/ben/embedded_agents/my-pi/packages/coding-agent/test/fixtures/gdb/main.c",fullname="/Users/ben/embedded_agents/my-pi/packages/coding-agent/test/fixtures/gdb/main.c",line="148",thread-groups=["i1"],times="0",original-location="main"}]}
+(gdb) 
+11^done,symbols={debug=[{filename="/Users/ben/embedded_agents/my-pi/packages/coding-agent/test/fixtures/gdb/main.c",fullname="/Users/ben/embedded_agents/my-pi/packages/coding-agent/test/fixtures/gdb/main.c",symbols=[{line="315",name="Default_Handler",type="void (void)",description="void Default_Handler(void);"},{line="269",name="HardFault_Handler",type="void (void)",description="void HardFault_Handler(void);"},{line="286",name="Reset_Handler",type="void (void)",description="void Reset_Handler(void);"},{line="123",name="SysTick_Handler",type="void (void)",description="void SysTick_Handler(void);"},{line="93",name="breakpoint_target",type="int (int)",description="int breakpoint_target(int);"},{line="80",name="corrupt_canary",type="void (unsigned int)",description="void corrupt_canary(unsigned int);"},{line="241",name="hardfault_report",type="void (struct frame *, unsigned int)",description="void hardfault_report(struct frame *, unsigned int);"},{line="147",name="main",type="int (void)",description="int main(void);"},{line="85",name="read_canary",type="unsigned int (void)",description="unsigned int read_canary(void);"},{line="104",name="recurse",type="unsigned int (unsigned int)",description="unsigned int recurse(unsigned int);"},{line="45",name="test_done",type="void (void)",description="void test_done(void);"},{line="134",name="pick_scenario_from_cmdline",type="void (void)",description="static void pick_scenario_from_cmdline(void);"},{line="30",name="print",type="void (const char *)",description="static void print(const char *);"},{line="32",name="print_hex",type="void (unsigned int)",description="static void print_hex(unsigned int);"},{line="50",name="sh_exit",type="void (void)",description="static void sh_exit(void);"},{line="128",name="streq",type="int (const char *, const char *)",description="static int streq(const char *, const char *);"}]}]}
+(gdb) 
+12^done,asm_insns=[{address="0x08000274",func-name="main",offset="0",inst="push\t{r4, lr}"},{address="0x08000276",func-name="main",offset="2",inst="sub\tsp, #8"},{address="0x08000278",func-name="main",offset="4",inst="bl\t0x8000184 <pick_scenario_from_cmdline>"}]
+(gdb) 
+13^done,files=[{file="/Users/ben/embedded_agents/my-pi/packages/coding-agent/test/fixtures/gdb/main.c",fullname="/Users/ben/embedded_agents/my-pi/packages/coding-agent/test/fixtures/gdb/main.c",debug-fully-read="true"}]
+(gdb) 
+14^error,msg="No registers."
+(gdb) 
+15^done,value="4"
+(gdb) 
+16^done
+(gdb) 
+17^exit

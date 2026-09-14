@@ -221,6 +221,40 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
   教训的形状:**"我的清单比别人少"先问"别人那一条是从哪来的",别默认是同步落后。** 这次如果直接去补同步,
   再同步一百次也补不出那个模型。
 
+- **gdb 第一刀:纯函数层**(2026-09-14,第 6 步第 7 刀,从 attic/tools/gdb-mi.ts + gdb.ts 的纯函数部分移植):
+  `host/domain/gdb/{mi,cortex-m,render,elf,eval-policy,index}.ts` —— MI3 分帧与解析、Cortex-M 故障解码、帧渲染、
+  ELF 头与 gdb 候选名、eval 闸门。不起进程、不碰硬件;会话与工具壳(`host/tools/gdb/`)是第二刀。测试
+  `test/gdb-mi.test.ts`(110)+ `test/gdb-eval-policy.test.ts`(14)。gdb 拆两刀的理由:解析器错了会以"调用栈
+  看着合理其实是编的"这种方式出错,最该先钉死;而一口气 2700 行的审稿面太大。
+  1. **不接板子也有真语料。** `arm-none-eabi-gdb --interpreter=mi3 -nx -q` 对着 `test/fixtures/gdb/fixture_f4.elf`
+     就能给出断点、反汇编、符号表、BreakpointTable、`echo 我` 的 `\346\210\221` 三个八进制字节 —— 这些都是
+     静态的。17 条带 token 的命令抓成 `fixtures/gdb/mi-corpus.txt`(5 KB),测试按 1/7/64/1000 字节切块喂分帧器,
+     CI 上没有 gdb 也跑;PATH 上有 gdb 时再对真进程发一遍、按真实 chunk 边界分帧,同一组断言。
+  2. **变异验证抓到三条空转用例**(审稿人逐条改源码再跑测试):`TextDecoder` 改成 `fatal:true` 全绿(而真 gdb
+     打印 `(char)0xff` 就是孤立的 `\377`,fatal 会在 stdout 回调里抛 —— 正是文件头说绝不能发生的事);
+     `miNumber` 去掉十六进制分支全绿(现有样本 `Number()` 也认;真 gdb 给指针拖着符号:`0x8000274 <main>`,
+     `Number()` 判成 NaN,指针求值静默变 undefined);`escapeCString` 不转义 `\t` 全绿(往返测试看不出,
+     readCString 收裸 tab 也过)。三条都补了直接断言。
+  3. **寄存器表要逐位对手册钉,而且要覆盖新架构。** ARMv8-M 的 UFSR bit 4(CFSR bit 20)`STKOF`(MSPLIM/PSPLIM
+     栈限检查)原表没有 —— M33/M55/M85 上真正的栈溢出证据会被报成"CFSR 里什么都没有"。审稿人按 DDI 0403 逐位
+     探针核对,现在每一位都有一条按 `1 << bit` 的断言,保留位断言不出声。
+  4. **故障话术按组合定,不按单个位定。** FORCED 而 CFSR 为空 ≠ "向量表读失败",多半是处理代码已写 1 清零;
+     BFAR 与 MMFAR 同时有效是两次粘滞故障,两个都要说、要标寄存器;IMPRECISERR 与 PRECISERR 并存时 BFAR 属于
+     精确那次(规范:非精确错误不写 BFAR),只有入栈 PC 要打折。flag 的 meaning 只陈述位本身,可信与否由
+     `decodeFault` 的尾句说。`decodeFault` 改收 `{cfsr,hfsr,mmfar,bfar}`:四个 u32 按位置传,换个位置类型看不出。
+  5. **QEMU 上 FP_CTRL / DWT_CTRL / DHCSR / DFSR 经内存读出来全是 0**(实测):预算 0 是"不知道"不是"零预算",
+     第二刀存 `total || undefined`,让 gdb 的 Z0/Z2 回复说了算。
+  6. **eval 闸门比阁楼版多认四样**,都是实测能绕过去的:`load` / `flash-erase`(经 gdb server 改写 flash,和烧录
+     一样贵却不经过 flash 工具)算写目标;表达式里藏的赋值 / `++` / `--`(`p x = 5`、`printf "%d", i++`)算写目标,
+     字符串与字符字面量先剥掉;`set {int}0x2000 = 1` 这种按类型写内存的写法是正经的写而不是"裸 set";行首 `|`
+     是 gdb 的 pipe 别名,会往 stdout 裸写。后者第一版就漏了:`|` 与空格之间**没有单词边界**,`\b` 套不住非单词
+     字符 —— 写测试时抓到的。`exec` 的 `show` 表达式要用同一把尺(`expressionWrites`)。
+  7. **Windows 上 DWARF 路径用 `/`、cwd 用 `\`,按 `path.sep` 硬比永远对不上**:`shortenPath` 两边各自归一成 `/`
+     再比(win32 再忽略大小写),剥的是原串的前缀。
+  8. 审稿人跑了真 QEMU + 真 gdb 的 badptr 场景把 `$psp` 上的异常帧整条链(parseRecord → unwrapList → hexToWords →
+     decodeStackedFrame)对了一遍:pc=0x080003c6 = main.c:200 的那条 store,与固件自己打印的 hardfault_report
+     逐字段一致;读 `$msp` 得到的是垃圾 —— 正是 EXC_RETURN 选栈那段注释在防的事。
+
 - 新开一道深引用 = 改 `exports`(从前是改四份别名表)。`boundary.test.ts` 钉住五条:菜单里没有 Node;
   工具间不反调会话间(`host/domain` 往外只拿 `host/models.ts`、`host/datasheet-server.ts`);餐厅只许走
   `@yoma-desktop/kernel`、`@yoma-desktop/kernel/tools/<名字>/contract` 或 `@yoma-desktop/kernel/tools/contracts`;
