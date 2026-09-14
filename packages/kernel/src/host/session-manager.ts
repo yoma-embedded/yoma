@@ -51,6 +51,7 @@ import { buildSystemPrompt } from "./system-prompt.ts"
 import { ConfirmDesk } from "./confirm.ts"
 import { ToolProgressThrottle } from "./tool-progress.ts"
 import { confirmNeeded } from "./tools/contracts.ts"
+import { processImage } from "./domain/image/process.ts"
 import { createRegisteredTools, type RegisteredTool, type RegisteredToolOptions } from "./tools/index.ts"
 import { configurableProviders, resolveModel } from "./models.ts"
 import { discoverSkills, loadContextFiles } from "./resources.ts"
@@ -133,7 +134,12 @@ function isOpen(entry: Entry): boolean {
  */
 export function createAgentTools(options: RegisteredToolOptions = {}): RegisteredTool[] {
   return [
-    createReadTool(),
+    // 图片走 host/domain/image:大图先压到供应商的内嵌上限以内,BMP 之类先转成 PNG。不接这个钩子的话,
+    // 发动机对 BMP 直接回一句"配个 imageProcessor",对十几 MB 的照片则原样发出去 —— 而超限不是"这张图没了",
+    // 是整段对话被拒。
+    createReadTool({
+      imageProcessor: (bytes, mimeType, options) => processImage(bytes, mimeType, options),
+    }),
     // 内核的 bash 不管 Python 的编码:Windows 的 GBK 控制台会把例程脚本的 UTF-8 输出
     // 变成乱码,而乱码到了模型眼里就是"脚本坏了"。每条命令都前置这两个变量。
     createBashTool({
@@ -195,6 +201,11 @@ interface Entry {
   unhook?: () => void
   /** 这个会话的装配面。留着是为了关会话时收长驻工具(log 的采集器握着串口)。 */
   tools?: RegisteredTool[]
+  /**
+   * prompt() 在 accept 之前的准备期(压缩附件图片,可能要几秒)。这段时间 lane 还是 idle,
+   * stop() 找不到任何在飞的操作 —— 没有这个标记,用户按下的"停止"会被整个吞掉。
+   */
+  preparing?: { cancelled: boolean }
   /**
    * 正在打开。**每个调用方都 await 这同一个 Promise** —— 两个并发的 ensureOpen 各自
    * 去 repo.open 的话,其中一个必然撞上内核的 `Session is already open`,而另一种时序
@@ -1074,19 +1085,51 @@ export class SessionManager {
     const messageID = input.messageID ?? Identifier.ascending("message")
     entry.pendingUserID = messageID
 
-    const images: ImageContent[] = (input.files ?? [])
-      .filter((file) => file.mime.startsWith("image/"))
-      .map((file) => ({
-        type: "image" as const,
-        data: file.url.replace(/^data:[^;]+;base64,/, ""),
-        mimeType: file.mime,
-      }))
+    // 贴进来的图同样要过压缩:截图与手机照片动辄十几 MB,原样发出去整轮会被供应商拒掉。
+    // file:// 的提及件在这里跳过 —— 它的路径已经在正文里,agent 自己会用 read 去读(那条路也过同一道压缩)。
+    const images: ImageContent[] = []
+    const notes: string[] = []
+    const omitted: string[] = []
+    // 这一段要花秒级时间,而 lane 还没有操作可中断:给它一个可取消的标记(见 Entry.preparing 与 stop)。
+    const preparing = { cancelled: false }
+    entry.preparing = preparing
+    try {
+      for (const file of input.files ?? []) {
+        if (!file.mime.startsWith("image/")) continue
+        const base64 = /^data:[^;]+;base64,(.*)$/s.exec(file.url)?.[1]
+        if (base64 === undefined) continue
+        const processed = await processImage(Buffer.from(base64, "base64"), file.mime)
+        if (preparing.cancelled) break
+        if (!processed.ok) {
+          notes.push(processed.message)
+          omitted.push(`${file.filename ?? file.mime}:${processed.message}`)
+          continue
+        }
+        // 说明**跟着消息进模型**,不只弹个界面提示:缩过的图坐标全变了,而模型看不到原图。
+        // 少了这句,"复位键在哪个像素"这类问题会得到一个按缩略图算出来、乘回去才对的答案。
+        notes.push(...processed.hints)
+        images.push({ type: "image", data: processed.data, mimeType: processed.mimeType })
+      }
+    } finally {
+      entry.preparing = undefined
+    }
+    // 准备期里用户按了停止:这一轮就此作罢,别让它在"已经点过停止"之后才开跑。
+    if (preparing.cancelled) {
+      entry.pendingUserID = undefined
+      return { messageID }
+    }
+    if (omitted.length > 0) {
+      this.options.emit([{ type: "kernel.error", sessionID, message: `图片没能送达模型 —— ${omitted.join(";")}` }])
+    }
+    const text = notes.length > 0 ? `${input.text}\n\n${notes.join("\n")}` : input.text
 
     // 一轮只收 images,别的附件送不进模型。曾经的事故形态:UI 把 PDF 显示成附件、
     // 这里静默丢掉,两边都不吭声,用户以为模型看过了。UI 侧已按能力分流(有本机路径的
     // PDF/文本转 @ 提及,无路径的 PDF 拒收),这里是防回归的哨兵 —— 只盯 data: URL 的
     // 内容型附件;file:// 的提及件路径已在正文里、agent 自己会去读,丢掉 part 是预期行为。
-    const dropped = (input.files ?? []).filter((file) => !file.mime.startsWith("image/") && file.url.startsWith("data:"))
+    const dropped = (input.files ?? []).filter(
+      (file) => !file.mime.startsWith("image/") && file.url.startsWith("data:"),
+    )
     if (dropped.length > 0) {
       this.options.emit([
         {
@@ -1098,8 +1141,8 @@ export class SessionManager {
     }
 
     const request: OperationRequest = images.length
-      ? { kind: "prompt", prompt: input.text, images }
-      : { kind: "prompt", prompt: input.text }
+      ? { kind: "prompt", prompt: text, images }
+      : { kind: "prompt", prompt: text }
     const accepted = await lane.accept(request, this.context)
     if (!accepted.ok) {
       entry.pendingUserID = undefined
@@ -1134,6 +1177,8 @@ export class SessionManager {
    * waitForIdle 就会永远停在那里(cli 的 abort() 是同一套动作)。
    */
   private async stop(entry: Entry): Promise<void> {
+    // 还在准备期(压缩附件)的那一轮:lane 上什么都没有,只能靠这个标记让它别再开跑。
+    if (entry.preparing) entry.preparing.cancelled = true
     // **先结算未决的确认**:挂起中的钩子占着这一轮的 drive,requestAbort 与 waitForIdle 都要等它
     // 先回来。顺序反了的表现是"点停止没反应",一直到确认台十分钟超时才动。
     this.desk.cancel(entry.id)

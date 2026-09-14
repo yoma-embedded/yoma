@@ -110,6 +110,37 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
   同一批里的工具调用是并行的,所以 log 在工具内用一条 promise 队列把自己的调用串起来;采集器的**活性按
   'close' 判而不是按 'exit'**—— `sh -c "reader &"` 这种源 shell 一退 'exit' 就来了,真正吐字节的孙进程还握着
   管道,按 'exit' 判会让第二个 start 静默顶掉旧采集器,串口就被那个孙进程占到内核退出。
+- **读图缩放**(2026-09-14,从 pi 的 utils/image-* 移植):`host/domain/image/` 四个文件 ——
+  `photon.ts`(加载 wasm 库)、`exif.ts`(方向标记的**纯字节解析**)、`render.ts`(解码→转正→缩放→编码的
+  原语 + worker)、`process.ts`(格式归一、限额策略、给模型的尺寸说明)。两个入口都过它:`read` 工具走
+  发动机的 `imageProcessor` 钩子,输入框附件走 `session-manager.prompt`。超限**不是"这张图没了"而是整段
+  对话被拒**,所以宁可缩、缩不动就明说没送。候选顺序 PNG 在前 JPEG 在后:供应商按**像素尺寸**计 token,
+  留着无损不多花钱,波形与小字不会被糊掉。
+  三条付过学费的规矩:
+  1. **photon 必须对打包器隐形。** 它的 CJS 入口在加载那一刻就 `readFileSync(__dirname + "/*.wasm")`。
+     一旦被 inline 进带顶层 await 的 ESM 产物(信箱守护、bench 评测入口),node 判不出模块类型,
+     加载即 `ERR_AMBIGUOUS_MODULE_SYNTAX` —— 整个守护起不来,而报错跟图片毫无关系。所以源码里**一个
+     import 说明符都不给**,运行期 `createRequire` 按绝对路径 require;包目录走 extraResources 落到
+     `resources/photon`,路径由 main 的 `ensurePhotonDirEnv` 塞进 `YOMA_PHOTON_DIR`(内核 utilityProcess
+     与信箱守护都从 `process.env` 继承;信箱是纯 node,查不到 `process.resourcesPath`)。
+     test/image.test.ts 有一条按语法扫源码的守门用例。
+  2. **重活在 worker 线程里。** 实测 4000×3000 一轮约 0.5 秒,而内核是一个进程伺候所有会话和界面 RPC。
+     worker 一趟 19 ms。worker 入口**不是文件**而是 `new Worker(源码字符串, { eval: true })` —— 文件就要在
+     四种运行环境里各自找得到,正是第 1 条那套麻烦。
+  3. **因此 `renderImage` 必须自包含**:它的源码被 `toString()` 塞进 worker,引用任何模块作用域的符号在
+     那边都是 ReferenceError。两条路的输出由测试逐字节比对钉着。**但自包含也保不住压缩过的包**:
+     tsx 与 `--keep-names` 会把内部函数裹成 `__name(fn,"名字")`(所以源码里那行恒等 `__name` 是承重的),
+     而 `--minify` 会把 `__name` 改名成别的字母 —— 名字对不上,shim 救不了。真正的兜底是
+     **worker 报错就退回进程内**:`ok:false` 只可能是 worker 那份副本程序性故障(坏图片走的是
+     `ok:true` + `undecodable`),所以它按"worker 坏了"处理,连续三次才彻底改走进程内。
+     测试里压缩包与不压缩包各打一次,前者钉的正是"worker 坏了结果照样对"。
+  4. **"没装这功能"和"这张没弄成"要分开说**:前者是 `runRender` 返回 undefined(压根没找到 photon),
+     后者是 `{kind:"failed"}`。混成一句的代价是用户拿着一句"这个版本没装图像功能"去查根本不存在的打包问题。
+  5. **压缩附件的那几秒里 lane 上没有操作**,用户这时按"停止",`stop()` 什么都取消不掉,然后这一轮照样
+     开跑(对硬件 agent 就是一路跑到烧录确认条)。所以 `Entry.preparing` 是个可取消的标记,`stop()` 会翻它,
+     `prompt()` 在 accept 之前回头看一眼。
+  6. 说明(转过格式、缩过多少)**跟着消息进模型**,不只弹界面提示:模型看不到原图,不说它就会按缩略图的
+     坐标回答。`read` 那条路由发动机拼进工具结果,输入框这条由 `prompt()` 拼进正文。
 - 新开一道深引用 = 改 `exports`(从前是改四份别名表)。`boundary.test.ts` 钉住五条:菜单里没有 Node;
   工具间不反调会话间(`host/domain` 往外只拿 `host/models.ts`、`host/datasheet-server.ts`);餐厅只许走
   `@yoma-desktop/kernel`、`@yoma-desktop/kernel/tools/<名字>/contract` 或 `@yoma-desktop/kernel/tools/contracts`;

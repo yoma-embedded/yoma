@@ -75,6 +75,18 @@ function attachKernelToWindow(win: BrowserWindow): void {
   if (!win.webContents.isLoading()) attach()
 }
 
+/**
+ * photon(读图缩放的 wasm 库)所在目录。打包后它走 extraResources 落在 `resources/photon`;
+ * 开发期不设,由内核按 node_modules 解析(kernel 的 host/domain/image/photon.ts)。
+ *
+ * 设在 `process.env` 上而不是当参数传:内核 utilityProcess 与信箱守护都是 `{...process.env}` 起的,
+ * 一处设置两条路都看得见 —— 信箱那条是**纯 node**(ELECTRON_RUN_AS_NODE),没有 process.resourcesPath 可查。
+ */
+function ensurePhotonDirEnv(): void {
+  if (process.env.YOMA_PHOTON_DIR) return
+  if (app.isPackaged) process.env.YOMA_PHOTON_DIR = join(process.resourcesPath, "photon")
+}
+
 function resolveEnginesDir(): string | undefined {
   if (process.env.YOMA_ENGINES_DIR) return process.env.YOMA_ENGINES_DIR
   // 打包后走 extraResources;开发期走仓库根的 engines 软链(指向 ../yoma/engines)。
@@ -180,6 +192,7 @@ const main = Effect.gen(function* () {
 
   ensureLoopbackNoProxy()
   useEnvProxy()
+  ensurePhotonDirEnv()
   app.commandLine.appendSwitch("proxy-bypass-list", "<-loopback>")
   const features = app.commandLine.getSwitchValue("enable-features")
   app.commandLine.appendSwitch("enable-features", features ? `${jsCallStackFeature},${features}` : jsCallStackFeature)

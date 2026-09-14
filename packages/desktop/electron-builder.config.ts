@@ -110,6 +110,16 @@ const getBase = (appId: string): Configuration => ({
       from: ".engines-stage/data/",
       to: "engines/data/",
     },
+    // 读图缩放的 wasm 库。**不能让打包器把它 inline 进 JS 产物**:它的 CJS 入口在加载那一刻就
+    // `readFileSync(__dirname + "/photon_rs_bg.wasm")`,inline 之后 __dirname 指向产物目录、1.8 MB 的
+    // wasm 也跟不过来;而带顶层 await 的信箱产物里一旦混进 __dirname,node 直接
+    // ERR_AMBIGUOUS_MODULE_SYNTAX(2026-09-14 实测)。所以它作为**整包目录**原样放进 resources,
+    // 由内核在运行期按绝对路径 require(kernel 的 host/domain/image/photon.ts),
+    // 路径经 main 的 ensurePhotonDirEnv 走 YOMA_PHOTON_DIR。
+    {
+      from: "../../node_modules/@silvia-odwyer/photon-node/",
+      to: "photon/",
+    },
   ],
   mac: {
     category: "public.app-category.developer-tools",

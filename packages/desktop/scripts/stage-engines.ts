@@ -112,7 +112,10 @@ function extract(archive: string, into: string): void {
   mkdirSync(into, { recursive: true })
   // .tar.gz 用 tar;.zip 优先 unzip,退回 bsdtar(macOS/Win11 的 tar 能读 zip,GNU tar 不能)。
   const attempts = archive.endsWith(".zip")
-    ? [["unzip", "-q", archive, "-d", into], ["tar", "-xf", archive, "-C", into]]
+    ? [
+        ["unzip", "-q", archive, "-d", into],
+        ["tar", "-xf", archive, "-C", into],
+      ]
     : [["tar", "-xzf", archive, "-C", into]]
   for (const cmd of attempts) {
     const result = run(cmd)
@@ -207,10 +210,16 @@ function resolveEnginesDir(): string {
       )
     }
     const result = run([
-      "gh", "release", "download", tag,
-      "--repo", lock.repo,
-      "--pattern", asset,
-      "--dir", path.dirname(archive),
+      "gh",
+      "release",
+      "download",
+      tag,
+      "--repo",
+      lock.repo,
+      "--pattern",
+      asset,
+      "--dir",
+      path.dirname(archive),
       "--clobber",
     ])
     if (!result.ok) {
@@ -335,8 +344,21 @@ for (const name of staged) {
   // 可执行位断言只在 POSIX 构建机上有意义:NTFS 没有执行位,Node 在 win32 对普通
   // 文件恒返回 100666,chmod 也改不动(Windows 打包机上实测)—— 不守卫的话这条
   // 断言在 Windows 上永远失败,还把人误导去重跑引擎构建。
-  if (process.platform !== "win32" && (stat.mode & 0o111) === 0)
-    fail(`.engines-stage/bin/${name} 丢了可执行位`)
+  if (process.platform !== "win32" && (stat.mode & 0o111) === 0) fail(`.engines-stage/bin/${name} 丢了可执行位`)
 }
 
-console.log(`[stage-engines] 通过:${staged.length} 个引擎(${staged.join(", ")})已实体化到 .engines-stage/`)
+// 读图缩放的 wasm 库:electron-builder 的 extraResources 只会对不存在的 from 打一行 warn 然后接着打包
+// (app-builder-lib 的 fileMatcher 就是这么写的),于是"包里没有 photon"会一路静默到用户机器上 ——
+// 表现是每张图都变成 "[Image omitted: … no image backend …]"。这里按**打包器会用的那条相对路径**验一次。
+// 它依赖 npm 把这个包提到仓库根(今天如此);哪天被嵌到某个 workspace 下面,这条断言就是第一个喊的人。
+const photonDir = path.resolve(desktopDir, "..", "..", "node_modules", "@silvia-odwyer", "photon-node")
+for (const name of ["photon_rs.js", "photon_rs_bg.wasm"]) {
+  if (!existsSync(path.join(photonDir, name))) {
+    fail(
+      `photon 缺 ${name}(找的是 ${photonDir})`,
+      "先在仓库根跑 `npm install`;如果它被装到了某个 workspace 的 node_modules 下,electron-builder.config.ts 的 extraResources 路径要跟着改。",
+    )
+  }
+}
+
+console.log(`[stage-engines] 通过:${staged.length} 个引擎(${staged.join(", ")})已实体化到 .engines-stage/,photon 就位`)

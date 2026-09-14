@@ -9,6 +9,7 @@ import { afterEach, describe, expect, test, vi } from "vitest"
 
 import { SessionProjection } from "./projector.ts"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { crc32, deflateSync } from "node:zlib"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import {
@@ -202,7 +203,9 @@ describe("内核宿主端到端", () => {
     await host.handle("session.prompt", { sessionID: session.id, input: { text: "2+2 等于几?" } })
 
     await waitFor(() =>
-      events.some((e) => e.type === "message.updated" && e.message.role === "assistant" && "error" in e.message === false),
+      events.some(
+        (e) => e.type === "message.updated" && e.message.role === "assistant" && "error" in e.message === false,
+      ),
     )
     await waitFor(() => {
       const parts = events.flatMap((e) => (e.type === "message.part.updated" ? [e.part] : []))
@@ -314,16 +317,18 @@ describe("内核宿主端到端", () => {
     // 所以盯投影器的进度入口:它必须在工具结束前就收到 "first"、且真的投影出了一张 running 卡片。
     const progressed: Array<{ text: string; emitted: number }> = []
     const original = SessionProjection.prototype.updateToolProgress
-    const spy = vi
-      .spyOn(SessionProjection.prototype, "updateToolProgress")
-      .mockImplementation(function (this: SessionProjection, id, partial) {
-        const events = original.call(this, id, partial)
-        progressed.push({
-          text: partial.content.map((c) => (c.type === "text" ? (c.text ?? "") : "")).join(""),
-          emitted: events.length,
-        })
-        return events
+    const spy = vi.spyOn(SessionProjection.prototype, "updateToolProgress").mockImplementation(function (
+      this: SessionProjection,
+      id,
+      partial,
+    ) {
+      const events = original.call(this, id, partial)
+      progressed.push({
+        text: partial.content.map((c) => (c.type === "text" ? (c.text ?? "") : "")).join(""),
+        emitted: events.length,
       })
+      return events
+    })
     try {
       const { host, events, workspace } = makeHost([
         fauxAssistantMessage([fauxToolCall("bash", { command: "echo first; sleep 0.5; echo second" })]),
@@ -346,10 +351,7 @@ describe("内核宿主端到端", () => {
   test("bash 里起 openocd 也要先问:门按程序名判,不按工具名判(拒绝 → bash 没跑)", async () => {
     const command = "cd build && openocd -f interface/stlink.cfg -c 'init; stm32g4x mass_erase 0; exit'"
     const { host, events, workspace } = makeHost(
-      [
-        fauxAssistantMessage([fauxToolCall("bash", { command })]),
-        fauxAssistantMessage([fauxText("好,那我先不擦")]),
-      ],
+      [fauxAssistantMessage([fauxToolCall("bash", { command })]), fauxAssistantMessage([fauxText("好,那我先不擦")])],
       { confirmTools: true },
     )
     const session = (await host.handle("session.create", { directory: workspace })) as Session
@@ -442,6 +444,120 @@ describe("内核宿主端到端", () => {
  * 两条都是**只有内核的结构性操作能做到**的事(compaction entry / 挪会话树的 tip),
  * 而它们的状态与 transcript 都只经事件流到前端 —— 所以端到端钉住,不测内部字段。
  */
+describe("输入框里贴进来的图片", () => {
+  /** 压不动的 24bpp PNG:噪声像素,deflate 几乎没得压 —— 拿来逼出真正耗时的压缩过程。 */
+  function createNoisyPng(width: number, height: number): Buffer {
+    const chunk = (type: string, body: Buffer): Buffer => {
+      const header = Buffer.alloc(8)
+      header.writeUInt32BE(body.length, 0)
+      header.write(type, 4, "ascii")
+      const checksum = Buffer.alloc(4)
+      checksum.writeUInt32BE(crc32(Buffer.concat([header.subarray(4), body])), 0)
+      return Buffer.concat([header, body, checksum])
+    }
+    const ihdr = Buffer.alloc(13)
+    ihdr.writeUInt32BE(width, 0)
+    ihdr.writeUInt32BE(height, 4)
+    ihdr[8] = 8
+    ihdr[9] = 2
+    const stride = width * 3 + 1
+    const raw = Buffer.alloc(stride * height)
+    let seed = 0x2f6e2b1
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        // Math.imul 才是 32 位乘法:直接写 `*` 会超出 double 的精度,低位被抹平,
+        // "噪声"退化成高度可压缩的花纹(实测 2000×2000 只有 0.1 MB,压缩一下就完事,这条用例就白跑了)。
+        seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff
+        const at = y * stride + 1 + x * 3
+        raw[at] = seed & 0xff
+        raw[at + 1] = (seed >> 8) & 0xff
+        raw[at + 2] = (seed >> 16) & 0xff
+      }
+    }
+    return Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      chunk("IHDR", ihdr),
+      chunk("IDAT", deflateSync(raw)),
+      chunk("IEND", Buffer.alloc(0)),
+    ])
+  }
+
+  /** 1×1 的 24bpp BMP:模型收不了 BMP,这张图必须在进模型之前被转成 PNG。 */
+  function bmp1x1DataUrl(): string {
+    const buffer = Buffer.alloc(58)
+    buffer.write("BM", 0, "ascii")
+    buffer.writeUInt32LE(buffer.length, 2)
+    buffer.writeUInt32LE(54, 10)
+    buffer.writeUInt32LE(40, 14)
+    buffer.writeInt32LE(1, 18)
+    buffer.writeInt32LE(1, 22)
+    buffer.writeUInt16LE(1, 26)
+    buffer.writeUInt16LE(24, 28)
+    buffer.writeUInt32LE(0, 30)
+    buffer.writeUInt32LE(4, 34)
+    buffer[56] = 0xff
+    return `data:image/bmp;base64,${buffer.toString("base64")}`
+  }
+
+  test("附件过一道压缩:BMP 变 PNG 才进模型与 transcript", async () => {
+    const { manager, events, workspace } = makeManager([fauxAssistantMessage([fauxText("看到了")])])
+    const session = await manager.create(workspace)
+    await manager.prompt(session.id, {
+      text: "看看这张图",
+      files: [{ mime: "image/bmp", url: bmp1x1DataUrl(), filename: "board.bmp" }],
+    })
+    await waitFor(() => statusesOf(events).at(-1) === "idle")
+
+    const page = await manager.messages(session.id)
+    const user = page.items.find((item) => item.info.role === "user")!
+    const file = user.parts.find((part) => part.type === "file")
+    expect(file, JSON.stringify(user.parts.map((part) => part.type))).toBeDefined()
+    expect((file as { mime: string }).mime).toBe("image/png")
+    // 说明要**跟着消息进模型**,不只弹个界面提示 —— 模型看不到原图,不说它就不知道自己看的是转过/缩过的。
+    const text = user.parts
+      .filter((part) => part.type === "text")
+      .map((part) => (part as { text: string }).text)
+      .join("\n")
+    expect(text).toContain("converted from image/bmp to image/png")
+    await manager.disposeAll()
+  }, 30_000)
+
+  test("准备期里按停止:这一轮不再开跑(那段时间 lane 上没有操作可中断)", async () => {
+    const { manager, workspace } = makeManager([fauxAssistantMessage([fauxText("不该跑到这里")])])
+    const session = await manager.create(workspace)
+    // 一张压不动的大图:超了字节限额,要一轮轮缩下去,前后好几秒 —— 窗口足够宽,不靠掐点。
+    const big = createNoisyPng(2000, 2000)
+    const pending = manager.prompt(session.id, {
+      text: "看看这张图",
+      files: [{ mime: "image/png", url: `data:image/png;base64,${big.toString("base64")}`, filename: "big.png" }],
+    })
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await manager.abort(session.id)
+    await pending
+
+    // 断言点是**落盘**而不是"有没有回答":取消掉的这一轮根本没走到 lane.accept,
+    // 所以连用户消息都不该有。等回答再断言是空转的 —— drive 不被 await,那时它还没跑呢。
+    const page = await manager.messages(session.id)
+    expect(page.items.map((item) => item.info.role)).toEqual([])
+    await manager.disposeAll()
+  }, 30_000)
+
+  test("file:// 的提及件不当图片塞进去 —— 它的路径在正文里,agent 自己会去 read", async () => {
+    const { manager, events, workspace } = makeManager([fauxAssistantMessage([fauxText("好")])])
+    const session = await manager.create(workspace)
+    await manager.prompt(session.id, {
+      text: "看看 @board.png",
+      files: [{ mime: "image/png", url: "file:///tmp/board.png", filename: "board.png" }],
+    })
+    await waitFor(() => statusesOf(events).at(-1) === "idle")
+
+    const page = await manager.messages(session.id)
+    const user = page.items.find((item) => item.info.role === "user")!
+    expect(user.parts.some((part) => part.type === "file")).toBe(false)
+    await manager.disposeAll()
+  }, 30_000)
+})
+
 describe("结构性操作", () => {
   test("手动压缩:状态走 compacting → idle,transcript 上留下压缩分隔线", async () => {
     const { host, events, workspace } = makeHost([
@@ -861,7 +977,8 @@ describe("状态机不被旁路事件带偏", () => {
     // idle 只能在这一轮真的说完之后出现。
     const idleAt = events.findIndex((event) => event.type === "session.status" && event.status.type === "idle")
     const doneAt = events.findIndex(
-      (event) => event.type === "message.part.updated" && event.part.type === "text" && event.part.text.includes("读完了"),
+      (event) =>
+        event.type === "message.part.updated" && event.part.type === "text" && event.part.text.includes("读完了"),
     )
     expect(doneAt).toBeGreaterThanOrEqual(0)
     expect(idleAt).toBeGreaterThan(doneAt)
@@ -981,7 +1098,9 @@ describe("navigate 的 removed 事件", () => {
     const before = (await host.handle("session.messages", { sessionID: session.id })) as {
       items: Array<{ info: AssistantMessage; parts: Part[] }>
     }
-    const second = before.items.find((item) => item.parts.some((part) => part.type === "text" && part.text === "问题二"))!
+    const second = before.items.find((item) =>
+      item.parts.some((part) => part.type === "text" && part.text === "问题二"),
+    )!
     const dropped = before.items.slice(before.items.indexOf(second)).map((item) => item.info.id)
     expect(dropped.length).toBe(2)
 
