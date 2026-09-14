@@ -718,6 +718,8 @@ export class SessionManager {
           onInstalled: () => this.refreshMachineEnv(),
           installRegistry: this.options.installRegistry,
         },
+        // 手册服务器地址从同一个 configDir 的 .env 解析:设置页、手册库页、agent 说同一个地址。
+        datasheet: { configDir: this.configDir },
       })
       const created = await AgentHarness.create<ExecutionToolContext>(
         {

@@ -9,6 +9,7 @@
 
 import type { AgentHarnessTool, ExecutionToolContext } from "@earendil-works/pi-agent-core"
 
+import { createDatasheetTool, type DatasheetToolOptions } from "./datasheet/session.ts"
 import { createFindTool } from "./find/session.ts"
 import { createFlashTool } from "./flash/session.ts"
 import { createGdbTool } from "./gdb/session.ts"
@@ -27,6 +28,11 @@ export interface RegisteredToolOptions {
    * **不传也能装配出工具**(自检那条路就不传),只是它会去读真实的 ~/.yoma、装完不刷在飞会话的 PATH。
    */
   toolchain?: ToolchainToolOptions
+  /**
+   * datasheet 工具的接线:`.env` 所在目录(地址解析要读它)。不传就读真实的 ~/.yoma —— 与 toolchain 同一条
+   * 规矩:自检那条路不传也能装配。
+   */
+  datasheet?: DatasheetToolOptions
 }
 
 /**
@@ -47,5 +53,6 @@ export function createRegisteredTools(options: RegisteredToolOptions = {}): Regi
     createLogTool(),
     createLaTool(shared),
     createGdbTool(),
+    createDatasheetTool(options.datasheet),
   ]
 }

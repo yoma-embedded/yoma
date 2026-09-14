@@ -1,0 +1,686 @@
+[
+ {
+  "chip": "AT32WB",
+  "rev": "AT32WB415_DS",
+  "manual_name": "雅特力 AT32WB415 数据手册（中文）",
+  "kind": "datasheet",
+  "num_chunks": 185,
+  "covered_devices": null,
+  "source_page_range": [
+   1,
+   57
+  ]
+ },
+ {
+  "chip": "AT32WB",
+  "rev": "AT32WB415_RM",
+  "manual_name": "雅特力 AT32WB415 用户手册",
+  "kind": "reference",
+  "num_chunks": 1273,
+  "covered_devices": null,
+  "source_page_range": [
+   1,
+   372
+  ]
+ },
+ {
+  "chip": "ESP32-P4",
+  "rev": "ESP32-P4_DS",
+  "manual_name": "乐鑫 ESP32-P4 数据手册（英文）",
+  "kind": "datasheet",
+  "num_chunks": 373,
+  "covered_devices": null,
+  "source_page_range": [
+   1,
+   102
+  ]
+ },
+ {
+  "chip": "ESP32-P4",
+  "rev": "TRM_p1-400",
+  "manual_name": "乐鑫 ESP32-P4 技术参考手册（英文）（原文第 1–400 页）",
+  "kind": "reference",
+  "num_chunks": 1179,
+  "covered_devices": null,
+  "source_page_range": [
+   1,
+   400
+  ]
+ },
+ {
+  "chip": "ESP32-P4",
+  "rev": "TRM_p1201-1600",
+  "manual_name": "乐鑫 ESP32-P4 技术参考手册（英文）（原文第 1201–1600 页）",
+  "kind": "reference",
+  "num_chunks": 1076,
+  "covered_devices": null,
+  "source_page_range": [
+   1201,
+   1600
+  ]
+ },
+ {
+  "chip": "ESP32-P4",
+  "rev": "TRM_p1601-2000",
+  "manual_name": "乐鑫 ESP32-P4 技术参考手册（英文）（原文第 1601–2000 页）",
+  "kind": "reference",
+  "num_chunks": 765,
+  "covered_devices": null,
+  "source_page_range": [
+   1601,
+   2000
+  ]
+ },
+ {
+  "chip": "ESP32-P4",
+  "rev": "TRM_p2001-2400",
+  "manual_name": "乐鑫 ESP32-P4 技术参考手册（英文）（原文第 2001–2400 页）",
+  "kind": "reference",
+  "num_chunks": 914,
+  "covered_devices": null,
+  "source_page_range": [
+   2001,
+   2400
+  ]
+ },
+ {
+  "chip": "ESP32-P4",
+  "rev": "TRM_p2401-2800",
+  "manual_name": "乐鑫 ESP32-P4 技术参考手册（英文）（原文第 2401–2800 页）",
+  "kind": "reference",
+  "num_chunks": 824,
+  "covered_devices": null,
+  "source_page_range": [
+   2401,
+   2800
+  ]
+ },
+ {
+  "chip": "ESP32-P4",
+  "rev": "TRM_p2801-3200",
+  "manual_name": "乐鑫 ESP32-P4 技术参考手册（英文）（原文第 2801–3200 页）",
+  "kind": "reference",
+  "num_chunks": 900,
+  "covered_devices": null,
+  "source_page_range": [
+   2801,
+   3200
+  ]
+ },
+ {
+  "chip": "ESP32-P4",
+  "rev": "TRM_p3201-3600",
+  "manual_name": "乐鑫 ESP32-P4 技术参考手册（英文）（原文第 3201–3600 页）",
+  "kind": "reference",
+  "num_chunks": 797,
+  "covered_devices": null,
+  "source_page_range": [
+   3201,
+   3600
+  ]
+ },
+ {
+  "chip": "ESP32-P4",
+  "rev": "TRM_p3601-3701",
+  "manual_name": "乐鑫 ESP32-P4 技术参考手册（英文）（原文第 3601–3701 页）",
+  "kind": "reference",
+  "num_chunks": 183,
+  "covered_devices": null,
+  "source_page_range": [
+   3601,
+   3701
+  ]
+ },
+ {
+  "chip": "ESP32-P4",
+  "rev": "TRM_p401-800",
+  "manual_name": "乐鑫 ESP32-P4 技术参考手册（英文）（原文第 401–800 页）",
+  "kind": "reference",
+  "num_chunks": 1402,
+  "covered_devices": null,
+  "source_page_range": [
+   401,
+   800
+  ]
+ },
+ {
+  "chip": "ESP32-P4",
+  "rev": "TRM_p801-1200",
+  "manual_name": "乐鑫 ESP32-P4 技术参考手册（英文）（原文第 801–1200 页）",
+  "kind": "reference",
+  "num_chunks": 858,
+  "covered_devices": null,
+  "source_page_range": [
+   801,
+   1200
+  ]
+ },
+ {
+  "chip": "GENERAL",
+  "rev": "PM0056",
+  "manual_name": "意法半导体 PM0056_CortexM3_F1-F2 编程手册",
+  "kind": "reference",
+  "num_chunks": 645,
+  "covered_devices": null,
+  "source_page_range": [
+   1,
+   156
+  ]
+ },
+ {
+  "chip": "GENERAL",
+  "rev": "PM0214",
+  "manual_name": "意法半导体 PM0214_CortexM4_F3-F4-H7 编程手册",
+  "kind": "reference",
+  "num_chunks": 1135,
+  "covered_devices": null,
+  "source_page_range": [
+   1,
+   262
+  ]
+ },
+ {
+  "chip": "GENERAL",
+  "rev": "PM0253",
+  "manual_name": "意法半导体 PM0253_CortexM7_F7-H7 编程手册",
+  "kind": "reference",
+  "num_chunks": 1179,
+  "covered_devices": null,
+  "source_page_range": [
+   1,
+   254
+  ]
+ },
+ {
+  "chip": "STM32F1",
+  "rev": "PM0063",
+  "manual_name": "意法半导体 PM0063_F100_FlashProg 编程手册",
+  "kind": "reference",
+  "num_chunks": 78,
+  "covered_devices": null,
+  "source_page_range": [
+   1,
+   30
+  ]
+ },
+ {
+  "chip": "STM32F1",
+  "rev": "PM0068",
+  "manual_name": "意法半导体 PM0068_F10x_XLdensity_FlashProg 编程手册",
+  "kind": "reference",
+  "num_chunks": 95,
+  "covered_devices": null,
+  "source_page_range": [
+   1,
+   31
+  ]
+ },
+ {
+  "chip": "STM32F1",
+  "rev": "PM0075",
+  "manual_name": "意法半导体 PM0075_F10x_FlashMemory 编程手册",
+  "kind": "reference",
+  "num_chunks": 87,
+  "covered_devices": null,
+  "source_page_range": [
+   1,
+   31
+  ]
+ },
+ {
+  "chip": "STM32F1",
+  "rev": "RM0041_p1-400",
+  "manual_name": "意法半导体 RM0041_STM32F100 参考手册（原文第 1–400 页）",
+  "kind": "datasheet",
+  "num_chunks": 1324,
+  "covered_devices": null,
+  "source_page_range": [
+   1,
+   400
+  ]
+ },
+ {
+  "chip": "STM32F1",
+  "rev": "RM0041_p401-709",
+  "manual_name": "意法半导体 RM0041_STM32F100 参考手册（原文第 401–709 页）",
+  "kind": "datasheet",
+  "num_chunks": 1024,
+  "covered_devices": null,
+  "source_page_range": [
+   401,
+   709
+  ]
+ },
+ {
+  "chip": "STM32F4",
+  "rev": "RM0386_p1-400",
+  "manual_name": "意法半导体 RM0386 STM32F469 参考手册（原文第 1–400 页）",
+  "kind": "reference",
+  "num_chunks": 1415,
+  "covered_devices": null,
+  "source_page_range": [
+   1,
+   400
+  ]
+ },
+ {
+  "chip": "STM32F4",
+  "rev": "RM0386_p1201-1600",
+  "manual_name": "意法半导体 RM0386 STM32F469 参考手册（原文第 1201–1600 页）",
+  "kind": "reference",
+  "num_chunks": 1703,
+  "covered_devices": null,
+  "source_page_range": [
+   1201,
+   1600
+  ]
+ },
+ {
+  "chip": "STM32F4",
+  "rev": "RM0386_p1601-1627",
+  "manual_name": "意法半导体 RM0386 STM32F469 参考手册（原文第 1601–1627 页）",
+  "kind": "reference",
+  "num_chunks": 109,
+  "covered_devices": null,
+  "source_page_range": [
+   1601,
+   1627
+  ]
+ },
+ {
+  "chip": "STM32F4",
+  "rev": "RM0386_p401-800",
+  "manual_name": "意法半导体 RM0386 STM32F469 参考手册（原文第 401–800 页）",
+  "kind": "reference",
+  "num_chunks": 1541,
+  "covered_devices": null,
+  "source_page_range": [
+   401,
+   800
+  ]
+ },
+ {
+  "chip": "STM32F4",
+  "rev": "RM0386_p801-1200",
+  "manual_name": "意法半导体 RM0386 STM32F469 参考手册（原文第 801–1200 页）",
+  "kind": "reference",
+  "num_chunks": 1458,
+  "covered_devices": null,
+  "source_page_range": [
+   801,
+   1200
+  ]
+ },
+ {
+  "chip": "STM32F4",
+  "rev": "RM0390_p1-400",
+  "manual_name": "意法半导体 RM0390_STM32F446 参考手册（原文第 1–400 页）",
+  "kind": "datasheet",
+  "num_chunks": 1414,
+  "covered_devices": null,
+  "source_page_range": [
+   1,
+   400
+  ]
+ },
+ {
+  "chip": "STM32F4",
+  "rev": "RM0390_p1201-1321",
+  "manual_name": "意法半导体 RM0390_STM32F446 参考手册（原文第 1201–1321 页）",
+  "kind": "datasheet",
+  "num_chunks": 300,
+  "covered_devices": null,
+  "source_page_range": [
+   1201,
+   1321
+  ]
+ },
+ {
+  "chip": "STM32F4",
+  "rev": "RM0390_p401-800",
+  "manual_name": "意法半导体 RM0390_STM32F446 参考手册（原文第 401–800 页）",
+  "kind": "datasheet",
+  "num_chunks": 1467,
+  "covered_devices": null,
+  "source_page_range": [
+   401,
+   800
+  ]
+ },
+ {
+  "chip": "STM32F4",
+  "rev": "RM0390_p801-1200",
+  "manual_name": "意法半导体 RM0390_STM32F446 参考手册（原文第 801–1200 页）",
+  "kind": "datasheet",
+  "num_chunks": 1654,
+  "covered_devices": null,
+  "source_page_range": [
+   801,
+   1200
+  ]
+ },
+ {
+  "chip": "STM32F4",
+  "rev": "RM0401_p1-400",
+  "manual_name": "意法半导体 RM0401_STM32F410 参考手册（原文第 1–400 页）",
+  "kind": "datasheet",
+  "num_chunks": 1325,
+  "covered_devices": null,
+  "source_page_range": [
+   1,
+   400
+  ]
+ },
+ {
+  "chip": "STM32F4",
+  "rev": "RM0401_p401-763",
+  "manual_name": "意法半导体 RM0401_STM32F410 参考手册（原文第 401–763 页）",
+  "kind": "datasheet",
+  "num_chunks": 1328,
+  "covered_devices": null,
+  "source_page_range": [
+   401,
+   763
+  ]
+ },
+ {
+  "chip": "STM32F4",
+  "rev": "RM0402_p1-400",
+  "manual_name": "意法半导体 RM0402_STM32F412 参考手册（原文第 1–400 页）",
+  "kind": "datasheet",
+  "num_chunks": 1369,
+  "covered_devices": null,
+  "source_page_range": [
+   1,
+   400
+  ]
+ },
+ {
+  "chip": "STM32F4",
+  "rev": "RM0402_p401-800",
+  "manual_name": "意法半导体 RM0402_STM32F412 参考手册（原文第 401–800 页）",
+  "kind": "datasheet",
+  "num_chunks": 1421,
+  "covered_devices": null,
+  "source_page_range": [
+   401,
+   800
+  ]
+ },
+ {
+  "chip": "STM32F4",
+  "rev": "RM0402_p801-1155",
+  "manual_name": "意法半导体 RM0402_STM32F412 参考手册（原文第 801–1155 页）",
+  "kind": "datasheet",
+  "num_chunks": 1336,
+  "covered_devices": null,
+  "source_page_range": [
+   801,
+   1155
+  ]
+ },
+ {
+  "chip": "STM32G0",
+  "rev": "DS12231",
+  "manual_name": "意法半导体 STM32G081xB 数据手册 DS12231 Rev 5（英文）",
+  "kind": "datasheet",
+  "num_chunks": 452,
+  "covered_devices": "STM32G081xB",
+  "source_page_range": [
+   1,
+   144
+  ]
+ },
+ {
+  "chip": "STM32G0",
+  "rev": "DS12232",
+  "manual_name": "意法半导体 STM32G071x8/xB 数据手册 DS12232 Rev 5（英文）",
+  "kind": "datasheet",
+  "num_chunks": 456,
+  "covered_devices": "STM32G071x8/xB",
+  "source_page_range": [
+   1,
+   143
+  ]
+ },
+ {
+  "chip": "STM32G0",
+  "rev": "DS12766",
+  "manual_name": "意法半导体 STM32G070CB/KB/RB 数据手册 DS12766 Rev 3（英文）",
+  "kind": "datasheet",
+  "num_chunks": 304,
+  "covered_devices": "STM32G070CB/KB/RB",
+  "source_page_range": [
+   1,
+   100
+  ]
+ },
+ {
+  "chip": "STM32G0",
+  "rev": "DS12991",
+  "manual_name": "意法半导体 STM32G030x6/x8 数据手册 DS12991 Rev 6（英文）",
+  "kind": "datasheet",
+  "num_chunks": 303,
+  "covered_devices": "STM32G030x6/x8",
+  "source_page_range": [
+   1,
+   100
+  ]
+ },
+ {
+  "chip": "STM32G0",
+  "rev": "DS12992",
+  "manual_name": "意法半导体 STM32G031x4/x6/x8 数据手册 DS12992 Rev 4（英文）",
+  "kind": "datasheet",
+  "num_chunks": 399,
+  "covered_devices": "STM32G031x4/x6/x8",
+  "source_page_range": [
+   1,
+   126
+  ]
+ },
+ {
+  "chip": "STM32G0",
+  "rev": "DS12993",
+  "manual_name": "意法半导体 STM32G041x6/x8 数据手册 DS12993 Rev 4（英文）",
+  "kind": "datasheet",
+  "num_chunks": 396,
+  "covered_devices": "STM32G041x6/x8",
+  "source_page_range": [
+   1,
+   128
+  ]
+ },
+ {
+  "chip": "STM32G0",
+  "rev": "DS13303",
+  "manual_name": "意法半导体 STM32G051x6/x8 数据手册 DS13303 Rev 4（英文）",
+  "kind": "datasheet",
+  "num_chunks": 411,
+  "covered_devices": "STM32G051x6/x8",
+  "source_page_range": [
+   1,
+   131
+  ]
+ },
+ {
+  "chip": "STM32G0",
+  "rev": "DS13513",
+  "manual_name": "意法半导体 STM32G061x6/x8 数据手册 DS13513 Rev 4（英文）",
+  "kind": "datasheet",
+  "num_chunks": 417,
+  "covered_devices": "STM32G061x6/x8",
+  "source_page_range": [
+   1,
+   131
+  ]
+ },
+ {
+  "chip": "STM32G0",
+  "rev": "DS13514",
+  "manual_name": "意法半导体 STM32G050x6/x8 数据手册 DS13514 Rev 3（英文）",
+  "kind": "datasheet",
+  "num_chunks": 298,
+  "covered_devices": "STM32G050x6/x8",
+  "source_page_range": [
+   1,
+   96
+  ]
+ },
+ {
+  "chip": "STM32G0",
+  "rev": "DS13560",
+  "manual_name": "意法半导体 STM32G0B1xB/xC/xE 数据手册 DS13560 Rev 6（英文）",
+  "kind": "datasheet",
+  "num_chunks": 561,
+  "covered_devices": "STM32G0B1xB/xC/xE",
+  "source_page_range": [
+   1,
+   165
+  ]
+ },
+ {
+  "chip": "STM32G0",
+  "rev": "DS13564",
+  "manual_name": "意法半导体 STM32G0C1xC/xE 数据手册 DS13564 Rev 5（英文）",
+  "kind": "datasheet",
+  "num_chunks": 538,
+  "covered_devices": "STM32G0C1xC/xE",
+  "source_page_range": [
+   1,
+   163
+  ]
+ },
+ {
+  "chip": "STM32G0",
+  "rev": "DS13565",
+  "manual_name": "意法半导体 STM32G0B0KE/CE/RE/VE 数据手册 DS13565 Rev 3（英文）",
+  "kind": "datasheet",
+  "num_chunks": 345,
+  "covered_devices": "STM32G0B0KE/CE/RE/VE",
+  "source_page_range": [
+   1,
+   111
+  ]
+ },
+ {
+  "chip": "STM32G0",
+  "rev": "RM0444_p1-400",
+  "manual_name": "意法半导体 STM32G0x1 参考手册 RM0444 Rev 6（英文）（原文第 1–400 页）",
+  "kind": "reference",
+  "num_chunks": 1450,
+  "covered_devices": "STM32G0x1",
+  "source_page_range": [
+   1,
+   400
+  ]
+ },
+ {
+  "chip": "STM32G0",
+  "rev": "RM0444_p1201-1384",
+  "manual_name": "意法半导体 STM32G0x1 参考手册 RM0444 Rev 6（英文）（原文第 1201–1384 页）",
+  "kind": "reference",
+  "num_chunks": 733,
+  "covered_devices": "STM32G0x1",
+  "source_page_range": [
+   1201,
+   1384
+  ]
+ },
+ {
+  "chip": "STM32G0",
+  "rev": "RM0444_p401-800",
+  "manual_name": "意法半导体 STM32G0x1 参考手册 RM0444 Rev 6（英文）（原文第 401–800 页）",
+  "kind": "reference",
+  "num_chunks": 1325,
+  "covered_devices": "STM32G0x1",
+  "source_page_range": [
+   401,
+   800
+  ]
+ },
+ {
+  "chip": "STM32G0",
+  "rev": "RM0444_p801-1200",
+  "manual_name": "意法半导体 STM32G0x1 参考手册 RM0444 Rev 6（英文）（原文第 801–1200 页）",
+  "kind": "reference",
+  "num_chunks": 1464,
+  "covered_devices": "STM32G0x1",
+  "source_page_range": [
+   801,
+   1200
+  ]
+ },
+ {
+  "chip": "STM32G0",
+  "rev": "RM0454_p1-400",
+  "manual_name": "意法半导体 STM32G0x0 参考手册 RM0454 Rev 5（英文）（原文第 1–400 页）",
+  "kind": "reference",
+  "num_chunks": 1283,
+  "covered_devices": "STM32G0x0",
+  "source_page_range": [
+   1,
+   400
+  ]
+ },
+ {
+  "chip": "STM32G0",
+  "rev": "RM0454_p401-800",
+  "manual_name": "意法半导体 STM32G0x0 参考手册 RM0454 Rev 5（英文）（原文第 401–800 页）",
+  "kind": "reference",
+  "num_chunks": 1320,
+  "covered_devices": "STM32G0x0",
+  "source_page_range": [
+   401,
+   800
+  ]
+ },
+ {
+  "chip": "STM32G0",
+  "rev": "RM0454_p801-989",
+  "manual_name": "意法半导体 STM32G0x0 参考手册 RM0454 Rev 5（英文）（原文第 801–989 页）",
+  "kind": "reference",
+  "num_chunks": 704,
+  "covered_devices": "STM32G0x0",
+  "source_page_range": [
+   801,
+   989
+  ]
+ },
+ {
+  "chip": "AT32F",
+  "rev": "AT32F011_DS",
+  "manual_name": "雅特力 AT32F011 数据手册（中文）",
+  "kind": "datasheet",
+  "num_chunks": 194,
+  "covered_devices": null,
+  "source_page_range": [
+   1,
+   61
+  ]
+ },
+ {
+  "chip": "AT32F",
+  "rev": "AT32F011_RM",
+  "manual_name": "雅特力 AT32F011 用户手册",
+  "kind": "reference",
+  "num_chunks": 1158,
+  "covered_devices": null,
+  "source_page_range": [
+   1,
+   344
+  ]
+ },
+ {
+  "chip": "AT32F",
+  "rev": "AT32F402_405_RM",
+  "manual_name": "雅特力 AT32F402_405 用户手册",
+  "kind": "reference",
+  "num_chunks": 1677,
+  "covered_devices": null,
+  "source_page_range": [
+   1,
+   493
+  ]
+ }
+]

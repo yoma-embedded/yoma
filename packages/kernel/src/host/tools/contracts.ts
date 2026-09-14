@@ -6,6 +6,7 @@
  */
 
 import type { ToolContract } from "./contract-types.ts"
+import { DATASHEET_CONTRACT } from "./datasheet/contract.ts"
 import { FIND_CONTRACT } from "./find/contract.ts"
 import { FLASH_CONTRACT, probeCommandIn } from "./flash/contract.ts"
 import { GDB_CONTRACT } from "./gdb/contract.ts"
@@ -16,7 +17,7 @@ import { LS_CONTRACT } from "./ls/contract.ts"
 import { POWERSHELL_CONTRACT } from "./powershell/contract.ts"
 import { TOOLCHAIN_CONTRACT } from "./toolchain/contract.ts"
 
-/** 四件套之后先放文件工具,再是这台机器本身(工具链),硬件最后;顺序与 index.ts 的装配、types.ts 的 TOOL_NAMES 逐字同序。 */
+/** 四件套之后先放文件工具,再是这台机器本身(工具链),硬件之后是手册;顺序与 index.ts 的装配、types.ts 的 TOOL_NAMES 逐字同序。 */
 export const TOOL_CONTRACTS = [
   GREP_CONTRACT,
   FIND_CONTRACT,
@@ -27,6 +28,7 @@ export const TOOL_CONTRACTS = [
   LOG_CONTRACT,
   LA_CONTRACT,
   GDB_CONTRACT,
+  DATASHEET_CONTRACT,
 ] as const satisfies readonly ToolContract[]
 
 export function toolContract(name: string): ToolContract | undefined {

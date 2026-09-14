@@ -257,6 +257,7 @@ export const TOOL_NAMES = [
   "log",
   "la",
   "gdb",
+  "datasheet",
 ] as const
 
 export type ToolName = (typeof TOOL_NAMES)[number]

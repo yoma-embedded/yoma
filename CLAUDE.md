@@ -44,7 +44,7 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
 
 四个盒子(`boundary.test.ts` 的说法):**餐厅** = app / session-ui / ui / util / desktop,只认**菜单**
 (kernel 的门 `.`,浏览器安全);**厨房** = kernel 的门 `./host` + bench;**工具间** =
-`kernel/src/host/domain/` 与 `host/tools/<名字>/{contract.ts,session.ts}`(住户:flash、grep、find、ls、powershell、log);
+`kernel/src/host/domain/` 与 `host/tools/<名字>/{contract.ts,session.ts}`(住户:grep、find、ls、powershell、toolchain、flash、log、la、gdb、datasheet);
 **发动机** = `packages/{agent,ai,chord,telemetry}`(哈希锁定)。
 
 门就是 `packages/kernel/package.json` 的 `exports`,七道(外加 `./package.json`):
@@ -298,6 +298,48 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
   16. 探针租约与 server 收尸原本零覆盖(删掉 `releaseProbe` 或杀树全绿):假 openocd(打就绪串、真的在端口上听、
       写 pid、活到被杀)一条用例同时钉住租约、收尸、崩溃重起、keepServer;宿主退出那条用子进程 `node --import tsx`
       跑 spawnServer 再 SIGTERM 自己。
+
+- **datasheet 工具**(2026-09-14,第 6 步第 9 刀,从 attic/tools/datasheet.ts 重写):`host/domain/datasheet/{section,hits,chips}.ts`
+  (章节抽取、命中格式与产物路径检查、芯片 / 分卷 / 封面型号解析,纯函数)+ `host/tools/datasheet/{contract,client,session}.ts`
+  (菜单;带超时的 fetch + 错误翻译 + 芯片索引单飞缓存;四个动作 search / read_section / view_figure / chips)。TOOL_NAMES 末尾加
+  "datasheet",共 14 个工具。没有确认门(全部只读)、没有队列(无状态)、没有 dispose。session-manager 传 `datasheet: { configDir }`,
+  地址与手册库页同解。测试 `test/datasheet-domain.test.ts`(35)+ `test/tools-datasheet.test.ts`(75 条假服务器 + 5 条真服务器,
+  后者只在 `YOMA_DATASHEET_LIVE=1` 时跑,别让 CI 依赖公网)。
+  1. **对着真 manifest 写,不对着阁楼写**:757 本里 305 本是按页切的卷(`RM0390_p401-800`),模型自然写 `rev:"RM0390"`,而服务器对
+     不存在的 rev **一条都不回**(不是 GENERAL 噪声,是空)。`resolveRev` 把基名解析成全部卷、每卷各搜一次(并发)再按分数合并;
+     `chips` 里一本分卷手册显示成一行并说明两种写法。服务器源码在 `../yoma-tools/RAG_yoma/server/app.py`,rev 的过滤语义在
+     `rag_yoma/query.py`(给 rev = 只这一本、不折 GENERAL;不给 = 全家族 + GENERAL)。
+  2. **三种无声失败各有一条兜底**:chip 是型号 → manifest 解析成家族重查(阁楼已有);名字不合法(空格、中文)→ 不打会 422 的那一枪,
+     直接去索引解析;家族收录了但前 k 条全是 GENERAL(Cortex-M 内核手册在泛问题上分数高)→ 放宽到服务器上限 20 条把本家挖出来、
+     本家排前 GENERAL 压后并说明,20 条里还是没有才说"没搜到"。阁楼版把第三种直接报成"chip 里没有匹配",是假话。
+  3. **服务器的错误码要分别翻**:404 = 没有 /api/search,503 = 索引没发布,422 = 名字不合法;只有连不上 / 超时 / 5xx 才是
+     "DATASHEET LOOKUP UNAVAILABLE"。把 422 翻成"服务器挂了"会让模型从此不查手册。
+  4. **manifest 的拉取不绑任何一次调用的 abortSignal**:它 4.3 MB、所有会话共用一份缓存(模块级、10 分钟 TTL、单飞);按停止时那一次
+     调用立刻返回(raceAbort),下载在后台走完进缓存。失败不缓存,端点不在(404)缓存 —— 旧服务器不该每次多打一枪。
+  5. **view_figure 走 domain/image 那道**(与 read 工具读图同一条):大图压到供应商内嵌上限以内,缩过了给模型一句比例说明;阁楼版是
+     8 MB 硬上限直接塞,超 5 MB base64 的图会让整段对话被拒。
+  6. **封面型号**:33 本手册的 manifest 带 `covered_devices`,是**一个字符串**、带 `x` 通配与 `/` 备选(`STM32G081xB`、
+     `STM32G071x8/xB`、`STM32G0B0KE/CE/RE/VE`、`STM32G0x1`)。第一版按 `string[]` 字面前缀写、测试用编的夹具全绿、线上一次都
+     没触发 —— 审稿对着真数据抓出来的。现在展开成模式、`x` 匹配一个字符;夹具改成真 manifest 的切片(`test/fixtures/datasheet/
+     manifest-slice.json`),别再对着编出来的形状写测试。
+  7. 测试里地址一律显式注入(env + mkdtemp configDir):本机 `~/.yoma/.env` 指着旧地址,不注入的话断言取决于跑测试的人的 .env。
+  审稿两位(一个对真服务器逐动作实验,一个做生命周期变异)抓到 21 条,全部属实全修。以后还会踩的:
+  8. **read_section 要对着 Docling 的真产物写**:所有标题都是 `##`(位域行 "Bits 3:0 …"、"Reset value:"、"Note:" 都提成了标题),
+     "到下一个同级标题为止"只给四行、寄存器表永远被切掉 —— 编号章节的边界按**编号深度**算;标题里的标点是转义的
+     (`USART\_BRR`、`TIM6&amp;TIM7`)而命中的 `headings` 字段是裸的,13% 的标题(恰好是寄存器节)按面包屑找不到 —— 两边都
+     `unescapeMarkdown`;有一个标题就叫 `2`,"wanted 以标题开头"这种反向宽松匹配会被它吞掉且 `mode:"section"` 看不出错 ——
+     反向匹配要求标题撑起 wanted 的大半、在词边界上断(`30.6` 不是 `30.6.2` 的前缀)、取最长;命中的标题不是要的那个时
+     输出第一行说 "(Closest heading to …)"。目录只列编号章节。
+  9. **说给模型的数字要算对**:GENERAL 兜底的 "N 条压过本家" 要数真正压过本家最好一条的,不是 20 条里 GENERAL 的总数;
+     返回的条数不超过 topK(本家优先、剩下的位子给 GENERAL);"几本手册"按文档数,分卷另注(chips 说 "14 manual(s)" 却只列 4 行,
+     模型会以为藏了 10 本);候选清单截断要写 "+N more",不然 "Closest" 冒充全表。
+  10. **索引拉不到时的全 GENERAL 也是落空**:第一版在 manifest 404 / 断线时把 GENERAL 原样递出去、一句不说 —— 这正是这个
+      工具存在的理由;精确 chip + rev 零命中也要说"这本在、但没匹配",阁楼版有这句,重写丢了。
+  11. **分卷扇出先试一枪**:服务器对每个请求重做一次 embedding,10 卷并发实测比一枪慢 6 倍;先一枪家族范围 20 条,目标卷够
+      k 条就不扇出。服务器侧真正的解法是 `/api/search` 收 rev 列表,一次 embedding 服务所有卷(已建议)。
+  12. 非 2xx 响应体的读取也要过中止:`res.text().catch(() => "")` 把用户按停止吞成一份"服务器不可达"的正常结果。命中整条
+      归一(缺 `score` 时 `toFixed` 会把整个调用炸成裸 TypeError;`chip: null` 会冒充本家命中)。写完测试**再跑一次 typecheck**
+      (第一版提交前 tsgo 只跑了源码,测试文件里三个类型错误是审稿抓的)。
 
 - 新开一道深引用 = 改 `exports`(从前是改四份别名表)。`boundary.test.ts` 钉住五条:菜单里没有 Node;
   工具间不反调会话间(`host/domain` 往外只拿 `host/models.ts`、`host/datasheet-server.ts`);餐厅只许走
@@ -860,10 +902,12 @@ USB(USBTMC)或 LAN(SCPI 原始套接字 5025 口),只在这一台上验证过。
 产品决定是用户装完即可查手册,防线在服务器侧(限流 / 反代)。解析规则只有这一份(叶子模块,经
 `@yoma-desktop/kernel/host/datasheet-server` 这道叶子门可达,不再靠别名):**显式 > 环境变量
 `YOMA_DATASHEET_SERVER` > `<configDir>/.env`(或 `$YOMA_ENV_FILE`)> 内置默认**,值 off / none / false / 0 =
-显式关闭。datasheet 工具收 `{configDir, server, env, builtIn, timeoutMs}`(kernel 的 createEmbeddedTools
-传 configDir,bench 因此不再是盲区);desktop main 的手册库页经叶子模块解析,和内核
-说同一个地址。**每个请求都带超时**(API 20 s、产物 60 s):内置地址意味着所有安装都会去碰一台可能挂掉的
-机器,没有超时就是整轮吊死。2026-09-05 从开发机探默认地址连接超时 —— 维护者要确认或换掉这个常量。
+显式关闭。datasheet 工具收 `{configDir, server, env, builtIn, timeoutMs, artifactTimeoutMs}`(session-manager 经
+`createRegisteredTools({ datasheet: { configDir } })` 传 configDir,bench 因此不再是盲区);desktop main 的手册库页经叶子模块解析,和内核
+说同一个地址。**每个请求都带超时**(API 20 s、产物与 manifest 60 s):内置地址意味着所有安装都会去碰一台可能挂掉的
+机器,没有超时就是整轮吊死。2026-09-14 维护者确认了这个地址(`http://47.122.110.137:8301`,757 本 / 78 个家族,
+`/api/search`、`/api/manifest`、`/artifacts/` 都在);旧地址 47.122.120.208 已下线(回 502)—— 开发机自己的 `~/.yoma/.env`
+若还写着旧地址会压过内置默认,本机查手册就失败而别人的不会。
 `ensureDatasheetServerEnv`(kernel-entry)现在只是把解析结果喂进 process.env 的薄壳。
 
 ### 热升级(electron-updater)
@@ -1003,8 +1047,8 @@ NsisUpdater 的 blockmap 路径 —— 通道本来就通。这次修的是**用
   tar 路径与可执行位处理没有真机验过。运行期镜像只有 `YOMA_TOOLCHAIN_MIRROR` 一个口子,维护者若要自建
   镜像,把包放到 `<镜像>/<文件名>` 即可。内核 utilityProcess 里的 `fetch` 不认系统代理设置(main 进程的
   `setGlobalProxyFromEnv` 不覆盖它)。
-- **数据手册默认地址待维护者确认**:`DEFAULT_DATASHEET_SERVER` 是 ad6df94 之前的那个 IP,2026-09-05 从
-  开发机探测连接超时。还没有设置页字段可以改它(只能 `~/.yoma/.env` 或环境变量)。
+- **数据手册地址没有设置页字段**:内置默认 2026-09-14 已由维护者确认可用;换地址只能 `~/.yoma/.env` 或环境变量。
+  内置的是裸 IP + 明文 HTTP:服务器一搬家就得发版,查询语句在路上是裸的 —— 挂域名 / TLS 是服务器侧的事。
 - **热升级没有真跑过一次两版本升级**:controller 有单测、bridge 有 e2e,但"装 vN → 发布 vN+1 → 自动下载
   → 退出时安装"的完整路径要一次真实 Release 才验得到。
 - **信箱调试台:2026-08-10 大幅简化之后还没上过真板子。** 这一版删掉了判据层、
