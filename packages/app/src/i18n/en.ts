@@ -274,6 +274,7 @@ export const dict = {
   "session.confirmDock.tool.flash": "Flash",
   "session.confirmDock.tool.bash": "Bash",
   "session.confirmDock.tool.powershell": "PowerShell",
+  "session.confirmDock.tool.log": "Log",
   "session.confirmDock.replyFailed": "The reply did not reach the kernel, please try again",
   "session.new.title": "Build anything",
   "session.new.project.new": "New project",

@@ -28,7 +28,6 @@ import {
   createEditTool,
   createReadTool,
   createWriteTool,
-  type AgentHarnessTool,
   type AgentLane,
   type Context,
   type ExecutionToolContext,
@@ -52,7 +51,7 @@ import { buildSystemPrompt } from "./system-prompt.ts"
 import { ConfirmDesk } from "./confirm.ts"
 import { ToolProgressThrottle } from "./tool-progress.ts"
 import { confirmNeeded } from "./tools/contracts.ts"
-import { createRegisteredTools, type RegisteredToolOptions } from "./tools/index.ts"
+import { createRegisteredTools, type RegisteredTool, type RegisteredToolOptions } from "./tools/index.ts"
 import { configurableProviders, resolveModel } from "./models.ts"
 import { discoverSkills, loadContextFiles } from "./resources.ts"
 import {
@@ -132,7 +131,7 @@ function isOpen(entry: Entry): boolean {
  * 嵌入式那一套(flash/gdb/la/scope/…)2026-09-10 归零,旧实现留在 kernel/attic/tools
  * 作重写参考;2026-09-11 起按 host/tools/<名字>/ 的样板逐个回来。host 自检也走这里。
  */
-export function createAgentTools(options: RegisteredToolOptions = {}): AgentHarnessTool<ExecutionToolContext>[] {
+export function createAgentTools(options: RegisteredToolOptions = {}): RegisteredTool[] {
   return [
     createReadTool(),
     // 内核的 bash 不管 Python 的编码:Windows 的 GBK 控制台会把例程脚本的 UTF-8 输出
@@ -194,6 +193,8 @@ interface Entry {
   unsubscribes?: Array<() => void>
   /** 确认钩子的取消函数。单独放:它必须活到 stop() 之后才能摘(见 closeEntry)。 */
   unhook?: () => void
+  /** 这个会话的装配面。留着是为了关会话时收长驻工具(log 的采集器握着串口)。 */
+  tools?: RegisteredTool[]
   /**
    * 正在打开。**每个调用方都 await 这同一个 Promise** —— 两个并发的 ensureOpen 各自
    * 去 repo.open 的话,其中一个必然撞上内核的 `Session is already open`,而另一种时序
@@ -713,6 +714,7 @@ export class SessionManager {
       // 这几行之间**不能有 await** —— 它们一起构成"这个会话开好了"这一个事实。
       entry.harness = harness
       entry.projection = projection
+      entry.tools = tools
       entry.unsubscribes = this.subscribe(entry, harness)
       // 确认钩子**不**并进 unsubscribes:closeEntry 先摘订阅再 stop,而 desk.cancel 结算掉第一条之后,
       // 同一批里的第二条工具会立刻轮到 before_tool —— 钩子已摘,它就无人确认地起跑了。所以钩子
@@ -1262,6 +1264,9 @@ export class SessionManager {
     // harness.close() 连会话一起关 —— 必须关,repo 不允许同一个会话开两次。
     if (entry.harness) await entry.harness.close(this.context).catch(() => {})
     else if (entry.session) await entry.session.close(this.context).catch(() => {})
+    // 长驻工具先收:log 的采集器握着串口,会话关了它就该还回去,不能等到内核进程退出。
+    for (const tool of entry.tools ?? []) await tool.dispose?.().catch(() => {})
+    entry.tools = undefined
     // 当前的和 refreshMachineEnv 退役掉的一起收:遗留子进程一个都不许活过会话。
     await this.cleanupRetiredEnvs(entry)
     await entry.env?.cleanup(this.context).catch(() => {})

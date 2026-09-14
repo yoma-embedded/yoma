@@ -242,7 +242,7 @@ export interface ToolConfirmView {
  * grep / find / ls / powershell(四件套之后先放文件工具,硬件最后)。
  * 退役的名字**不必**留在这里:界面按任意工具名走万能卡,旧会话重放照样画得出来。
  */
-export const TOOL_NAMES = ["read", "bash", "edit", "write", "grep", "find", "ls", "powershell", "flash"] as const
+export const TOOL_NAMES = ["read", "bash", "edit", "write", "grep", "find", "ls", "powershell", "flash", "log"] as const
 
 export type ToolName = (typeof TOOL_NAMES)[number]
 

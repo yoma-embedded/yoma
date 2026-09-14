@@ -30,6 +30,17 @@ describe("confirmNeeded", () => {
     expect(gate?.summary({ command })).toBe(command)
   })
 
+  it("log 只在 command 源起探针程序时问;串口、TCP、wait/read 一律不问", () => {
+    const command = "openocd -f interface/stlink.cfg -c 'rtt server start 9090 0'"
+    const gate = confirmNeeded("log", { action: "start", command })
+    expect(gate?.label).toBe("日志")
+    expect(gate?.summary({ action: "start", command })).toBe(`start ${command}`)
+    expect(confirmNeeded("log", { action: "start", command: "python3 decode.py /dev/ttyUSB0" })).toBeUndefined()
+    expect(confirmNeeded("log", { action: "start", port: "/dev/ttyUSB0", baud: 921600 })).toBeUndefined()
+    expect(confirmNeeded("log", { action: "start", tcp: "localhost:19021" })).toBeUndefined()
+    expect(confirmNeeded("log", { action: "wait", pattern: "openocd" })).toBeUndefined()
+  })
+
   it("无害命令、没登记的工具、参数形状不对的都不问", () => {
     expect(confirmNeeded("bash", { command: "ls -la && grep -rn openocd src/" })).toBeUndefined()
     expect(confirmNeeded("powershell", { command: "Get-PnpDevice -Class Ports" })).toBeUndefined()

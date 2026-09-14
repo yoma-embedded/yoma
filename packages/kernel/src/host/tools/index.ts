@@ -12,6 +12,7 @@ import type { AgentHarnessTool, ExecutionToolContext } from "@earendil-works/pi-
 import { createFindTool } from "./find/session.ts"
 import { createFlashTool } from "./flash/session.ts"
 import { createGrepTool } from "./grep/session.ts"
+import { createLogTool } from "./log/session.ts"
 import { createLsTool } from "./ls/session.ts"
 import { createPowerShellTool } from "./powershell/session.ts"
 
@@ -20,7 +21,13 @@ export interface RegisteredToolOptions {
   enginesDir?: string
 }
 
-export function createRegisteredTools(options: RegisteredToolOptions = {}): AgentHarnessTool<ExecutionToolContext>[] {
+/**
+ * 装配面上的工具:比发动机的 AgentHarnessTool 多一个可选的会话关闭收尾口。长驻型工具(log 的采集器)
+ * 靠它在会话关掉时还回串口;一次性工具不实现。session-manager 的 closeEntry 在 stop 之后逐个调。
+ */
+export type RegisteredTool = AgentHarnessTool<ExecutionToolContext> & { dispose?(): Promise<void> }
+
+export function createRegisteredTools(options: RegisteredToolOptions = {}): RegisteredTool[] {
   const shared = { enginesDir: options.enginesDir || undefined }
   return [
     createGrepTool(shared),
@@ -28,5 +35,6 @@ export function createRegisteredTools(options: RegisteredToolOptions = {}): Agen
     createLsTool(shared),
     createPowerShellTool(shared),
     createFlashTool(),
+    createLogTool(),
   ]
 }

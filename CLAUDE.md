@@ -44,7 +44,7 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
 
 四个盒子(`boundary.test.ts` 的说法):**餐厅** = app / session-ui / ui / util / desktop,只认**菜单**
 (kernel 的门 `.`,浏览器安全);**厨房** = kernel 的门 `./host` + bench;**工具间** =
-`kernel/src/host/domain/` 与 `host/tools/<名字>/{contract.ts,session.ts}`(2026-09-11 起有住户:flash);
+`kernel/src/host/domain/` 与 `host/tools/<名字>/{contract.ts,session.ts}`(住户:flash、grep、find、ls、powershell、log);
 **发动机** = `packages/{agent,ai,chord,telemetry}`(哈希锁定)。
 
 门就是 `packages/kernel/package.json` 的 `exports`,七道(外加 `./package.json`):
@@ -97,6 +97,19 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
   -ExecutionPolicy Bypass -EncodedCommand`,脚本头两行关进度条与置 UTF-8 输出,stderr 上的 CLIXML 块**解码**
   (取出 Error 记录,丢进度)而不是整块删 —— Write-Error 退出码是 0,整块删掉模型就以为成功了。CI 两岗测试前
   `npm run engines:rg` 只装 rg,grep / find 的集成用例在 CI 上缺 rg 直接红而不是跳过。
+- **log 工具**(2026-09-14,第 6 步第 4 刀,从 attic/tools/{log,serial}.ts 重写):`host/tools/log/` 五个文件 ——
+  `contract.ts`(菜单)、`excerpt.ts`(节选纯函数:折叠、骨架采样、按命中点开窗裁)、`capture.ts`(会话级采集器:
+  child / tcp 两种源、环形缓冲 5000 行 / 512 KB、全量落 `<cwd>/.yoma/logs/hw-*.log`)、`serial.ts`(三平台串口:POSIX
+  开两次 fd + `cat` 读继承来的 O_NOCTTY fd,Windows 是 PowerShell 5.1 读 System.IO.Ports 原始字节)、`session.ts`
+  (六个动作 start / read / wait / status / stop / ports)。**一个会话一个采集器**,活在工具闭包里;装配面的工具多一个
+  可选 `dispose()`(`tools/index.ts` 的 `RegisteredTool`),`session-manager.closeEntry` 在 stop 之后逐个调 ——
+  桌面内核长驻,不收的话会话关了串口还被占着。log **不碰探针租约**(RTT 从 gdb server 的 TCP 口读,串口是另一个
+  USB 接口);确认门只在 `command` 源的命令位站着探针程序时问(同 bash / powershell 那道 `probeCommandIn`)。
+  wait 期间把预览行喂 onUpdate(走工具进度链路上卡片)。串口端到端用例靠 python3 的 pty,没有就跳过。
+  两条审稿实测出来的规矩:**发动机的 AgentHarness 不读工具上的 `executionMode`**(那是老 agent-loop 的字段),
+  同一批里的工具调用是并行的,所以 log 在工具内用一条 promise 队列把自己的调用串起来;采集器的**活性按
+  'close' 判而不是按 'exit'**—— `sh -c "reader &"` 这种源 shell 一退 'exit' 就来了,真正吐字节的孙进程还握着
+  管道,按 'exit' 判会让第二个 start 静默顶掉旧采集器,串口就被那个孙进程占到内核退出。
 - 新开一道深引用 = 改 `exports`(从前是改四份别名表)。`boundary.test.ts` 钉住五条:菜单里没有 Node;
   工具间不反调会话间(`host/domain` 往外只拿 `host/models.ts`、`host/datasheet-server.ts`);餐厅只许走
   `@yoma-desktop/kernel`、`@yoma-desktop/kernel/tools/<名字>/contract` 或 `@yoma-desktop/kernel/tools/contracts`;
