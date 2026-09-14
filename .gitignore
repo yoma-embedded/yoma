@@ -3,6 +3,7 @@ out/
 dist/
 .engines-stage/
 .engines-cache/
+.upstream-cache/
 .turbo/
 *.tsbuildinfo
 .ts-dist/

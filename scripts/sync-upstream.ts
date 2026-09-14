@@ -31,6 +31,59 @@ async function git(source: string, args: string[]): Promise<Buffer> {
   return stdout
 }
 
+/** 自管镜像的位置(已进 .gitignore)。删掉它只是丢缓存,下一次自己重新拉。 */
+export const MIRROR_DIRECTORY = ".upstream-cache/pi.git"
+
+/**
+ * 锁里的 repository 会被交给 `git clone`,所以按白名单校验:只认 https://(真上游)与 file:///(测试用的
+ * 本地裸仓)。挡的是 `ext::sh -c ...` 这类能借 Git 传输层执行命令的地址,以及以 `-` 开头被当成选项的串。
+ */
+function validateRepositoryUrl(repository: string): string {
+  const url = repository.trim()
+  if (!/^(?:https:\/\/|file:\/\/\/)[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]+$/.test(url)) {
+    throw new Error(`upstream-lock.json 的 repository 必须是 https:// 或 file:/// 的 Git 地址:${JSON.stringify(repository)}`)
+  }
+  return url
+}
+
+/**
+ * 默认来源:按锁里记的**上游仓库地址**自己维护一份裸镜像,而不是"这台机器上某个目录里的 pi 检出"。
+ *
+ * 【为什么改】同步的依据应该是上游仓库本身。默认指向 `../pi` 意味着:换一台机器、换一个同事、CI 里,
+ * 这个命令都跑不起来,而且跑得起来的那台机器上"旁边那个 pi 是什么状态"成了同步结果的一部分 ——
+ * 那正是这套工具费力用 commit + sha256 想消掉的不确定性。
+ *
+ * 【安全性没有变松】联网只是把 Git 对象取回来,而对象是内容寻址的:同步仍然只读一个**解析好的完整
+ * commit**,仍然用旧 commit 的 Git 对象核对本地基线,仍然逐文件比 sha256。网络在这里换不来任何
+ * "偷偷改掉某个文件"的能力 —— 改了 sha 就对不上。
+ *
+ * `--source` 保留:离线、或者要拿一份本地检出(自己的分支、未推上去的提交)时用它,那条路一个字节都不下载。
+ */
+async function ensureMirror(projectRoot: string, repository: string, offline: boolean): Promise<string> {
+  const url = validateRepositoryUrl(repository)
+  const directory = join(projectRoot, ...MIRROR_DIRECTORY.split("/"))
+  let present = true
+  try {
+    await lstat(directory)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+    present = false
+  }
+  if (!present) {
+    if (offline) throw new Error(`--offline 但本地还没有镜像(${MIRROR_DIRECTORY}):先联网跑一次,或用 --source 指一个本地 Git 仓库`)
+    await mkdir(dirname(directory), { recursive: true })
+    await execute("git", ["clone", "--bare", "--quiet", url, directory], { encoding: "buffer", maxBuffer: 64 * 1024 * 1024 })
+    return directory
+  }
+  // 镜像必须还指着同一个上游:地址变了就不是同一份历史,宁可报错也不要悄悄接着用。
+  const current = (await git(directory, ["config", "--get", "remote.origin.url"])).toString("utf8").trim()
+  if (current !== url) {
+    throw new Error(`本地镜像指向 ${current},与锁里的 ${url} 不一致:删掉 ${MIRROR_DIRECTORY} 让它重新拉取`)
+  }
+  if (!offline) await git(directory, ["fetch", "--prune", "--quiet", "origin", "+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"])
+  return directory
+}
+
 async function resolveCommit(source: string, ref: string): Promise<string> {
   if (!ref.trim() || ref.startsWith("-") || /[\x00-\x20\x7f]/.test(ref)) throw new Error("--ref 必须是非空 Git commit/ref，不能包含选项或控制字符")
   const sha = (await git(source, ["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`])).toString("utf8").trim()
@@ -65,15 +118,20 @@ function checkBaseline(lock: UpstreamLock, files: Map<string, GitFile>): void {
   if (errors.length) throw new Error(errors.join("\n"))
 }
 
-export async function prepareSync(options: { projectRoot: string; source?: string; ref?: string }): Promise<SyncPlan> {
-  const sourceInput = options.source ?? join(options.projectRoot, "../pi")
-  if (!sourceInput.trim() || /[\x00-\x1f\x7f]/.test(sourceInput)) throw new Error("--source 必须是非空本地 Git 仓库路径")
+export async function prepareSync(options: { projectRoot: string; source?: string; ref?: string; offline?: boolean }): Promise<SyncPlan> {
   const projectRoot = await realpath(options.projectRoot)
   const previousLockText = (await readProjectFile(projectRoot, "upstream-lock.json")).toString("utf8")
   const previousLock = parseUpstreamLock(previousLockText)
+  // 本地基线先验:发现核心被改过就停,一个字节都不下载。
   const failures = await checkProtectedFiles(projectRoot, previousLock)
   if (failures.length) throw new Error(`本地保护文件不再等于旧锁；停止同步，保留你的改动：\n${failures.join("\n")}`)
-  const source = await realpath(sourceInput)
+  if (options.source !== undefined && (!options.source.trim() || /[\x00-\x1f\x7f]/.test(options.source))) {
+    throw new Error("--source 必须是非空本地 Git 仓库路径")
+  }
+  // 不给 --source 就用自管镜像(来源是锁里的上游仓库地址,不是这台机器上的某个目录)。
+  const source = await realpath(
+    options.source ?? (await ensureMirror(projectRoot, previousLock.repository, options.offline ?? false)),
+  )
   // Resolve both once. All subsequent reads use immutable commits/blob IDs, never the working tree.
   const to = await resolveCommit(source, options.ref ?? "HEAD")
   const from = await resolveCommit(source, previousLock.commit)
@@ -198,15 +256,17 @@ export function formatSyncPlan(plan: SyncPlan): string {
   ].join("\n")
 }
 
-const HELP = `用法：npm run upstream:diff -- [--source <本地pi仓库>] [--ref <commit/ref>] [--apply] [--packages-reviewed <完整目标SHA>] [--model-data-reviewed <完整目标SHA>]
-默认 --source 为工程旁的 ../pi，--ref HEAD；默认只预览。只读取 Git 对象，不 fetch、不复制工作树、不提交代码。
+const HELP = `用法：npm run upstream:diff -- [--ref <commit/ref>] [--source <本地Git仓库>] [--offline] [--apply] [--packages-reviewed <完整目标SHA>] [--model-data-reviewed <完整目标SHA>]
+默认来源是 upstream-lock.json 里记的上游仓库：工具自己在 ${MIRROR_DIRECTORY} 维护一份裸镜像并 fetch，不依赖这台机器上有没有 pi 检出。
+--source 指一个本地 Git 仓库时完全离线（自己的分支、没推上去的提交走这条）；--offline 用已有镜像不联网。
+--ref 默认 HEAD（镜像的 HEAD 就是上游默认分支的最新提交）。只读取 Git 对象，从不复制工作树，默认只预览。
 --apply 逐文件写入并最后更新锁；多文件更新不是原子事务，中途失败需要检查工作树和旧锁。
 上游四个 package.json 有变化时，先人工适配本地配置，再用精确目标 SHA 确认已核对。\n`
 
 export async function runSyncCli(args: string[], projectRoot = dirname(dirname(fileURLToPath(import.meta.url)))): Promise<void> {
-  const { values } = parseArgs({ args, options: { source: { type: "string" }, ref: { type: "string" }, apply: { type: "boolean" }, "packages-reviewed": { type: "string" }, "model-data-reviewed": { type: "string" }, help: { type: "boolean", short: "h" } } })
+  const { values } = parseArgs({ args, options: { source: { type: "string" }, ref: { type: "string" }, offline: { type: "boolean" }, apply: { type: "boolean" }, "packages-reviewed": { type: "string" }, "model-data-reviewed": { type: "string" }, help: { type: "boolean", short: "h" } } })
   if (values.help) { process.stdout.write(HELP); return }
-  const plan = await prepareSync({ projectRoot, source: values.source, ref: values.ref })
+  const plan = await prepareSync({ projectRoot, source: values.source, ref: values.ref, offline: values.offline })
   process.stdout.write(`${formatSyncPlan(plan)}\n`)
   if (values.apply) {
     await applySync(plan, { packagesReviewed: values["packages-reviewed"], modelDataReviewed: values["model-data-reviewed"] })

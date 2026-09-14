@@ -1,10 +1,10 @@
 import { execFile } from "node:child_process"
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { promisify } from "node:util"
 import { afterEach, describe, expect, it } from "vitest"
-import { applySync, prepareSync } from "../sync-upstream.ts"
+import { applySync, MIRROR_DIRECTORY, prepareSync } from "../sync-upstream.ts"
 import { checkProtectedFiles, parseUpstreamLock, sha256, type UpstreamLock } from "../upstream-common.ts"
 
 const execute = promisify(execFile)
@@ -70,6 +70,84 @@ async function fixture(generated = false) {
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
+})
+
+/** 把夹具仓库的 file:// 地址写进锁 —— 生产里那一格是 pi 的 https 地址。 */
+async function pointLockAtRepository(projectRoot: string, repository: string): Promise<void> {
+  const file = join(projectRoot, "upstream-lock.json")
+  const lock = JSON.parse(await readFile(file, "utf8")) as UpstreamLock
+  lock.repository = repository
+  await writeFile(file, `${JSON.stringify(lock, null, 2)}\n`)
+}
+
+async function exists(path: string): Promise<boolean> {
+  return stat(path).then(
+    () => true,
+    () => false,
+  )
+}
+
+describe("自管上游镜像(不依赖某台机器上的检出)", () => {
+  it("不给 --source 时按锁里的仓库地址自己克隆,并在第二次运行时 fetch 到新提交", async () => {
+    const { source, projectRoot, commit } = await fixture()
+    await pointLockAtRepository(projectRoot, `file://${source}`)
+    await put(source, aiFile, "upstream ai\n")
+    const to = await commit()
+
+    const plan = await prepareSync({ projectRoot })
+    expect(plan.to).toBe(to)
+    expect(await exists(join(projectRoot, MIRROR_DIRECTORY))).toBe(true)
+    await applySync(plan)
+    expect(await readFile(join(projectRoot, aiFile), "utf8")).toBe("upstream ai\n")
+
+    // 第二次:上游又走了一步。镜像已经在了,必须 fetch 到新提交 —— 停在克隆那一刻的话,
+    // 这个命令会永远报"已经是最新",而上游其实一直在走。
+    await put(source, aiFile, "upstream ai 2\n")
+    const next = await commit()
+    const second = await prepareSync({ projectRoot })
+    expect(second.to).toBe(next)
+  })
+
+  it("--offline 用已有镜像不联网:上游走了也看不见", async () => {
+    const { source, projectRoot, commit } = await fixture()
+    await pointLockAtRepository(projectRoot, `file://${source}`)
+    await put(source, aiFile, "upstream ai\n")
+    const first = await commit()
+    expect((await prepareSync({ projectRoot })).to).toBe(first)
+
+    await put(source, aiFile, "upstream ai 2\n")
+    await commit()
+    expect((await prepareSync({ projectRoot, offline: true })).to).toBe(first)
+  })
+
+  it("锁里的仓库地址不是 https/file 时拒绝 —— 它会被交给 git clone", async () => {
+    const { projectRoot } = await fixture()
+    // ext:: 这类地址能借 Git 传输层执行命令;夹具原本那个 "local-test-fixture" 也不是合法地址。
+    await pointLockAtRepository(projectRoot, "ext::sh -c touch% /tmp/pwned")
+    await expect(prepareSync({ projectRoot })).rejects.toThrow(/https:\/\/ 或 file:\/\/\//)
+    await expect(prepareSync({ projectRoot })).rejects.toThrow(/repository/)
+  })
+
+  it("已有镜像指向别的上游时停下,不悄悄接着用", async () => {
+    const { source, projectRoot, commit } = await fixture()
+    await pointLockAtRepository(projectRoot, `file://${source}`)
+    await put(source, aiFile, "upstream ai\n")
+    await commit()
+    await prepareSync({ projectRoot })
+    // 换一个地址:同名目录里那份历史不再是锁说的那一份了。
+    await pointLockAtRepository(projectRoot, `file://${source}-other`)
+    await expect(prepareSync({ projectRoot })).rejects.toThrow(/与锁里的/)
+  })
+
+  it("--source 仍然可用,而且那条路一个字节都不下载", async () => {
+    const { source, projectRoot, commit } = await fixture()
+    await pointLockAtRepository(projectRoot, "file:///nonexistent-should-not-be-touched")
+    await put(source, aiFile, "upstream ai\n")
+    const to = await commit()
+    const plan = await prepareSync({ projectRoot, source })
+    expect(plan.to).toBe(to)
+    expect(await exists(join(projectRoot, MIRROR_DIRECTORY))).toBe(false)
+  })
 })
 
 describe("upstream synchronization", () => {

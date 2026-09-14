@@ -6,21 +6,31 @@
 
 | 命令 | 用途 | 是否改文件 |
 | --- | --- | --- |
-| `npm run upstream:check` | 检查本地受保护文件与锁定清单是否一致 | 否，无需 pi 在旁边 |
-| `npm run upstream:diff -- --source ../pi --ref HEAD` | 验证旧基线，再预览选定上游提交的增删改与包配置变化 | 否 |
-| `npm run upstream:update -- --source ../pi --ref <完整SHA>` | 同步受管理文件，最后更新锁定清单 | 是 |
+| `npm run upstream:check` | 检查本地受保护文件与锁定清单是否一致 | 否，完全离线 |
+| `npm run upstream:diff` | 取回上游、验证旧基线，再预览增删改与包配置变化 | 否（只写镜像缓存） |
+| `npm run upstream:update -- --packages-reviewed <完整SHA>` | 同步受管理文件，最后更新锁定清单 | 是 |
+
+**来源是上游仓库本身，不是某台机器上的某个目录。** 不给 `--source` 时，工具按 `upstream-lock.json` 里的
+`repository` 在 `.upstream-cache/pi.git` 维护一份裸镜像并 `fetch`（该目录已进 `.gitignore`，删掉只是丢缓存，
+下次自己重新拉）。换一台机器、换一个同事、在 CI 里，同一条命令都跑得起来，而且结果只由"解析出来的
+那个完整 commit"决定——而不是由"那台机器旁边那个 pi 检出当时是什么状态"决定。
+
+联网只是把 Git 对象取回来，安全性没有变松：对象是内容寻址的。同步仍然只读一个解析好的完整 commit、
+仍然用旧 commit 的 Git 对象核对本地基线、仍然逐文件比 sha256。改了任何一个字节，sha 就对不上。
+锁里的 `repository` 会被交给 `git clone`，所以按白名单只认 `https://` 与 `file:///`（挡 `ext::` 这类能借
+Git 传输层执行命令的地址）。
 
 `upstream:check` 通过，只表示仍符合已经锁定的版本，不能说明没有新的上游提交。
 
-`--source` 指向本机 pi Git 仓库；相对路径按当前工作目录解析。`--ref` 可以是它已有的分支、tag 或 commit。先预览，再将输出的完整 SHA 交给 update，确保两次使用同一提交。工具自身不联网，不改变 pi 检出，也不自动创建提交。
+`--source <本地Git仓库>` 保留给两种情况：完全离线，或者要同步一份还没推上去的本地检出（自己的分支）。那条路一个字节都不下载。`--offline` 表示用已有镜像、不 fetch。`--ref` 默认 HEAD，即镜像里上游默认分支的最新提交，也可以给分支、tag 或 commit。先预览，再将输出的完整 SHA 交给 update，确保两次使用同一提交。工具不改变任何 pi 检出，也不自动创建提交。
 
 ## 平时按这个顺序更新
 
-1. 更新本机 pi 检出，拿到希望跟随的上游提交。不要自动覆盖 pi 工作树中的个人修改。
-2. 在 yoma-core 根目录执行 `npm run upstream:check`，确认当前受保护文件仍符合旧基线。
-3. 执行 `npm run upstream:diff -- --source ../pi --ref HEAD`，查看受管理文件的变化与上游包配置变化。
-4. 执行 `npm run upstream:update -- --source ../pi --ref <预览中的完整SHA>`。
-5. 执行 `npm run typecheck`、`npm test`。API 有变化时，在 CLI 等消费者中适配后再验证。
+1. 执行 `npm run upstream:check`，确认当前受保护文件仍符合旧基线。
+2. 执行 `npm run upstream:diff`，工具自己取回上游，列出受管理文件的变化与上游包配置变化。
+3. 上游 package.json 有变化时先适配本地依赖（见下节），`npm install` 重新安装。
+4. 执行 `npm run upstream:update -- --packages-reviewed <预览中的完整SHA>`。
+5. 执行 `npx turbo typecheck --force`、`npm test`，以及 desktop 的七道闸门。API 有变化时，在消费者中适配后再验证。
 6. 将本次源码、锁定清单、必要配置及测试改动一并保存到自己的 Git 提交。文档、CLI 与其他本地文件的改动应分别核对。
 
 版本字符串没有变化也可能有新的 commit。本次 EventStream 优化仍标为 0.85.1，准确基线要看完整 commit。
@@ -63,7 +73,7 @@ CLI、examples、本地 package.json、构建配置、自己的文档不属于�
 处理方式是先审阅上游配置差异，适配本地依赖、catalog、exports 或运行环境要求；依赖变化时重新安装并保存 package-lock.json。完成审阅后，用预览中的完整目标 SHA 明确标记这次配置已核对：
 
 ```sh
-npm run upstream:update -- --source ../pi --ref <完整SHA> --packages-reviewed <同一个完整SHA>
+npm run upstream:update -- --packages-reviewed <同一个完整SHA>
 ```
 
 `--packages-reviewed` 只表示调用者已负责核对该提交的配置，不会替调用者自动改好 package.json，也不跳过类型检查与行为测试。
@@ -82,7 +92,7 @@ npm run upstream:update -- --source ../pi --ref <完整SHA> --packages-reviewed 
 完成数据兼容性检查后，用精确目标 SHA 标记该次审阅：
 
 ```sh
-npm run upstream:update -- --source ../pi --ref <完整SHA> --model-data-reviewed <同一个完整SHA>
+npm run upstream:update -- --model-data-reviewed <同一个完整SHA>
 ```
 
 该标记不会执行生成器或自动验证模型价格、地址等元数据。生成脚本或上游数据源的变化仍需要单独关注；必要时可以与 `--packages-reviewed` 一起传入。
@@ -97,6 +107,18 @@ npm run upstream:update -- --source ../pi --ref <完整SHA> --model-data-reviewe
 - `packages/agent-legacy`(2025 年从 pi `f8f75544b` 派生、自行维护的旧 harness)已于 2026-09-10 删除,`packages/kernel` 接 `packages/agent` 这份上游拷贝。
 
 ## 这次验证
+
+2026-09-14 从 `b2602be77` 同步到 `ceea48f5d`(21 个范围内提交,47 个文件,7 新增 / 40 修改 / 0 删除)。
+同一次改了同步工具本身:默认来源从"工程旁的 `../pi`"改成"按锁里的 repository 自建镜像"(见上文),
+新增 5 条工具用例。依赖跟着上游走:typebox 1.3.7→1.3.27、@google/genai 1.52→2.21、http(s)-proxy-agent 7→9、
+@anthropic-ai/sdk 0.123→0.124、@aws-sdk/client-bedrock-runtime 3.1048→3.1127、@smithy/node-http-handler 4.7.3→4.12.1、
+esbuild 0.28.1→0.28.2、ignore 7.0.5→7.0.8(typebox 与 esbuild 在本仓自己的包里同步抬到同一版,避免一棵树两份)。
+
+验证范围:全量 2217 条测试、根 typecheck、lint,以及 desktop 的七道闸门(build / smoke / e2e:ipc /
+e2e:renderer / smoke:mailbox / e2e:mailbox / e2e:paint)全绿。真实 provider 调用、Windows、硬件副作用不在范围内。
+
+## 上一次验证
+
 
 2026-09-09 从独立仓 yoma-core 搬入 yoma monorepo:`packages/agent/{src,test}`、同步脚本、锁文件原样迁入,`npm run upstream:check` 在 yoma 内全部通过;yoma 原有的 ai/chord/telemetry 已与 `b2602be77` 逐字节一致,无需再同步。
 
