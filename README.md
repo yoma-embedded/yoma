@@ -86,6 +86,11 @@ npm run engines:build    # netlist parsing / STM32 tools. STM32 configuration ne
 npm run dev:desktop         # restart this command after changing the kernel
 ```
 
+## Before submitting changes
+
+Run `npm run check:ci`, the same entry point as Ubuntu CI: upstream hashes, lint, uncached type checks, ripgrep setup, and all unit tests.
+On Windows, also run `npm run test:windows`. For process, path, or desktop packaging changes, wait for the PR's Windows CI (including the build and Electron checks) before releasing. A passing Mac run does not verify Windows behavior.
+
 ## License
 
 MIT. Third-party sources are listed in `NOTICE`: the desktop app is inherited from [opencode](https://github.com/anomalyco/opencode); the kernel is derived from [pi](https://github.com/earendil-works/pi) (`packages/ai`, `packages/agent`, `packages/chord` and `packages/telemetry` are vendored from pi; `packages/kernel/src/host` is a derived work).

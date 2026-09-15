@@ -1,11 +1,7 @@
-// 工具链版本探测(version.ts)验收:parseVersion / satisfies 是纯函数,直接拿真实
-// 工具的 --version 输出当样本断言;probeVersion 要真起子进程,用平台原生的假
-// 工具脚本(Windows 是 .bat,其它平台是 #!/bin/sh)——不能像 log.test.ts /
-// engines.test.ts 那样无条件写 #!/bin/sh,那批是已知在 Windows 开发机上不亮的
-// 存量坑(见前一阶段报告:「Windows 缺 /bin/sh」),这里新增的测试要在这台机器
-// 上真的跑绿,所以按 process.platform 分支生成脚本。
+import { writeFakeExe } from "./fixtures/fake-exe.ts";
+// 版本探测使用共享的原生启动器夹具，与无 shell 的产品调用方式一致。
 import { basename, delimiter, join } from "node:path";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseVersion, probeVersion, PROBE_TIMEOUT_MS, satisfies } from "../src/host/domain/toolchain/version.ts";
@@ -18,7 +14,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	// maxRetries/retryDelay:杀掉的那个挂起进程(超时测试那条)在 Windows 上偶尔
-	// 会比 probeVersion 的 Promise 结算晚一拍才真正释放它自己那个 .bat 文件的
+	// 会比 probeVersion 的 Promise 结算晚一拍才真正释放它自己那个可执行文件的
 	// 句柄,直接删会撞 EBUSY——这两个选项是 Node 专门为这类"进程刚被杀、文件系统
 	// 还没追上"场景留的,不是加了兜底就代表实现本身有竞态。
 	rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
@@ -29,27 +25,11 @@ afterEach(() => {
  * probeVersion 自己的调用方式对齐,不是拿 shell 里能用的写法抄一份。返回绝对路径。
  */
 function writeFakeTool(name: string, body: { stdout?: string; stderr?: string; hang?: boolean }): string {
-	// stdout/stderr 先写、hang 放最后:这样"先打印版本号,再卡住"(超时测试里
-	// 验证"超时会丢弃已经到手的部分输出"那条要用到)才会真的先把输出冲出去,
-	// 不会被挂在前面的死循环堵住,一个字节都出不来。
-	if (process.platform === "win32") {
-		const file = join(dir, `${name}.bat`);
-		const lines = ["@echo off"];
-		if (body.stdout !== undefined) lines.push(`echo ${body.stdout}`);
-		if (body.stderr !== undefined) lines.push(`echo ${body.stderr} 1>&2`);
-		// windows 没有 sleep,一个不退出的死循环就是"挂住"最省事的写法。
-		if (body.hang) lines.push(":loop", "goto loop");
-		writeFileSync(file, `${lines.join("\r\n")}\r\n`);
-		return file;
-	}
-	const file = join(dir, name);
-	const lines = ["#!/bin/sh"];
-	if (body.stdout !== undefined) lines.push(`echo "${body.stdout}"`);
-	if (body.stderr !== undefined) lines.push(`echo "${body.stderr}" 1>&2`);
-	if (body.hang) lines.push("sleep 9999");
-	writeFileSync(file, `${lines.join("\n")}\n`);
-	chmodSync(file, 0o755);
-	return file;
+  const lines: string[] = []
+  if (body.stdout !== undefined) lines.push(`console.log(${JSON.stringify(body.stdout)})`)
+  if (body.stderr !== undefined) lines.push(`console.error(${JSON.stringify(body.stderr)})`)
+  if (body.hang) lines.push("setInterval(() => {}, 1000)")
+  return writeFakeExe(dir, name, lines.join("\n"))
 }
 
 describe("parseVersion: 真实工具的 --version 输出", () => {

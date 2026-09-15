@@ -8,7 +8,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest"
 
 import { SessionProjection } from "./projector.ts"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { crc32, deflateSync } from "node:zlib"
 import { tmpdir } from "node:os"
 import path from "node:path"
@@ -85,7 +85,7 @@ describe.skipIf(process.platform !== "win32")("Windows PowerShell 会话链路",
             : saved.state.status === "error"
               ? saved.state.error
               : ""
-        expect(output).toContain(workspace)
+        expect(output).toContain(realpathSync.native(workspace))
         expect(output).toContain("结束 中文")
         if (code !== 0) expect(output).toContain("Command exited with code 7")
         expect(events.filter((event) => event.type === "kernel.error")).toEqual([])

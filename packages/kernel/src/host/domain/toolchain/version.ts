@@ -15,6 +15,7 @@
  */
 
 import { type ChildProcess, spawn } from "node:child_process";
+import { killTree } from "../engines.ts";
 
 // ─── 版本号抽取 ──────────────────────────────────────────────────────────────
 
@@ -136,6 +137,7 @@ export function probeVersion(bin: string): Promise<string | undefined> {
 				env: process.env,
 				// 桌面端是 GUI 进程,探测版本时不该在用户眼前闪一个控制台窗口。
 				windowsHide: true,
+				detached: process.platform !== "win32",
 			});
 		} catch {
 			// 极少数平台会在这里同步抛而不是走 'error' 事件(比如参数本身不合法)。
@@ -178,10 +180,10 @@ export function probeVersion(bin: string): Promise<string | undefined> {
 			// 操作系统真正回收:实测踩过,探测用的假二进制文件在 Windows 上因此
 			// 还被短暂锁着,紧跟着的清理代码删不掉那个目录,报 EBUSY。
 			timedOut = true;
-			child.kill("SIGTERM");
+			killTree(child, "SIGTERM");
 			// POSIX 上 SIGTERM 可能被忽略,宽限后 SIGKILL 兜底——Windows 的
 			// kill() 本来就是无条件 TerminateProcess,这一步在那边是空转。
-			after(FORCE_KILL_GRACE_MS, () => child.kill("SIGKILL"));
+			after(FORCE_KILL_GRACE_MS, () => killTree(child, "SIGKILL"));
 			// settle 必须有界:两次信号都没能换来 'close'(比如卡在不可中断的
 			// 内核态 I/O)也不能让调用方永远等下去——这是"超时…不抛"承诺里
 			// 容易漏掉的那一半,光把信号发出去不够,得真的兜住 resolve。

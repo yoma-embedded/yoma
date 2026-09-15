@@ -125,3 +125,7 @@ e2e:renderer / smoke:mailbox / e2e:mailbox / e2e:paint)全绿。真实 provider 
 2026-09-08 从 `9767ba275` 同步到 `b2602be77`：更新 EventStream 事件队列实现，新增对应的 5 个上游回归测试，并单独更新 AI CHANGELOG。Harness 源码及依赖配置没有上游变化。
 
 验证范围为上游一致性、同步保护测试、类型检查，以及原有 Harness/CLI 和新增事件队列的离线测试。真实 provider、Windows 和任意硬件副作用的崩溃恢复不在本次验证范围内。
+
+## Windows 测试夹具适配
+
+`packages/agent/vitest.config.ts` 加载 `scripts/upstream-test-portability.ts`，仅在 Windows 对四个指定的上游测试模块转换夹具：JSONL 的 `/workspace` 及其编码目录换成带盘符的路径，Git Bash 的 `$PWD` 经 `cygpath` 输出原生路径。源码和测试的磁盘文件仍按上游哈希锁定，断言不删、不跳过，生产模块不转换。上游改变夹具写法后须复核该适配；`scripts/test/upstream-test-portability.test.ts` 检查当前夹具与适配一致。

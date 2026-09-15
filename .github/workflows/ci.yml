@@ -24,12 +24,8 @@ jobs:
           cache: npm
       - name: 安装依赖
         run: npm ci
-      - name: 类型检查
-        run: npm run typecheck
-      - name: 准备 ripgrep(grep / find 的集成用例要真跑它)
-        run: npm run engines:rg
-      - name: 单测
-        run: npm test
+      - name: 本地与 CI 共用检查(上游锁定 / lint / 类型 / ripgrep / 单测)
+        run: npm run check:ci
 
   desktop:
     runs-on: windows-latest
@@ -51,7 +47,7 @@ jobs:
       - name: 准备 ripgrep(grep / find 的集成用例要真跑它)
         run: npm run engines:rg
       - name: 内核单测(agent + kernel + kernel-domain + desktop,Windows 岗)
-        run: npx vitest run --project agent --project kernel --project kernel-domain --project desktop
+        run: npm run test:windows
       - name: 下载 Electron 二进制
         shell: pwsh
         run: |

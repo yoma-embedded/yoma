@@ -1,3 +1,4 @@
+import { writeFakeExe as writeNativeFakeExe } from "./fixtures/fake-exe.ts"
 /**
  * toolchain 工具(host/tools/toolchain/{contract,session}.ts)的验收。
  *
@@ -15,7 +16,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -69,16 +70,7 @@ const invocation: AgentHarnessToolInvocation = {
 
 /** 假工具:打印一行版本号就退出(与 toolchain-resolve.test.ts 同一套)。 */
 function writeFakeExe(dir: string, name: string, version: string): string {
-  mkdirSync(dir, { recursive: true })
-  if (process.platform === "win32") {
-    const file = join(dir, `${name}.bat`)
-    writeFileSync(file, `@echo off\r\necho ${version}\r\n`)
-    return file
-  }
-  const file = join(dir, name)
-  writeFileSync(file, `#!/bin/sh\necho "${version}"\n`)
-  chmodSync(file, 0o755)
-  return file
+  return writeNativeFakeExe(dir, name, `console.log(${JSON.stringify(version)})`)
 }
 
 function writeManifest(tools: ToolSpec[]): void {

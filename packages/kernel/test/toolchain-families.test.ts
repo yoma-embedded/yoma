@@ -1,3 +1,4 @@
+import { writeFakeExe as writeNativeFakeExe } from "./fixtures/fake-exe.ts";
 // 芯片平台预设(families.ts)验收。预设是纯数据,这里钉的是数据必须满足的结构性
 // 承诺 —— 每一条都对应一个真实的静默断裂模式:
 //
@@ -14,7 +15,7 @@
 // 4. **probe:"exists" 真的能把目录记进账本、默认严格档真的拒绝目录**:这是 dir 型
 //    条目在 actions.ts 里的落地,两头都要响。
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -131,18 +132,10 @@ describe("recordToolchainPath 的目录输入与 probe 档位", () => {
 		rmSync(installDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 	});
 
-	/** 能被 probeVersion spawn 的假工具(win .bat / posix sh),echo 固定文本。 */
+	/** 能被 probeVersion spawn 的假工具(共享原生启动器),echo 固定文本。 */
 	function writeFakeExe(dir: string, name: string, output: string): string {
-		if (process.platform === "win32") {
-			const file = join(dir, `${name}.bat`);
-			writeFileSync(file, `@echo off\r\necho ${output}\r\n`);
-			return file;
-		}
-		const file = join(dir, name);
-		writeFileSync(file, `#!/bin/sh\necho "${output}"\n`);
-		chmodSync(file, 0o755);
-		return file;
-	}
+    return writeNativeFakeExe(dir, name, `console.log(${JSON.stringify(output)})`)
+  }
 
 	it('probe:"exists" 把目录原样记进账本(by:user、无版本)—— dir 型条目的正门', async () => {
 		const sdkDir = join(installDir, "esp-idf-v5.2");

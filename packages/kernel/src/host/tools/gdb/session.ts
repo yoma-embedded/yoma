@@ -382,8 +382,6 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
         'gdb start needs either connect:"host:port" (attach to a running server) or server:"openocd|jlink|qemu" plus its options.',
       )
     }
-    const machine = await elfMachineOf(elf)
-    const { gdbPath } = resolveGdbPath(machine, params.gdbPath ?? options.gdbPath)
 
     let host = "localhost"
     let port: number
@@ -402,6 +400,9 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
             config: params.config,
             machine: params.machine,
           })
+    const machine = await elfMachineOf(elf)
+    const { gdbPath } = resolveGdbPath(machine, params.gdbPath ?? options.gdbPath)
+
     if (serverArgv) serverArgv[0] = serverBinary(kind as Exclude<GdbServerKind, "external">)
 
     if (PROBE_SERVERS.has(kind)) {

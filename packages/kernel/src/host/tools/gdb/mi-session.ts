@@ -508,6 +508,8 @@ export class GdbSession {
       }
       if (!this.exited) throw new Error(`gdb pid ${this.child.pid} did not exit; the session is still owned`)
     }
+    // A graceful GDB exit can leave helpers in its process group. The group outlives its leader.
+    if (process.platform !== "win32") killTree(this.child, "SIGKILL")
     await this.finish()
   }
 

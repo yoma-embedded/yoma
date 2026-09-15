@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import net from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 
 import type { AgentHarnessToolInvocation, AgentToolResult } from "@earendil-works/pi-agent-core"
 import { BACKGROUND_CONTEXT, type Context, withAbortSignal } from "@earendil-works/pi-agent-core/harness/context"
@@ -55,7 +55,7 @@ afterEach(async () => {
   for (const capture of openCaptures.splice(0)) await capture.stop()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()!
-    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
+    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
 })
 
@@ -773,7 +773,7 @@ describe("log tool", () => {
     writeFileSync(
       script,
       [
-        `import { LogCapture } from ${JSON.stringify(captureModule)}`,
+        `import { LogCapture } from ${JSON.stringify(pathToFileURL(captureModule).href)}`,
         `const capture = new LogCapture({ kind: "child", argv: [${JSON.stringify(process.execPath)}, ${JSON.stringify(source)}] }, "forever", ${JSON.stringify(join(dir, "hw.log"))}, ${JSON.stringify(dir)})`,
         `await capture.start()`,
         `await new Promise((resolve) => setTimeout(resolve, 300))`,
@@ -842,11 +842,14 @@ describe("log tool", () => {
   it("shell 退了、孙进程还握着管道:仍算在采,第二个 start 被拒,stop 连孙进程一起收", async () => {
     const dir = createTempDir()
     const grandchild = join(dir, "grandchild.mjs")
-    writeFileSync(grandchild, `console.log("grandchild " + process.pid); setInterval(() => console.log("tick"), 20);`)
+    writeFileSync(
+      grandchild,
+      `console.log("grandchild " + process.pid); setInterval(() => console.log("tick"), 20); process.send?.("ready");`,
+    )
     const parent = join(dir, "parent.mjs")
     writeFileSync(
       parent,
-      `import { spawn } from "node:child_process";\nspawn(${JSON.stringify(process.execPath)}, [${JSON.stringify(grandchild)}], { stdio: ["ignore", "inherit", "inherit"], windowsHide: true });\nsetTimeout(() => process.exit(0), 50);`,
+      `import { spawn } from "node:child_process";\nconst child = spawn(${JSON.stringify(process.execPath)}, [${JSON.stringify(grandchild)}], { stdio: ["ignore", "inherit", "inherit", "ipc"], windowsHide: true });\nchild.once("message", () => process.exit(0));`,
     )
     const { run } = makeTool()
     await run({ action: "start", command: `"${process.execPath}" "${parent}"` })
