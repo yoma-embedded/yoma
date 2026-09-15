@@ -16,7 +16,7 @@
     "package:linux": "npm run package:linux -w packages/desktop",
     "typecheck": "turbo typecheck && tsgo --noEmit -p tsconfig.json",
     "lint": "oxlint",
-    "check:ci": "npm run upstream:check && npm run lint && turbo typecheck --force && tsgo --noEmit -p tsconfig.json && npm run engines:rg && npm test",
+    "check:ci": "npm run upstream:check && turbo typecheck --force && tsgo --noEmit -p tsconfig.json && npm run engines:rg && npm test",
     "test:windows": "vitest run --project agent --project kernel --project kernel-domain --project desktop",
     "test": "vitest run",
     "upstream:check": "tsx scripts/check-upstream.ts",

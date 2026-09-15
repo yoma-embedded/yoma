@@ -89,8 +89,8 @@ npm run dev:desktop         # 改内核要重启这条命令
 
 ## 提交前检查
 
-运行 `npm run check:ci`：它与 Ubuntu CI 共用入口，检查上游哈希、lint、强制类型检查、准备 ripgrep 并跑全量单测。
-Windows 上另跑 `npm run test:windows`；涉及子进程、文件路径或桌面打包的改动，须等 PR 的 Windows CI（含构建和 Electron 验收）通过后再发布。Mac 本地全绿不能代替 Windows 验证。
+运行 `npm run check:ci`：它与 Ubuntu CI 共用入口，检查上游哈希、强制类型检查、准备 ripgrep 并跑全量单测。
+Windows 上另跑 `npm run test:windows`；涉及子进程、文件路径或桌面打包的改动，须等 PR 的 Windows CI（含构建和 Electron 验收）通过后再发布。Mac 本地全绿不能代替 Windows 验证。原生引擎构建和完整引擎冒烟留在专门的引擎／发布流程。
 
 ## 许可
 

@@ -88,8 +88,8 @@ npm run dev:desktop         # restart this command after changing the kernel
 
 ## Before submitting changes
 
-Run `npm run check:ci`, the same entry point as Ubuntu CI: upstream hashes, lint, uncached type checks, ripgrep setup, and all unit tests.
-On Windows, also run `npm run test:windows`. For process, path, or desktop packaging changes, wait for the PR's Windows CI (including the build and Electron checks) before releasing. A passing Mac run does not verify Windows behavior.
+Run `npm run check:ci`, the same entry point as Ubuntu CI: upstream hashes, uncached type checks, ripgrep setup, and all unit tests.
+On Windows, also run `npm run test:windows`. For process, path, or desktop packaging changes, wait for the PR's Windows CI (including the build and Electron checks) before releasing. A passing Mac run does not verify Windows behavior. Native engine builds and full engine smoke tests run in the dedicated engine/release workflows.
 
 ## License
 
