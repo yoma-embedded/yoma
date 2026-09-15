@@ -96,3 +96,8 @@ export function fakeExeName(name: string): string {
 
 /** 最常用的假货:把收到的参数原样打出来(`argv: a b c`),退出 0。 */
 export const ECHO_ARGV_JS = `console.log("argv: " + process.argv.slice(2).join(" "));\n`;
+
+// Compiling the fixture is setup, not part of the operation under test. On a busy
+// Windows runner csc can take longer than Vitest's default 5 s test deadline.
+// Keep the compiler's own 30 s limit and reuse the resulting bytes in this worker.
+if (process.platform === "win32") nativeLauncher();
