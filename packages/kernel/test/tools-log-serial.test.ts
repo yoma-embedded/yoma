@@ -5,7 +5,8 @@
 
 import { afterEach, describe, expect, it } from "vitest"
 import { type ChildProcess, spawn, spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, writeFileSync } from "node:fs"
+import { rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -119,9 +120,10 @@ afterEach(async () => {
     // 收尸只是为了让测试输出干净,不值得为它挂住 —— 已经退了的进程不会再发 'exit'。
     await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 500))])
   }
+  // WriteStream.end() 异步关闭文件;同步 rm 重试会阻塞关闭回调,Windows 因句柄仍打开而报 EPERM。
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()!
-    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
 })
 
