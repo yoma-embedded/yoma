@@ -148,7 +148,7 @@ const gdbParameters = Type.Object({
   ),
   keepServer: Type.Optional(
     Type.Boolean({
-      description: "stop: leave the gdb server running so a human can attach; the tool prints the command line.",
+      description: "stop: leave an OpenOCD/QEMU server running for manual handover. Not supported for managed J-Link, which exits on disconnect to clean hardware breakpoints; keep that session open or use an externally managed server with connect.",
     }),
   ),
 })

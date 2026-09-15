@@ -47,7 +47,8 @@ export const SERVER_CAPS: Record<GdbServerKind, ServerCaps> = {
     resetHalt: "monitor reset",
     resetRun: "monitor go",
     rttHint: 'RTT: JLinkGDBServer already serves it — `log start tcp:"localhost:19021"`',
-    readyRe: /Listening on TCP\/IP port \d+/,
+    // Listening 出现在连接目标之前;这一行才表示目标初始化已结束。
+    readyRe: /Waiting for GDB connection/,
   },
   // QEMU 成功时 stdout/stderr 都是空的(实测),只能轮询端口。
   qemu: {
@@ -129,7 +130,9 @@ export function buildServerArgv(input: ServerArgvInput): string[] {
         "-port",
         String(port),
         "-nogui",
-        "-silent",
+        "-nosilent",
+        // DLL 的退出清理会摘掉 FPB 断点。Windows 强杀不能代替正常退出。
+        "-singlerun",
       ]
     }
     case "qemu": {
@@ -206,6 +209,8 @@ export interface ServerProcess {
   argv: string[]
   /** 最近若干行合并输出 —— 连接失败时全部有用信息都在这里。 */
   tail: string[]
+  /** 保留跨 chunk 的原始尾部,用于就绪判据。 */
+  outputTail: string
   /** 全量输出落在这里(QEMU 上固件的 semihosting 打印只有这一条路)。 */
   logFile?: string
   exited?: { code: number | null; signal: NodeJS.Signals | null }
@@ -230,6 +235,7 @@ export function spawnServer(argv: string[], port: number, cwd: string, logFile?:
     port,
     argv,
     tail: [],
+    outputTail: "",
     logFile,
     killNow: () => {
       if (!server.exited) killTree(child, "SIGKILL")
@@ -238,6 +244,7 @@ export function spawnServer(argv: string[], port: number, cwd: string, logFile?:
   liveServers.add(server)
   killOnHostExit(liveServers)
   const push = (chunk: string) => {
+    server.outputTail = (server.outputTail + chunk).slice(-8192)
     if (logFile) {
       try {
         appendFileSync(logFile, chunk)
@@ -273,9 +280,8 @@ export function spawnServer(argv: string[], port: number, cwd: string, logFile?:
 }
 
 /**
- * 就绪 = race(就绪正则, TCP 可连, server 退出),server 退出立刻获胜。
+ * 常规后端等 TCP 可连;J-Link single-run 只等目标初始化后的输出,不能用一次假连接探测它。
  *
- * 两条判据都要 —— 每个 server 各自的假阳/假阴写在 SERVER_CAPS 表里。这里只补一句表里放不下的:
  * 轮询的只有 **gdb 端口**,因为 OpenOCD 的 4444/6666 在适配器初始化之前就绑上了,拿它们判断会在目标根本
  * 没连上时误判成功。
  */
@@ -284,6 +290,7 @@ export async function waitForServerReady(
   readyRe: RegExp | undefined,
   deadlineMs: number,
   signal?: AbortSignal,
+  outputOnly = false,
 ): Promise<{ sawPattern: boolean }> {
   const started = Date.now()
   let sawPattern = false
@@ -300,8 +307,9 @@ export async function waitForServerReady(
         ),
       )
     }
-    if (readyRe && !sawPattern && server.tail.some((l) => readyRe.test(l))) sawPattern = true
-    if (await tcpProbe("127.0.0.1", server.port)) return { sawPattern }
+    if (readyRe && !sawPattern && readyRe.test(server.outputTail)) sawPattern = true
+    // single-run 的一次 TCP 探测就是一次客户端连接:断开会让服务器退出。
+    if (outputOnly ? sawPattern : await tcpProbe("127.0.0.1", server.port)) return { sawPattern }
     await new Promise((r) => {
       const t = setTimeout(r, TCP_POLL_MS)
       t.unref?.()
@@ -309,10 +317,36 @@ export async function waitForServerReady(
   }
   throw new Error(
     appendProbeOccupationHint(
-      `the gdb server did not open port ${server.port} within ${deadlineMs} ms.\n` +
+      `the gdb server did not ${outputOnly ? "finish target initialization" : `open port ${server.port}`} within ${deadlineMs} ms.\n` +
         `Command: ${server.argv.join(" ")}\n` +
         `Its output so far:\n${server.tail.join("\n") || "(nothing)"}`,
       server.tail.join("\n"),
     ),
   )
+}
+
+function waitForServerExit(server: ServerProcess, ms: number): Promise<boolean> {
+  if (server.exited) return Promise.resolve(true)
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer)
+      server.child.off("exit", done)
+      resolve(Boolean(server.exited))
+    }
+    const timer = setTimeout(done, ms)
+    timer.unref?.()
+    server.child.once("exit", done)
+  })
+}
+
+/** 关闭完成才交还探针。J-Link single-run 在 GDB 断开后自己清理;其余后端先收 SIGTERM。 */
+export async function stopServer(server: ServerProcess, waitForNaturalExit: boolean): Promise<{ forced: boolean }> {
+  if (waitForNaturalExit && await waitForServerExit(server, 3000)) return { forced: false }
+  if (!server.exited) killTree(server.child, "SIGTERM")
+  if (await waitForServerExit(server, 3000)) return { forced: true }
+  server.killNow()
+  if (!await waitForServerExit(server, 3000)) {
+    throw new Error(`gdb server pid ${server.child.pid} did not exit; the debug probe has not been released`)
+  }
+  return { forced: true }
 }

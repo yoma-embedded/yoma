@@ -107,6 +107,16 @@ export function powershellExe(explicit?: string): string | undefined {
   return findOnPath("powershell.exe") ?? findOnPath("pwsh.exe")
 }
 
+/**
+ * PS7 → Node/Electron → PS5.1 不会走 PS7 的兼容环境转换,会误载 PS7 的同名模块。
+ * 只在启动 Windows PowerShell 时移除继承的 PSModulePath,让 5.1 自己构造其默认搜索路径。
+ * 不动宿主环境、注册表或 pwsh 的环境。见 Microsoft about_PSModulePath 的 intermediate process 说明。
+ */
+export function powershellEnv(exe: string, env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  if (process.platform !== "win32" || !/^powershell(?:\.exe)?$/i.test(path.basename(exe))) return env
+  return Object.fromEntries(Object.entries(env).filter(([key]) => key.toLowerCase() !== "psmodulepath"))
+}
+
 /** 真正跑的脚本:两行编码头 + 可选的字面路径定位 + 模型给的命令。 */
 export function powershellScript(command: string, cwd?: string): string {
   // PS 5.1 启动时把 cwd 当通配路径:工程名含 [] 时会静默落回 powershell.exe 所在目录。
@@ -196,6 +206,7 @@ export function createPowerShellTool(
       let liveErr = ""
       const result = await runEngine(exe, argv, {
         cwd: env.cwd,
+        env: powershellEnv(exe),
         signal: context.abortSignal,
         timeoutMs,
         onOutput: ({ stream, text }) => {

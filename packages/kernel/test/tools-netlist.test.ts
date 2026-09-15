@@ -10,6 +10,7 @@
  */
 
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -48,8 +49,8 @@ import { ECHO_ARGV_JS, writeFakeExe } from "./fixtures/fake-exe.ts"
 // ─── 脚手架 ──────────────────────────────────────────────────────────────────
 
 const REPO_ROOT = join(import.meta.dirname, "..", "..", "..")
-const REAL_ENGINES = join(REPO_ROOT, "engines")
-const FIXTURES = join(REAL_ENGINES, "controller_map", "tests", "fixtures")
+const REAL_ENGINES = process.env.YOMA_TEST_ENGINES ?? join(REPO_ROOT, "engines")
+const FIXTURES = join(REPO_ROOT, "engines", "controller_map", "tests", "fixtures")
 
 const tempDirs: string[] = []
 
@@ -244,7 +245,7 @@ describe("netlist tool (fake engines)", () => {
     const result = await run({ netlistPath: "board.NET" })
     const text = textOf(result)
     expect(text).toContain("[detection]\nDetected main controller (auto): U2")
-    expect(text).toContain(`"argv":"${join(cwd, "board.NET")}"`)
+    expect(text).toContain(`"argv":${JSON.stringify(join(cwd, "board.NET"))}`)
     expect(result.details).toEqual({
       mode: "map",
       netlist: join(cwd, "board.NET"),
@@ -362,7 +363,7 @@ describe("netlist tool (fake engines)", () => {
 // ─── 3. 真引擎 ────────────────────────────────────────────────────────────────
 
 function realDataDir(): string | undefined {
-  const candidates = [join(REAL_ENGINES, "data", "stm32"), process.env.YOMA_TEST_STM32_DATA ?? ""].filter(Boolean)
+  const candidates = [process.env.YOMA_TEST_STM32_DATA ?? "", join(REAL_ENGINES, "data", "stm32")].filter(Boolean)
   for (const dir of candidates) {
     try {
       if (readdirSync(dir).some((f) => f.endsWith(".irpack"))) return dir
@@ -375,16 +376,15 @@ function realDataDir(): string | undefined {
 
 function realEnginesDir(dataDir?: string): string {
   const root = createTempDir()
-  symlinkSync(join(REAL_ENGINES, "bin"), join(root, "bin"), "dir")
+  cpSync(join(REAL_ENGINES, "bin"), join(root, "bin"), { recursive: true, dereference: true })
   if (dataDir) {
     mkdirSync(join(root, "data"), { recursive: true })
-    symlinkSync(dataDir, join(root, "data", "stm32"), "dir")
+    symlinkSync(dataDir, join(root, "data", "stm32"), process.platform === "win32" ? "junction" : "dir")
   }
   return root
 }
 
 const haveEngines =
-  process.platform !== "win32" &&
   existsSync(join(REAL_ENGINES, "bin", exe("controller_map"))) &&
   existsSync(join(REAL_ENGINES, "bin", exe("board_ir"))) &&
   existsSync(join(FIXTURES, "odrive_two_ax.NET"))

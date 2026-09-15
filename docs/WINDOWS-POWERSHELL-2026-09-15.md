@@ -1,5 +1,8 @@
 # Windows PowerShell 使用验收（2026-09-15）
 
+本页记录首轮验收。真板阶段随后发现 PS7 模块路径继承影响 `Get-FileHash`，已单独复现并修复；
+当前结果见 [Windows 调试问题跟进](WINDOWS-DEBUG-FOLLOWUP-2026-09-15.md)。
+
 ## 已修复
 
 通过 Yoma 的真实 PowerShell 工具执行系统 PowerShell 5.1，发现并修复：
@@ -74,9 +77,10 @@ exit $child.ExitCode
 
 - 首轮安装包及独立安装目录对应上一轮引擎交付修改，**尚未包含本轮 PowerShell 修复**。
   本轮测试使用当前源码与重新构建的 `packages/desktop/out/`，后续发布前需重新打包。
-- 旧 netlist/stm32config `.cmd` 假引擎的 32 个 Windows 失败仍未修复；不能声称全仓测试全绿。
-  详见 [Windows 引擎与安装验收](WINDOWS-ACCEPTANCE-2026-09-15.md)。
+- 首轮遗留的 netlist/stm32config `.cmd` 假引擎 32 个 Windows 失败，已在
+  [夹具收尾](WINDOWS-ENGINE-FIXTURES-2026-09-15.md)修复；这仍不等于全仓单测全绿。
 - 沙箱中 `taskkill` / Electron 子进程可能受限；真杀树和桌面测试在获准的宿主环境执行。
-- 没有真实板子烧录、串口采集、GDB、HAL/CMSIS 完整工程或双机信箱验收。
+- 首轮不含硬件验收；后续的烧录、RTT、GDB 与 HAL/CMSIS 工程见 [BK64 真板记录](BK64-YOMA-ACCEPTANCE-2026-09-15.md)。
+  串口与双机信箱仍未验收。
 - 本机证据在被忽略的 `.yoma/windows-acceptance-20260915/`：`powershell-*.log`、
   `powershell-use.ts`、`powershell-use-razeqy/result.json` 及编译产物。

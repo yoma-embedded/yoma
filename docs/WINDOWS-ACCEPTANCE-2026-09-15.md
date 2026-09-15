@@ -6,6 +6,9 @@
 这不是干净 Windows 机器或真实板子的完整验收。HAL/CMSIS 未交付，Windows 部分旧测试夹具仍失败，不能报告全仓测试全绿。
 第 1–6 步迁移没有重做；示波器、例程库和第 7 步仍按交接暂缓。
 
+后续已修复本页记录的 32 项 Windows 夹具失败，两工具真实引擎测试 58/58 通过；详见
+[Windows 引擎测试夹具收尾](WINDOWS-ENGINE-FIXTURES-2026-09-15.md)。本页保留首次安装验收的历史结果。
+
 后续 PowerShell 专项修复、Windows 实际编译和 IPC/paint 验收见
 [Windows PowerShell 使用验收](WINDOWS-POWERSHELL-2026-09-15.md)。下文安装包信息保留首轮基线。
 

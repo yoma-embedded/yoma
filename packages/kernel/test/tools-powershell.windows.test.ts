@@ -2,7 +2,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import type { AgentHarnessToolInvocation, AgentToolResult } from "@earendil-works/pi-agent-core"
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/pi-agent-core/harness/context"
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node"
@@ -62,6 +62,7 @@ function alive(pid: number) {
   }
 }
 afterEach(async () => {
+  vi.unstubAllEnvs()
   for (const pid of childPids) {
     try {
       process.kill(pid)
@@ -74,6 +75,35 @@ afterEach(async () => {
 })
 
 describe.skipIf(process.platform !== "win32")("Windows PowerShell 使用回归", () => {
+  it("不继承 PS7 的同名模块,Get-FileHash 可以自动加载且不改宿主环境", async () => {
+    const { cwd, run } = setup()
+    const modules = join(cwd, "PS7 Modules")
+    const utility = join(modules, "Microsoft.PowerShell.Utility")
+    mkdirSync(utility, { recursive: true })
+    writeFileSync(join(utility, "Microsoft.PowerShell.Utility.psd1"),
+      "@{ ModuleVersion='99.0'; PowerShellVersion='99.0'; RootModule='utility.psm1'; FunctionsToExport=@('Get-FileHash') }")
+    writeFileSync(join(utility, "utility.psm1"), "function Get-FileHash { throw 'wrong module loaded' }")
+    const inherited = `${modules};${process.env.PSModulePath ?? ""}`
+    vi.stubEnv("PSModulePath", inherited)
+    vi.stubEnv("YOMA_PS_ENV_MARKER", "retained")
+    const file = join(cwd, "hash [1].txt")
+    writeFileSync(file, "abc")
+    const result = await run({ command: `$ErrorActionPreference='Stop'; @{ hash=(Get-FileHash -LiteralPath ${ps(file)}).Hash; marker=$env:YOMA_PS_ENV_MARKER; modules=$env:PSModulePath } | ConvertTo-Json -Compress` })
+    const value = JSON.parse(text(result))
+    expect(value.hash).toBe("BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD")
+    expect(value.marker).toBe("retained")
+    expect(value.modules).not.toContain(modules)
+    expect(process.env.PSModulePath).toBe(inherited)
+  })
+
+  it("隐藏的 cmdlet 错误仍失败,成功的空结果不误报失败", async () => {
+    const { run } = setup()
+    await expect(run({ command: "Get-Process yoma-process-that-does-not-exist -ErrorAction SilentlyContinue | Select-Object Name" }))
+      .rejects.toThrow("Command exited with code 1")
+    const result = await run({ command: "Get-Process | Where-Object ProcessName -eq yoma-process-that-does-not-exist | Select-Object Name" })
+    expect(result.details.exitCode).toBe(0)
+  })
+
   it("中文特殊字符路径、UTF-8 文件与多行脚本往返", async () => {
     const { cwd, run } = setup()
     const file = join(cwd, "测量 [1] & '$.txt")

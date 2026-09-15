@@ -10,6 +10,7 @@
  */
 
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -44,7 +45,7 @@ import { writeFakeExe } from "./fixtures/fake-exe.ts"
 // ─── 脚手架 ──────────────────────────────────────────────────────────────────
 
 const REPO_ROOT = join(import.meta.dirname, "..", "..", "..")
-const REAL_ENGINES = join(REPO_ROOT, "engines")
+const REAL_ENGINES = process.env.YOMA_TEST_ENGINES ?? join(REPO_ROOT, "engines")
 const REAL_KERNEL = join(REAL_ENGINES, "bin", exe("stm32kernel"))
 
 const tempDirs: string[] = []
@@ -360,7 +361,7 @@ describe("stm32config tool (fake kernel)", () => {
     const { run, cwd } = makeTool(makeEnginesDir({ stm32kernel: ECHO_ARGV_JS }))
     writeFileSync(join(cwd, "board.json"), "{}")
     const result = await run({ command: "validate", configPath: "board.json" })
-    expect(textOf(result)).toContain(join(cwd, "board.json"))
+    expect(JSON.parse(textOf(result)).argv).toContain(join(cwd, "board.json"))
     expect(result.details).toMatchObject({ configPath: join(cwd, "board.json") })
     await expect(run({ command: "validate", configPath: "missing.json" })).rejects.toThrow(
       `configPath not found or not a regular file: ${join(cwd, "missing.json")}`,
@@ -466,7 +467,7 @@ describe("stm32config tool (fake kernel)", () => {
 
 /** 装了 irpack 的数据目录:仓库自己的 engines/data/stm32,或 YOMA_TEST_STM32_DATA;都没有就 undefined。 */
 function realDataDir(): string | undefined {
-  const candidates = [join(REAL_ENGINES, "data", "stm32"), process.env.YOMA_TEST_STM32_DATA ?? ""].filter(Boolean)
+  const candidates = [process.env.YOMA_TEST_STM32_DATA ?? "", join(REAL_ENGINES, "data", "stm32")].filter(Boolean)
   for (const dir of candidates) {
     try {
       if (readdirSync(dir).some((f) => f.endsWith(".irpack"))) return dir
@@ -480,15 +481,15 @@ function realDataDir(): string | undefined {
 /** 真 bin + 指定数据目录拼成一个 engines 根(软链)。 */
 function realEnginesDir(dataDir?: string): string {
   const root = createTempDir()
-  symlinkSync(join(REAL_ENGINES, "bin"), join(root, "bin"), "dir")
+  cpSync(join(REAL_ENGINES, "bin"), join(root, "bin"), { recursive: true, dereference: true })
   if (dataDir) {
     mkdirSync(join(root, "data"), { recursive: true })
-    symlinkSync(dataDir, join(root, "data", "stm32"), "dir")
+    symlinkSync(dataDir, join(root, "data", "stm32"), process.platform === "win32" ? "junction" : "dir")
   }
   return root
 }
 
-const haveKernel = process.platform !== "win32" && existsSync(REAL_KERNEL)
+const haveKernel = existsSync(REAL_KERNEL)
 const dataDir = haveKernel ? realDataDir() : undefined
 
 describe.skipIf(!haveKernel)("stm32config against the real stm32kernel", () => {

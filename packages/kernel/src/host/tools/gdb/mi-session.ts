@@ -20,6 +20,7 @@
 
 import { type ChildProcess, spawn } from "node:child_process"
 import { appendFileSync, createWriteStream, type WriteStream } from "node:fs"
+import { finished as streamFinished } from "node:stream/promises"
 
 import { killOnHostExit, killTree, unrefStream } from "../../domain/engines.ts"
 import {
@@ -487,9 +488,11 @@ export class GdbSession {
 
   async stop(): Promise<void> {
     if (!this.child || this.finished) return
-    // 先让 gdb 自己走 —— 它会干净地 detach 目标。失败了再动刀。
+    // ^exit 只表示接受退出请求,detach / remote 清理在它之后。Windows 的 SIGTERM 是硬杀,
+    // 收到 ^exit 就杀会截断清理。先等进程自然退出,失去响应才升级到杀树。
     try {
       await this.send("-gdb-exit", GDB_EXIT_TIMEOUT_MS)
+      await this.waitForExit(EXIT_WAIT_MS)
     } catch {
       // gdb 可能已经死了或者不理会;下面照杀。
     }
@@ -499,24 +502,30 @@ export class GdbSession {
       forced.unref?.()
       await this.waitForExit(EXIT_WAIT_MS)
       clearTimeout(forced)
-      if (!this.exited) this.killNow()
+      if (!this.exited) {
+        this.killNow()
+        await this.waitForExit(EXIT_WAIT_MS)
+      }
+      if (!this.exited) throw new Error(`gdb pid ${this.child.pid} did not exit; the session is still owned`)
     }
-    this.finish()
+    await this.finish()
   }
 
   private waitForExit(ms: number): Promise<void> {
     if (this.exited) return Promise.resolve()
     return new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, ms)
-      timer.unref?.()
-      this.child?.once("exit", () => {
+      const done = () => {
         clearTimeout(timer)
+        this.child?.off("exit", done)
         resolve()
-      })
+      }
+      const timer = setTimeout(done, ms)
+      timer.unref?.()
+      this.child?.once("exit", done)
     })
   }
 
-  private finish(): void {
+  private async finish(): Promise<void> {
     this.finished = true
     liveSessions.delete(this)
     this.failPending(new Error("gdb session closed"))
@@ -524,9 +533,16 @@ export class GdbSession {
     this.child?.stderr?.removeAllListeners("data")
     this.child?.stdout?.destroy()
     this.child?.stderr?.destroy()
-    this.miStream?.end()
-    this.stopsStream?.end()
+    // end() 只是请求刷盘;Windows 下未关闭的句柄会让随后的清理报 EPERM。
+    const streams = [this.miStream, this.stopsStream].filter((s): s is WriteStream => s !== undefined)
     this.miStream = undefined
     this.stopsStream = undefined
+    await Promise.all(
+      streams.map(async (stream) => {
+        const closed = streamFinished(stream)
+        stream.end()
+        await closed
+      }),
+    )
   }
 }

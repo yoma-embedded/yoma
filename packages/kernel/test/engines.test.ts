@@ -6,6 +6,7 @@
  * 2026-09-10 工具归零:原先同文件里那批"引擎工具"的用例(stm32config / netlist /
  * flash)随工具一起搬到了 attic/test/engine-tools.test.ts,不再编译也不再跑。
  */
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
@@ -141,9 +142,17 @@ describe("runEngine", () => {
 	});
 
 	it("passes argv without shell interpretation", async () => {
-		const echo = writeFakeExe(createTempDir(), "echo", ECHO_ARGV_JS);
-		const result = await runEngine(echo, ["a b", "$HOME", "; rm -rf /"]);
-		expect(result.stdout.trim()).toBe("argv: a b $HOME ; rm -rf /");
+		const echo = writeFakeExe(join(createTempDir(), "中文 [space]"), "echo", `console.log(JSON.stringify(process.argv.slice(2)));`);
+		const args = ["", "a b", "$HOME", "&|<>^%", 'a"b', "C:\\space path\\", "中文"];
+		const result = await runEngine(echo, args);
+		expect(result.exitCode).toBe(0);
+		expect(JSON.parse(result.stdout)).toEqual(args);
+	});
+
+	it("forwards fake engine stdin and stdout without text conversion", () => {
+		const echo = writeFakeExe(createTempDir(), "echo", `process.stdin.pipe(process.stdout);`);
+		const input = Buffer.from([0, 0xff, 0xe4, 0xb8, 0xad, 10, 13, 34, 92]);
+		expect(execFileSync(echo, [], { input, windowsHide: true, timeout: 5000 })).toEqual(input);
 	});
 
 	it("pins PYTHONIOENCODING / PYTHONUTF8 for the engine process", async () => {

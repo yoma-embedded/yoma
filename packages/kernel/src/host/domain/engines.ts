@@ -365,6 +365,8 @@ const STREAM_FLUSH_GRACE_MS = 1000;
 
 export interface EngineRunOptions {
 	cwd?: string;
+	/** 完整子进程环境;省略时继承 process.env。允许调用方移除不兼容的宿主变量。 */
+	env?: NodeJS.ProcessEnv;
 	signal?: AbortSignal;
 	timeoutMs?: number;
 	/**
@@ -493,15 +495,16 @@ export function appendTail(buffer: string, chunk: string, maxChars = 8_000): str
 
 export function runEngine(bin: string, args: string[], options: EngineRunOptions = {}): Promise<EngineRunResult> {
 	const timeoutMs = options.timeoutMs ?? DEFAULT_ENGINE_TIMEOUT_MS;
+	const env = options.env ?? process.env;
 	return new Promise((resolve, reject) => {
 		const child = spawn(bin, args, {
 			cwd: options.cwd,
 			stdio: ["ignore", "pipe", "pipe"],
 			// Python 引擎在中文 Windows 上按 cp936 写 stdout,而下面按 UTF-8 解;与 getShellEnv 同一条规矩。
 			env: {
-				...process.env,
-				PYTHONIOENCODING: process.env.PYTHONIOENCODING || "utf-8",
-				PYTHONUTF8: process.env.PYTHONUTF8 || "1",
+				...env,
+				PYTHONIOENCODING: env.PYTHONIOENCODING || "utf-8",
+				PYTHONUTF8: env.PYTHONUTF8 || "1",
 			},
 			// 自成进程组,这样 killTree 才够得着孙进程。
 			detached: process.platform !== "win32",

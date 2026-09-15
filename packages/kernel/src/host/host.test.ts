@@ -700,9 +700,9 @@ describe("会话不存在", () => {
 })
 
 describe("轮级自动重试", () => {
-  test("可重试的 provider 失败会自己再试一次,且整段是一个连续的 busy", async () => {
+  test.each(["503 Service Unavailable", "Connection error."])("provider %s 会自己重试,且整段是一个连续的 busy", async (failure) => {
     const { host, events, workspace } = makeHost([
-      fauxRetryableError("503 Service Unavailable"),
+      fauxRetryableError(failure),
       fauxAssistantMessage([fauxText("这次成了")]),
     ])
     const session = (await host.handle("session.create", { directory: workspace })) as Session
@@ -722,6 +722,7 @@ describe("轮级自动重试", () => {
     // bench 判"这一轮跑完了"去跑判据、同时 agent 正要重试、两边同时动板子的时刻。
     const statuses = statusesOf(events)
     expect(statuses).toEqual(["busy", "idle"])
+    expect(events.some((e) => e.type === "message.updated" && e.message.role === "assistant" && e.message.error?.data.message === failure)).toBe(true)
     await host.dispose()
   }, 30_000)
 

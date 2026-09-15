@@ -30,7 +30,6 @@ import {
   clamp,
   claimProbe,
   describeProbeConflict,
-  killTree,
   releaseProbe,
   stamp,
 } from "../../domain/engines.ts"
@@ -67,6 +66,7 @@ import {
   serverBinary,
   type ServerProcess,
   spawnServer,
+  stopServer,
   waitForServerReady,
 } from "./servers.ts"
 import {
@@ -89,7 +89,6 @@ import {
 const ATTACH_TIMEOUT_MS = 60_000
 /** server 从 spawn 到 gdb 端口可连的上限。 */
 const SERVER_READY_MS = 20_000
-const FORCE_KILL_GRACE_MS = 3_000
 const MAX_EVAL_CHARS = 6_000
 const HEARTBEAT_MS = 1_000
 const GDB_DIR = path.join(".yoma", "gdb")
@@ -219,29 +218,29 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
   }
 
   const teardown = async (keepServer: boolean) => {
+    let cleanupNote = ""
     const closingSession = session
+    await closingSession?.stop()
     session = undefined
     core = {}
-    await closingSession?.stop().catch(() => undefined)
     if (server && !keepServer) {
-      // 顺序不能反:gdb 先走,否则它会卡在 remote 等待里。
-      const victim = server
-      killTree(victim.child, "SIGTERM")
-      const forced = setTimeout(() => {
-        if (!victim.exited) killTree(victim.child, "SIGKILL")
-      }, FORCE_KILL_GRACE_MS)
-      forced.unref?.()
+      // 顺序不能反:gdb 断开后,J-Link 才会退出并清理硬件断点。不能发完 kill 就宣布探针空闲。
+      const stopped = await stopServer(server, serverKind === "jlink")
+      if (serverKind === "jlink" && (stopped.forced || server.exited?.code !== 0)) {
+        cleanupNote = "\nJ-Link did not exit normally. The server process is gone, but hardware breakpoint cleanup is unverified; reconnect before treating target faults as firmware evidence."
+      }
     }
     if (!keepServer) {
       server = undefined
       connection = undefined
     }
-    // keepServer 留下的 openocd / JLinkGDBServer 仍然攥着探针:租约跟着它,别放 —— 放了的话下一次 flash 会被告知
+    // keepServer 留下的 OpenOCD 仍然攥着探针:租约跟着它,别放 —— 放了的话下一次 flash 会被告知
     // 探针空着,然后在硬件层面撞上占用,而不是被指回这里。
     if (heldProbe && !(keepServer && PROBE_SERVERS.has(serverKind))) {
       heldProbe = false
       releaseProbe("gdb")
     }
+    return cleanupNote
   }
 
   /** 目标已经不在了(程序退出 / 探针掉了):任何运行控制都该明说,而不是让 gdb 报 "The program is not being run."。 */
@@ -406,7 +405,11 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
     if (serverArgv) serverArgv[0] = serverBinary(kind as Exclude<GdbServerKind, "external">)
 
     if (PROBE_SERVERS.has(kind)) {
-      const holder = claimProbe("gdb", `${kind} on ${params.chip ?? "target"}`, () => session?.running === true)
+      const holder = claimProbe(
+        "gdb",
+        `${kind} on ${params.chip ?? "target"}`,
+        () => session?.running === true || Boolean(server && !server.exited),
+      )
       if (holder) throw new Error(`gdb start: ${describeProbeConflict(holder)}`)
       heldProbe = true
     }
@@ -419,7 +422,7 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
       const tag = stamp()
       if (serverArgv) {
         server = spawnServer(serverArgv, port, cwd, path.join(dir, `server-${tag}.log`))
-        await waitForServerReady(server, caps().readyRe, SERVER_READY_MS, signal)
+        await waitForServerReady(server, caps().readyRe, SERVER_READY_MS, signal, kind === "jlink")
       }
       started = new GdbSession({
         gdbPath,
@@ -801,10 +804,13 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
   }
 
   async function stop(params: GdbInput): Promise<GdbResult> {
+    if (params.keepServer && serverKind === "jlink" && server && !server.exited) {
+      throw new Error("J-Link uses single-run mode so disconnect can clean up hardware breakpoints; keepServer is not supported. Keep this session open, or use a separately managed server with connect for a manual handover.")
+    }
     if (!session?.running) {
       // 会话可能已经死了(gdb 崩了)但 server 还在:一并收掉。
-      await teardown(false)
-      return textResult("no gdb session was running.", detailsOf("stop"))
+      const cleanup = await teardown(false)
+      return textResult(`no gdb session was running.${cleanup}`, detailsOf("stop"))
     }
     const keep = params.keepServer === true && server !== undefined
     const probeNote =
@@ -816,8 +822,8 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
         ? `\nThe server is still listening. To take over by hand:\n  ${gdbPathUsed ?? "gdb"} ${elfPath} -ex "target extended-remote ${connection}"${probeNote}`
         : ""
     const file = session.file
-    await teardown(keep)
-    return textResult(`gdb session closed.${handover}\nSession log: ${file}`, detailsOf("stop"))
+    const cleanup = await teardown(keep)
+    return textResult(`gdb session closed.${handover}${cleanup}\nSession log: ${file}`, detailsOf("stop"))
   }
 
   async function run(
