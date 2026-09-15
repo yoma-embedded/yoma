@@ -98,12 +98,6 @@ function textOf(result: AgentToolResult<NetlistDetails>): string {
   return result.content.map((part) => (part.type === "text" ? part.text : "")).join("")
 }
 
-const abortAfter = (ms: number): Context => {
-  const controller = new AbortController()
-  setTimeout(() => controller.abort(), ms)
-  return withAbortSignal(controller.signal, BACKGROUND_CONTEXT)
-}
-
 const ECHO_CONTROLLER_MAP = `
 console.error("Detected main controller (auto): U2  (STM-LQFP64_N, 64 pins).\\nWarning: low-confidence controller detection");
 console.log(JSON.stringify({ tool: "controller_map v0.1.0", controller: { ref: "U2", part: "" }, low_confidence: true, argv: process.argv.slice(2).join(" ") }));
@@ -334,7 +328,7 @@ describe("netlist tool (fake engines)", () => {
   })
 
   it("does not spawn when the turn is already aborted, and aborts a running engine with its label", async () => {
-    const slow = `await new Promise((r) => setTimeout(r, 5000)); console.log("{}");`
+    const slow = `console.error("READY " + process.pid); await new Promise((r) => setTimeout(r, 5000)); console.log("{}");`
     const { run, cwd } = makeTool(makeEnginesDir({ controller_map: slow, board_ir: slow, stm32kernel: ECHO_ARGV_JS }))
     writeFileSync(join(cwd, "board.NET"), "x")
     const aborted = withAbortSignal(AbortSignal.abort(), BACKGROUND_CONTEXT)
@@ -344,9 +338,36 @@ describe("netlist tool (fake engines)", () => {
       "board_ir was aborted",
     )
     expect(spawn).not.toHaveBeenCalled()
-    const started = Date.now()
-    await expect(run({ netlistPath: "board.NET" }, abortAfter(100))).rejects.toThrow("controller_map was aborted")
-    expect(Date.now() - started).toBeLessThan(3000)
+    // 等假引擎真的启动再中止。固定 100 ms 在 Windows 上可能落在启动器创建 Node 的
+    // 中途,taskkill 尚未枚举到新子进程,既没测到运行中止,又会遗留占着 cwd 的进程。
+    const controller = new AbortController()
+    let pid: number | undefined
+    let abortedAt = 0
+    await expect(
+      run({ netlistPath: "board.NET" }, withAbortSignal(controller.signal, BACKGROUND_CONTEXT), (partial) => {
+        const ready = /READY (\d+)/.exec(textOf(partial))
+        if (!ready || pid !== undefined) return
+        pid = Number(ready[1])
+        abortedAt = Date.now()
+        controller.abort()
+      }),
+    ).rejects.toThrow("controller_map was aborted")
+    expect(pid).toBeGreaterThan(0)
+    expect(Date.now() - abortedAt).toBeLessThan(3000)
+    // Windows 的父进程退出不代表子进程已释放工作目录;明确等它退出后才删夹具。
+    await expect
+      .poll(
+        () => {
+          try {
+            process.kill(pid!, 0)
+            return true
+          } catch {
+            return false
+          }
+        },
+        { timeout: 3000 },
+      )
+      .toBe(false)
   })
 
   it("streams the engine's detection lines to the card while it runs", async () => {
