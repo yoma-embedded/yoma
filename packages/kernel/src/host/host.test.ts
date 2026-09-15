@@ -920,7 +920,45 @@ describe("思考档位", () => {
  * prompt 整轮事件丢光)。所以只能在这一层钉住。
  */
 describe("并发装配与生命周期", () => {
-  test("同一 tick 两次 messages():只开一个 harness,两边都拿得到投影", async () => {
+  test("没有 API key 也能读取空会话和已保存的历史", async () => {
+    const sessionsRoot = tempDir("yoma-sessions-")
+    const configDir = tempDir("yoma-config-")
+    const workspace = tempDir("yoma-ws-")
+    const events: KernelEvent[] = []
+    currentFauxProvider = `faux-${++fauxCount}`
+    let configured = false
+    const resolveModels = vi.fn(async () => {
+      if (!configured) throw new Error("No usable provider")
+      return harnessWith([fauxAssistantMessage([fauxText("离线也能看见")])])
+    })
+    const options = { sessionsRoot, configDir, emit: (batch: KernelEvent[]) => events.push(...batch), resolveModels }
+    const writer = new SessionManager(options)
+    const session = await writer.create(workspace)
+    try {
+      expect((await writer.messages(session.id)).items).toEqual([])
+      expect(resolveModels).not.toHaveBeenCalled()
+      configured = true
+      await writer.prompt(session.id, { text: "保存这一轮" })
+      await waitFor(() => statusesOf(events).at(-1) === "idle")
+    } finally {
+      await writer.disposeAll()
+    }
+    configured = false
+    resolveModels.mockClear()
+    const reader = new SessionManager(options)
+    try {
+      const page = await reader.messages(session.id)
+      expect(page.items.map((item) => item.info.role)).toEqual(["user", "assistant"])
+      expect(page.items.flatMap((item) => item.parts)).toContainEqual(
+        expect.objectContaining({ type: "text", text: "离线也能看见" }),
+      )
+      expect(resolveModels).not.toHaveBeenCalled()
+    } finally {
+      await reader.disposeAll()
+    }
+  })
+
+  test("同一 tick 两次 messages():共用只读会话,发消息时才装配一个 harness", async () => {
     const spy = spyHarness()
     try {
       const { manager, events, workspace } = makeManager([fauxAssistantMessage([fauxText("好")])])
@@ -932,12 +970,14 @@ describe("并发装配与生命周期", () => {
       spy.reset()
 
       const [first, second] = await Promise.all([manager.messages(session.id), manager.messages(session.id)])
-      expect(spy.count()).toBe(1)
+      expect(spy.count()).toBe(0)
       expect(first.items).toEqual(second.items)
 
-      // 装配真的完整:紧接着一轮对话,事件与 transcript 都只有一份。
-      await manager.prompt(session.id, { text: "你好" })
+      // 冷会话读取与发送并发:共享 repo.open,随后完整装配一次。
+      await manager.disposeAll()
+      await Promise.all([manager.messages(session.id), manager.prompt(session.id, { text: "你好" })])
       await waitFor(() => statusesOf(events).at(-1) === "idle")
+      expect(spy.count()).toBe(1)
       const page = await manager.messages(session.id)
       const ids = page.items.map((item) => item.info.id)
       expect(new Set(ids).size).toBe(ids.length)
@@ -1056,6 +1096,7 @@ describe("状态机不被旁路事件带偏", () => {
       const { manager, events, workspace } = makeManager([fauxAssistantMessage([fauxText("好")])])
       const session = await manager.create(workspace)
       await manager.messages(session.id)
+      await manager.setModel(session.id, currentFauxProvider, "plain")
       // 空闲的 lane 上中断:requestAbort 之后没有在飞操作,waitForIdle 必须立刻回来。
       await manager.abort(session.id)
 
