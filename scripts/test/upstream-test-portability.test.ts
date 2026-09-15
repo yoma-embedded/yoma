@@ -25,7 +25,7 @@ describe("upstream test portability", () => {
       const input = readFileSync(id, "utf8")
       const output = adaptUpstreamTest(input, id)!
       expect(output).not.toBe(input)
-      expect(output.replaceAll('"$(cygpath -aw .)"', '"$PWD"')).toBe(input)
+      expect(output.replaceAll('"$(cygpath -alw .)"', '"$PWD"')).toBe(input)
     }
   })
 })

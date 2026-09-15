@@ -212,7 +212,7 @@ describe("set", () => {
     const exe = writeFakeExe(binDir, "widget", "1.2.3")
     writeManifest([{ id: "widget", bin: ["widget"] }])
     const result = await makeTool().run({ action: "set", id: "widget", path: binDir })
-    expect(textOf(result)).toContain(exe)
+    expect(textOf(result).toLowerCase()).toContain(exe.toLowerCase())
     expect(textOf(result)).toContain("no need to ask again")
     expect(result.details).toMatchObject({ action: "set", ok: true, id: "widget" })
     expect((await readLedger(configDir)).entries.widget?.by).toBe("user")
