@@ -9,7 +9,7 @@
 
 import { describe, expect, test } from "vitest"
 import { execFileSync } from "node:child_process"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
@@ -68,8 +68,10 @@ async function settle(events: readonly unknown[], quietMs = 800, capMs = 10_000)
 /** 假监视器:记住回调,用例直接喂事件。 */
 class FakeWatch {
   readonly listeners: Array<(event: string, filename: string | null) => void> = []
+  readonly directories: string[] = []
   closed = 0
   readonly watch: WatchFn = (_directory, _options, listener) => {
+    this.directories.push(_directory)
     this.listeners.push(listener)
     return {
       on: () => undefined,
@@ -136,6 +138,7 @@ describe("VcsWatchers(假监视器)", () => {
       watchers.ensure(alias)
       watchers.ensure(repo)
       expect(fake.listeners.length).toBe(1)
+      expect(fake.directories).toEqual([process.platform === "win32" ? realpathSync.native(repo) : path.resolve(repo)])
       expect(watchers.watching(repo)).toBe(true)
       expect(watchers.watching(alias)).toBe(true)
 

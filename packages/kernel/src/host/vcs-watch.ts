@@ -14,7 +14,7 @@
  * agent 跑完一轮照旧会刷新,只是用户自己在终端提交后要等下一次刷新。
  */
 
-import { watch } from "node:fs"
+import { realpathSync, watch } from "node:fs"
 import path from "node:path"
 
 import type { VcsInfo } from "../types.ts"
@@ -112,7 +112,11 @@ export class VcsWatchers {
     }
     let watcher: WatchHandle
     try {
-      watcher = this.watchFn(key, { recursive: true, persistent: false }, (_event, filename) => {
+      // libuv's Windows recursive watcher can abort on 8.3 paths (RUNNER~1)
+      // when the OS reports a long filename. Keep aliases for emitted events,
+      // but give the native watcher the canonical directory.
+      const watchedPath = process.platform === "win32" ? realpathSync.native(key) : key
+      watcher = this.watchFn(watchedPath, { recursive: true, persistent: false }, (_event, filename) => {
         if (!shouldRefresh(filename)) return
         this.schedule(key)
       })

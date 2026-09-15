@@ -107,7 +107,14 @@ async function waitFor(predicate: () => boolean, timeoutMs = 6000): Promise<void
 }
 
 async function listenLocal(onSocket: (socket: net.Socket) => void): Promise<{ server: net.Server; port: number }> {
-  const server = net.createServer(onSocket)
+  const server = net.createServer((socket) => {
+    // stop() closes the client while this fake source may still be writing.
+    // Windows reports that expected disconnect as ECONNRESET on the server side.
+    socket.on("error", (error: NodeJS.ErrnoException) => {
+      if (error.code !== "ECONNRESET") throw error
+    })
+    onSocket(socket)
+  })
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
   const port = (server.address() as net.AddressInfo).port
   return { server, port }
@@ -839,7 +846,9 @@ describe("log tool", () => {
     expect(textOf(waited)).toContain("matched /hardfault/")
   })
 
-  it("shell 退了、孙进程还握着管道:仍算在采,第二个 start 被拒,stop 连孙进程一起收", async () => {
+  // Inherited Node stdio survives its parent on POSIX; Windows does not guarantee this.
+  // Windows tree cleanup and detached sources are exercised by the adjacent tests.
+  it.skipIf(process.platform === "win32")("shell 退了、孙进程还握着管道:仍算在采,第二个 start 被拒,stop 连孙进程一起收", async () => {
     const dir = createTempDir()
     const grandchild = join(dir, "grandchild.mjs")
     writeFileSync(
@@ -914,6 +923,9 @@ describe("log tool", () => {
       } catch {
         // 已经没了。
       }
+      await waitFor(() => {
+        try { process.kill(pid, 0); return false } catch { return true }
+      })
     }
   }, 20_000)
 

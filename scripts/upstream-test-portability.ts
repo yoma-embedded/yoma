@@ -10,10 +10,11 @@ export function adaptUpstreamTest(code: string, id: string): string | undefined 
     return code
       .replace(/"\/workspace(-[ab])?"/g, (_, suffix = "") => JSON.stringify(`C:\\workspace${suffix}`))
       .replaceAll('"--workspace--"', '"--C--workspace--"')
+      .replaceAll('"/sessions/--workspace--/"', JSON.stringify('\\sessions\\--C--workspace--\\'))
   }
   if (/\/packages\/agent\/test\/harness\/(nodejs-env|tools)\.test\.ts$/.test(file)) {
     // $PWD uses MSYS paths (/tmp/…), while canonicalPath/realpath return Windows paths.
-    return code.replaceAll('"$PWD"', '"$(cygpath -aw .)"')
+    return code.replaceAll('"$PWD"', '"$(cygpath -alw .)"')
   }
 }
 

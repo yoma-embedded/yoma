@@ -15,7 +15,7 @@ import { writeFakeExe as writeNativeFakeExe } from "./fixtures/fake-exe.ts";
 // 4. **probe:"exists" 真的能把目录记进账本、默认严格档真的拒绝目录**:这是 dir 型
 //    条目在 actions.ts 里的落地,两头都要响。
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
