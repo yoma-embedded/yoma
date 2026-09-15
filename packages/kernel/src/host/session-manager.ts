@@ -29,6 +29,7 @@ import {
   createReadTool,
   createWriteTool,
   type AgentLane,
+  type Branch,
   type Context,
   type ExecutionToolContext,
   type JsonlSessionMetadata,
@@ -650,7 +651,7 @@ export class SessionManager {
   // -------------------------------------------------------------------------
 
   /**
-   * 打开(或复用)一个会话。
+   * 打开(或复用)一个会话。readOnly 只加载历史,执行操作才装配 harness。
    *
    * 三条纪律,每条都对应过一次真实故障:
    *
@@ -662,7 +663,7 @@ export class SessionManager {
    * 3. **半路失败要关干净**。harness/session 不关掉的话 entry 会永远带着一条死 lane,
    *    而 repo 也不让这个会话再开第二次。
    */
-  private async ensureOpen(sessionID: string): Promise<Entry> {
+  private async ensureOpen(sessionID: string, readOnly = false): Promise<Entry> {
     let found = this.entries.get(sessionID)
     if (!found) {
       await this.list()
@@ -674,11 +675,23 @@ export class SessionManager {
     entry.touched = Date.now()
     // 正在销毁:它会把 lane/projection 逐个清掉,这中间交出去的 entry 是半关的。
     if (entry.closing) await entry.closing.catch(() => {})
-    if (isOpen(entry)) return entry
-    entry.opening ??= this.openEntry(entry).finally(() => {
+    if (entry.opening) await entry.opening
+    if (isOpen(entry) || (readOnly && entry.projection)) return entry
+    entry.opening ??= (readOnly ? this.readEntry(entry) : this.openEntry(entry)).finally(() => {
       entry.opening = undefined
     })
     return entry.opening
+  }
+
+  /** 查看历史只读会话文件,不装配模型、工具或执行环境。与装配共用 opening 锁。 */
+  private async readEntry(entry: Entry): Promise<Entry> {
+    const session = entry.session ?? (await this.repo.open(entry.meta, this.context))
+    entry.session = session
+    const projection = this.newProjection(entry)
+    const branch = await session.branch("main", this.context)
+    if (branch) await this.replay(branch, projection)
+    entry.projection = projection
+    return entry
   }
 
   private async openEntry(entry: Entry): Promise<Entry> {
@@ -867,7 +880,7 @@ export class SessionManager {
    * 收的是 lane 与 projection 而不是 entry:openEntry 要在**挂上去之前**把历史放完,
    * 那时候 entry 上还什么都没有。
    */
-  private async replay(lane: AgentLane, projection: SessionProjection): Promise<void> {
+  private async replay(lane: Pick<Branch, "findEntries">, projection: SessionProjection): Promise<void> {
     for (const item of await lane.findEntries({ order: "oldestFirst" }, this.context)) {
       if (item.type === "message") projection.applyMessage(item.message, { entryId: item.id })
       else if (item.type === "compaction" || item.type === "branch_summary") projection.applySummary(item)
@@ -1360,7 +1373,7 @@ export class SessionManager {
   }
 
   async messages(sessionID: string) {
-    const entry = await this.ensureOpen(sessionID)
+    const entry = await this.ensureOpen(sessionID, true)
     return { items: entry.projection!.snapshot() }
   }
 
