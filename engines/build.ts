@@ -81,7 +81,7 @@ async function freeze(name: string, module: string, outBin: string, work: string
 	const shim = path.join(work, `${name}_entry.py`);
 	mkdirSync(work, { recursive: true });
 	writeFileSync(shim, `from ${module} import main\nif __name__ == "__main__":\n    raise SystemExit(main())\n`);
-	await $`uv run --with pyinstaller pyinstaller --onefile --clean --noconfirm --distpath ${path.join(work, "out")} --workpath ${path.join(work, "build")} --specpath ${work} --name ${name} --paths . ${shim}`.cwd(
+	await $`uv run --with pyinstaller pyinstaller --onefile --clean --noconfirm --runtime-hook ${path.join(project, "utf8_stdio.py")} --distpath ${path.join(work, "out")} --workpath ${path.join(work, "build")} --specpath ${work} --name ${name} --paths . ${shim}`.cwd(
 		project,
 	);
 	copyFileSync(path.join(work, "out", exe(name)), outBin);
