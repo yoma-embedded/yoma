@@ -1,3 +1,4 @@
+import { writeFakeExe } from "./fixtures/fake-exe.ts"
 /**
  * la 工具(host/tools/la/{contract,stats,session}.ts)的验收。
  *
@@ -12,7 +13,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -64,7 +65,7 @@ const invocation: AgentHarnessToolInvocation = {
 }
 
 /**
- * 假 yoma-la。engineBin 找的是 `<enginesDir>/bin/yoma-la`(Windows 上是 .cmd 包装),所以照
+ * 假 yoma-la。engineBin 找的是 `<enginesDir>/bin/yoma-la`(Windows 上是原生 .exe),所以照
  * test/fixtures/fake-exe.ts 那套写:一段 .mjs + 一个启动器。
  */
 /** 采集跑到底时留下的标记文件(每轮一个临时目录)。 */
@@ -74,17 +75,7 @@ function finishedMarker(): string {
 
 function installFakeEngine(body: string): void {
   body = body.split("@FINISHED@").join(finishedMarker().split("\\").join("\\\\"))
-  const bin = join(enginesDir, "bin")
-  mkdirSync(bin, { recursive: true })
-  const script = join(bin, "yoma-la.mjs")
-  writeFileSync(script, body)
-  if (process.platform === "win32") {
-    writeFileSync(join(bin, "yoma-la.cmd"), `@"${process.execPath}" "${script}" %*\r\n`)
-    return
-  }
-  const launcher = join(bin, "yoma-la")
-  writeFileSync(launcher, `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`)
-  chmodSync(launcher, 0o755)
+  writeFakeExe(join(enginesDir, "bin"), "yoma-la", body)
 }
 
 /** 记 argv + 按子命令分支的假引擎骨架。 */

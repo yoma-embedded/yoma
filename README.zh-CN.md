@@ -87,6 +87,11 @@ npm run engines:build    # 网表解析 / STM32 工具。STM32 配置需要本�
 npm run dev:desktop         # 改内核要重启这条命令
 ```
 
+## 提交前检查
+
+运行 `npm run check:ci`：它与 Ubuntu CI 共用入口，检查上游哈希、lint、强制类型检查、准备 ripgrep 并跑全量单测。
+Windows 上另跑 `npm run test:windows`；涉及子进程、文件路径或桌面打包的改动，须等 PR 的 Windows CI（含构建和 Electron 验收）通过后再发布。Mac 本地全绿不能代替 Windows 验证。
+
 ## 许可
 
 MIT。第三方来源见 `NOTICE`：桌面端继承自 [opencode](https://github.com/anomalyco/opencode)；内核派生自 [pi](https://github.com/earendil-works/pi)（`packages/ai`、`packages/agent`、`packages/chord`、`packages/telemetry` 为 vendored 上游拷贝，`packages/kernel/src/host` 为派生）。

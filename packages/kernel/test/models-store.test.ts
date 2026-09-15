@@ -10,7 +10,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -25,7 +25,6 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  chmodSync(configDir, 0o700)
   rmSync(configDir, { recursive: true, force: true })
 })
 
@@ -88,22 +87,18 @@ describe("FileModelsStore", () => {
     expect(await store.read("alsoBroken")).toBeUndefined()
   })
 
-  it("目录写不进去时不抛:模型已经在内存里可用了,只是下次启动要重新联网拉", async () => {
+  it("缓存目标不能替换时不抛:模型已经在内存里可用了,只是下次启动要重新联网拉", async () => {
     const store = new FileModelsStore(configDir)
-    chmodSync(configDir, 0o500)
+    mkdirSync(storeFile())
     await expect(store.write("deepseek", { models: [model("deepseek-flash")] })).resolves.toBeUndefined()
-    chmodSync(configDir, 0o700)
     // 确实没写进去(如实记录,不假装成功)。
     expect(await store.read("deepseek")).toBeUndefined()
   })
 
   it("写失败不留临时文件", async () => {
     const store = new FileModelsStore(configDir)
-    chmodSync(configDir, 0o500)
+    mkdirSync(storeFile())
     await store.write("deepseek", { models: [model("deepseek-flash")] })
-    chmodSync(configDir, 0o700)
-    const leftovers = readFileSync
-    void leftovers
     const { readdirSync } = await import("node:fs")
     expect(readdirSync(configDir).filter((name) => name.startsWith(".models-store-"))).toEqual([])
   })

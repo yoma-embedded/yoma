@@ -616,7 +616,20 @@ describeFakeGdb("GdbSession(假 gdb)", () => {
     expect(() => process.kill(kid, 0)).not.toThrow()
     await session.stop()
     await new Promise((r) => setTimeout(r, 300))
-    expect(() => process.kill(kid, 0)).toThrow()
+    await expect
+      .poll(() => {
+        try {
+          process.kill(kid, 0)
+          // Linux orphan zombies still have a PID, but no longer execute or hold devices.
+          if (process.platform === "linux") {
+            return /\) Z /.test(readFileSync(`/proc/${kid}/stat`, "utf8"))
+          }
+          return false
+        } catch (error) {
+          return ["ESRCH", "ENOENT"].includes((error as NodeJS.ErrnoException).code ?? "")
+        }
+      })
+      .toBe(true)
   })
 
   it("停止事件逐行落进 stops jsonl —— 自动压缩之后还查得到", async () => {

@@ -1,5 +1,5 @@
 /** Windows 使用验收:真系统 PowerShell 5.1、真 native 子进程,不依赖 .cmd 假引擎。 */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
@@ -44,7 +44,7 @@ function setup() {
       invocation,
       signal ? withAbortSignal(signal, BACKGROUND_CONTEXT) : BACKGROUND_CONTEXT,
     )
-  return { cwd, run }
+  return { cwd: realpathSync.native(cwd), run }
 }
 async function until(check: () => boolean, ms = 10_000) {
   const deadline = Date.now() + ms

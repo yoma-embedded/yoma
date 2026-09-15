@@ -1,10 +1,9 @@
+import { writeFakeExe as writeNativeFakeExe } from "./fixtures/fake-exe.ts";
 // 工具链解析(resolve.ts)验收:七档探测顺序、账本失效路径的复核、版本不满足时
 // 的"继续找下一档"、shellEnvFor 的 PATH 前置与 exports 填充、promptSectionFor 的
 // 人话文案、side 筛选。
 //
-// 假工具沿用 toolchain-version.test.ts 的写法(Windows 是 .bat、其它平台是
-// #!/bin/sh),因为 resolveTool 内部就是直接调 probeVersion,同一套假工具能被
-// 两边同样 spawn 起来。env 全程显式传(PATH 从空字符串起步、按需追加),不依赖
+// 假工具用 fixtures/fake-exe.ts 的原生启动器。env 全程显式传(PATH 从空字符串起步、按需追加),不依赖
 // process.env —— 否则这台机器上真实装了什么会悄悄影响 missing/ambiguous 之类的
 // 判定,变成一个测哪儿都测不出差异的闸门(根 CLAUDE.md 点名的反模式)。工具 id
 // 一律用 "widget" 这类不在 WELL_KNOWN_LOCATIONS / REGISTRY_SEARCH_TERM 表里的假
@@ -20,7 +19,7 @@
 // 造的 ResolvedTool 覆盖了,决策逻辑(resolveTool 内部 good/bad 分桶)按文件头注释
 // 的规则实现,但这一分支没有端到端测试——如实记录,不假装测到了。
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { installableFor } from "../src/host/domain/toolchain/catalog.ts";
@@ -51,15 +50,7 @@ afterEach(() => {
 
 /** 造一个能被 probeVersion 直接 spawn 的假工具,打印一行版本号就退出。返回绝对路径。 */
 function writeFakeExe(dir: string, name: string, version: string): string {
-	if (process.platform === "win32") {
-		const file = join(dir, `${name}.bat`);
-		writeFileSync(file, `@echo off\r\necho ${version}\r\n`);
-		return file;
-	}
-	const file = join(dir, name);
-	writeFileSync(file, `#!/bin/sh\necho "${version}"\n`);
-	chmodSync(file, 0o755);
-	return file;
+  return writeNativeFakeExe(dir, name, `console.log(${JSON.stringify(version)})`)
 }
 
 /**

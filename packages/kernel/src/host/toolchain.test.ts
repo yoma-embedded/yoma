@@ -1,3 +1,4 @@
+import { writeFakeExe as writeNativeFakeExe } from "../../test/fixtures/fake-exe.ts"
 /**
  * toolchain.status / toolchain.set RPC(host/toolchain.ts)的验证。
  *
@@ -10,12 +11,18 @@
  * 影响 missing 判定(kernel/test 的 toolchain-*.test.ts 同一条纪律)。
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { readLedger } from "./domain/toolchain/index.ts"
 
-import { toolchainFamilies, toolchainFamilySet, toolchainFamilyStatus, toolchainSet, toolchainStatus } from "./toolchain.ts"
+import {
+  toolchainFamilies,
+  toolchainFamilySet,
+  toolchainFamilyStatus,
+  toolchainSet,
+  toolchainStatus,
+} from "./toolchain.ts"
 
 let projectDir: string
 let configDir: string
@@ -37,15 +44,7 @@ afterEach(() => {
 
 /** 造一个能被 probeVersion spawn 的假工具,打印一行版本号就退出。返回绝对路径。 */
 function writeFakeExe(dir: string, name: string, version: string): string {
-  if (process.platform === "win32") {
-    const file = path.join(dir, `${name}.bat`)
-    writeFileSync(file, `@echo off\r\necho ${version}\r\n`)
-    return file
-  }
-  const file = path.join(dir, name)
-  writeFileSync(file, `#!/bin/sh\necho "${version}"\n`)
-  chmodSync(file, 0o755)
-  return file
+  return writeNativeFakeExe(dir, name, `console.log(${JSON.stringify(version)})`)
 }
 
 function writeManifest(tools: unknown[]): void {
@@ -158,7 +157,7 @@ describe("toolchain.set", () => {
 // 有它们的 well-known/registry 条目 —— 按 process.platform 跑的话,开发机上真装的
 // SEGGER / CMake 会悄悄让 missing 断言时红时绿(win32 还会真起 reg.exe)。linux 的
 // 表条目在这台机器上展开为空,PATH 档又完全受注入的 env 控制,判定于是只由测试
-// 自己摆的东西决定。PATHEXT 照常注入 —— 假工具在 win32 上是 .bat,PATH 档的展开
+// 自己摆的东西决定。PATHEXT 照常注入 —— 假工具在 win32 上是 .exe,PATH 档的展开
 // 逻辑按"env 里有没有 PATHEXT"切换,与 platform 参数无关(locations.ts 的既有语义)。
 
 function familyOpts(pathDirs: string[] = [], extraEnv: Record<string, string> = {}) {
@@ -292,8 +291,8 @@ describe("toolchain.familySet", () => {
   })
 
   it("平台预设里没有的工具 id 直接 reject", async () => {
-    await expect(
-      toolchainFamilySet({ ...familyOpts(), family: "esp32", id: "arm-gcc", path: binDir }),
-    ).rejects.toThrow(/没有工具/)
+    await expect(toolchainFamilySet({ ...familyOpts(), family: "esp32", id: "arm-gcc", path: binDir })).rejects.toThrow(
+      /没有工具/,
+    )
   })
 })
