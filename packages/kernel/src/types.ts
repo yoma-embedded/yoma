@@ -258,6 +258,8 @@ export const TOOL_NAMES = [
   "la",
   "gdb",
   "datasheet",
+  "netlist",
+  "stm32config",
 ] as const
 
 export type ToolName = (typeof TOOL_NAMES)[number]

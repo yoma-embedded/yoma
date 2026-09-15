@@ -112,7 +112,8 @@ def describe_mcu_via_kernel(binary: str, part: str, data_dir: str | None) -> Mcu
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
         raise SystemExit(
-            f"error: `{' '.join(cmd)}` exited {proc.returncode}: {proc.stderr.strip()}"
+            f"error: `{' '.join(cmd)}` exited {proc.returncode}: "
+            f"{proc.stdout.strip() or proc.stderr.strip()}"
         )
     return _parse_desc(json.loads(proc.stdout))
 

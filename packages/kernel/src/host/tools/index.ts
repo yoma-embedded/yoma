@@ -17,7 +17,9 @@ import { createGrepTool } from "./grep/session.ts"
 import { createLaTool } from "./la/session.ts"
 import { createLogTool } from "./log/session.ts"
 import { createLsTool } from "./ls/session.ts"
+import { createNetlistTool } from "./netlist/session.ts"
 import { createPowerShellTool } from "./powershell/session.ts"
+import { createStm32ConfigTool } from "./stm32config/session.ts"
 import { createToolchainTool, type ToolchainToolOptions } from "./toolchain/session.ts"
 
 export interface RegisteredToolOptions {
@@ -54,5 +56,7 @@ export function createRegisteredTools(options: RegisteredToolOptions = {}): Regi
     createLaTool(shared),
     createGdbTool(),
     createDatasheetTool(options.datasheet),
+    createNetlistTool(shared),
+    createStm32ConfigTool(shared),
   ]
 }

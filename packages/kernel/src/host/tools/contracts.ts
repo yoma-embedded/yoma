@@ -14,10 +14,12 @@ import { GREP_CONTRACT } from "./grep/contract.ts"
 import { LA_CONTRACT } from "./la/contract.ts"
 import { LOG_CONTRACT } from "./log/contract.ts"
 import { LS_CONTRACT } from "./ls/contract.ts"
+import { NETLIST_CONTRACT } from "./netlist/contract.ts"
 import { POWERSHELL_CONTRACT } from "./powershell/contract.ts"
+import { STM32CONFIG_CONTRACT } from "./stm32config/contract.ts"
 import { TOOLCHAIN_CONTRACT } from "./toolchain/contract.ts"
 
-/** 四件套之后先放文件工具,再是这台机器本身(工具链),硬件之后是手册;顺序与 index.ts 的装配、types.ts 的 TOOL_NAMES 逐字同序。 */
+/** 四件套之后先放文件工具,再是这台机器本身(工具链),硬件之后是手册,最后是原理图 → 固件那条线(netlist、stm32config);顺序与 index.ts 的装配、types.ts 的 TOOL_NAMES 逐字同序。 */
 export const TOOL_CONTRACTS = [
   GREP_CONTRACT,
   FIND_CONTRACT,
@@ -29,6 +31,8 @@ export const TOOL_CONTRACTS = [
   LA_CONTRACT,
   GDB_CONTRACT,
   DATASHEET_CONTRACT,
+  NETLIST_CONTRACT,
+  STM32CONFIG_CONTRACT,
 ] as const satisfies readonly ToolContract[]
 
 export function toolContract(name: string): ToolContract | undefined {

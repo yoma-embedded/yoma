@@ -44,7 +44,7 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
 
 四个盒子(`boundary.test.ts` 的说法):**餐厅** = app / session-ui / ui / util / desktop,只认**菜单**
 (kernel 的门 `.`,浏览器安全);**厨房** = kernel 的门 `./host` + bench;**工具间** =
-`kernel/src/host/domain/` 与 `host/tools/<名字>/{contract.ts,session.ts}`(住户:grep、find、ls、powershell、toolchain、flash、log、la、gdb、datasheet);
+`kernel/src/host/domain/` 与 `host/tools/<名字>/{contract.ts,session.ts}`(住户:grep、find、ls、powershell、toolchain、flash、log、la、gdb、datasheet、netlist、stm32config);
 **发动机** = `packages/{agent,ai,chord,telemetry}`(哈希锁定)。
 
 门就是 `packages/kernel/package.json` 的 `exports`,七道(外加 `./package.json`):
@@ -340,6 +340,38 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
   12. 非 2xx 响应体的读取也要过中止:`res.text().catch(() => "")` 把用户按停止吞成一份"服务器不可达"的正常结果。命中整条
       归一(缺 `score` 时 `toFixed` 会把整个调用炸成裸 TypeError;`chip: null` 会冒充本家命中)。写完测试**再跑一次 typecheck**
       (第一版提交前 tsgo 只跑了源码,测试文件里三个类型错误是审稿抓的)。
+
+- **netlist 与 stm32config 工具**(2026-09-15,第 6 步第 10 刀,从 attic/tools/{netlist,stm32config}.ts 重写,第 6 步到此收尾):
+  `host/tools/netlist/{contract,session}.ts`(不带 part 跑 `controller_map` 出原始逐 pin 图,带 part 跑 `board_ir` 出三个 JSON)、
+  `host/tools/stm32config/{contract,args,session}.ts`(七个子命令原样透给 `stm32kernel`)。TOOL_NAMES 末尾加 "netlist"、
+  "stm32config",共 16 个工具。都没有确认门、没有队列、没有 dispose。测试 `test/tools-netlist.test.ts` + `test/tools-stm32config.test.ts`:
+  假引擎(fixtures/fake-exe.ts)+ 真引擎层(仓库 engines/bin 在就跑;irpack 从 `engines/data/stm32` 或 `YOMA_TEST_STM32_DATA` 找,
+  没有就跳过那几条)。
+  1. **irpack 不进 git、也不随包出货**:它是 CubeMX 器件库的解析产物,没装 CubeMX 的机器(CI 的 runner 就是)打出来的 Yoma 里只有
+     stm32kernel 二进制、没有数据 —— `schema` 之外的命令一个都跑不了,board_ir 也跟着跑不了。所以:话要说成"这台机器没有器件
+     数据"(不是"引擎坏了"、不是"跑 engines:build"),`schema` 不再要求数据目录,守则写成条件式("有数据时不许手写外设初始化;
+     报没有数据时回落到手册 + 手写 HAL"),覆盖范围从数据目录现算、追加在工具描述末尾(契约是浏览器安全的菜单,读不了数据目录)。
+     本机的 `engines/data/stm32` 是指向 `../stm32-config-kernel/data` 的悬空软链;可用的 irpack 在 `../my-pi/engines/stm32-config-kernel/data`
+     (27 个 pack),`../yoma-tools/stm32-config-kernel/data` 那两个是旧格式(反序列化失败)。
+  2. **stm32kernel 的退出码分类学**:0 干净;1 + diagnostics JSON = 正常诊断结果;其余退出码一律抛,即使 stdout 有内容。
+     schema 是字段参考文本,其余命令要求 JSON 对象。配置文档先查普通文件再 spawn;不带 config 的 candidates 失败时引导修查询参数,
+     不能叫模型修一份不存在的配置。
+  3. controller_map 对不存在的文件回 Python traceback + exit 1:工具先查存在,给一句确定的 "netlist file not found"。原始图 42 KB
+     截到 10 000 字符,截断前先把整份 JSON 解析出主控 ref 与 low_confidence 进 details。
+  4. 引擎的 stderr 进度("loaded pack …"、"Detected main controller …")边跑边上卡片(onUpdate + appendTail),结果仍以 stdout 为准。
+  5. **审查收尾修复**:默认产物住 `.yoma/tool-output/`(自带忽略规则),每次 board_ir 调用创建独立子目录;显式 outDir 也在其下
+     创建独立子目录。同名网表、不同 part、并发调用不再互相覆盖。三个文件全部能读且是 JSON 才报告成功,旧文件不能冒充本轮产物。
+  6. **截断不能是死路**:controller_map 原始图与 stm32config 大输出截断前保存全文,`details.outputFile` 和正文都给绝对路径。
+     大芯片 describe-mcu 曾把 144 个 pad 截到 79 个,被藏起来的 ADC 通道没有别的读取入口。stderr 预览与异常也有长度上限;
+     Python traceback 保留末行原因。board_ir 调内核失败时保留 stdout 诊断(`MCU_UNKNOWN` 原来被空 stderr 吞掉)。
+  7. **参数必须对着真生成结果验证**:STM32F4 USART 的数据库枚举是 `STOPBITS_2` / `WORDLENGTH_9B`,不是 HAL 常量前缀;
+     还必须指定 `mode: "Asynchronous"`,否则可生成空 init。回归用例直接核对 usart.c 的波特率、停止位、字长。
+     覆盖描述明确列的是 pack 文件名,不是完整族目录(L4 pack 包含 L4+);查具体型号仍走 list-mcus。
+  8. 旧审查里“偶发丢检测说明”的失败与另一个审查者变异删 stderr 的实验重叠,不能据此归因 runEngine;
+     独立实测 8 次底层调用 + 72 次并发工具调用未复现。此次保留探测行断言,不改共用杀树/收流逻辑。
+  9. 收尾验收:两工具 58 项(含真引擎 / 真数据包)、全仓 206 文件 / 2603 通过 / 7 跳过;typecheck 强制重跑 11/11 + 根,
+     lint 75 warnings / 0 errors,桌面构建与六项 smoke/e2e 全通过;controller_map 的 check_board_ir.py 58 项通过。
+
 
 - 新开一道深引用 = 改 `exports`(从前是改四份别名表)。`boundary.test.ts` 钉住五条:菜单里没有 Node;
   工具间不反调会话间(`host/domain` 往外只拿 `host/models.ts`、`host/datasheet-server.ts`);餐厅只许走
