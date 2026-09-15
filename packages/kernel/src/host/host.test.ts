@@ -38,6 +38,65 @@ function tempDir(prefix: string): string {
   return dir
 }
 
+// 固定模型只决定调用哪个工具;执行、进度、会话投影与消息读取全部走真实 host。
+describe.skipIf(process.platform !== "win32")("Windows PowerShell 会话链路", () => {
+  test.each([0, 7])(
+    "真实 PowerShell 退出 %s:进度与最终状态能到达 transcript",
+    async (code) => {
+      const workspace = path.join(tempDir("yoma-ps-session-"), "中文 [工程] & 空格")
+      mkdirSync(workspace)
+      const { host, events } = makeHost(
+        [
+          fauxAssistantMessage([
+            fauxToolCall("powershell", {
+              command: `Write-Output '开始 中文'; Start-Sleep -Milliseconds 400; Write-Output (Get-Location).Path; Write-Output '结束 中文'; exit ${code}`,
+            }),
+          ]),
+          fauxAssistantMessage([fauxText("已收取结果")]),
+        ],
+        { workspace },
+      )
+      const parts = () =>
+        events.flatMap((e) => (e.type === "message.part.updated" && e.part.type === "tool" ? [e.part as ToolPart] : []))
+      try {
+        const session = (await host.handle("session.create", { directory: workspace })) as Session
+        await host.handle("session.prompt", { sessionID: session.id, input: { text: "验证 PowerShell" } })
+        const status = code === 0 ? "completed" : "error"
+        // projector 会原地更新 part;必须在运行时观察进度,不能等结束后拿旧对象当快照。
+        await waitFor(
+          () =>
+            parts().some(
+              (part) =>
+                part.state.status === "running" &&
+                part.state.output?.includes("开始 中文") &&
+                !part.state.output.includes("结束 中文"),
+            ),
+          15_000,
+        )
+        await waitFor(() => parts().some((part) => part.state.status === status), 15_000)
+        const page = (await host.handle("session.messages", { sessionID: session.id })) as {
+          items: Array<{ parts: Part[] }>
+        }
+        const saved = page.items.flatMap((item) => item.parts).find((part): part is ToolPart => part.type === "tool")!
+        expect(saved.state.status).toBe(status)
+        const output =
+          saved.state.status === "completed"
+            ? saved.state.output
+            : saved.state.status === "error"
+              ? saved.state.error
+              : ""
+        expect(output).toContain(workspace)
+        expect(output).toContain("结束 中文")
+        if (code !== 0) expect(output).toContain("Command exited with code 7")
+        expect(events.filter((event) => event.type === "kernel.error")).toEqual([])
+      } finally {
+        await host.dispose()
+      }
+    },
+    25_000,
+  )
+})
+
 let fauxCount = 0
 /** 最近一次 makeHost 建的 faux provider id —— setModel 要按名字点它。 */
 let currentFauxProvider = ""

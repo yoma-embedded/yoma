@@ -14,7 +14,8 @@
  * 2. 脚本第一行 `$ProgressPreference='SilentlyContinue'`:PowerShell 5.1 一发现 stderr 被重定向,
  *    就把进度记录序列化成 `#< CLIXML` 写 stderr(attic/tools/serial.ts 的真机实测:482B→100B,
  *    `-OutputFormat Text` 无效)。它必须在用户脚本之前执行,所以是第一行而不是一个 argv 开关。
- * 3. 脚本第二行 `[Console]::OutputEncoding = UTF8`:runEngine 按 UTF-8 解 stdout,而 5.1 默认按
+ * 3. 脚本第二行同时设置 `$OutputEncoding` 与 `[Console]::OutputEncoding`:前者管发给 native 程序的
+ *    stdin(5.1 默认 ASCII,中文全变问号),后者管 stdout。两者都用无 BOM UTF-8。runEngine 按 UTF-8 解 stdout,而 5.1 默认按
  *    控制台代码页写。包在 try 里 —— 没有控制台(服务里、重定向到管道)时这一句会抛,而它只是
  *    锦上添花,不该让整段脚本死掉。
  *
@@ -47,7 +48,8 @@ const MAX_TIMEOUT_MS = 10 * 60 * 1000
 export const POWERSHELL_MISSING = "PowerShell is not installed on this machine; use bash instead."
 
 export const PS_NO_PROGRESS = "$ProgressPreference = 'SilentlyContinue'"
-export const PS_UTF8_OUTPUT = "try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}"
+export const PS_UTF8_OUTPUT =
+  "try { $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}"
 
 /**
  * 固定开关。-NonInteractive 是承重的:交互提示(凭据框、`Read-Host`、确认)在没有 tty 的子进程里
@@ -105,16 +107,22 @@ export function powershellExe(explicit?: string): string | undefined {
   return findOnPath("powershell.exe") ?? findOnPath("pwsh.exe")
 }
 
-/** 真正跑的脚本:两行头 + 模型给的命令。顺序是契约,测试按"第一行/第二行"钉它。 */
-export function powershellScript(command: string): string {
-  return `${PS_NO_PROGRESS}\n${PS_UTF8_OUTPUT}\n${command}`
+/** 真正跑的脚本:两行编码头 + 可选的字面路径定位 + 模型给的命令。 */
+export function powershellScript(command: string, cwd?: string): string {
+  // PS 5.1 启动时把 cwd 当通配路径:工程名含 [] 时会静默落回 powershell.exe 所在目录。
+  // 编码前显式按字面路径定位;失败就终止,不能在另一个目录继续执行用户脚本。
+  const location =
+    cwd === undefined ? "" : `Set-Location -LiteralPath '${cwd.replaceAll("'", "''")}' -ErrorAction Stop\n`
+  return `${PS_NO_PROGRESS}\n${PS_UTF8_OUTPUT}\n${location}${command}`
 }
 
 /** 完整 argv(不含可执行文件);超长在这里拒,调用方不必自己数长度。 */
-export function powershellArgv(command: string): string[] {
-  const encoded = Buffer.from(powershellScript(command), "utf16le").toString("base64")
+export function powershellArgv(command: string, cwd?: string): string[] {
+  const encoded = Buffer.from(powershellScript(command, cwd), "utf16le").toString("base64")
   if (encoded.length > MAX_ENCODED_COMMAND_CHARS) {
-    throw new Error("powershell: command too long — write it to a .ps1 file and run that with -File")
+    throw new Error(
+      "powershell: command too long — write a UTF-8 with BOM .ps1 file and invoke it with & 'path.ps1' (or powershell.exe -File 'path.ps1')",
+    )
   }
   return [...POWERSHELL_FLAGS, "-EncodedCommand", encoded]
 }
@@ -175,7 +183,7 @@ export function createPowerShellTool(
       if (context.abortSignal?.aborted) throw new Error("powershell was aborted")
       const exe = powershellExe(options.exe)
       if (!exe) throw new Error(POWERSHELL_MISSING)
-      const argv = powershellArgv(params.command)
+      const argv = powershellArgv(params.command, env.cwd)
       const timeoutMs = clamp(
         params.timeout === undefined ? undefined : params.timeout * 1000,
         DEFAULT_TIMEOUT_MS,
@@ -236,7 +244,8 @@ export function createPowerShellTool(
       }
       if (result.exitCode !== 0) {
         // exitCode 为 null = 被信号杀掉而两面旗(超时 / 中止)都没举:别报成 "code null"。
-        const why = result.exitCode === null ? "Command was killed by a signal" : `Command exited with code ${result.exitCode}`
+        const why =
+          result.exitCode === null ? "Command was killed by a signal" : `Command exited with code ${result.exitCode}`
         throw new Error(`${text ? `${text}\n\n` : ""}${why}`)
       }
       return { content: [{ type: "text", text: text || "(no output)" }], details }

@@ -94,7 +94,9 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
   **只出文件不出目录**(pi 用 fd 会出目录)。ls 用 readdir(withFileTypes)而不是 env.listDir:后者对字符设备 /
   FIFO / socket 静默丢弃,`ls /dev` 会看不见 cu.* 串口。powershell 全平台恒定登记(清单平台无关),非 Windows
   没有 pwsh 时 execute 报未安装;Windows 上用 SystemRoot 绝对路径的 5.1,`-NoProfile -NonInteractive
-  -ExecutionPolicy Bypass -EncodedCommand`,脚本头两行关进度条与置 UTF-8 输出,stderr 上的 CLIXML 块**解码**
+  -ExecutionPolicy Bypass -EncodedCommand`,脚本头两行关进度条与置 UTF-8 输出(含 `$OutputEncoding`,否则 native stdin 中文变问号),
+  接着 `Set-Location -LiteralPath` 定位工程(5.1 启动遇到 `[]` 会静默落回系统目录)。Windows 真进程回归与使用方法见
+  `docs/WINDOWS-POWERSHELL-2026-09-15.md`。stderr 上的 CLIXML 块**解码**
   (取出 Error 记录,丢进度)而不是整块删 —— Write-Error 退出码是 0,整块删掉模型就以为成功了。CI 两岗测试前
   `npm run engines:rg` 只装 rg,grep / find 的集成用例在 CI 上缺 rg 直接红而不是跳过。
 - **log 工具**(2026-09-14,第 6 步第 4 刀,从 attic/tools/{log,serial}.ts 重写):`host/tools/log/` 五个文件 ——
@@ -218,6 +220,10 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
      一次(首次有人问模型列表时)和用户手点"刷新模型列表"。4 小时节流 + If-None-Match,没变就是 304,
      而 **304 必须保留原有模型和 etag** —— 丢了就等于每 4 小时清空一次列表。
   3. `YOMA_MODEL_CATALOG_URL` 能换成自建镜像或设 `off` 整个关掉(那时就只有内建 + 缓存)。
+  2026-09-15 Windows 首启补漏:`ensureModels()` 的在飞解析必须单飞。首屏多个组件同时读目录,
+  各建一份注册表会出现“后台刷 A,较晚的 B 盖掉 A”,缓存已更新但本次启动看不到新模型。
+  凭据变更同时清在飞解析与自动刷新标记;旧解析晚到也不许覆盖新表。目录指纹包含名称/档位/价格等元数据。
+  `host/model-startup.test.ts` 覆盖这些时序,app 的 browser 回归钉住更新事件后旧响应不能盖回列表。
   教训的形状:**"我的清单比别人少"先问"别人那一条是从哪来的",别默认是同步落后。** 这次如果直接去补同步,
   再同步一百次也补不出那个模型。
 
@@ -347,11 +353,11 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
   "stm32config",共 16 个工具。都没有确认门、没有队列、没有 dispose。测试 `test/tools-netlist.test.ts` + `test/tools-stm32config.test.ts`:
   假引擎(fixtures/fake-exe.ts)+ 真引擎层(仓库 engines/bin 在就跑;irpack 从 `engines/data/stm32` 或 `YOMA_TEST_STM32_DATA` 找,
   没有就跳过那几条)。
-  1. **irpack 不进 git、也不随包出货**:它是 CubeMX 器件库的解析产物,没装 CubeMX 的机器(CI 的 runner 就是)打出来的 Yoma 里只有
-     stm32kernel 二进制、没有数据 —— `schema` 之外的命令一个都跑不了,board_ir 也跟着跑不了。所以:话要说成"这台机器没有器件
+  1. **irpack 不进 git,但 `engines/build.ts --dist` 会随包出货**:它是 CubeMX 器件库的解析产物。普通分发要求至少 20 个包;
+     Windows 发布 CI 显式传 `--allow-missing-irpacks`,没有 CubeMX 时可出缺数据的包 —— `schema` 之外的命令与 board_ir 都跑不了。所以:话要说成"这台机器没有器件
      数据"(不是"引擎坏了"、不是"跑 engines:build"),`schema` 不再要求数据目录,守则写成条件式("有数据时不许手写外设初始化;
      报没有数据时回落到手册 + 手写 HAL"),覆盖范围从数据目录现算、追加在工具描述末尾(契约是浏览器安全的菜单,读不了数据目录)。
-     本机的 `engines/data/stm32` 是指向 `../stm32-config-kernel/data` 的悬空软链;可用的 irpack 在 `../my-pi/engines/stm32-config-kernel/data`
+     上轮 Mac 的 `engines/data/stm32` 是指向 `../stm32-config-kernel/data` 的悬空软链;当时可用的 irpack 在 `../my-pi/engines/stm32-config-kernel/data`
      (27 个 pack),`../yoma-tools/stm32-config-kernel/data` 那两个是旧格式(反序列化失败)。
   2. **stm32kernel 的退出码分类学**:0 干净;1 + diagnostics JSON = 正常诊断结果;其余退出码一律抛,即使 stdout 有内容。
      schema 是字段参考文本,其余命令要求 JSON 对象。配置文档先查普通文件再 spawn;不带 config 的 candidates 失败时引导修查询参数,
@@ -938,9 +944,12 @@ USB(USBTMC)或 LAN(SCPI 原始套接字 5025 口),只在这一台上验证过。
 `createRegisteredTools({ datasheet: { configDir } })` 传 configDir,bench 因此不再是盲区);desktop main 的手册库页经叶子模块解析,和内核
 说同一个地址。**每个请求都带超时**(API 20 s、产物与 manifest 60 s):内置地址意味着所有安装都会去碰一台可能挂掉的
 机器,没有超时就是整轮吊死。2026-09-14 维护者确认了这个地址(`http://47.122.110.137:8301`,757 本 / 78 个家族,
-`/api/search`、`/api/manifest`、`/artifacts/` 都在);旧地址 47.122.120.208 已下线(回 502)—— 开发机自己的 `~/.yoma/.env`
-若还写着旧地址会压过内置默认,本机查手册就失败而别人的不会。
-`ensureDatasheetServerEnv`(kernel-entry)现在只是把解析结果喂进 process.env 的薄壳。
+`/api/search`、`/api/manifest`、`/artifacts/` 都在);旧地址 47.122.120.208 已下线。
+2026-09-15 Windows 实测旧地址连接失败、新地址返回 757 本。环境变量或 `.env` 中残留的旧官方 HTTP 基址
+现在在解析时归一到新默认,不改配置文件;自建地址、显式 server 参数、off 和注入的 builtIn 仍按原意处理。
+删掉 `ensureDatasheetServerEnv` 薄壳:把文件值灌进 process.env 会永久压住后续文件修改,也会丢失配置来源。
+工具现在每次调用重读,连接失败明确说明配置来源与内置远端服务,不再误导用户必须自建服务器。
+内置的是地址,不是在 Windows 本机运行一份检索服务器。验收见 `docs/WINDOWS-STARTUP-BUGS-2026-09-15.md`。
 
 ### 热升级(electron-updater)
 
@@ -994,6 +1003,9 @@ NsisUpdater 的 blockmap 路径 —— 通道本来就通。这次修的是**用
   弄坏 SEGGER 全家。代价:零安装探针故事结束 —— 用户机器(尤其工位机)必须自装
   J-Link 软件或 OpenOCD,声明走 `toolchain.json`(J-Link 的 well-known/注册表探测
   已内建);首跑预检的"探针在不在"横幅一并移除(它就是 `probe-rs list`)。
+- **2026-09-15 Windows 安装验收补充**:desktop 的 `pi-ai` 也必须在 devDependencies。
+  它曾在 dependencies,导致 kernel.js 保留裸 import,安装后加载 node_modules 下 raw TS 报
+  `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`;源码冒烟因 workspace 软链可以通过。安装目录 smoke 与 renderer E2E 才能挡住这条断裂。
 - **engines 有两个来源,`scripts/stage-engines.ts` 按目标平台自动选**:本地
   `engines/`(跑过 `npm run engines:build` 之后,仅当它满足目标平台)或**预编译 Release
   产物**(按 `packages/desktop/engines.lock.json` 钉住的 tag,用 `gh` 下载)。
@@ -1095,8 +1107,9 @@ NsisUpdater 的 blockmap 路径 —— 通道本来就通。这次修的是**用
   `serverReady` 用占位值立刻 resolve)。清除它是独立一件事。
 - **终端(PTY)没有实现** —— yoma 的 `NodeExecutionEnv.exec` 是一次性 spawn,不是伪终端。
   相关设置行现在是退化状态而不是造假。
-- **Python 引擎不可移植**(见"会咬人的地方"):打出的包里 board_ir/connections/
-  controller_map 出了构建机就是坏的,等 yoma 侧做自包含构建。
+- **Python 开发期启动器不可直接分发**:出包必须走 `engines/build.ts --dist` 的 PyInstaller 冻结。
+  2026-09-15 已在 Windows 上构建并从独立安装目录启动三件套,见 `docs/WINDOWS-ACCEPTANCE-2026-09-15.md`;
+  干净机器上的独立运行仍须验收。
 - **mac 签名/公证没配**:electron-builder 配置在没有 Apple 凭据时自动降级为
   未公证包(用户要右键打开);配齐 `APPLE_ID`+`APPLE_APP_SPECIFIC_PASSWORD`+
   `APPLE_TEAM_ID`(或 `APPLE_KEYCHAIN_PROFILE`)即自动恢复,无需改代码。

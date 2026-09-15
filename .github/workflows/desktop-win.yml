@@ -182,6 +182,9 @@ jobs:
       - name: 安装产物首次会话验收
         run: npm run e2e:renderer -w packages/desktop
 
+      - name: 安装产物引擎与器件数据验收
+        run: npm run smoke -w packages/desktop
+
       # 同一条首屏闸门。注意它跑的是工作区里的 out/(未打包),不是刚装好的 app.asar:
       # remote-debugging-port 只在未打包时 appendSwitch,装出来的包没有调试端点可接。
       # 放在发布前依然划得来 —— 首屏一挂载就崩的 commit 不该变成 Release。
@@ -237,6 +240,10 @@ jobs:
             > [!WARNING]
             > Windows 安装包目前未做代码签名。请只从本 Release 下载、核对 `SHA256SUMS.txt`,
             > 并预期首次安装时会看到 SmartScreen 的“未知发布者”提示。
+
+            此发布流程允许缺少 STM32 器件数据包（irpacks），也不携带 HAL/CMSIS 源码。
+            缺器件数据时仅 STM32 schema 与原始网表解析可用，其余 STM32 配置命令和 board_ir 不可用。
+            安装冒烟会报告实际数据覆盖；真实板子调试与完整工程生成需另行验收。
           files: |
             release/yoma-win-x64.exe
             release/yoma-win-x64.exe.blockmap

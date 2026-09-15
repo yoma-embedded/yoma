@@ -110,6 +110,10 @@ const getBase = (appId: string): Configuration => ({
       from: ".engines-stage/data/",
       to: "engines/data/",
     },
+    {
+      from: ".engines-stage/manifest.json",
+      to: "engines/manifest.json",
+    },
     // 读图缩放的 wasm 库。**不能让打包器把它 inline 进 JS 产物**:它的 CJS 入口在加载那一刻就
     // `readFileSync(__dirname + "/photon_rs_bg.wasm")`,inline 之后 __dirname 指向产物目录、1.8 MB 的
     // wasm 也跟不过来;而带顶层 await 的信箱产物里一旦混进 __dirname,node 直接

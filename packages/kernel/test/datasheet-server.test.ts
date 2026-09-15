@@ -99,6 +99,27 @@ describe("优先级:显式 > 环境变量 > <configDir>/.env > 内置默认", ()
 });
 
 describe("归一化", () => {
+	it("旧官方地址的环境与文件覆盖随默认地址升级,不修改配置文件", () => {
+		const old = "http://47.122.120.208";
+		const configDir = configWithEnvFile(`${DATASHEET_SERVER_ENV}=${old}/\n`);
+		expect(resolveDatasheetServer({ env: {}, configDir })).toEqual({
+			url: DEFAULT_DATASHEET_SERVER, source: "file", file: join(configDir, ".env"), legacyUrl: old,
+		});
+		expect(readEnvFile(join(configDir, ".env"))[DATASHEET_SERVER_ENV]).toBe(`${old}/`);
+		expect(resolveDatasheetServer({ env: { [DATASHEET_SERVER_ENV]: `${old}:80/` }, configDir }).url)
+			.toBe(DEFAULT_DATASHEET_SERVER);
+		for (const url of [`${old}:8080`, `${old}/custom`, "http://my-server:8301"]) {
+			expect(resolveDatasheetServer({ env: { [DATASHEET_SERVER_ENV]: url }, configDir }).url).toBe(url);
+		}
+		expect(resolveDatasheetServer({ explicit: old, env: {}, configDir }).url).toBe(old);
+	});
+
+	it("同一进程重新读取修改后的 .env,不会固定在首次解析结果", () => {
+		const configDir = configWithEnvFile(`${DATASHEET_SERVER_ENV}=http://47.122.120.208\n`);
+		expect(resolveDatasheetServer({ env: {}, configDir }).url).toBe(DEFAULT_DATASHEET_SERVER);
+		writeFileSync(join(configDir, ".env"), `${DATASHEET_SERVER_ENV}=off\n`);
+		expect(resolveDatasheetServer({ env: {}, configDir }).source).toBe("off");
+	});
 	it("尾部斜杠一律剥掉(每一层都剥,拼 `${server}/api/search` 才不会变成双斜杠)", () => {
 		expect(resolveDatasheetServer({ explicit: "http://a.b///", env: {}, configDir: tempDir() }).url).toBe("http://a.b");
 		expect(

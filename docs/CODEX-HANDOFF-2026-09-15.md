@@ -124,7 +124,13 @@ git log -1 --oneline
 
 用 Windows Codex 打开这个 yoma 目录。Node/npm 按根 package.json 的 engines / packageManager 配置，CI 使用 Node 24；在 Windows 重新 `npm ci`。引擎按目标平台获取或构建，核实数据位置。不要复制 Mac 的 node_modules、虚拟环境、二进制或 out 目录。
 
-Git 带走代码、文档和仓库技能；不会带走 Mac 聊天历史、停放目录、未跟踪的引擎数据或本机配置。模型凭据在 Windows 本机单独配置，不能写进本文或 Git。开发不依赖完整复制旧聊天，但可以把旧聊天当作补充背景。
+Git 带走代码和已跟踪文档；本仓 `.agents/` 被忽略，产品 agent 技能需要单独迁移。Windows 接续时未找到
+`routine-driven-development`，不能假设它已经随克隆到位。Git 也不会带走 Mac 聊天历史、停放目录、未跟踪的引擎数据或本机配置。
+模型凭据在 Windows 本机单独配置，不能写进本文或 Git。开发不依赖完整复制旧聊天，但可以把旧聊天当作补充背景。
+
+Windows 第一轮核对与安装验收见 [WINDOWS-ACCEPTANCE-2026-09-15.md](WINDOWS-ACCEPTANCE-2026-09-15.md)。
+后续 Windows PowerShell 专项修复和使用验收见 [WINDOWS-POWERSHELL-2026-09-15.md](WINDOWS-POWERSHELL-2026-09-15.md)。
+其中包含安装产物发现并修复的 pi-ai 外部化故障、器件数据覆盖、Windows 测试夹具失败，以及真板阶段的前置缺口。
 
 ### 粘贴给 Windows Codex 的首条消息
 

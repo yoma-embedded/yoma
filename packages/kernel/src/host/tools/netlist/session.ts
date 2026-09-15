@@ -9,7 +9,7 @@
  *   截断后内联,全图只报路径(模型要看再 read)。
  *
  * 两个引擎对这两种模式而言非零退出都是真失败(不像 stm32kernel 的 exit 1 与 flash 的烧录器),抛错带上 stderr。
- * board_ir 要器件数据包(irpack):没有 CubeMX 的机器上没有,话要说成"这台机器没有器件数据、原始图仍可用",
+ * board_ir 要器件数据包(irpack):显式允许缺数据的分发构建可能不带,话要说成"这台机器没有器件数据、原始图仍可用",
  * 不是"引擎坏了"。
  *
  * 2026-09-15 按新内核接口重写:cwd 每次 execute 现取;中止走 context.abortSignal(并在 spawn 前先看一眼);
@@ -74,7 +74,7 @@ function requireDataDir(options?: EnginePathOptions): string {
     return dir
   } catch {
     throw new Error(
-      "netlist board_ir: the board IR needs the STM32 device data packs (irpacks) that stm32config uses, and none are installed in this build (they are derived from STM32CubeMX and not shipped). " +
+      "netlist board_ir: the board IR needs the STM32 device data packs (irpacks) that stm32config uses, and none are installed in this build. Use an engine distribution containing data/stm32/*.irpack; source builders can import them from STM32CubeMX with npm run engines:build. " +
         "Run netlist without `part` for the raw per-pin connection map, and take pin / peripheral facts from the datasheet tool.",
     )
   }

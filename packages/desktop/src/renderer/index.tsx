@@ -21,7 +21,7 @@ import pkg from "../../package.json"
 import { initI18n, t } from "./i18n"
 import { resetZoom, setPinchZoomEnabled, webviewZoom, zoomIn, zoomOut } from "./webview-zoom"
 import "./styles.css"
-import { Splash } from "@yoma-desktop/ui/logo"
+import { Logo } from "@yoma-desktop/ui/logo"
 import { useTheme } from "@yoma-desktop/ui/theme/context"
 
 const root = document.getElementById("root")
@@ -285,8 +285,12 @@ render(() => {
 
   function App() {
     const splash = (
-      <div class="h-dvh w-screen flex flex-col items-center justify-center bg-background-base">
-        <Splash class="w-16 h-20 opacity-50 animate-pulse" />
+      <div
+        data-component="startup-splash"
+        aria-label="Yoma"
+        class="h-dvh w-screen flex flex-col items-center justify-center bg-background-base"
+      >
+        <Logo class="w-64 h-12 opacity-50 animate-pulse" />
       </div>
     )
 

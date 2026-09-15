@@ -29,7 +29,6 @@
   },
   "main": "./out/main/index.js",
   "dependencies": {
-    "@earendil-works/pi-ai": "*",
     "@zip.js/zip.js": "2.7.62",
     "effect": "4.0.0-beta.83",
     "electron-context-menu": "4.1.2",
@@ -39,6 +38,7 @@
     "electron-window-state": "^5.0.3"
   },
   "devDependencies": {
+    "@earendil-works/pi-ai": "*",
     "@solid-primitives/i18n": "2.2.1",
     "@solid-primitives/storage": "4.3.3",
     "@solidjs/meta": "0.29.4",

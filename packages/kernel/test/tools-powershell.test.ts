@@ -178,12 +178,13 @@ describe("powershell 纯函数", () => {
 // 见文件头:假货的启动器在 Windows 上是 .cmd,无 shell 的 spawn 起不了它。
 describe.skipIf(process.platform === "win32")("powershell 工具(假 PowerShell)", () => {
   it("四个固定开关逐字,两行编码头在脚本最前面", async () => {
-    const { run } = makeTool(ECHO_ENCODED_JS)
+    const { run, cwd } = makeTool(ECHO_ENCODED_JS)
     const lines = textOf(await run({ command: "Write-Output hi" })).split("\n")
     expect(lines[0]).toBe("flags: -NoProfile -NonInteractive -ExecutionPolicy Bypass")
     expect(lines[1]).toBe(PS_NO_PROGRESS)
     expect(lines[2]).toBe(PS_UTF8_OUTPUT)
-    expect(lines[3]).toBe("Write-Output hi")
+    expect(lines[3]).toBe(`Set-Location -LiteralPath '${cwd.replaceAll("'", "''")}' -ErrorAction Stop`)
+    expect(lines[4]).toBe("Write-Output hi")
   })
 
   it("在会话 cwd 里跑", async () => {

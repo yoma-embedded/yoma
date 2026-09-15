@@ -303,7 +303,7 @@ export interface SessionManagerOptions {
 export class SessionManager {
   private readonly env: NodeExecutionEnv
   private readonly repo: JsonlSessionRepo
-  /** 后台那次联网刷新每个进程只发一次。 */
+  /** 每份注册表自动联网一次;凭据变化重建注册表时重置。 */
   private modelRefreshStarted = false
   private readonly entries = new Map<string, Entry>()
   private readonly options: SessionManagerOptions
@@ -316,6 +316,7 @@ export class SessionManager {
   private readonly context: Context = BACKGROUND_CONTEXT
 
   private models?: Models
+  private modelsPending?: Promise<{ models: Models; model: Model<string> }>
   private defaultModel?: Model<string>
   private modelError?: string
 
@@ -346,28 +347,46 @@ export class SessionManager {
    */
   private async ensureModels(): Promise<{ models: Models; model: Model<string> }> {
     if (this.models && this.defaultModel) return { models: this.models, model: this.defaultModel }
-    try {
-      // 老用户的 key 还在 ~/.pi/agent/auth.json 里,搬一次(幂等,不删旧文件)。
-      // 放在解析之前:不搬的话升级一次 app 就是"key 不见了",而用户什么都没做。
-      //
-      // **只在没注入 configDir 时搬**:注入的调用方(测试、隔离跑的 bench)显然是在
-      // 隔离,那就不该反手去读真实 HOME 里的老凭据 —— 否则隔离是假的,而且会把用户
-      // 真实的 key 复制进一个临时目录(写这条测试时就是这么发现的)。
-      if (!this.options.resolveModels && !this.options.configDir) migrateLegacyPiAuth(this.configDir)
-      const resolved = this.options.resolveModels
-        ? await this.options.resolveModels()
-        : ((await resolveModel(this.configDir, { authContext: this.options.authContext })) as {
-            models: Models
-            model: Model<string>
-          })
-      this.models = resolved.models
-      this.defaultModel = resolved.model as Model<string>
-      this.modelError = undefined
-      return { models: this.models, model: this.defaultModel }
-    } catch (error) {
-      this.modelError = (error as Error).message
-      throw error
-    }
+    if (this.modelsPending) return this.modelsPending
+    // 首屏多处并发读目录必须共用同一次解析。否则后台刷 A,后来的 B 盖掉 A,
+    // 远端目录只存进磁盘、界面仍读旧 B,表现为第二次启动才出现新模型。
+    const pending = Promise.resolve()
+      .then(async () => {
+        // 老用户的 key 还在 ~/.pi/agent/auth.json 里,搬一次(幂等,不删旧文件)。
+        // 放在解析之前:不搬的话升级一次 app 就是"key 不见了",而用户什么都没做。
+        //
+        // **只在没注入 configDir 时搬**:注入的调用方(测试、隔离跑的 bench)显然是在
+        // 隔离,那就不该反手去读真实 HOME 里的老凭据 —— 否则隔离是假的,而且会把用户
+        // 真实的 key 复制进一个临时目录(写这条测试时就是这么发现的)。
+        if (!this.options.resolveModels && !this.options.configDir) migrateLegacyPiAuth(this.configDir)
+        const resolved = this.options.resolveModels
+          ? await this.options.resolveModels()
+          : ((await resolveModel(this.configDir, { authContext: this.options.authContext })) as {
+              models: Models
+              model: Model<string>
+            })
+        return { models: resolved.models, model: resolved.model as Model<string> }
+      })
+      .then(
+        (resolved) => {
+          // 解析期间改了凭据:旧结果不能覆盖新注册表,等待新的一份。
+          if (this.modelsPending !== pending) return this.ensureModels()
+          this.models = resolved.models
+          this.defaultModel = resolved.model
+          this.modelError = undefined
+          return resolved
+        },
+        (error) => {
+          if (this.modelsPending !== pending) return this.ensureModels()
+          this.modelError = (error as Error).message
+          throw error
+        },
+      )
+      .finally(() => {
+        if (this.modelsPending === pending) this.modelsPending = undefined
+      })
+    this.modelsPending = pending
+    return pending
   }
 
   modelStatus(): { ready: boolean; error?: string } {
@@ -440,6 +459,7 @@ export class SessionManager {
     try {
       const { models } = await this.ensureModels()
       const result = await models.refresh({ allowNetwork: true, force: options.force ?? true })
+      if (this.models !== models) return this.providers()
       for (const [providerID, error] of result.errors) {
         this.options.emit([
           { type: "kernel.error", message: `刷新 ${providerID} 的模型目录失败:${error?.message ?? String(error)}` },
@@ -452,9 +472,9 @@ export class SessionManager {
     return this.providers()
   }
 
-  /** 模型列表的指纹:只有真的多/少了模型才值得推给界面。 */
+  /** 名称、档位、上下文和价格变化也要通知界面。 */
   private static signatureOf(providers: ProviderInfo[]): string {
-    return providers.map((provider) => `${provider.id}:${provider.models.map((model) => model.id).join(",")}`).join("|")
+    return JSON.stringify(providers)
   }
 
   /**
@@ -508,6 +528,8 @@ export class SessionManager {
   }
 
   private invalidateModels(): void {
+    this.modelsPending = undefined
+    this.modelRefreshStarted = false
     this.models = undefined
     this.defaultModel = undefined
     this.modelError = undefined

@@ -150,13 +150,20 @@ function pinnedMissNote(family: ChipFamily, rev: string): string {
 
 export function createDatasheetTool(options: DatasheetToolOptions = {}): DatasheetTool {
   const run = async (params: DatasheetInput, signal: AbortSignal | undefined): Promise<Result> => {
-    const server = serverUrl(options)
+    const configuration = resolveDatasheetServer({
+      explicit: options?.server,
+      env: options?.env,
+      configDir: options?.configDir,
+      builtIn: options?.builtIn,
+    })
+    const server = configuration.url
     if (!server) {
       return textResult(noServerHelp(datasheetEnvFile({ env: options.env, configDir: options.configDir })), {
         action: params.action,
       })
     }
     const client = createDatasheetClient(server, {
+      configuration,
       timeoutMs: options.timeoutMs,
       artifactTimeoutMs: options.artifactTimeoutMs,
       signal,

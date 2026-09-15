@@ -11,11 +11,8 @@
 
 import { createKernelHost, kernelSelfCheck, type KernelHost } from "@yoma-desktop/kernel/host"
 import { DEFAULT_THINKING_LEVEL, diffToolNames, type KernelEvent, type KernelFrame } from "@yoma-desktop/kernel"
-import { ensureDatasheetServerEnv } from "./datasheet-server.ts"
-
-// 把解析出的数据手册服务器地址(环境变量 > ~/.yoma/.env > 内置默认)喂进 process.env,
-// 让内核里所有读法(工具、例程库同步)都得到同一个答案;设了 off 就保持关闭。
-ensureDatasheetServerEnv()
+// 手册工具按 configDir 在每次调用时解析地址,与 main 的手册库页共用同一实现。
+// 不再把 .env 的结果写回 process.env:那会永久压住文件修改,并丢失配置来源。
 
 type StartCommand = {
   type: "start"

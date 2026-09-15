@@ -19,7 +19,11 @@
  * 进缓存,下一次就有了;绑上去的话按一次停止就把别的会话正在等的那份也废掉。
  */
 
-import { DATASHEET_SERVER_ENV } from "../../datasheet-server.ts"
+import {
+  DATASHEET_SERVER_ENV,
+  DEFAULT_DATASHEET_SERVER,
+  type DatasheetServerResolution,
+} from "../../datasheet-server.ts"
 import {
   buildChipIndex,
   type ChipFamily,
@@ -36,7 +40,7 @@ export const CHIP_INDEX_TTL_MS = 10 * 60 * 1000
 
 export const LOOKUP_UNAVAILABLE =
   "DATASHEET LOOKUP UNAVAILABLE. Do not invent register maps, electrical ratings, reset values, or peripheral behavior from memory. " +
-  "Tell the user the manuals cannot be queried from this machine, and that they can set YOMA_DATASHEET_SERVER to a working datasheet server (self-hosted is fine) or look the PDF up themselves."
+  "Tell the user this lookup failed and report the server/configuration diagnostic below. Yoma includes a default remote datasheet service; users do not need to host a server."
 
 /** 显式关掉(off)时的话:关掉是一个明确选择,文案要说清怎么关 / 怎么开回来。 */
 export function noServerHelp(envFile: string): string {
@@ -46,11 +50,24 @@ export function noServerHelp(envFile: string): string {
   )
 }
 
-export function unreachableHelp(server: string, detail: string): string {
+export function unreachableHelp(server: string, detail: string, configuration?: DatasheetServerResolution): string {
+  const source = configuration?.source
+  const origin =
+    source === "file"
+      ? `Configuration file: ${configuration?.file}. `
+      : source === "env"
+        ? `Configuration: environment variable ${DATASHEET_SERVER_ENV}. `
+        : source === "explicit"
+          ? "Configuration: explicit server option. "
+          : ""
+  const advice =
+    server === DEFAULT_DATASHEET_SERVER
+      ? "The built-in remote service is selected. Check network connectivity or service availability; no server setup is required."
+      : `Remove the server override to use Yoma's built-in service (${DEFAULT_DATASHEET_SERVER}), or check the configured server's network/service.`
   return (
     `${LOOKUP_UNAVAILABLE}\n` +
     `Could not reach the datasheet server at ${server}: ${detail}. ` +
-    `This is a configuration/network problem, not a missing chip fact.`
+    `This is a configuration/network problem, not a missing chip fact. ${origin}${advice}`
   )
 }
 
@@ -92,6 +109,7 @@ export function isUnreachable(error: unknown): error is DatasheetUnreachableErro
 }
 
 export interface DatasheetClientOptions {
+  configuration?: DatasheetServerResolution
   timeoutMs?: number
   artifactTimeoutMs?: number
   /** 这一次工具调用的中止信号;中止时原样抛出(不翻成"服务器不可达")。 */
@@ -193,7 +211,7 @@ export function createDatasheetClient(server: string, options: DatasheetClientOp
       : error instanceof Error
         ? error.message
         : String(error)
-    return new DatasheetUnreachableError(unreachableHelp(server, detail))
+    return new DatasheetUnreachableError(unreachableHelp(server, detail, options.configuration))
   }
 
   const fetchWith = async (url: string, ms: number, init?: RequestInit, own?: AbortSignal): Promise<Response> => {
@@ -239,7 +257,13 @@ export function createDatasheetClient(server: string, options: DatasheetClientOp
       const body = await errorBody(res)
       if (res.status === 503) return { failed: indexNotPublishedHelp(server, body) }
       if (res.status === 422) return { failed: badNameHelp(body) }
-      return { failed: unreachableHelp(server, `HTTP ${res.status} ${res.statusText}${body ? `: ${body}` : ""}`) }
+      return {
+        failed: unreachableHelp(
+          server,
+          `HTTP ${res.status} ${res.statusText}${body ? `: ${body}` : ""}`,
+          options.configuration,
+        ),
+      }
     }
     const json = await readBody(() => res.json() as Promise<unknown>, timeoutMs)
     const raw =

@@ -14,7 +14,7 @@ export default defineConfig({
       "import.meta.env.YOMA_CHANNEL": JSON.stringify(channel),
     },
     // yoma 必须被 inline,不能外部化。
-    // @yoma-desktop/kernel 放在 devDependencies 里,于是 externalizeDeps 不会碰它。
+    // kernel 与 pi-ai 都放在 devDependencies:两者导出 raw TS,外部化后安装包无法加载。
     build: {
       rollupOptions: {
         input: {

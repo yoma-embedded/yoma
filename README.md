@@ -64,7 +64,11 @@ Set `YOMA_DATASHEET_SERVER=off` to disable manual lookup entirely.
 
 ### 5. Generating an STM32 driver for the first time
 
-Before using this tool, fetch the HAL sources once for the chip family you use:
+Two separate resources are required: device packs (irpacks) for queries and configuration, and HAL/CMSIS sources for complete project generation.
+Device packs can ship with the engines, but the current Windows release workflow allows them to be absent. Without them, only `schema` and raw netlist parsing work; other STM32 configuration commands and `board_ir` are unavailable.
+HAL/CMSIS is not bundled, and there is currently no automatic download UI. See the [engine and data delivery notes](docs/桌面版发布流程.md#引擎和数据的交付边界).
+
+From a source checkout, fetch HAL/CMSIS for the chip family you use:
 
 ```powershell
 powershell -File engines/stm32-config-kernel/tools/fetch-fw.ps1 -Families STM32F1

@@ -43,6 +43,8 @@ export interface DatasheetServerResolution {
 	source: DatasheetServerSource;
 	/** source === "file" / "off"(来自文件)时是那个文件的路径。 */
 	file?: string;
+	/** 环境/文件中残留的已退役官方地址;运行时归一到当前内置地址,不改用户文件。 */
+	legacyUrl?: string;
 }
 
 export interface ResolveDatasheetServerOptions {
@@ -109,6 +111,16 @@ export function datasheetEnvFile(opts: { env?: NodeJS.ProcessEnv; configDir?: st
 
 export function resolveDatasheetServer(opts: ResolveDatasheetServerOptions = {}): DatasheetServerResolution {
 	const env = opts.env ?? process.env;
+	const configured = (raw: string, source: "env" | "file", file?: string): DatasheetServerResolution => {
+		const url = normalizeUrl(raw);
+		const location = file ? { file } : {};
+		// 只迁移这一个已退役的官方基址。自建地址、显式参数与 off 保持原意,
+		// 不能把任意连接失败都偷偷改投公共服务。
+		if (opts.builtIn === undefined && /^http:\/\/47\.122\.120\.208(?::80)?$/i.test(url)) {
+			return { url: DEFAULT_DATASHEET_SERVER, source, ...location, legacyUrl: url };
+		}
+		return { url, source, ...location };
+	};
 
 	const explicit = opts.explicit?.trim();
 	if (explicit) {
@@ -119,14 +131,14 @@ export function resolveDatasheetServer(opts: ResolveDatasheetServerOptions = {})
 	const fromEnv = env[DATASHEET_SERVER_ENV]?.trim();
 	if (fromEnv) {
 		if (isDisabledValue(fromEnv)) return { url: undefined, source: "off" };
-		return { url: normalizeUrl(fromEnv), source: "env" };
+		return configured(fromEnv, "env");
 	}
 
 	const file = datasheetEnvFile({ env, configDir: opts.configDir });
 	const fromFile = readEnvFile(file)[DATASHEET_SERVER_ENV]?.trim();
 	if (fromFile) {
 		if (isDisabledValue(fromFile)) return { url: undefined, source: "off", file };
-		return { url: normalizeUrl(fromFile), source: "file", file };
+		return configured(fromFile, "file", file);
 	}
 
 	const builtIn = opts.builtIn === undefined ? DEFAULT_DATASHEET_SERVER : opts.builtIn;

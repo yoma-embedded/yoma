@@ -18,7 +18,17 @@
 import { spawnSync } from "node:child_process"
 import { which } from "../../../scripts/shell.ts"
 import { createHash } from "node:crypto"
-import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs"
+import {
+  chmodSync,
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -133,7 +143,21 @@ function verifyManifest(root: string): void {
   }
   const manifest = JSON.parse(readFileSync(manifestFile, "utf8")) as {
     bin?: Record<string, { sha256?: string }>
+    irpacks?: number
   }
+  const data = path.join(root, "data", "stm32")
+  const packs = existsSync(data)
+    ? readdirSync(data).filter((name) => name.endsWith(".irpack") && statSync(path.join(data, name)).isFile()).length
+    : 0
+  if (manifest.irpacks !== undefined && manifest.irpacks !== packs) {
+    fail(
+      `STM32 数据数量与 manifest 不符:声明 ${manifest.irpacks},实际 ${packs}`,
+      "这份引擎产物不完整,请重新获取或构建。",
+    )
+  }
+  console.log(
+    `[stage-engines] STM32 器件包:${packs};HAL/CMSIS ${existsSync(path.join(data, "fw")) ? "目录存在(未验证)" : "未随包交付"}`,
+  )
   for (const [name, info] of Object.entries(manifest.bin ?? {})) {
     const file = path.join(root, "bin", name)
     if (!existsSync(file)) {
@@ -185,7 +209,6 @@ function resolveEnginesDir(): string {
 
   if (existsSync(path.join(into, "bin"))) {
     console.log(`[stage-engines] 用缓存的预编译引擎:${into}`)
-    verifyManifest(into)
     return into
   }
 
@@ -232,12 +255,13 @@ function resolveEnginesDir(): string {
 
   extract(archive, into)
   if (!existsSync(path.join(into, "bin"))) fail(`预编译产物解压后没有 bin/:${into}`)
-  verifyManifest(into)
   return into
 }
 
 const enginesDir = resolveEnginesDir()
 if (!existsSync(enginesDir)) fail(`找不到 engines 目录:${enginesDir}`)
+// 显式目录也可能是分发产物,不能绕过与 Release 相同的完整性检查。
+verifyManifest(enginesDir)
 
 // ---- 校验 --------------------------------------------------------------
 
@@ -316,6 +340,9 @@ for (const sub of ["bin", "data"] as const) {
   // dereference: 把所有软链(含 data 深处的)替换成真实内容;权限位默认保留,
   // 二进制的可执行位跟着过来。内部若有悬空软链,cpSync 抛错 = 响亮失败。
   cpSync(path.join(enginesDir, sub), path.join(stageDir, sub), { recursive: true, dereference: true })
+}
+if (existsSync(path.join(enginesDir, "manifest.json"))) {
+  copyFileSync(path.join(enginesDir, "manifest.json"), path.join(stageDir, "manifest.json"))
 }
 
 // data 里的文件全部剥掉可执行位。它们是芯片数据库/固件包/文档,不是 mac 可执行文件,

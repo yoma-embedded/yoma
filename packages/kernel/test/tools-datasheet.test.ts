@@ -890,6 +890,9 @@ describe("datasheet search", () => {
     expect(text).toContain("DATASHEET LOOKUP UNAVAILABLE")
     expect(text).toContain("Do not invent")
     expect(text).toContain("http://127.0.0.1:1")
+    expect(text).toContain("environment variable YOMA_DATASHEET_SERVER")
+    expect(text).toContain("users do not need to host a server")
+    expect(text).toContain(DEFAULT_DATASHEET_SERVER)
   })
 })
 
