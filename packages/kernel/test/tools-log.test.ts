@@ -7,7 +7,8 @@
  */
 
 import { afterEach, describe, expect, it } from "vitest"
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { rm } from "node:fs/promises"
 import net from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -53,9 +54,10 @@ function writeSource(js: string, name = "source"): string {
 afterEach(async () => {
   for (const tool of openTools.splice(0)) await tool.dispose()
   for (const capture of openCaptures.splice(0)) await capture.stop()
+  // WriteStream.end() 异步关闭文件;同步 rm 重试会阻塞关闭回调,Windows 因句柄仍打开而报 EPERM。
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()!
-    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
 })
 
