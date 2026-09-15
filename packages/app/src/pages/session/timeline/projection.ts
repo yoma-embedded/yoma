@@ -43,6 +43,10 @@ export function createTimelineProjection(input: {
     if (input.status().type === "idle") return
     return input.messages().findLast((message) => message.role === "user")?.id
   })
+  const modelRetry = createMemo(() => {
+    const status = input.status()
+    return status.type === "busy" ? status.retry : undefined
+  })
   const messageRowMemos = createMemo(
     mapArray(input.userMessages, (userMessage, indexAccessor) =>
       createMemo((previous: TimelineRow.TimelineRow[] | undefined) =>
@@ -56,6 +60,7 @@ export function createTimelineProjection(input: {
             input.showReasoningSummaries(),
             input.status().type,
             activeMessageID() === userMessage.id,
+            modelRetry(),
           ),
         ),
       ),

@@ -17,7 +17,6 @@ import { useNavigate } from "@solidjs/router"
 import { useMutation } from "@tanstack/solid-query"
 import { createVirtualizer, defaultRangeExtractor, elementScroll, type VirtualItem } from "@tanstack/solid-virtual"
 import { Accordion } from "@yoma-desktop/ui/accordion"
-import { Card } from "@yoma-desktop/ui/card"
 import { Message, MessageDivider, Part as MessagePart, partDefaultOpen } from "@yoma-desktop/session-ui/message-part"
 import { DiffChanges } from "@yoma-desktop/ui/diff-changes"
 import { FileIcon } from "@yoma-desktop/ui/file-icon"
@@ -50,6 +49,7 @@ import { sessionTitle } from "@/utils/session-title"
 import { scheduleConnectedMeasure } from "./measure"
 import { createTimelineProjection } from "./projection"
 import { MessageComment, TimelineRow, TimelineRowMap } from "./rows"
+import { ModelRequestStatus } from "./model-request-status"
 import { filterVirtualIndexes } from "./virtual-items"
 
 const emptyMessages: MessageType[] = []
@@ -804,14 +804,19 @@ export function MessageTimeline(props: {
           </TimelineRowFrame>
         )
       }
-      case "Error": {
-        const errorRow = row as Accessor<TimelineRowByTag<"Error">>
+      case "ModelRequest": {
+        const requestRow = row as Accessor<TimelineRowByTag<"ModelRequest">>
         return (
-          <TimelineRowFrame row={errorRow}>
+          <TimelineRowFrame row={requestRow}>
             <div data-slot="session-turn-message-container" class="w-full px-4 md:px-5">
-              <Card variant="error" class="error-card">
-                {errorRow().text}
-              </Card>
+              <ModelRequestStatus
+                row={requestRow()}
+                title={language.t(`session.modelRequest.${requestRow().state}`, {
+                  provider: requestRow().providerID,
+                  attempt: requestRow().attempt ?? 0,
+                  maxAttempts: requestRow().maxAttempts ?? 0,
+                })}
+              />
             </div>
           </TimelineRowFrame>
         )

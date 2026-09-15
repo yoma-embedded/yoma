@@ -63,9 +63,13 @@ function mergeOptimisticPage(page: MessagePage, items: OptimisticItem[]) {
     const result = Binary.search(session, item.message.id, (message) => message.id)
     if (!result.found) session.splice(result.index, 0, item.message)
     const current = part.get(item.message.id)
-    const confirmed = result.found
-      ? item.parts.filter((part) => Binary.search(current ?? [], part.id, (value) => value.id).found)
-      : []
+    // User messages are complete snapshots. Kernel part IDs (and compressed image URLs)
+    // differ from the composer's preview, so confirmation is by message, not by part ID.
+    const confirmed = !result.found
+      ? []
+      : item.message.role === "user"
+        ? item.parts
+        : item.parts.filter((part) => Binary.search(current ?? [], part.id, (value) => value.id).found)
     if (result.found) observed.push({ messageID: item.message.id, parts: confirmed })
     part.set(
       item.message.id,
@@ -643,7 +647,26 @@ export function createServerSession(client: Sdk, options?: { retry?: typeof retr
         load?.removedMessages.delete(info.id)
         const items = optimistic.get(info.sessionID)
         const item = items?.get(info.id)
-        if (items && item) {
+        if (item && info.role === "user") {
+          // The ordered kernel parts following this event replace the entire preview.
+          // Keep any parts already confirmed by earlier events, and retire only pending ones.
+          const pendingIDs = new Set(item.parts.map((part) => part.id))
+          load?.optimisticParts.delete(info.id)
+          const touched = load?.touchedParts.get(info.id)
+          pendingIDs.forEach((id) => touched?.delete(id))
+          clearOptimistic(info.sessionID, info.id)
+          setData(
+            produce((draft) => {
+              for (const id of pendingIDs) {
+                delete draft.part_text_accum_delta[id]
+                deltaBases.delete(id)
+              }
+              const parts = draft.part[info.id]?.filter((part) => !pendingIDs.has(part.id))
+              if (parts?.length) draft.part[info.id] = parts
+              else delete draft.part[info.id]
+            }),
+          )
+        } else if (items && item) {
           if (item.parts.length === 0) clearOptimistic(info.sessionID, info.id)
           if (item.parts.length > 0) items.set(info.id, { ...item, confirmedMessage: true })
         }

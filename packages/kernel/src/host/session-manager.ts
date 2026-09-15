@@ -1010,6 +1010,25 @@ export class SessionManager {
         // 这一轮结束了,refreshMachineEnv 退役掉的旧环境现在可以安全收子进程了。
         void this.cleanupRetiredEnvs(entry)
       }),
+      harness.events.on("retry_scheduled", (event) => {
+        // Summary retries have their own compacting state; this is model generation only.
+        if (entry.status.type !== "busy") return
+        emit(
+          this.setStatus(entry, {
+            type: "busy",
+            retry: {
+              attempt: event.attempt,
+              maxAttempts: event.maxAttempts,
+              notBefore: event.notBefore,
+              error: event.errorMessage,
+              providerID: entry.model?.providerID ?? "unknown",
+            },
+          }),
+        )
+      }),
+      harness.events.on("retry_end", () => {
+        if (entry.status.type === "busy" && entry.status.retry) emit(this.setStatus(entry, { type: "busy" }))
+      }),
       harness.events.on("message_start", (event) => {
         const message = event.message
         if (message.role !== "assistant") return
@@ -1156,7 +1175,11 @@ export class SessionManager {
   }
 
   private setStatus(entry: Entry, status: SessionStatus): KernelEvent[] {
-    if (entry.status.type === status.type) return []
+    if (
+      entry.status.type === status.type &&
+      (entry.status.type !== "busy" || status.type !== "busy" || entry.status.retry === status.retry)
+    )
+      return []
     entry.status = status
     return [{ type: "session.status", sessionID: entry.id, status }]
   }

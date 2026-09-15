@@ -1,4 +1,8 @@
 export const dict = {
+  "session.modelRequest.retrying":
+    "Model request interrupted — retrying ({{provider}}, attempt {{attempt}}/{{maxAttempts}})",
+  "session.modelRequest.recovered": "Model request recovered ({{provider}})",
+  "session.modelRequest.failed": "Model request failed ({{provider}})",
   "command.category.suggested": "Suggested",
   "command.category.view": "View",
   "command.category.session": "Session",

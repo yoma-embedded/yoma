@@ -1,4 +1,7 @@
 export const dict = {
+  "session.modelRequest.retrying": "模型请求中断，正在重试（{{provider}}，第 {{attempt}}/{{maxAttempts}} 次请求）",
+  "session.modelRequest.recovered": "模型请求已恢复（{{provider}}）",
+  "session.modelRequest.failed": "模型请求失败（{{provider}}）",
   "command.category.suggested": "建议",
   "command.category.view": "视图",
   "command.category.session": "会话",

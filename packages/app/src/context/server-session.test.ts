@@ -96,6 +96,59 @@ function setup(sessions: Record<string, Session>) {
 }
 
 describe("server session", () => {
+  test.each([false, true])("replaces screenshot previews with kernel parts while loading=%s", async (loading) => {
+    const pending = deferredResponse()
+    const message = userMessage("message")
+    const store = createServerSession(messageClient(pending.promise))
+    const request = loading ? store.sync("child") : undefined
+    const previewText = textPart(message.id, { id: "preview-text" })
+    const previewImage: Part = {
+      id: "preview-image",
+      sessionID: "child",
+      messageID: message.id,
+      type: "file",
+      mime: "image/png",
+      url: "data:image/png;base64,original",
+    }
+    const actualText = { ...previewText, id: "kernel-0000" }
+    const actualImage = { ...previewImage, id: "kernel-0001", url: "data:image/png;base64,compressed" }
+    store.optimistic.add({ sessionID: "child", message, parts: [previewText, previewImage] })
+
+    store.apply({ type: "message.updated", message })
+    store.apply({ type: "message.part.updated", part: actualText })
+    store.apply({ type: "message.part.updated", part: actualImage })
+    expect(store.data.part[message.id]).toEqual([actualText, actualImage])
+
+    // A repeated parent event and a stale in-flight page must keep the canonical parts.
+    store.apply({ type: "message.updated", message })
+    pending.resolve(response())
+    await request
+    expect(store.data.part[message.id]).toEqual([actualText, actualImage])
+  })
+
+  test.each([0, 1, 2])("replaces screenshot previews with %i accepted images from a fetched page", async (count) => {
+    const message = userMessage("message")
+    const preview: Part = {
+      id: "preview",
+      sessionID: "child",
+      messageID: message.id,
+      type: "file",
+      mime: "image/png",
+      url: "data:image/png;base64,original",
+    }
+    const actual = Array.from({ length: count }, (_, i) => ({
+      ...preview,
+      id: `kernel-${i}`,
+      url: "data:image/png;base64,compressed",
+    }))
+    const store = createServerSession(messageClient(response([{ info: message, parts: actual }])))
+    store.optimistic.add({ sessionID: "child", message, parts: [preview] })
+
+    await store.sync("child")
+
+    expect(store.data.part[message.id] ?? []).toEqual(actual)
+  })
+
   test("loads session content through the server client", async () => {
     const ctx = setup({ root: session("root") })
 
@@ -389,7 +442,8 @@ describe("server session", () => {
 
     await store.sync("child", { force: true })
 
-    expect(store.data.part[message.id]).toEqual([pendingPart])
+    // The complete user snapshot also retires previews omitted by the kernel.
+    expect(store.data.part[message.id]).toBeUndefined()
   })
 
   test("clears delta buffers when removing optimistic content", () => {

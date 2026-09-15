@@ -700,31 +700,91 @@ describe("会话不存在", () => {
 })
 
 describe("轮级自动重试", () => {
-  test.each(["503 Service Unavailable", "Connection error."])("provider %s 会自己重试,且整段是一个连续的 busy", async (failure) => {
-    const { host, events, workspace } = makeHost([
-      fauxRetryableError(failure),
-      fauxAssistantMessage([fauxText("这次成了")]),
-    ])
-    const session = (await host.handle("session.create", { directory: workspace })) as Session
-
-    await host.handle("session.prompt", { sessionID: session.id, input: { text: "你好" } })
-    await waitFor(
-      () =>
-        events.some(
-          (e) => e.type === "message.part.updated" && e.part.type === "text" && e.part.text.includes("这次成了"),
-        ),
-      20_000,
+  test("重试耗尽会清掉进度并保留最终错误", async () => {
+    const { host, events, workspace } = makeHost(
+      Array.from({ length: 4 }, () => fauxRetryableError("Connection error.")),
     )
-    await waitFor(() => statusesOf(events).at(-1) === "idle", 20_000)
-
-    // 关键不变式:整段重试是**一个连续的 busy**。若退避窗口里漏出 idle,重试那一轮的
-    // turn_start 会把状态推回 busy,序列里就会出现 idle→busy 的回跳 —— 而那正是
-    // bench 判"这一轮跑完了"去跑判据、同时 agent 正要重试、两边同时动板子的时刻。
-    const statuses = statusesOf(events)
-    expect(statuses).toEqual(["busy", "idle"])
-    expect(events.some((e) => e.type === "message.updated" && e.message.role === "assistant" && e.message.error?.data.message === failure)).toBe(true)
-    await host.dispose()
+    try {
+      const session = (await host.handle("session.create", { directory: workspace })) as Session
+      await host.handle("session.prompt", { sessionID: session.id, input: { text: "你好" } })
+      await waitFor(() => statusesOf(events).at(-1) === "idle", 20_000)
+      const attempts = events.flatMap((e) =>
+        e.type === "session.status" && e.status.type === "busy" && e.status.retry ? [e.status.retry.attempt] : [],
+      )
+      expect(attempts).toEqual([2, 3, 4])
+      expect(await host.handle("session.status", { sessionID: session.id })).toEqual({ type: "idle" })
+      const failures = events.filter(
+        (e) => e.type === "message.updated" && e.message.role === "assistant" && e.message.error,
+      )
+      expect(failures.length).toBeGreaterThanOrEqual(4)
+    } finally {
+      await host.dispose()
+    }
   }, 30_000)
+
+  test("等待重试时停止会清掉进度", async () => {
+    const { host, events, workspace } = makeHost([
+      fauxRetryableError("Connection error."),
+      fauxAssistantMessage([fauxText("不应继续")]),
+    ])
+    try {
+      const session = (await host.handle("session.create", { directory: workspace })) as Session
+      await host.handle("session.prompt", { sessionID: session.id, input: { text: "你好" } })
+      await waitFor(
+        () => events.some((e) => e.type === "session.status" && e.status.type === "busy" && e.status.retry),
+        10_000,
+      )
+      expect(await host.handle("session.status", { sessionID: session.id })).toMatchObject({
+        type: "busy",
+        retry: { attempt: 2 },
+      })
+      await host.handle("session.abort", { sessionID: session.id })
+      expect(await host.handle("session.status", { sessionID: session.id })).toEqual({ type: "idle" })
+      expect(
+        events.some((e) => e.type === "message.part.updated" && e.part.type === "text" && e.part.text === "不应继续"),
+      ).toBe(false)
+    } finally {
+      await host.dispose()
+    }
+  }, 20_000)
+
+  test.each(["503 Service Unavailable", "Connection error."])(
+    "provider %s 会自己重试,且整段是一个连续的 busy",
+    async (failure) => {
+      const { host, events, workspace } = makeHost([
+        fauxRetryableError(failure),
+        fauxAssistantMessage([fauxText("这次成了")]),
+      ])
+      const session = (await host.handle("session.create", { directory: workspace })) as Session
+
+      await host.handle("session.prompt", { sessionID: session.id, input: { text: "你好" } })
+      await waitFor(
+        () =>
+          events.some(
+            (e) => e.type === "message.part.updated" && e.part.type === "text" && e.part.text.includes("这次成了"),
+          ),
+        20_000,
+      )
+      await waitFor(() => statusesOf(events).at(-1) === "idle", 20_000)
+
+      // 关键不变式:整段重试是**一个连续的 busy**。若退避窗口里漏出 idle,重试那一轮的
+      // turn_start 会把状态推回 busy,序列里就会出现 idle→busy 的回跳 —— 而那正是
+      // bench 判"这一轮跑完了"去跑判据、同时 agent 正要重试、两边同时动板子的时刻。
+      const statuses = statusesOf(events)
+      expect(statuses.filter((value, index) => index === 0 || value !== statuses[index - 1])).toEqual(["busy", "idle"])
+      const retry = events.find((e) => e.type === "session.status" && e.status.type === "busy" && e.status.retry)
+      expect(retry).toMatchObject({ status: { type: "busy", retry: { attempt: 2, maxAttempts: 4, error: failure } } })
+      expect(events.filter((e) => e.type === "session.status").at(-1)).toMatchObject({ status: { type: "idle" } })
+      expect(
+        events.some(
+          (e) =>
+            e.type === "message.updated" && e.message.role === "assistant" && e.message.error?.data.message === failure,
+        ),
+      ).toBe(true)
+      await host.dispose()
+    },
+    30_000,
+  )
 
   test("上下文溢出:压缩后重试一次,中间不漏 idle", async () => {
     const { host, events, workspace } = makeHost([

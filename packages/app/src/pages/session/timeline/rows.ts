@@ -1,5 +1,5 @@
 import { parseCommentNote, readCommentMetadata } from "@/utils/comment-note"
-import { AssistantMessage, Part, SessionStatus, UserMessage } from "@yoma-desktop/kernel"
+import { AssistantMessage, ModelRetry, Part, SessionStatus, UserMessage } from "@yoma-desktop/kernel"
 import { groupParts, PartGroup, renderable } from "@yoma-desktop/session-ui/message-part"
 import { Data, Equal } from "effect"
 
@@ -22,7 +22,14 @@ export type TimelineRowMap = {
     previousAssistantPart: boolean
   }
   Thinking: { userMessageID: string; reasoningHeading?: string }
-  Error: { userMessageID: string; text: string }
+  ModelRequest: {
+    userMessageID: string
+    state: "retrying" | "recovered" | "failed"
+    providerID: string
+    text: string
+    attempt?: number
+    maxAttempts?: number
+  }
 }
 
 export namespace TimelineRow {
@@ -49,19 +56,9 @@ export namespace TimelineRow {
     userMessageID: string
     reasoningHeading?: string
   }> {}
-  export class Error extends Data.TaggedClass("Error")<{
-    userMessageID: string
-    text: string
-  }> {}
+  export class ModelRequest extends Data.TaggedClass("ModelRequest")<TimelineRowMap["ModelRequest"]> {}
 
-  export type TimelineRow =
-    | TurnGap
-    | CommentStrip
-    | UserMessage
-    | TurnDivider
-    | AssistantPart
-    | Thinking
-    | Error
+  export type TimelineRow = TurnGap | CommentStrip | UserMessage | TurnDivider | AssistantPart | Thinking | ModelRequest
 
   export const key = (row: TimelineRow) => {
     switch (row._tag) {
@@ -77,8 +74,8 @@ export namespace TimelineRow {
         return `assistant-part:${row.userMessageID}:${row.group.key}`
       case "Thinking":
         return `thinking:${row.userMessageID}`
-      case "Error":
-        return `error:${row.userMessageID}`
+      case "ModelRequest":
+        return `model-request:${row.userMessageID}`
     }
   }
 
@@ -96,6 +93,7 @@ export namespace Timeline {
     showReasoning: boolean,
     status: SessionStatus["type"],
     isActive: boolean,
+    retry?: ModelRetry,
   ) {
     const rows: TimelineRow.TimelineRow[] = []
 
@@ -105,7 +103,19 @@ export namespace Timeline {
     const compaction = userParts.some((p) => p.type === "compaction")
     const interruptedMessageIndex = assistantMessages.findIndex((m) => m.error?.name === "MessageAbortedError")
     const interrupted = interruptedMessageIndex !== -1
-    const error = assistantMessages.find((m) => m.error && m.error.name !== "MessageAbortedError")?.error
+    const errorIndex = assistantMessages.findLastIndex(
+      (m) => !m.synthetic && m.error && m.error.name !== "MessageAbortedError",
+    )
+    const failed = assistantMessages[errorIndex]
+    const recovered =
+      errorIndex !== -1 &&
+      assistantMessages
+        .slice(errorIndex + 1)
+        .some((m) => !m.synthetic && !m.error && typeof m.time.completed === "number")
+    const cancelled =
+      errorIndex !== -1 && assistantMessages.slice(errorIndex + 1).some((m) => m.error?.name === "MessageAbortedError")
+    const activeRetry = isActive && status === "busy" ? retry : undefined
+    const terminalError = failed?.error && !recovered && !cancelled && (!isActive || status === "idle")
 
     const assistantPartRefs = assistantMessages.flatMap((message, messageIndex) =>
       getMessageParts(message.id)
@@ -177,7 +187,7 @@ export namespace Timeline {
       assistantGroupIndex += 1
     })
 
-    if (isActive && status === "busy" && !error && (showReasoning ? assistantPartRefs.length === 0 : true)) {
+    if (isActive && status === "busy" && !activeRetry && (showReasoning ? assistantPartRefs.length === 0 : true)) {
       const heading = assistantMessages
         .flatMap((message) => getMessageParts(message.id))
         .map((part) => (part.type === "reasoning" && part.text ? reasoningHeading(part.text) : undefined))
@@ -191,18 +201,20 @@ export namespace Timeline {
       )
     }
 
-    // 内核对 provider 失败不重试 —— 失败就是一条带 error 的 assistant 消息,
-    // 所以没有 "retry" 这个中间状态,也就没有对应的时间线行。
-
     // 每轮的 diff 汇总原来来自 UserMessage.summary.diffs,而那是 opencode 的文件快照
     // 产物。内核没有快照,这一行随之消失;真要显示的话得从 edit/write 工具的
     // details.patch 重新合成,那是独立一件事。
 
-    if (error) {
-      const data = error.data?.message
+    // Replayed history contains the failed attempts too. A later completed model response
+    // proves recovery; merely starting a stream (or executing a tool) does not.
+    if (activeRetry || recovered || terminalError) {
+      const data = activeRetry?.error ?? failed?.error?.data.message
       rows.push(
-        new TimelineRow.Error({
+        new TimelineRow.ModelRequest({
           userMessageID: userMessage.id,
+          state: activeRetry ? "retrying" : recovered ? "recovered" : "failed",
+          providerID: activeRetry?.providerID ?? failed?.providerID ?? "unknown",
+          ...(activeRetry ? { attempt: activeRetry.attempt, maxAttempts: activeRetry.maxAttempts } : {}),
           text: unwrapErrorMessage(
             typeof data === "string" ? data : data === undefined || data === null ? "" : String(data),
           ),

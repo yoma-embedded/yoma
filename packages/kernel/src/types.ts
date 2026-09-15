@@ -52,7 +52,17 @@ export interface Tokens {
   }
 }
 
-export type SessionStatus = { type: "idle" } | { type: "busy" } | { type: "compacting" }
+export interface ModelRetry {
+  /** Request attempt, including the original request (1). */
+  attempt: number
+  maxAttempts: number
+  notBefore: number
+  error: string
+  providerID: string
+}
+
+// Retry stays busy: hosts must not mistake backoff for a completed turn.
+export type SessionStatus = { type: "idle" } | { type: "busy"; retry?: ModelRetry } | { type: "compacting" }
 
 // ---------------------------------------------------------------------------
 // 消息
