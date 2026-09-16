@@ -32,6 +32,7 @@ import type {
   ToolchainStatusView,
   VcsInfo,
 } from "./types.ts"
+import type { ScopeCaptureInfo, ScopeViewParams, ScopeViewResult } from "./scope-view.ts"
 
 // ---------------------------------------------------------------------------
 // 请求
@@ -188,6 +189,10 @@ export interface KernelMethods {
   "la.view": { params: LaViewParams; result: LaViewResult }
   /** 工程里的采集列表(最新在前)。布局只有 host 知道,渲染器不拼 .yoma/la 路径。 */
   "la.captures": { params: { directory: string }; result: LaCaptureInfo[] }
+  /** Saved analog captures only: viewing never changes instrument state. */
+  "scope.captures": { params: { directory: string }; result: ScopeCaptureInfo[] }
+  "scope.view": { params: ScopeViewParams; result: ScopeViewResult }
+  "scope.screenshot": { params: { dir: string }; result: { url: string; createdAt: number } | undefined }
 
   "project.list": { params: void; result: Array<{ directory: string; lastOpened: number }> }
   "project.add": { params: { directory: string }; result: Array<{ directory: string; lastOpened: number }> }

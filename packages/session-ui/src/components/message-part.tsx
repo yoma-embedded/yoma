@@ -28,6 +28,7 @@ import { useData } from "../context"
 import { useDialog } from "@yoma-desktop/ui/context/dialog"
 import { useI18n } from "@yoma-desktop/ui/context/i18n"
 import { GenericTool } from "./basic-tool"
+import { ScopeTool } from "./scope-tool"
 import { FileIcon } from "@yoma-desktop/ui/file-icon"
 import { Icon } from "@yoma-desktop/ui/icon"
 import { ToolErrorCard } from "./tool-error-card"
@@ -610,7 +611,7 @@ const state: Record<
     name: string
     render?: ToolComponent
   }
-> = {}
+> = { scope: { name: "scope", render: ScopeTool } }
 
 export function registerTool(input: { name: string; render?: ToolComponent }) {
   state[input.name] = input

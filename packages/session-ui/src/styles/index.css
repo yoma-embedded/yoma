@@ -6,3 +6,4 @@
 @import "../components/message-part.css" layer(components);
 @import "../components/session-turn.css" layer(components);
 @import "../components/tool-error-card.css" layer(components);
+@import "../components/scope-tool.css" layer(components);

@@ -38,7 +38,7 @@ for (const bundle of bundles) {
     bundle: true,
     platform: "node",
     format: "esm",
-    external: ["electron"],
+    external: ["electron", "usb"],
     logLevel: "warning",
     // 被 inline 的 CJS 依赖(yaml 等)会动态 require node 内置模块;ESM 产物里
     // esbuild 的 shim 只认作用域里的 `require`,不给它就是运行时直接 throw(实测)。

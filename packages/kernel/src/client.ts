@@ -95,6 +95,11 @@ export interface KernelClient {
     view(params: KernelParams<"la.view">): Promise<KernelResult<"la.view">>
     captures(directory: string): Promise<KernelResult<"la.captures">>
   }
+  scope: {
+    view(params: KernelParams<"scope.view">): Promise<KernelResult<"scope.view">>
+    captures(directory: string): Promise<KernelResult<"scope.captures">>
+    screenshot(dir: string): Promise<KernelResult<"scope.screenshot">>
+  }
   vcs: {
     info(directory: string): Promise<VcsInfo>
     diff(directory: string): Promise<FileDiff[]>
@@ -169,6 +174,11 @@ export function createKernelClient(transport: KernelTransport): KernelClient {
     la: {
       view: (params) => call("la.view", params),
       captures: (directory) => call("la.captures", { directory }),
+    },
+    scope: {
+      view: (params) => call("scope.view", params),
+      captures: (directory) => call("scope.captures", { directory }),
+      screenshot: (dir) => call("scope.screenshot", { dir }),
     },
     vcs: {
       info: (directory) => call("vcs.info", { directory }),

@@ -14,6 +14,7 @@ import { createAgentTools, SessionManager, type SessionManagerOptions } from "./
 import { runPreflight, inspectEngines } from "./preflight.ts"
 import { yomaConfigDir } from "./auth.ts"
 import { laCaptures, laView } from "./la-view.ts"
+import { scopeCaptures, scopeScreenshot, scopeView } from "./scope-view.ts"
 import { ProjectStore, listFiles, readFile, searchFiles, vcsDiff, vcsInfo, vcsInit } from "./services.ts"
 import { StreamSink } from "./stream.ts"
 import {
@@ -145,6 +146,9 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     "file.read": ({ directory, path: file }) => readFile(directory, file),
     "la.view": (params) => laView(params),
     "la.captures": ({ directory }) => laCaptures(directory),
+    "scope.captures": ({ directory }) => scopeCaptures(directory),
+    "scope.view": (params) => scopeView(params),
+    "scope.screenshot": ({ dir }) => scopeScreenshot(dir),
     "file.search": ({ directory, query, limit, directories }) => searchFiles(directory, query, limit, directories),
 
     // app 打开每个项目都会先问一次 vcs.info,是仓库就从这一刻起盯住它的目录。

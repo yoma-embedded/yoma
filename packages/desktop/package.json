@@ -1,7 +1,7 @@
 {
   "name": "@yoma-desktop/desktop",
   "private": true,
-  "version": "0.2.6",
+  "version": "0.2.7",
   "type": "module",
   "license": "MIT",
   "homepage": "https://github.com/yoma-embedded/yoma",
@@ -35,7 +35,8 @@
     "electron-log": "^5",
     "electron-store": "11.0.2",
     "electron-updater": "6.8.9",
-    "electron-window-state": "^5.0.3"
+    "electron-window-state": "^5.0.3",
+    "usb": "3.1.0"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "*",

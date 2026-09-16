@@ -21,7 +21,16 @@
  */
 
 import { spawn, spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs"
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { connect } from "node:net"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
@@ -142,6 +151,51 @@ const workspace = (() => {
   return realpathSync(dir)
 })()
 
+// Known offline evidence: tests exercise the real RPC and renderer without touching a USB instrument.
+const scopeDir = join(workspace, ".yoma", "scope", "paint-scope")
+mkdirSync(scopeDir, { recursive: true })
+const scopeValues = Buffer.alloc(8192)
+for (let i = 0; i < 4096; i++)
+  scopeValues.writeInt16LE(i === 2049 ? 24000 : Math.round(12000 * Math.sin((i * Math.PI) / 128)), i * 2)
+writeFileSync(join(scopeDir, "c1.i16"), scopeValues)
+copyFileSync(join(desktop, "..", "kernel", "test", "fixtures", "scope", "screen.png"), join(scopeDir, "screen.png"))
+writeFileSync(
+  join(scopeDir, "capture.json"),
+  JSON.stringify({
+    schema: "yoma/scope@1",
+    id: "paint-scope",
+    createdAt: 1789000000000,
+    address: "usb:offline-fixture",
+    model: "SDS824X HD (test fixture)",
+    serial: "offline-fixture",
+    mode: "single",
+    quality: "exact",
+    timebase: { scale: 0.0004, delay: 0 },
+    sampleRate: 1000000,
+    interval: 0.000001,
+    stride: 1,
+    recordPoints: 4096,
+    trigger: { mode: "SINGLE", source: "C1", level: 0, status: "Stop" },
+    channels: [
+      {
+        ch: 1,
+        label: "校准夹具",
+        file: "c1.i16",
+        points: 4096,
+        vdiv: 1,
+        offset: 0,
+        coupling: "DC",
+        probe: 10,
+        unit: "V",
+        gain: 0.1,
+        rawOffset: 0,
+        codePerDiv: 7680,
+      },
+    ],
+    screenshot: { file: "screen.png", createdAt: 1789000000001 },
+  }),
+)
+
 const logTail: string[] = []
 // 端口在我们探完之后才被占(另一个 Electron 刚好起来)的兜底:Chromium 会把 bind 失败
 // 打在 stderr 上,抓到就立刻失败,不然要白等 60 秒才说"没出现 page 目标"。
@@ -258,6 +312,7 @@ type CdpMessage = {
   method?: string
   params?: unknown
   result?: {
+    data?: string
     result?: { value?: unknown; description?: string }
     exceptionDetails?: { text?: string; exception?: { description?: string } }
   }
@@ -484,6 +539,73 @@ try {
     "右栏逻辑分析仪仪器体在位(la-body)",
     await waitFor(`!!document.querySelector('[data-component="la-body"]')`, APPEAR_TIMEOUT_MS),
   )
+  check(
+    "示波器历史采集面板读取离线证据",
+    await waitFor(
+      `document.querySelector('[data-component="scope-body"]')?.textContent.includes('offline-fixture') === true`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  check(
+    "示波器真波形 Canvas 挂载",
+    await waitFor(`!!document.querySelector('[data-component="scope-waveform"] canvas')`, APPEAR_TIMEOUT_MS),
+  )
+  const scopeData = await evaluate<{ channels: { points: { min: number; max: number }[] }[] }>(
+    `window.api.kernel.request('scope.view', ${json({ dir: scopeDir, columns: 32 })})`,
+  )
+  check(
+    "scope.view 跨真实 contextBridge 保留窄脉冲",
+    scopeData.channels[0].points.some((point) => point.max > 3),
+  )
+  await evaluate(`document.querySelector('[data-component="scope-waveform"]').scrollIntoView({block:'center'})`)
+  check(
+    "波形放大按钮可操作",
+    await waitFor(
+      `(() => {
+    const button = document.querySelector('[data-component="scope-waveform"] button[aria-label="放大波形"]')
+    return !!button && !button.disabled
+  })()`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  await evaluate(`document.querySelector('[data-component="scope-waveform"] button[aria-label="放大波形"]').click()`)
+  await waitFor(
+    `document.querySelector('[data-component="scope-waveform"] [data-slot="plot"]')?.getAttribute('aria-busy') === 'false'`,
+    APPEAR_TIMEOUT_MS,
+  )
+  for (const [name, fraction] of [
+    ["游标 A", 0.4],
+    ["游标 B", 0.6],
+  ] as const) {
+    await clickText([name])
+    const pos = await evaluate<{ x: number; y: number }>(`(() => {
+      const canvas = document.querySelector('[data-component="scope-waveform"] canvas')
+      canvas.scrollIntoView({block:'center'})
+      const r = canvas.getBoundingClientRect()
+      return {x:r.left+r.width*${fraction}, y:r.top+50}
+    })()`)
+    await send("Input.dispatchMouseEvent", { type: "mousePressed", ...pos, button: "left", clickCount: 1 })
+    await send("Input.dispatchMouseEvent", { type: "mouseReleased", ...pos, button: "left", clickCount: 1 })
+  }
+  check(
+    "示波器 A/B 游标显示时间差",
+    await waitFor(
+      `document.querySelector('[data-slot="cursor-table"]')?.textContent.includes('Δt') === true`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  await clickText(["查看仪器截图"])
+  check(
+    "同次采集截图经 RPC 显示",
+    await waitFor(
+      `(() => {const image=document.querySelector('img[alt="示波器仪器截图"]');return !!image && image.complete && image.naturalWidth>0})()`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  if (process.env.YOMA_PAINT_SCREENSHOT) {
+    const shot = await send("Page.captureScreenshot", { format: "png" })
+    writeFileSync(process.env.YOMA_PAINT_SCREENSHOT, Buffer.from(shot.result!.data as string, "base64"))
+  }
   check("会话页没崩到错误页", (await evaluate<boolean>(CRASHED)) === false)
   drain("会话页")
 

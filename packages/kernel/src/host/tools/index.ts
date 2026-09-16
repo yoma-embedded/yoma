@@ -19,6 +19,7 @@ import { createLogTool } from "./log/session.ts"
 import { createLsTool } from "./ls/session.ts"
 import { createNetlistTool } from "./netlist/session.ts"
 import { createPowerShellTool } from "./powershell/session.ts"
+import { createScopeTool } from "./scope/session.ts"
 import { createStm32ConfigTool } from "./stm32config/session.ts"
 import { createToolchainTool, type ToolchainToolOptions } from "./toolchain/session.ts"
 
@@ -57,6 +58,7 @@ export function createRegisteredTools(options: RegisteredToolOptions = {}): Regi
     createFlashTool(),
     createLogTool(),
     createLaTool(shared),
+    createScopeTool(),
     createGdbTool(),
     createDatasheetTool(options.datasheet),
     createNetlistTool(stm32),

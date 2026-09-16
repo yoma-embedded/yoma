@@ -17,7 +17,7 @@ export type InstrumentStatus = "online" | "capturing" | "warn" | "offline"
 export interface LaDisplay {
   kind: "la"
 }
-export type InstrumentDisplay = LaDisplay
+export type InstrumentDisplay = LaDisplay | { kind: "scope" }
 
 export interface Instrument {
   id: string
@@ -25,7 +25,7 @@ export interface Instrument {
   /** 连接/配置摘要，显示在窗口标题右侧 */
   detail: string
   transport: Transport
-  status: InstrumentStatus
+  status: InstrumentStatus | "history"
   display: InstrumentDisplay
 }
 
@@ -35,6 +35,14 @@ export type DockMode = "tabs" | "debug" | "file"
 // ---------------------------------------------------------------- instruments
 
 const INSTRUMENTS: Instrument[] = [
+  {
+    id: "scope",
+    name: "示波器",
+    detail: "历史采集 · 连接状态见 scope 工具结果",
+    transport: "usb",
+    status: "history",
+    display: { kind: "scope" },
+  },
   {
     id: "dslogic",
     name: "逻辑分析仪",

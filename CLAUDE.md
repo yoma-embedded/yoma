@@ -13,7 +13,8 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
   **归零**:旧实现搬到 `packages/kernel/attic/`(不编译、不跑),按新内核的工具接口一个个重写 ——
   2026-09-11 起按样板 `host/tools/<名字>/{contract.ts,session.ts}` 逐个重写,首个是 flash;2026-09-12 从 pi 的
   coding-agent 移植了 grep / find / ls / powershell(清单:四件套 + grep / find / ls / powershell + flash);
-  示波器与例程库 2026-09-11 整体停到仓库外 `../yoma-parked/`(功能还要,方案未定,先不拖累)。
+  示波器 2026-09-16 恢复为 `host/tools/scope/` + `host/domain/scope/`,首期仅开放 SDS824X HD USB,
+  带只读历史波形面板,Mac 首轮真机检查通过,Windows 与故障恢复稳定性仍待验证;例程库仍停在仓库外 `../yoma-parked/`。
 - **桌面端**(`packages/{desktop,app,kernel,ui,session-ui,util,bench}`)——
   Electron 外壳 + SolidJS UI,fork 自 opencode 的前端;`bench` 是无人值守调试台。
 
@@ -395,7 +396,7 @@ pi 上游包(`ai` / `agent` / `chord` / `telemetry`,包名保留 `@earendil-work
 kernel 接它 —— 从前那份自有 harness(`agent-legacy` / `@yoma/agent`)同日删除。
 
 嵌入式应用层**不再是单独的包**:2026-09-10 `@yoma/coding-agent` 并进 `kernel` —— 工具链解析、
-引擎辅助、逻辑分析仪的语义进 `kernel/src/host/domain/`(示例语料与示波器 2026-09-11 停到仓库外
+引擎辅助、逻辑分析仪与示波器的语义进 `kernel/src/host/domain/`(示例语料仍停在仓库外
 `../yoma-parked/`),系统提示词、资源发现、模型目录、数据手册地址解析进 `kernel/src/host/`,用例文件进 `packages/kernel/test/`
 (单独一个 vitest 项目 `kernel-domain`),归零的工具实现进 `packages/kernel/attic/`。
 
@@ -870,16 +871,19 @@ TS 侧的纪律:
   25 MHz,I²C SDA=D0/SCL=D1、UART D5、SPI D12–15)。I²C 解出 **300 条注解 / 6 个事务**,UART 47 字节
   "DSLogic series USB-based LA from DreamSourceLab",SPI 5 次传输 288 字。smoke 与 `build.ts` 自检都钉这个数。
 
-### 示波器(`host/domain/scope`,2026-09-11 停到仓库外)
+### 示波器(`host/domain/scope` + `host/tools/scope`,2026-09-16 恢复)
 
-Siglent **SDS824X HD**(SDS800X HD 一族:4 通道 / 200 MHz / 12 位)的原生集成,纯 TypeScript,不经引擎:
-USB(USBTMC)或 LAN(SCPI 原始套接字 5025 口),只在这一台上验证过。代码没有任何调用方,2026-09-11 连测试、
-夹具和旧工具壳一起原样搬到 `../yoma-parked/scope/`(目录内保留仓库相对路径,`cp -R` 即可搬回)。功能还要,
-方案想清楚再回来;回来时工具壳按 `host/tools/<name>/` 样板重写。样本落点 `<工程>/.yoma/scope/<id>/`、截图
-`.yoma/scope/screens/`、仪器地址 `.yoma/scope.json` 仍在 `YOMA_IGNORE` 里。
+首期工具仅接受 Siglent **SDS824X HD** 的 USB 地址,不开放底层留存的 TCP 与 raw 命令。工具具备设备独占、
+设置读回、arm/collect、完整采样与显式概览抽样、截图、离线 samples。波形落在 `<工程>/.yoma/scope/<id>/`,
+截图与采集元数据关联;本机仪器地址存 `.yoma/scope/config.json`(兼容读取旧 `.yoma/scope.json`),目录自带忽略规则。
+前端的 `scope.captures/view/screenshot` 只读磁盘,拖动和缩放不会操作硬件。完整原始数据不进会话历史。
 
-真机核实过的协议怪癖、USB(node-usb 3)接法与 2026-09-04 的联调记录随代码一起搬到了 `../yoma-parked/scope/NOTES.md`;
-改协议层前先读那份。
+USB 依赖 `usb@3.1.0` 同时登记在 kernel 与 desktop 的 dependencies,预编译 `@node-usb` 模块必须解出 asar。
+取消必须等待 native transfer 结算再释放租约;close 并不保证立即中断正在等待的USB读取,截图可能等约15秒。
+旧驱动真机协议经验、接线验收与本次验证范围在 `docs/scope-usb.md`；2026-09-04 的旧真机结果不等于新集成验收。
+2026-09-16 Mac 实测:仪器重启后设置、双通道完整采样、arm/collect 与真实数据前端通过;重启前旧新驱动均有读回超时,
+拔插未恢复,根因与可靠软件恢复仍未解决。当前探头为 CH1 Little Bee H1(用户确认 1 V/A)、CH2 1× 校准信号;
+不要把这份具体接线当作后续用户的默认事实。正常 disconnect/dispose 只释放 USB;仅未结束的武装操作需要 STOP。
 
 ### 工具链自动安装(`toolchain install` / `host/domain/toolchain/{catalog,install}.ts`)
 

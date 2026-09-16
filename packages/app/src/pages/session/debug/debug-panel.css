@@ -70,6 +70,9 @@
 .ydbg-win[data-st="offline"] {
   opacity: 0.6;
 }
+.ydbg-win[data-st="history"] .ydbg-led {
+  background: var(--d-muted);
+}
 .ydbg-win-name {
   font-size: 12.5px;
   font-weight: 560;
@@ -106,6 +109,160 @@
   color: var(--d-faint);
   margin-top: 7px;
   line-height: 1.5;
+}
+
+/* ---- 示波器：保存的模拟波形与仪器截图（只读） ---- */
+[data-component="scope-body"] {
+  min-width: 0;
+}
+[data-component="scope-body"] select {
+  min-width: 0;
+  color: var(--d-ink);
+  background: var(--d-panel);
+  border: 1px solid var(--d-line);
+  border-radius: 5px;
+  padding: 3px 6px;
+}
+[data-component="scope-body"] > .ydbg-win-meta select {
+  flex: 1;
+  width: 0;
+}
+[data-component="scope-body"] button {
+  background: var(--d-panel);
+  color: var(--d-ink);
+  border: 1px solid var(--d-line);
+  border-radius: 5px;
+  padding: 3px 7px;
+  font-size: 11px;
+  cursor: pointer;
+}
+[data-component="scope-body"] button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+[data-component="scope-body"] button[aria-pressed="true"] {
+  background: var(--d-accent-tint);
+  border-color: var(--d-accent);
+}
+[data-component="scope-body"] [data-slot="identity"] {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+[data-component="scope-body"] [data-slot="acquisition"],
+[data-component="scope-body"] [data-slot="sampling"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  font-size: 11px;
+  color: var(--d-muted);
+  margin: 6px 0;
+}
+[data-component="scope-body"] [data-slot="error"] {
+  color: var(--d-fail);
+  background: var(--d-fail-bg);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+[data-component="scope-waveform"] {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 7px;
+  margin-top: 12px;
+}
+[data-component="scope-waveform"] [data-slot="controls"],
+[data-component="scope-waveform"] [data-slot="actions"],
+[data-component="scope-waveform"] [data-slot="channels"],
+[data-component="scope-waveform"] [data-slot="readout"] {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  font-size: 11px;
+}
+[data-component="scope-waveform"] [data-slot="controls"] {
+  justify-content: space-between;
+}
+[data-component="scope-waveform"] [data-slot="actions"] {
+  gap: 4px;
+}
+[data-component="scope-waveform"] [data-slot="channels"] label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+[data-component="scope-waveform"] [data-slot="channels"] input {
+  accent-color: currentColor;
+}
+[data-component="scope-waveform"] [data-slot="plot"] {
+  position: relative;
+  min-width: 0;
+  min-height: 280px;
+  background: var(--d-panel);
+  border-radius: 5px;
+}
+[data-component="scope-waveform"] canvas {
+  display: block;
+  max-width: 100%;
+  touch-action: none;
+  cursor: crosshair;
+}
+[data-component="scope-waveform"] [data-slot="loading"] {
+  position: absolute;
+  top: 7px;
+  right: 10px;
+  font-size: 11px;
+  color: var(--d-muted);
+}
+[data-component="scope-waveform"] [data-slot="cursor-table"] {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  font: 11px var(--d-mono);
+}
+[data-component="scope-waveform"] table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+[data-component="scope-waveform"] th:first-child {
+  width: 44px;
+}
+[data-component="scope-waveform"] th,
+[data-component="scope-waveform"] td {
+  text-align: left;
+  font-weight: normal;
+  padding: 4px 7px;
+  border-bottom: 1px solid var(--d-line);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  vertical-align: top;
+}
+[data-component="scope-body"] [data-slot="screen"] {
+  margin-top: 12px;
+}
+[data-component="scope-body"] figure {
+  margin: 8px 0 0;
+}
+[data-component="scope-body"] .scope-screen-image {
+  display: block;
+  padding: 0;
+  max-width: 100%;
+  overflow: hidden;
+  cursor: zoom-in;
+}
+[data-component="scope-body"] .scope-screen-image img {
+  display: block;
+  max-width: 100%;
+  max-height: 420px;
+  object-fit: contain;
+}
+[data-component="scope-body"] figcaption {
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--d-muted);
 }
 
 /* ---- 逻辑分析仪波形(真仪器,la-waveform.tsx) ---- */

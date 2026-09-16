@@ -1,6 +1,7 @@
-import { For } from "solid-js"
+import { For, Match, Switch } from "solid-js"
 import { debug, type Instrument, type Transport } from "./debug-data"
 import { LaBody } from "./la-waveform"
+import { ScopeBody } from "./scope-body"
 import "./debug-panel.css"
 
 const TRANSPORT_LABEL: Record<Transport, string> = {
@@ -24,7 +25,10 @@ function InstrumentWindow(props: { ins: Instrument }) {
         <span class="ydbg-win-detail ydbg-mono">{props.ins.detail}</span>
       </header>
       <div class="ydbg-win-b">
-        <LaBody />
+        <Switch>
+          <Match when={props.ins.display.kind === "la"}><LaBody /></Match>
+          <Match when={props.ins.display.kind === "scope"}><ScopeBody /></Match>
+        </Switch>
       </div>
     </section>
   )

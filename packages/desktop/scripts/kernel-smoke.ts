@@ -79,6 +79,24 @@ if (diff)
 
 console.log(`✓ 内核加载正常 (node ${report.node} / electron ${report.electron ?? "n/a"}),${report.tools.length} 个工具`)
 
+// Load the actual native module through the product's module path; no USB enumeration or device access.
+try {
+  const script = `const { createRequire } = require('node:module');
+    const usb = createRequire(${JSON.stringify(bundle)})('usb');
+    if (typeof usb.usb?.getDevices !== 'function') throw new Error('USB native API unavailable');
+    console.log('usb-native-ok');`
+  const loaded = execFileSync(electron, ["-e", script], {
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+    encoding: "utf8",
+    timeout: 15_000,
+    windowsHide: true,
+  })
+  if (!loaded.includes("usb-native-ok")) fail("USB 原生模块没有完成加载")
+  console.log("✓ USB 原生模块在产品运行时加载正常(未访问仪器)")
+} catch (error) {
+  fail(`USB 原生模块加载失败:${(error as Error).message}`)
+}
+
 // ---------------------------------------------------------------------------
 // 2. engines 二进制真的在
 // ---------------------------------------------------------------------------

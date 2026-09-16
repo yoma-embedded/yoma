@@ -70,6 +70,9 @@ const wantsForeignPlatform = process.argv.some((arg) => ["--win", "-w", "--linux
 const localElectronDist = path.join(packageDir, "node_modules", "electron", "dist")
 
 const getBase = (appId: string): Configuration => ({
+  // usb ships N-API binaries per platform; rebuilding it for Electron is neither needed nor supported.
+  npmRebuild: false,
+  nodeGypRebuild: false,
   artifactName: "yoma-${os}-${arch}.${ext}",
   ...(wantsForeignPlatform ? {} : { electronDist: localElectronDist }),
   directories: {
@@ -88,7 +91,12 @@ const getBase = (appId: string): Configuration => ({
   // 信箱守护的两个 node 入口必须从 asar 里解出来:它们由 main 用
   // spawn(execPath, [.mjs]) + ELECTRON_RUN_AS_NODE 起,node 的 ESM 加载器
   // 读不了 asar 内的文件。运行时路径由 main/index.ts 做 app.asar → unpacked 替换。
-  asarUnpack: ["out/main/mailbox-host.mjs", "out/main/mailbox-turn-entry.mjs"],
+  asarUnpack: [
+    "out/main/mailbox-host.mjs",
+    "out/main/mailbox-turn-entry.mjs",
+    "node_modules/usb/**/*",
+    "node_modules/@node-usb/**/*",
+  ],
   extraResources: [
     // opencode 时代这里还有一个 native/(mac_window.node + swift-build)条目,
     // fork 后该目录已不存在,源码里也无引用,引用一个不存在的 from 会让打包绊倒。

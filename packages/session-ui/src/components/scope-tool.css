@@ -1,0 +1,32 @@
+[data-component="scope-tool"] {
+  min-width: 0;
+  pre {
+    max-height: 360px;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font: 12px/1.5 var(--font-family-mono);
+  }
+  figure { margin: 10px 0 0; }
+  figure button {
+    display: block;
+    max-width: 100%;
+    padding: 0;
+    border: 1px solid var(--border-base);
+    border-radius: 6px;
+    background: var(--background-base);
+    overflow: hidden;
+    cursor: zoom-in;
+  }
+  img {
+    display: block;
+    max-width: 100%;
+    max-height: 360px;
+    object-fit: contain;
+  }
+  figcaption {
+    margin-top: 5px;
+    color: var(--text-weak);
+    font-size: 11px;
+  }
+}

@@ -266,6 +266,7 @@ export const TOOL_NAMES = [
   "flash",
   "log",
   "la",
+  "scope",
   "gdb",
   "datasheet",
   "netlist",

@@ -10,7 +10,7 @@ An agent for **embedded engineers** — not just a code editor, but a full close
 - **Log capture**: long-running log collection over serial or RTT, with analysis
 - **gdb debugging**: breakpoints, single-stepping, expressions, fault analysis, and more
 - **Logic analyzer**: DSLogic capture and protocol decoding (I²C / SPI / UART / CAN / …, 150 decoders bundled) — bus traffic read as transactions, diffed against what the firmware should have sent
-- **Oscilloscope**: Siglent SDS800X HD over USB or LAN — analog waveforms with statistics and a text plot, the scope's own measurements, screenshots the agent can look at, and arm/collect around a reset or power-up
+- **Oscilloscope**: Siglent SDS824X HD over USB — configuration, measurements, screenshots, and triggered captures. The agent reads saved evidence; the UI provides waveform zoom, cursors, and screenshot history. Initial Mac hardware checks passed; Windows USB and recovery reliability remain unverified. See the [USB integration guide (Chinese)](docs/scope-usb.md).
 
 ### Grounded in hardware facts
 

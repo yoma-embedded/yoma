@@ -37,7 +37,7 @@ await build({
   platform: "node",
   target: "node22",
   format: "esm",
-  external: ["electron"],
+  external: ["electron", "usb"],
   logLevel: "warning",
   define: { "process.env.YOMA_EVAL_BUILD": JSON.stringify(stamp()) },
   banner: {
