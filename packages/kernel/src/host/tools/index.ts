@@ -25,6 +25,8 @@ import { createToolchainTool, type ToolchainToolOptions } from "./toolchain/sess
 export interface RegisteredToolOptions {
   /** engines/ 根目录(bin/rg 在里面)。空串也算没给:kernel-entry 把未设的路径透传成 ""。 */
   enginesDir?: string
+  /** STM32 本机资源使用同一份工具链账本与用户缓存目录。 */
+  configDir?: string
   /**
    * toolchain 工具的接线:账本目录、清单来源、安装注册表、装完刷 PATH 的钩子。
    * **不传也能装配出工具**(自检那条路就不传),只是它会去读真实的 ~/.yoma、装完不刷在飞会话的 PATH。
@@ -45,6 +47,7 @@ export type RegisteredTool = AgentHarnessTool<ExecutionToolContext> & { dispose?
 
 export function createRegisteredTools(options: RegisteredToolOptions = {}): RegisteredTool[] {
   const shared = { enginesDir: options.enginesDir || undefined }
+  const stm32 = { ...shared, configDir: options.configDir }
   return [
     createGrepTool(shared),
     createFindTool(shared),
@@ -56,7 +59,7 @@ export function createRegisteredTools(options: RegisteredToolOptions = {}): Regi
     createLaTool(shared),
     createGdbTool(),
     createDatasheetTool(options.datasheet),
-    createNetlistTool(shared),
-    createStm32ConfigTool(shared),
+    createNetlistTool(stm32),
+    createStm32ConfigTool(stm32),
   ]
 }

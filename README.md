@@ -64,17 +64,13 @@ Set `YOMA_DATASHEET_SERVER=off` to disable manual lookup entirely.
 
 ### 5. Generating an STM32 driver for the first time
 
-Two separate resources are required: device packs (irpacks) for queries and configuration, and HAL/CMSIS sources for complete project generation.
-Device packs can ship with the engines, but the current Windows release workflow allows them to be absent. Without them, only `schema` and raw netlist parsing work; other STM32 configuration commands and `board_ir` are unavailable.
-HAL/CMSIS is not bundled, and there is currently no automatic download UI. See the [engine and data delivery notes](docs/桌面版发布流程.md#引擎和数据的交付边界).
+Install STM32CubeMX on this computer. For complete project generation, use CubeMX to download the firmware package for your chip family into its local firmware repository.
+In Yoma's toolchain settings, select the CubeMX installation and firmware repository if they are in custom locations.
 
-From a source checkout, fetch HAL/CMSIS for the chip family you use:
-
-```powershell
-powershell -File engines/stm32-config-kernel/tools/fetch-fw.ps1 -Families STM32F1
-```
-
-If CubeMX is already installed, the sources are copied from its installation directory; otherwise they are pulled from ST's official GitHub repositories. The output lands in, for example, `engines/data/stm32/fw/STM32F1/` (relative to the repository root).
+Yoma ships the configuration engine and local database converter. On first use, it generates device packs from your CubeMX database into a user cache; project generation also uses your downloaded HAL/CMSIS sources.
+These resources stay on your computer: they are not uploaded or included in Yoma installers. A changed database or engine produces a new cache version.
+Missing resources are reported with configuration instructions. `schema` and raw netlist parsing need no CubeMX data.
+See the [engine and data delivery notes](docs/桌面版发布流程.md#引擎和数据的交付边界).
 
 ## Run from source
 
@@ -82,7 +78,7 @@ If CubeMX is already installed, the sources are copied from its installation dir
 git clone https://github.com/yoma-embedded/yoma.git yoma
 cd yoma
 npm install
-npm run engines:build    # netlist parsing / STM32 tools. STM32 configuration needs CubeMX installed locally: build parses the device database to generate irpacks
+npm run engines:build    # build executables, including the local CubeMX converter; user data is prepared at runtime
 npm run dev:desktop         # restart this command after changing the kernel
 ```
 

@@ -12,12 +12,15 @@
  */
 
 import { execFileSync } from "node:child_process"
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { diffToolNames } from "@yoma-desktop/kernel"
 import { resolveElectron } from "./electron-bin.ts"
 import { selfCheckLa } from "../../../engines/logic-analyzer/build.ts"
+import { assertNoStm32Data } from "../../../engines/distribution.ts"
+import { ENGINE_BINARIES } from "../../kernel/src/host/domain/engines.ts"
 
 const here = dirname(fileURLToPath(import.meta.url))
 const workspaceDesktop = join(here, "..")
@@ -81,8 +84,7 @@ console.log(`✓ 内核加载正常 (node ${report.node} / electron ${report.ele
 // ---------------------------------------------------------------------------
 
 const bin = join(enginesDir, "bin")
-const stm32Data = join(enginesDir, "data", "stm32")
-const REQUIRED_BINS = ["stm32kernel", "controller_map", "board_ir", "connections", "rg"].map(exe)
+const REQUIRED_BINS = ENGINE_BINARIES.map(exe)
 
 if (!existsSync(bin)) {
   fail(`${bin} 不存在 —— 核对 YOMA_ENGINES_DIR 与安装包资源;源码构建者可运行 npm run engines:build。`)
@@ -106,13 +108,34 @@ try {
   for (const name of ["controller_map", "board_ir", "connections"]) runBin(name, ["--help"])
   runBin("rg", ["--version"])
   if (!runBin("stm32kernel", ["schema"]).includes("ConfigDoc")) throw new Error("schema 缺 ConfigDoc")
-  console.log("✓ 五个必需引擎可启动,STM32 schema 可用(无需器件数据)")
+  if (!runBin("stm32ck-import", ["--help"]).includes("--probe")) throw new Error("STM32 本地转换器缺 --probe")
+  console.log(`✓ ${REQUIRED_BINS.length} 个必需引擎可启动,STM32 schema 与本地转换器可用`)
 } catch (error) {
   fail(`引擎启动失败:${(error as Error).message}`)
 }
 
+// 用手写的最小测试数据验证安装后的定位器,不依赖构建机 CubeMX,也不复制厂商数据库。
+const probeRoot = mkdtempSync(join(tmpdir(), "yoma-import-smoke-"))
+try {
+  const db = join(probeRoot, "db")
+  mkdirSync(join(db, "mcu"), { recursive: true })
+  writeFileSync(join(db, "package.xml"), '<Package Version="smoke-fixture"/>')
+  writeFileSync(join(db, "mcu", "fixture.xml"), '<Mcu Family="STM32G4"/>')
+  const output = join(probeRoot, "must-not-write")
+  const probe = JSON.parse(runBin("stm32ck-import", ["--probe", "--cubemx-db", probeRoot, "--out", output]))
+  if (probe.dbPath !== db || probe.dbVersion !== "smoke-fixture" || probe.families?.[0] !== "STM32G4") {
+    throw new Error(`probe 返回错误的资源定位:${JSON.stringify(probe)}`)
+  }
+  if (existsSync(output)) throw new Error("只读 probe 写入了数据")
+  console.log("✓ 安装版转换器能定位本机 CubeMX 布局(隔离测试数据),probe 无写入")
+} catch (error) {
+  fail(`本地 CubeMX 定位器验收失败:${(error as Error).message}`)
+} finally {
+  rmSync(probeRoot, { recursive: true, force: true })
+}
+
 // yoma-la 是可选引擎;Windows 发布 CI 已装 MSYS2,其它环境可能没有。
-// 像 irpack 一样缺了只跳过 —— 但有的话必须真能跑:自检与 engines/build.ts 装完那次是同一个函数。
+// 有的话必须真能跑:自检与 engines/build.ts 装完那次是同一个函数。
 if (present.includes(exe("yoma-la"))) {
   try {
     console.log(`✓ yoma-la ${await selfCheckLa(enginesDir)}(内嵌 Python + 解码器就位)`)
@@ -123,35 +146,16 @@ if (present.includes(exe("yoma-la"))) {
   console.log("↷ 跳过逻辑分析仪闸门:engines/bin 里没有 yoma-la(构建机无 MSYS2 时属预期)")
 }
 
-// irpack 是 CubeMX 解析产物,不进 git。GitHub runner / 没装 CubeMX 的机器上没有 pack
-// 只有显式允许缺数据的分发构建才放行;缺失时 board_ir 也不可用,原始网表仍可解析。
-const irpacks = existsSync(stm32Data)
-  ? readdirSync(stm32Data).filter((name) => name.endsWith(".irpack") && statSync(join(stm32Data, name)).isFile())
-  : []
-const manifestFile = join(enginesDir, "manifest.json")
-if (existsSync(manifestFile)) {
-  const manifest = JSON.parse(readFileSync(manifestFile, "utf8")) as { irpacks?: number }
-  if (manifest.irpacks !== undefined && manifest.irpacks !== irpacks.length) {
-    fail(`交付的 irpack 数量与 manifest 不符:声明 ${manifest.irpacks},实际 ${irpacks.length}`)
-  }
-}
-if (irpacks.length === 0) {
-  if (process.argv.includes("--require-stm32-data")) fail("要求 STM32 数据,但交付目录中没有 irpack")
-  console.log("↷ 跳过 STM32 配置与 board_ir 验收:交付目录中没有 irpack;仅 schema 与原始网表可用")
-} else {
+// 安装包 / 分发目录不得包含开发机的 STM32 数据。源码树可保留开发者自己的
+// 旧数据,但它们不是运行时来源,stage-engines 也不会把它们复制进安装包。
+if (!existsSync(join(enginesDir, "build.ts"))) {
   try {
-    const result = JSON.parse(runBin("stm32kernel", ["list-mcus", "--data-dir", stm32Data])) as { mcus?: unknown[] }
-    if (!Array.isArray(result.mcus) || result.mcus.length === 0) throw new Error("list-mcus 未返回器件")
-    console.log(`✓ stm32 irpacks ${irpacks.length} 个包可加载,${result.mcus.length} 条 MCU 记录`)
+    assertNoStm32Data(enginesDir)
+    console.log("✓ 安装资源未携带 CubeMX 数据库、器件包或 STM32 固件")
   } catch (error) {
-    fail(`STM32 数据在但无法读取:${(error as Error).message}`)
+    fail((error as Error).message)
   }
 }
-
-console.log(
-  existsSync(join(stm32Data, "fw"))
-    ? "ℹ HAL/CMSIS 目录存在;本冒烟不验证 generate/编译"
-    : "↷ HAL/CMSIS 未交付(与 irpack 不同);完整工程生成/编译仍待单独验收",
-)
+console.log("ℹ STM32 功能在使用时从用户本机 CubeMX 准备资源;本冒烟不代替工程生成和编译验收")
 
 console.log("\n冒烟通过。")

@@ -293,7 +293,13 @@ export function diffToolNames(actual: readonly string[]): string | undefined {
  */
 export interface ToolchainResolvedTool {
   id: string
-  status: "ok" | "version-mismatch" | "ambiguous" | "missing"
+  status: "ok" | "configured" | "recorded" | "unverified" | "version-mismatch" | "ambiguous" | "missing"
+  checks?: {
+    entry: "found" | "partial" | "missing" | "directory"
+    execution: "passed" | "unverified" | "not-applicable"
+    version: "satisfied" | "mismatch" | "unknown" | "not-required"
+  }
+  missingBins?: string[]
   optional: boolean
   bin: Record<string, string>
   version?: string
@@ -342,7 +348,7 @@ export interface ToolchainFamilyToolView {
   /** 行标题,专有名词(Arm GNU Toolchain / ESP-IDF / …),中英一致,不进 i18n。 */
   title: string
   optional: boolean
-  /** 手填路径的形态:exe = 可执行文件(记账要验版本),dir = 安装目录(只验存在)。 */
+  /** 资源形态:exe = 记录后单独验证可执行入口,dir = 目录配置(不启动程序)。 */
   pathKind: "exe" | "dir"
 }
 

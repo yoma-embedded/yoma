@@ -20,6 +20,7 @@
 
 import { copyFile, mkdir, stat, writeFile } from "node:fs/promises"
 import path from "node:path"
+import { executionEnvSnapshot } from "../../domain/execution-env.ts"
 
 import type { AgentHarnessTool, ExecutionToolContext } from "@earendil-works/pi-agent-core"
 
@@ -171,7 +172,12 @@ export function createLaTool(options: LaToolOptions = {}): LaTool {
     return entry
   }
 
-  const engineCtx = (cwd: string, signal?: AbortSignal) => ({ enginesDir: options.enginesDir, cwd, signal })
+  const engineCtx = (cwd: string, signal: AbortSignal | undefined, env: NodeJS.ProcessEnv) => ({
+    enginesDir: options.enginesDir,
+    cwd,
+    signal,
+    env,
+  })
   const rootOf = (cwd: string) => path.join(cwd, LA_DIR)
 
   async function registerCapture(
@@ -308,12 +314,17 @@ export function createLaTool(options: LaToolOptions = {}): LaTool {
     return { id, dir, spec }
   }
 
-  async function run(params: LaInput, cwd: string, signal: AbortSignal | undefined): Promise<LaResult> {
+  async function run(
+    params: LaInput,
+    cwd: string,
+    signal: AbortSignal | undefined,
+    env: NodeJS.ProcessEnv,
+  ): Promise<LaResult> {
     const action = params.action
     switch (action) {
       case "devices": {
         requireEngine(options.enginesDir, action)
-        const found = await laDevices(engineCtx(cwd, signal))
+        const found = await laDevices(engineCtx(cwd, signal, env))
         if (found.count === 0) {
           return textResult(
             'No DSLogic found. Is it plugged in? On Windows it shows up as "USB-based DSL Instrument v2" (WinUSB, no driver install needed). If DSView is open, close it — it holds the device. Try the tool without hardware with device="demo".',
@@ -355,7 +366,7 @@ export function createLaTool(options: LaToolOptions = {}): LaTool {
           dir,
           controller,
           spec,
-          promise: laCapture(engineCtx(cwd, mergeSignals(signal, controller.signal)), spec, dir, "capture"),
+          promise: laCapture(engineCtx(cwd, mergeSignals(signal, controller.signal), env), spec, dir, "capture"),
           killNow: () => controller.abort(),
         })
         const report = await entry.promise
@@ -374,7 +385,7 @@ export function createLaTool(options: LaToolOptions = {}): LaTool {
           dir,
           controller,
           spec,
-          promise: laCapture(engineCtx(cwd, controller.signal), spec, dir, "capture"),
+          promise: laCapture(engineCtx(cwd, controller.signal, env), spec, dir, "capture"),
           killNow: () => controller.abort(),
         })
         const waiting =
@@ -469,7 +480,7 @@ export function createLaTool(options: LaToolOptions = {}): LaTool {
       case "decoders": {
         requireEngine(options.enginesDir, action)
         if (params.decoder) {
-          const catalog = await laDecoders(engineCtx(cwd, signal), [params.decoder])
+          const catalog = await laDecoders(engineCtx(cwd, signal, env), [params.decoder])
           const one = catalog.decoders[0]
           if (!one) throw new Error(`la decoders: no decoder named ${params.decoder} (la decoders lists them)`)
           const text = [
@@ -482,7 +493,7 @@ export function createLaTool(options: LaToolOptions = {}): LaTool {
           ].join("\n")
           return textResult(text, { action })
         }
-        const catalog = await laDecoders(engineCtx(cwd, signal))
+        const catalog = await laDecoders(engineCtx(cwd, signal, env))
         const lines = [...catalog.decoders]
           .sort((a, b) => a.id.localeCompare(b.id))
           .map((decoder) => {
@@ -572,7 +583,7 @@ export function createLaTool(options: LaToolOptions = {}): LaTool {
         requireEngine(options.enginesDir, action)
         const outFile = path.join(meta.dir, DECODE_NDJSON)
         const report = await laDecode(
-          engineCtx(cwd, signal),
+          engineCtx(cwd, signal, env),
           { input: path.join(meta.dir, CAPTURE_DSL), pds, from: window?.from, to: window?.to },
           outFile,
         )
@@ -699,6 +710,7 @@ export function createLaTool(options: LaToolOptions = {}): LaTool {
     // replay 不声明(默认 never):采集碰真实硬件,崩溃恢复不该自动重跑。
     execute: async (_toolCallId, params, _onUpdate, toolContext, _invocation, context) => {
       const cwd = toolContext.env.cwd
+      const env = executionEnvSnapshot(toolContext.env)
       const signal = context.abortSignal
       /**
        * 闸门放在**队列里面**:放在外面的话,排在一次采集后面的 arm 会在 dispose 之后照跑,起一个
@@ -708,7 +720,7 @@ export function createLaTool(options: LaToolOptions = {}): LaTool {
       const guarded = async (): Promise<LaResult> => {
         if (disposed) throw new Error(`la ${params.action}: this session is closing`)
         if (signal?.aborted) throw new Error(`la ${params.action} was aborted`)
-        return run(params, cwd, signal)
+        return run(params, cwd, signal, env)
       }
       // 只有会动 armed 状态的四个动作排队。其余九个只读文件,跟在一次采集后面干等是纯亏:
       // 实测 la list 在一次 1.2 秒的采集后面等了 1.7 秒,生产里那就是整个触发超时(缺省 30 秒)。

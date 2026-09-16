@@ -69,6 +69,27 @@ describe("findEnvKey", () => {
 });
 
 describe("withPath", () => {
+	it.each([
+		{ keys: ["PATH", "Path"] },
+		{ keys: ["Path", "PATH", "pAtH"] },
+	])("重复 PATH 键 $keys 不得把手选目录解析成全局的同名工具", ({ keys }) => {
+		const globalDir = join(dir, "global");
+		const selectedDir = join(dir, "selected");
+		mkdirSync(globalDir);
+		mkdirSync(selectedDir);
+		writeFileSync(join(globalDir, "mytool.exe"), "global");
+		const base: NodeJS.ProcessEnv = { ...Object.fromEntries(keys.map((key) => [key, globalDir])), PATHEXT: ".exe", KEEP: "yes" };
+
+		const env = withPath(base, [selectedDir]);
+		// 先验缺失：用户选的目录为空，不能偷偷捡全局工具。
+		expect(findOnPath("mytool", env)).toBeUndefined();
+		writeFileSync(join(selectedDir, "mytool.exe"), "selected");
+		expect(findOnPath("mytool", env)).toBe(join(selectedDir, "mytool.exe"));
+		expect(Object.keys(env).filter((key) => key.toLowerCase() === "path")).toEqual(["PATH"]);
+		expect(env.KEEP).toBe("yes");
+		for (const key of keys) expect(base[key]).toBe(globalDir);
+	});
+
 	// Windows 形状的 env:真实键叫 "Path"。这条在 Mac 上也会真的失败 —— 不用等 Windows CI。
 	it("替换 PATH 时把原来的 Path 键一起拿掉,findOnPath 扫的才是指定目录", () => {
 		writeFileSync(join(dir, "mytool.exe"), "");

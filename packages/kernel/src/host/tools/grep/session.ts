@@ -16,6 +16,7 @@
  */
 
 import path from "node:path"
+import { executionEnvSnapshot } from "../../domain/execution-env.ts"
 
 import {
   type AgentHarnessTool,
@@ -97,6 +98,7 @@ export function createGrepTool(
     parameters: GREP_CONTRACT.parameters,
     execute: async (_toolCallId, params, _onUpdate, toolContext, _invocation, context) => {
       const env = toolContext.env
+      const processEnv = executionEnvSnapshot(env)
       const cwd = env.cwd
       // 这一轮已经被用户停掉:不起子进程。runEngineLines 要到 spawn 之后才看信号。
       if (context.abortSignal?.aborted) throw new Error("grep was aborted")
@@ -139,6 +141,7 @@ export function createGrepTool(
       let result: Awaited<ReturnType<typeof runEngineLines>>
       try {
         result = await runEngineLines(rg, args, {
+          env: processEnv,
           cwd: rgCwd,
           signal: context.abortSignal,
           timeoutMs,
@@ -162,7 +165,10 @@ export function createGrepTool(
             // rg 给的路径相对它的 cwd;glob 按相对搜索根的正斜杠路径挑。
             const absolute = path.resolve(rgCwd, file)
             if (params.glob) {
-              const relativeToRoot = path.relative(searchingDirectory ? searchPath : cwd, absolute).split(path.sep).join("/")
+              const relativeToRoot = path
+                .relative(searchingDirectory ? searchPath : cwd, absolute)
+                .split(path.sep)
+                .join("/")
               if (!matchesToolGlob(relativeToRoot, params.glob)) return
             }
             matches.push({ file: absolute, line: lineNumber, text: event.data?.lines?.text })
@@ -178,9 +184,7 @@ export function createGrepTool(
       }
 
       if (result.timedOut) {
-        throw new Error(
-          `grep timed out after ${Math.round(timeoutMs / 1000)}s — narrow path or glob, or raise timeout`,
-        )
+        throw new Error(`grep timed out after ${Math.round(timeoutMs / 1000)}s — narrow path or glob, or raise timeout`)
       }
       if (result.aborted) throw new Error("grep was aborted")
       // exit 2 且一条命中都没有才算真错(坏正则)。一棵树里一个读不动的目录也会让 rg 退 2,而命中

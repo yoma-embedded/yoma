@@ -116,10 +116,20 @@ const FORCE_KILL_GRACE_MS = 2_000;
  * 异常。命中路径本身可能是错的(比如同名但不相干的程序),让整条 resolve 链
  * 因为一次 --version 探测失败就抛出去,代价比"这个工具的版本标未知"大得多。
  */
-export function probeVersion(bin: string): Promise<string | undefined> {
+export interface ExecutableProbe {
+	/** 仅 --version 正常退出才能证明这次执行成功;版本文本本身不是成功证据。 */
+	executable: boolean;
+	version?: string;
+}
+
+export async function probeVersion(bin: string, env: NodeJS.ProcessEnv = process.env): Promise<string | undefined> {
+	return (await probeExecutable(bin, env)).version;
+}
+
+export function probeExecutable(bin: string, env: NodeJS.ProcessEnv = process.env): Promise<ExecutableProbe> {
 	return new Promise((resolve) => {
 		let settled = false;
-		const settle = (value: string | undefined) => {
+		const settle = (value: ExecutableProbe = { executable: false }) => {
 			if (settled) return;
 			settled = true;
 			resolve(value);
@@ -134,7 +144,7 @@ export function probeVersion(bin: string): Promise<string | undefined> {
 				// 第一条;core/tools/serial.ts:180 的 spawnSync 同一处疤)。这里显式
 				// 传一份不会有坏处,即使某个 bun 版本恰好对异步 spawn 不触发这条 ——
 				// 省略了就是把正确性押在"这个版本恰好没这个问题"上。
-				env: process.env,
+				env,
 				// 桌面端是 GUI 进程,探测版本时不该在用户眼前闪一个控制台窗口。
 				windowsHide: true,
 				detached: process.platform !== "win32",
@@ -195,9 +205,9 @@ export function probeVersion(bin: string): Promise<string | undefined> {
 			clearAll();
 			settle(undefined);
 		});
-		child.on("close", () => {
+		child.on("close", (code) => {
 			clearAll();
-			settle(timedOut ? undefined : (parseVersion(stdout) ?? parseVersion(stderr)));
+			settle(timedOut ? undefined : { executable: code === 0, version: parseVersion(stdout) ?? parseVersion(stderr) });
 		});
 	});
 }

@@ -3,10 +3,10 @@
  *
  * 1. 契约与纯函数:两种模式、没有确认门、summary、文件名词干、从 controller_map 的 JSON 里读主控。
  * 2. **假引擎**(fixtures/fake-exe.ts):controller_map / board_ir 的 argv、探测说明的透出、三个产物的内联与截断、
- *    非零退出抛错、没有器件数据时的话、中止、进度旁路。
+ *    非零退出抛错、统一资源准备接线、中止、进度旁路。
  * 3. **真引擎**(仓库 engines/bin 里的 controller_map 在时才跑):对 engines/controller_map/tests/fixtures 里的
  *    真网表跑一遍(odrive 的 Altium .NET 与 nRF 的 pca10056);board_ir 还要 irpack(见 tools-stm32config.test.ts
- *    的说明),没有就跳过那一条。
+ *    的说明),通过准备函数注入夹具。CubeMX 的真实准备链由资源模块测试覆盖。
  */
 
 import {
@@ -43,6 +43,7 @@ import {
   detectedController,
   RAW_MAP_MAX_CHARS,
   sanitizeStem,
+  type NetlistToolOptions,
 } from "../src/host/tools/netlist/session.ts"
 import { ECHO_ARGV_JS, writeFakeExe } from "./fixtures/fake-exe.ts"
 
@@ -86,12 +87,22 @@ function makeEnginesDir(bins: Record<string, string>, options: { noData?: boolea
   return root
 }
 
-function makeTool(enginesDir: string) {
+function makeTool(enginesDir: string, prepare?: NetlistToolOptions["prepare"]) {
   const cwd = createTempDir()
-  const tool = createNetlistTool({ enginesDir })
+  const configDir = createTempDir()
+  const prepareResources =
+    prepare ??
+    vi.fn(async () => {
+      const dataDir = join(enginesDir, "data", "stm32")
+      if (!existsSync(dataDir) || !readdirSync(dataDir).some((file) => file.endsWith(".irpack"))) {
+        throw new Error("CubeMX database not configured (fixture)")
+      }
+      return { dataDir, manifestPath: join(dataDir, "manifest.json"), families: ["STM32F4"] }
+    })
+  const tool = createNetlistTool({ enginesDir, configDir, prepare: prepareResources })
   const run = (params: NetlistInput, context: Context = BACKGROUND_CONTEXT, onUpdate: Update = () => {}) =>
     tool.execute("c1", params, onUpdate, { env: new NodeExecutionEnv({ cwd }) }, invocation, context)
-  return { tool, run, cwd }
+  return { tool, run, cwd, configDir, prepareResources }
 }
 
 function textOf(result: AgentToolResult<NetlistDetails>): string {
@@ -146,6 +157,56 @@ describe("netlist contract", () => {
     })
     expect(detectedController('{"controller":{"ref":""}}')).toEqual({})
     expect(detectedController("not json")).toEqual({})
+  })
+})
+
+describe("netlist resource preparation", () => {
+  it("uses the shared prepared data and forwards host context and import progress", async () => {
+    const prepared = { dataDir: join(createTempDir(), "devices"), manifestPath: "unused", families: ["STM32F4"] }
+    const prepare = vi.fn<NonNullable<NetlistToolOptions["prepare"]>>(async (options) => {
+      options.onProgress?.("Importing local CubeMX data")
+      return prepared
+    })
+    const enginesDir = makeEnginesDir({ board_ir: FAKE_BOARD_IR, stm32kernel: ECHO_ARGV_JS }, { noData: true })
+    const { run, cwd, configDir } = makeTool(enginesDir, prepare)
+    writeFileSync(join(cwd, "board.NET"), "x")
+    const signal = new AbortController().signal
+    const updates: string[] = []
+    const result = await run(
+      { netlistPath: "board.NET", part: "STM32F405RGTx" },
+      withAbortSignal(signal, BACKGROUND_CONTEXT),
+      (partial) => updates.push(textOf(partial)),
+    )
+    expect(prepare).toHaveBeenCalledWith(
+      expect.objectContaining({ enginesDir, configDir, projectDir: cwd, signal, part: "STM32F405RGTx" }),
+    )
+    expect(prepare.mock.calls[0]![0].firmware).not.toBe(true)
+    expect(updates).toContain("Importing local CubeMX data")
+    expect(textOf(result)).toContain(`--data-dir ${prepared.dataDir}`)
+  })
+
+  it("does not prepare CubeMX resources for raw maps", async () => {
+    const { run, cwd, prepareResources } = makeTool(
+      makeEnginesDir({ controller_map: ECHO_CONTROLLER_MAP }, { noData: true }),
+    )
+    writeFileSync(join(cwd, "board.NET"), "x")
+    await run({ netlistPath: "board.NET" })
+    expect(prepareResources).not.toHaveBeenCalled()
+  })
+
+  it("does not launch board_ir when cancellation happens during resource preparation", async () => {
+    const controller = new AbortController()
+    const prepare = vi.fn<NonNullable<NetlistToolOptions["prepare"]>>(async () => {
+      controller.abort()
+      return { dataDir: "unused", manifestPath: "unused", families: [] }
+    })
+    const { run, cwd } = makeTool(makeEnginesDir({ board_ir: FAKE_BOARD_IR, stm32kernel: ECHO_ARGV_JS }), prepare)
+    writeFileSync(join(cwd, "board.NET"), "x")
+    const spawn = vi.spyOn(engines, "runEngine")
+    await expect(
+      run({ netlistPath: "board.NET", part: "STM32F405RGTx" }, withAbortSignal(controller.signal, BACKGROUND_CONTEXT)),
+    ).rejects.toThrow("was aborted")
+    expect(spawn).not.toHaveBeenCalled()
   })
 })
 
@@ -207,12 +268,14 @@ describe("netlist tool (fake engines)", () => {
     )
   })
 
-  it("rejects an empty data directory before starting board_ir", async () => {
+  it("does not create output directories when resources cannot be prepared", async () => {
     const root = makeEnginesDir({ board_ir: FAKE_BOARD_IR, stm32kernel: ECHO_ARGV_JS })
     rmSync(join(root, "data", "stm32", "stm32f4.irpack"))
     const { run, cwd } = makeTool(root)
     writeFileSync(join(cwd, "board.NET"), "x")
-    await expect(run({ netlistPath: "board.NET", part: "STM32F405RGTx" })).rejects.toThrow("none are installed")
+    await expect(run({ netlistPath: "board.NET", part: "STM32F405RGTx" })).rejects.toThrow(
+      "CubeMX database not configured (fixture)",
+    )
     expect(existsSync(join(cwd, ".yoma"))).toBe(false)
   })
 
@@ -311,7 +374,7 @@ describe("netlist tool (fake engines)", () => {
     expect(existsSync(result.details.files!.stm32Map)).toBe(true)
   })
 
-  it("throws when board_ir exits non-zero, and explains missing device data packs without spawning", async () => {
+  it("throws when board_ir exits non-zero, and preserves resource preparation errors without spawning", async () => {
     const bad = makeTool(
       makeEnginesDir({ board_ir: `console.error("unknown part"); process.exitCode = 7;`, stm32kernel: ECHO_ARGV_JS }),
     )
@@ -322,7 +385,7 @@ describe("netlist tool (fake engines)", () => {
     const noData = makeTool(makeEnginesDir({ board_ir: FAKE_BOARD_IR, stm32kernel: ECHO_ARGV_JS }, { noData: true }))
     writeFileSync(join(noData.cwd, "b.NET"), "x")
     await expect(noData.run({ netlistPath: "b.NET", part: "STM32F405RGTx" })).rejects.toThrow(
-      /needs the STM32 device data packs .* Run netlist without `part`/,
+      "CubeMX database not configured (fixture)",
     )
     expect(existsSync(join(noData.cwd, ".yoma", "b_board_ir.json"))).toBe(false)
   })

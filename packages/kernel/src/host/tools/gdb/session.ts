@@ -22,6 +22,7 @@
 
 import { mkdir, stat } from "node:fs/promises"
 import path from "node:path"
+import { executionEnvSnapshot } from "../../domain/execution-env.ts"
 
 import type { AgentHarnessTool, AgentToolResult, ExecutionToolContext } from "@earendil-works/pi-agent-core"
 
@@ -227,7 +228,8 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
       // 顺序不能反:gdb 断开后,J-Link 才会退出并清理硬件断点。不能发完 kill 就宣布探针空闲。
       const stopped = await stopServer(server, serverKind === "jlink")
       if (serverKind === "jlink" && (stopped.forced || server.exited?.code !== 0)) {
-        cleanupNote = "\nJ-Link did not exit normally. The server process is gone, but hardware breakpoint cleanup is unverified; reconnect before treating target faults as firmware evidence."
+        cleanupNote =
+          "\nJ-Link did not exit normally. The server process is gone, but hardware breakpoint cleanup is unverified; reconnect before treating target faults as firmware evidence."
       }
     }
     if (!keepServer) {
@@ -340,7 +342,7 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
     return miString(rows.find((row) => miNumber(row.number) === number)?.type)
   }
 
-  async function start(params: GdbInput, cwd: string, signal: AbortSignal): Promise<GdbResult> {
+  async function start(params: GdbInput, cwd: string, signal: AbortSignal, env: NodeJS.ProcessEnv): Promise<GdbResult> {
     const notes: string[] = []
     if (session?.running && session.state !== "exited" && session.state !== "connection-lost") {
       // 自动压缩会把会话从上下文里抹掉,但会话还活着。这里**不能抛**:抛出去模型会 stop 再 start,拆掉一个本该留着的会话。
@@ -401,9 +403,9 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
             machine: params.machine,
           })
     const machine = await elfMachineOf(elf)
-    const { gdbPath } = resolveGdbPath(machine, params.gdbPath ?? options.gdbPath)
+    const { gdbPath } = resolveGdbPath(machine, params.gdbPath ?? options.gdbPath, env)
 
-    if (serverArgv) serverArgv[0] = serverBinary(kind as Exclude<GdbServerKind, "external">)
+    if (serverArgv) serverArgv[0] = serverBinary(kind as Exclude<GdbServerKind, "external">, env)
 
     if (PROBE_SERVERS.has(kind)) {
       const holder = claimProbe(
@@ -422,12 +424,13 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
       await mkdir(dir, { recursive: true })
       const tag = stamp()
       if (serverArgv) {
-        server = spawnServer(serverArgv, port, cwd, path.join(dir, `server-${tag}.log`))
+        server = spawnServer(serverArgv, port, cwd, path.join(dir, `server-${tag}.log`), env)
         await waitForServerReady(server, caps().readyRe, SERVER_READY_MS, signal, kind === "jlink")
       }
       started = new GdbSession({
         gdbPath,
         cwd,
+        env,
         logFile: path.join(dir, `session-${tag}.log`),
         miFile: path.join(dir, `session-${tag}.mi`),
         stopsFile: path.join(dir, `stops-${tag}.jsonl`),
@@ -806,7 +809,9 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
 
   async function stop(params: GdbInput): Promise<GdbResult> {
     if (params.keepServer && serverKind === "jlink" && server && !server.exited) {
-      throw new Error("J-Link uses single-run mode so disconnect can clean up hardware breakpoints; keepServer is not supported. Keep this session open, or use a separately managed server with connect for a manual handover.")
+      throw new Error(
+        "J-Link uses single-run mode so disconnect can clean up hardware breakpoints; keepServer is not supported. Keep this session open, or use a separately managed server with connect for a manual handover.",
+      )
     }
     if (!session?.running) {
       // 会话可能已经死了(gdb 崩了)但 server 还在:一并收掉。
@@ -832,6 +837,7 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
     cwd: string,
     onUpdate: Update,
     signal: AbortSignal | undefined,
+    env: NodeJS.ProcessEnv,
   ): Promise<GdbResult> {
     const merged = abortOf(signal)
     // 这一轮已经被用户停掉(信号在排队期间就响了):碰目标的动作一个都别做。status / stop 无害。
@@ -842,7 +848,7 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
       case "start":
         starting = true
         try {
-          return await start(params, cwd, merged)
+          return await start(params, cwd, merged, env)
         } finally {
           starting = false
         }
@@ -873,12 +879,13 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
       await serialize(() => teardown(false)).catch(() => undefined)
     },
     execute: (_toolCallId, params, onUpdate, toolContext, _invocation, context) => {
+      const env = executionEnvSnapshot(toolContext.env)
       // status 不排队:它只读闭包里的状态,发的 MI 命令由 GdbSession.send 自己串行;排进队列的话一次 30 秒的
       // continue 会把"现在在哪"这个最常问的问题堵到 30 秒之后(审稿实测)。
-      if (params.action === "status") return run(params, toolContext.env.cwd, onUpdate, context.abortSignal)
+      if (params.action === "status") return run(params, toolContext.env.cwd, onUpdate, context.abortSignal, env)
       return serialize(() => {
         if (disposed && params.action !== "stop") throw new Error(`gdb ${params.action}: the session is closing`)
-        return run(params, toolContext.env.cwd, onUpdate, context.abortSignal)
+        return run(params, toolContext.env.cwd, onUpdate, context.abortSignal, env)
       })
     },
   }

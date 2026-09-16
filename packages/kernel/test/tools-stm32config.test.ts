@@ -3,10 +3,10 @@
  *
  * 1. 契约与 argv 构造:七个命令、没有确认门、summary、`stm32kernel --help` 逐字对应的 argv。
  * 2. **假内核**(fixtures/fake-exe.ts 包成可执行文件):退出码分类学(0 / 1 诊断 / 2 用法 / 崩溃)、路径解析、
- *    配置文档预检、没有器件数据时的话、schema 不要数据、中止、进度旁路。
+ *    配置文档预检、资源准备接线、schema 不要数据、中止、进度旁路和生成版本记录。
  * 3. **真内核**(仓库 engines/bin/stm32kernel 在时才跑):`schema` 不要数据;其余命令还要 irpack ——
  *    `engines/data/stm32` 里有就用它,没有就看 `YOMA_TEST_STM32_DATA`(指向一个装了 irpack 的目录),都没有就跳过。
- *    irpack 是 CubeMX 器件库的解析产物,不进 git,CI 上没有是预期。
+ *    这层注入准备好的数据只验证工具与引擎协议;本机 CubeMX 的发现/转换/固件准备由资源模块测试独立验收。
  */
 
 import {
@@ -39,7 +39,7 @@ import {
   type Stm32ConfigInput,
   stm32ConfigSummary,
 } from "../src/host/tools/stm32config/contract.ts"
-import { createStm32ConfigTool, describeCoverage, noDataPacksMessage } from "../src/host/tools/stm32config/session.ts"
+import { createStm32ConfigTool, type Stm32ConfigToolOptions } from "../src/host/tools/stm32config/session.ts"
 import { writeFakeExe } from "./fixtures/fake-exe.ts"
 
 // ─── 脚手架 ──────────────────────────────────────────────────────────────────
@@ -71,7 +71,7 @@ const invocation: AgentHarnessToolInvocation = {
 
 type Update = (partial: AgentToolResult<Stm32ConfigDetails>) => void
 
-/** 造一个 bin/data 布局的 engines 根;bins 里给出的假引擎会写进 bin/,data/stm32 里放一个假 irpack(除非 noData)。 */
+/** 测试夹具:bin/ 是假引擎,其余目录只供注入的资源准备函数使用,不是生产资源布局。 */
 function makeEnginesDir(bins: Record<string, string>, options: { noData?: boolean } = {}): string {
   const root = createTempDir()
   mkdirSync(join(root, "bin"), { recursive: true })
@@ -83,12 +83,24 @@ function makeEnginesDir(bins: Record<string, string>, options: { noData?: boolea
   return root
 }
 
-function makeTool(enginesDir: string) {
+function makeTool(enginesDir: string, prepare?: Stm32ConfigToolOptions["prepare"]) {
   const cwd = createTempDir()
-  const tool = createStm32ConfigTool({ enginesDir })
+  const configDir = createTempDir()
+  const prepareResources =
+    prepare ??
+    vi.fn(async () => {
+      const dataDir = join(enginesDir, "data", "stm32")
+      if (!existsSync(dataDir) || !readdirSync(dataDir).some((file) => file.endsWith(".irpack"))) {
+        throw new Error("CubeMX database not configured (fixture)")
+      }
+      const manifestPath = join(enginesDir, "stm32-resources.json")
+      writeFileSync(manifestPath, JSON.stringify({ schemaVersion: 1, database: { hash: "fixture" } }))
+      return { dataDir, fwDir: join(dataDir, "fw"), manifestPath, families: ["STM32F4"] }
+    })
+  const tool = createStm32ConfigTool({ enginesDir, configDir, prepare: prepareResources })
   const run = (params: Stm32ConfigInput, context: Context = BACKGROUND_CONTEXT, onUpdate: Update = () => {}) =>
     tool.execute("c1", params, onUpdate, { env: new NodeExecutionEnv({ cwd }) }, invocation, context)
-  return { tool, run, cwd }
+  return { tool, run, cwd, configDir, prepareResources }
 }
 
 function textOf(result: AgentToolResult<Stm32ConfigDetails>): string {
@@ -101,7 +113,11 @@ const abortAfter = (ms: number): Context => {
   return withAbortSignal(controller.signal, BACKGROUND_CONTEXT)
 }
 
-const ECHO_ARGV_JS = `console.log(JSON.stringify({ argv: "argv: " + process.argv.slice(2).join(" ") }));`
+const ECHO_ARGV_JS = `
+import { mkdirSync } from "node:fs";
+const args = process.argv.slice(2);
+if (args[0] === "generate") mkdirSync(args[args.indexOf("--out") + 1], {recursive:true});
+console.log(JSON.stringify({ argv: "argv: " + args.join(" ") }));`
 
 // ─── 1. 契约与 argv ───────────────────────────────────────────────────────────
 
@@ -299,6 +315,106 @@ describe("stm32config buildArgs", () => {
 // ─── 2. 假内核 ────────────────────────────────────────────────────────────────
 
 describe("stm32config tool (fake kernel)", () => {
+  it("prepares the config's MCU and firmware, forwards progress, and records versions only after generation succeeds", async () => {
+    const source = createTempDir()
+    const manifestPath = join(source, "manifest.json")
+    const manifest = JSON.stringify({
+      schemaVersion: 1,
+      database: { hash: "db-version" },
+      firmware: { version: "1.6.3" },
+    })
+    writeFileSync(manifestPath, manifest)
+    const prepared = {
+      dataDir: join(source, "devices"),
+      fwDir: join(source, "firmware"),
+      manifestPath,
+      families: ["STM32G4"],
+    }
+    const prepare = vi.fn<NonNullable<Stm32ConfigToolOptions["prepare"]>>(async (options) => {
+      options.onProgress?.("Preparing STM32G4 from local CubeMX")
+      return prepared
+    })
+    const enginesDir = makeEnginesDir({ stm32kernel: ECHO_ARGV_JS }, { noData: true })
+    const { run, cwd, configDir } = makeTool(enginesDir, prepare)
+    writeFileSync(join(cwd, "board.json"), JSON.stringify({ mcu: { part: "STM32G473RCTx" } }))
+    const signal = new AbortController().signal
+    const updates: string[] = []
+    const spawn = vi.spyOn(engines, "runEngine")
+    const result = await run(
+      { command: "generate", configPath: "board.json", part: "STM32F405RGTx", out: "fw" },
+      withAbortSignal(signal, BACKGROUND_CONTEXT),
+      (partial) => updates.push(textOf(partial)),
+    )
+    expect(prepare).toHaveBeenCalledWith(
+      expect.objectContaining({
+        enginesDir,
+        configDir,
+        projectDir: cwd,
+        part: "STM32G473RCTx",
+        firmware: true,
+        signal,
+      }),
+    )
+    expect(prepare.mock.calls.map(([options]) => options.firmware)).toEqual([false, true])
+    expect(spawn.mock.calls.map(([, args]) => args[0])).toEqual(["validate", "generate"])
+    expect(updates).toContain("Preparing STM32G4 from local CubeMX\n")
+    expect(JSON.parse(textOf(result).split("\n\n")[0]!).argv).toContain(
+      `--fw-dir ${prepared.fwDir} --data-dir ${prepared.dataDir}`,
+    )
+    expect(result.details.resourceManifest).toBe(join(cwd, "fw", "stm32-resources.json"))
+    expect(readFileSync(result.details.resourceManifest!, "utf8")).toBe(manifest)
+  })
+
+  it("does not replace a generated project's provenance when validation fails", async () => {
+    const { run, cwd, prepareResources } = makeTool(
+      makeEnginesDir({
+        stm32kernel: `console.log('{"diagnostics":[{"code":"PIN_CONFLICT"}]}'); process.exitCode = 1;`,
+      }),
+    )
+    writeFileSync(join(cwd, "board.json"), JSON.stringify({ mcu: { part: "STM32F405RGTx" } }))
+    mkdirSync(join(cwd, "fw"))
+    const manifestPath = join(cwd, "fw", "stm32-resources.json")
+    writeFileSync(manifestPath, "previous generation")
+    const result = await run({ command: "generate", configPath: "board.json", out: "fw" })
+    expect(result.details.exitCode).toBe(1)
+    expect(result.details.resourceManifest).toBeUndefined()
+    expect(prepareResources).toHaveBeenCalledTimes(1)
+    expect(prepareResources).toHaveBeenCalledWith(expect.objectContaining({ firmware: false }))
+    expect(readFileSync(manifestPath, "utf8")).toBe("previous generation")
+  })
+
+  it("uses config-scoped query resources without requiring firmware and preserves malformed-config diagnostics", async () => {
+    const { run, cwd, prepareResources } = makeTool(
+      makeEnginesDir({
+        stm32kernel: `console.log('{"diagnostics":[{"code":"DOC_PARSE"}]}'); process.exitCode = 1;`,
+      }),
+    )
+    writeFileSync(join(cwd, "board.json"), JSON.stringify({ mcu: { part: "STM32G473RCTx" } }))
+    await run({ command: "candidates", configPath: "board.json", part: "STM32F405RGTx", peripheral: "USART1" })
+    expect(prepareResources).toHaveBeenLastCalledWith(
+      expect.objectContaining({ part: "STM32G473RCTx", firmware: false }),
+    )
+    writeFileSync(join(cwd, "board.json"), "{")
+    const malformed = await run({ command: "generate", configPath: "board.json", out: "fw" })
+    expect(prepareResources).toHaveBeenLastCalledWith(expect.objectContaining({ part: undefined, firmware: false }))
+    expect(textOf(malformed)).toContain("DOC_PARSE")
+    expect(existsSync(join(cwd, "fw"))).toBe(false)
+  })
+
+  it("does not launch the engine when cancellation happens during resource preparation", async () => {
+    const controller = new AbortController()
+    const prepare = vi.fn<NonNullable<Stm32ConfigToolOptions["prepare"]>>(async () => {
+      controller.abort()
+      return { dataDir: "unused", manifestPath: "unused", families: [] }
+    })
+    const { run } = makeTool(makeEnginesDir({ stm32kernel: ECHO_ARGV_JS }), prepare)
+    const spawn = vi.spyOn(engines, "runEngine")
+    await expect(run({ command: "list-mcus" }, withAbortSignal(controller.signal, BACKGROUND_CONTEXT))).rejects.toThrow(
+      "was aborted",
+    )
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
   it("keeps the full describe-mcu result when the preview cannot fit all pads", async () => {
     const { run } = makeTool(
       makeEnginesDir({ stm32kernel: `console.log(JSON.stringify({ pads: "x".repeat(50000), lastPad: "PC15" }));` }),
@@ -341,17 +457,16 @@ describe("stm32config tool (fake kernel)", () => {
     expect((error as Error).message.length).toBeLessThan(9_000)
   })
 
-  it("rejects a directory config and an empty data directory before running the engine", async () => {
+  it("rejects a directory config and propagates a resource preparation failure before running the engine", async () => {
     const root = makeEnginesDir({ stm32kernel: ECHO_ARGV_JS })
     const { run, cwd } = makeTool(root)
     await expect(run({ command: "validate", configPath: cwd })).rejects.toThrow("not a regular file")
     rmSync(join(root, "data", "stm32", "stm32f4.irpack"))
-    await expect(run({ command: "list-mcus" })).rejects.toThrow("no STM32 device data packs")
+    await expect(run({ command: "list-mcus" })).rejects.toThrow("CubeMX database not configured (fixture)")
   })
-  it("runs the kernel, returns its stdout, and names the coverage in the description", async () => {
+  it("runs the kernel with prepared resources without freezing coverage in its description", async () => {
     const { tool, run } = makeTool(makeEnginesDir({ stm32kernel: ECHO_ARGV_JS }))
-    expect(tool.description).toContain("Device packs on this machine: 1 — STM32F4.")
-    expect(tool.description.startsWith(STM32CONFIG_CONTRACT.description)).toBe(true)
+    expect(tool.description).toBe(STM32CONFIG_CONTRACT.description)
     const result = await run({ command: "list-mcus" })
     expect(textOf(result)).toContain("argv: list-mcus --data-dir")
     expect(result.details).toEqual({ command: "list-mcus", exitCode: 0 })
@@ -395,7 +510,7 @@ describe("stm32config tool (fake kernel)", () => {
 
   it("appends build instructions with an explicit working directory after a successful generate", async () => {
     const { run, cwd } = makeTool(makeEnginesDir({ stm32kernel: ECHO_ARGV_JS }))
-    writeFileSync(join(cwd, "board.json"), "{}")
+    writeFileSync(join(cwd, "board.json"), JSON.stringify({ mcu: { part: "STM32F405RGTx" } }))
     const result = await run({ command: "generate", configPath: "board.json", out: "fw" })
     expect(textOf(result)).toContain(`Project generated at ${join(cwd, "fw")}`)
     expect(textOf(result)).toContain("change to that directory, then run:")
@@ -418,17 +533,14 @@ describe("stm32config tool (fake kernel)", () => {
     await expect(crash.run({ command: "list-mcus" })).rejects.toThrow(/failed \(exit 101\): panic/)
   })
 
-  it("schema works without device data; every other command explains that no data packs are installed", async () => {
-    const { tool, run } = makeTool(makeEnginesDir({ stm32kernel: ECHO_ARGV_JS }, { noData: true }))
-    expect(tool.description).toContain("no device data packs installed")
+  it("schema never prepares resources; other commands preserve the resource module's actionable error", async () => {
+    const { run, prepareResources } = makeTool(makeEnginesDir({ stm32kernel: ECHO_ARGV_JS }, { noData: true }))
     expect(textOf(await run({ command: "schema" }))).toContain("argv: schema")
-    await expect(run({ command: "list-mcus" })).rejects.toThrow(noDataPacksMessage("list-mcus"))
-    await expect(run({ command: "describe-mcu", part: "STM32F405RGTx" })).rejects.toThrow(/no STM32 device data packs/)
-    expect(describeCoverage({ enginesDir: createTempDir() })).toContain("only `schema` works")
-    // 数据目录在但一个 irpack 都没有:同一句话。
-    const empty = createTempDir()
-    mkdirSync(join(empty, "data", "stm32"), { recursive: true })
-    expect(describeCoverage({ enginesDir: empty })).toContain("no device data packs installed")
+    expect(prepareResources).not.toHaveBeenCalled()
+    await expect(run({ command: "list-mcus" })).rejects.toThrow("CubeMX database not configured (fixture)")
+    await expect(run({ command: "describe-mcu", part: "STM32F405RGTx" })).rejects.toThrow(
+      "CubeMX database not configured (fixture)",
+    )
   })
 
   it("does not spawn when the turn is already aborted, and aborts a running kernel with its label", async () => {

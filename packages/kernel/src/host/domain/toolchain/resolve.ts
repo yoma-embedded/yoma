@@ -8,34 +8,16 @@
  * 探测顺序(每一档能被更早的档覆盖,来源见 ResolveSource):
  *   local(项目级手动覆盖) > ledger(这台机器上次确认过的) > env(清单点名的环境变量)
  *   > path(PATH 扫描) > well-known(平台已知安装位置) > registry(Windows 注册表)
- * 命中一档不代表定案:哪一档的版本不满足 tool.version 都不算数,继续往后找 ——
- * 只有全部七档都试过仍不满足才最终报 version-mismatch(见 resolveTool 的循环)。
+ * 项目 local 与用户账本记录是明确选择:失效或版本不符也原样报告,不静默换版本。
+ * 自动发现的候选不满足时才继续后续档位。
  * local/ledger/env/path 四档天然只产出一个候选;well-known/registry 可能在同一档
  * 内产出多个目录(比如 CubeIDE 内置 arm-gcc 10.3 和独立装的 13.2 同时存在)——都
  * 满足版本要求时取第一个但把全部记进 candidates,版本满足情况不一致(有的满足
  * 有的不满足)时报 ambiguous 而不是替用户悄悄选一个:悄悄选的后果是"选错照样能
  * 编译,炸在很远的地方"(根 CLAUDE.md 反复出现的那类教训)。
  *
- * 关于 tool.bin 数组的语义:同一个字段在真实清单里被用出了两种意图 —— arm-gcc 的
- * ["arm-none-eabi-gcc","arm-none-eabi-g++","arm-none-eabi-objcopy","arm-none-eabi-size"]
- * 是"这几个可执行文件都要有"(cmake 工具链文件把四个角色都钉死成这几个名字),
- * arm-gdb 的 ["arm-none-eabi-gdb","gdb-multiarch","gdb"] 是"这几个名字随便哪个能
- * 跑就行"(gdb.ts 的 preferredGdbNames 就是纯 alternation)。schema 没有字段区分
- * 这两种意图,这里选了一条对两种意图都不错的统一规则:同一处候选位置(同一次
- * PATH 扫描 / 同一个已知目录)里,只要**至少一个**声明的名字解析到就算这一档
- * 命中;解析到的每个名字各自记进 bin,没解析到的就不出现在结果里 —— arm-gdb 这
- * 类"只需要一个"天然只会产出一个条目,arm-gcc 这类"全部共存于同一目录"的真实
- * 分发形态,实践中会一起解析到,不需要再加一层"必须凑齐几个"的校验。exports 的
- * {bin} 替换、probeVersion 探测用的"这个工具的代表路径",取的都是 tool.bin 声明
- * 顺序里第一个**真的解析到了**的名字(不是数组第一个,是数组里第一个有着落的 ——
- * gdb 场景下声明顺序里第一名常常没装,第二名才是真身)。
- *
- * ledger/local 命中都要先用 existsSync 复核 entry 里每一条记录的路径还在不在 ——
- * 账本记的是"上次问过一次",不是"现在还对";用户卸载重装、或者换了个盘,账本
- * 指向的路径消失,静默拿它去 probeVersion/spawn 只会报一个和真实原因风马牛不相及
- * 的错误("工具坏了"而不是"工具挪了地方")。只要 entry.bin 里有一条路径不在了,
- * 整条 entry 当作过期,不做"部分采信"—— 半新半旧的账本条目比整条重新探测更难
- * 排查,也更难在 promptSectionFor 里说清楚"到底信了哪一半"。
+ * binMode 明确区分全部必需入口与可替代入口。保存路径、找到入口、执行成功和
+ * 版本满足是不同事实;目录资源只记 configured,不冒充可执行工具。
  *
  * 不写回账本:resolveToolchain 是纯读函数 —— 探测到的结果要不要记回
  * `<configDir>/toolchains.json`,契约没有点这件事,交给下一层(kernel host / bench
@@ -50,14 +32,20 @@ import path from "node:path";
 
 import { type HostKey, hostKey, type Installable, installableFor } from "./catalog.ts";
 import { listManagedInstalls } from "./install.ts";
-import { emptyLedger, readLedger, readLocalOverrides } from "./ledger.ts";
+import { readLedger, readLocalOverrides } from "./ledger.ts";
 import type { Ledger, LedgerEntry } from "./ledger.ts";
 import { findEnvKey, findOnPath, registryCandidates, wellKnownCandidates, withPath } from "./locations.ts";
 import { installHint, manifestForSide, MANIFEST_RELATIVE, parseManifest } from "./schema.ts";
 import type { ToolchainManifest, ToolSpec } from "./schema.ts";
-import { probeVersion, satisfies } from "./version.ts";
+import { executableEntries, pathType } from "./entries.ts";
+import { probeExecutable, satisfies } from "./version.ts";
 
-export type ToolStatus = "ok" | "version-mismatch" | "ambiguous" | "missing";
+export type ToolStatus = "ok" | "configured" | "recorded" | "unverified" | "version-mismatch" | "ambiguous" | "missing";
+export interface ToolChecks {
+	entry: "found" | "partial" | "missing" | "directory";
+	execution: "passed" | "unverified" | "not-applicable";
+	version: "satisfied" | "mismatch" | "unknown" | "not-required";
+}
 /**
  * "managed" = Yoma 自己装进 `<configDir>/toolchains/` 的(install.ts),排在账本之后、
  * 环境变量之前:skipLedger 的新鲜探测也必须找得到它,否则设置页"重新探测"一按,
@@ -68,6 +56,8 @@ export type ResolveSource = "local" | "ledger" | "managed" | "env" | "path" | "w
 export interface ResolvedTool {
 	id: string;
 	status: ToolStatus;
+	checks?: ToolChecks;
+	missingBins?: string[];
 	optional: boolean;
 	bin: Record<string, string>;
 	version?: string;
@@ -133,6 +123,24 @@ function primaryBinPath(bin: Record<string, string>, names: string[]): string | 
 	return Object.values(bin)[0];
 }
 
+/** 探测与实际执行共用模板规则;调用方明确提供的环境值始终优先。 */
+function applyToolExports(tool: ToolSpec, bin: Record<string, string>, env: NodeJS.ProcessEnv): void {
+	const primary = primaryBinPath(bin, tool.bin ?? []);
+	if (primary === undefined) return;
+	for (const [name, template] of Object.entries(tool.exports ?? {})) {
+		if (env[name] !== undefined) continue;
+		env[name] = template.replaceAll("{bin}", primary).replaceAll("{path}", primary);
+	}
+}
+
+function probeEnv(tool: ToolSpec, bin: Record<string, string>, base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+	const pathValue = base[findEnvKey(base, "PATH") ?? "PATH"] ?? "";
+	const dirs = [...new Set(Object.values(bin).map((file) => path.dirname(file)))];
+	const env = withPath(base, [...dirs, ...pathValue.split(path.delimiter).filter(Boolean)]);
+	applyToolExports(tool, bin, env);
+	return env;
+}
+
 function dedupe(items: string[]): string[] {
 	return [...new Set(items)];
 }
@@ -140,11 +148,10 @@ function dedupe(items: string[]): string[] {
 // ─── 七档里的前四档:local / ledger / env / path,天然只产出一个候选 ─────────────
 
 /**
- * local 与 ledger 同构:条目在、且记的每条路径都还存在,才算这一档命中 ——
- * 见文件头「半新半旧」那段(整条 entry 要么全采信要么全作废,不做部分采信)。
+ * 自动发现缓存可过期重探;用户选择即使路径失效也保留,由后续验证明确报告。
  */
-function entryHits(entry: LedgerEntry | undefined): Hit[] {
-	return entry && allPathsExist(entry.bin) ? [entry.bin] : [];
+function entryHits(entry: LedgerEntry | undefined, explicit = false): Hit[] {
+	return entry && (explicit || entry.by === "user" || allPathsExist(entry.bin)) ? [entry.bin] : [];
 }
 
 /** tool.env 按声明顺序尝试,第一个指向存在路径的变量就赢 —— alternation,不是"全部收集"。 */
@@ -249,12 +256,11 @@ async function resolveTool(tool: ToolSpec, ctx: ResolveCtx): Promise<ResolvedToo
 	const names = tool.bin ?? [];
 	const optional = tool.optional ?? false;
 	const wanted = tool.version;
-
-	// 每一档写成一个 thunk 而不是提前算好的数组:well-known/registry 两档的代价不
-	// 便宜(glob 展开、reg.exe 子进程),真正需要的是"只在前面几档都没答案时才去
-	// 碰它们",提前算好等于白白替每个工具多跑两次昂贵探测。
+	const installable = installableFor(tool.id, ctx.host);
+	const hint = installHint(ctx.manifest, tool, ctx.platform);
+	const base = { id: tool.id, optional, wanted, why: tool.why };
 	const tiers: Array<[ResolveSource, () => Hit[]]> = [
-		["local", () => entryHits(ctx.localOverrides[tool.id])],
+		["local", () => entryHits(ctx.localOverrides[tool.id], true)],
 		["ledger", () => entryHits(ctx.ledger.entries[tool.id])],
 		["managed", () => managedHits(tool, ctx.configDir, ctx.env)],
 		["env", () => envHits(tool, ctx.env)],
@@ -262,100 +268,119 @@ async function resolveTool(tool: ToolSpec, ctx: ResolveCtx): Promise<ResolvedToo
 		["well-known", () => wellKnownHits(tool, ctx.platform, ctx.env)],
 		["registry", () => registryHits(tool, ctx.platform, ctx.env)],
 	];
-
+	let firstFailure: ResolvedTool | undefined;
 	const seen: string[] = [];
-	let missSource: ResolveSource | undefined;
-	let missVersion: string | undefined;
-
-	const satisfiesWanted = (v: string | undefined): boolean => wanted === undefined || (v !== undefined && satisfies(v, wanted));
-
-	// 能不能让 Yoma 自己装:只看 catalog 有没有这台机器的包。钉的版本满不满足清单要的范围
-	// 是提示词 / UI 展示时的事(lineFor 在不满足时明确说"装了也不够,转告用户"),数据本身
-	// 照样带 —— 设置页要显示"可以装 X 版"让人自己判断。算在探测之前:ambiguous(两套版本
-	// 不一致的安装)也该给出"装一套钉死的"这条出路。
-	const installable = installableFor(tool.id, ctx.host);
-
 	for (const [source, getHits] of tiers) {
 		const hits = getHits();
-		if (hits.length === 0) continue;
-
 		const probed = await Promise.all(
-			hits.map(async (hit) => {
-				const primary = primaryBinPath(hit, names);
-				const version = primary !== undefined ? await probeVersion(primary) : undefined;
-				return { bin: hit, primary, version };
+			hits.map(async (hit): Promise<ResolvedTool> => {
+				const recorded = Object.values(hit);
+				if (tool.pathKind === "dir") {
+					const directory = recorded.find((value) => pathType(value) === "dir");
+					return {
+						...base,
+						source,
+						bin: hit,
+						status: directory ? "configured" : "recorded",
+						hint,
+						checks: {
+							entry: directory ? "directory" : "missing",
+							execution: "not-applicable",
+							version: "not-required",
+						},
+					};
+				}
+				const bin = executableEntries(tool, hit, ctx.env);
+				const located = Object.keys(bin);
+				const missingBins = names.filter((name) => !bin[name]);
+				if (located.length === 0)
+					return {
+						...base,
+						source,
+						bin: {},
+						candidates: recorded,
+						status: "recorded",
+						missingBins,
+						hint,
+						installable,
+						checks: { entry: "missing", execution: "unverified", version: wanted ? "unknown" : "not-required" },
+					};
+				const ordered = names.length ? names.filter((name) => bin[name]) : located;
+				const all = tool.binMode === "all";
+				const results = await Promise.all(
+					ordered.map(async (name) => ({
+						name,
+						...(await probeExecutable(bin[name]!, probeEnv(tool, all ? bin : { [name]: bin[name]! }, ctx.env))),
+					})),
+				);
+				// all 的版本范围指向主入口(如 gcc),而非 objcopy 等使用独立版本号的伴随工具。
+				const primary = all
+					? results[0]!
+					: (results.find(
+							(r) => r.executable && r.version !== undefined && (!wanted || satisfies(r.version, wanted)),
+						) ?? results[0]!);
+				const version = primary.version;
+				const complete = !all || missingBins.length === 0;
+				const executable = complete && (all ? results.every((r) => r.executable) : primary.executable);
+				const versionCheck: ToolChecks["version"] =
+					version === undefined
+						? "unknown"
+						: !wanted
+							? "not-required"
+							: satisfies(version, wanted)
+								? "satisfied"
+								: "mismatch";
+				const status: ToolStatus =
+					!complete || !executable || versionCheck === "unknown"
+						? "unverified"
+						: versionCheck === "mismatch"
+							? "version-mismatch"
+							: "ok";
+				// any 只暴露被选择的入口,避免 exports/PATH 再选回刚刚探测失败的首选。
+				const selected = all ? bin : { [primary.name]: bin[primary.name]! };
+				return {
+					...base,
+					source,
+					status,
+					bin: status === "version-mismatch" ? {} : selected,
+					version,
+					candidates: status === "version-mismatch" ? Object.values(selected) : undefined,
+					missingBins: all && missingBins.length ? missingBins : undefined,
+					hint: status === "ok" ? undefined : hint,
+					installable: status === "ok" ? undefined : installable,
+					checks: {
+						entry: complete ? "found" : "partial",
+						execution: executable ? "passed" : "unverified",
+						version: versionCheck,
+					},
+				};
 			}),
 		);
-
-		const good = probed.filter((p) => satisfiesWanted(p.version));
-		const bad = probed.filter((p) => !satisfiesWanted(p.version));
-
-		if (good.length > 0 && bad.length === 0) {
-			const winner = good[0];
-			return {
-				id: tool.id,
-				status: "ok",
-				optional,
-				bin: winner.bin,
-				version: winner.version,
-				wanted,
-				source,
-				// 只有一个候选时不必列 candidates —— bin/version 已经说完了全部事实。
-				candidates: probed.length > 1 ? dedupe(probed.map((p) => p.primary).filter((p): p is string => p !== undefined)) : undefined,
-				why: tool.why,
-			};
+		const good = probed.filter((p) => p.status === "ok" || p.status === "configured");
+		// 明确选过的路径属于用户意图。失效/版本错误也必须如实返回,不从全局找一套掩盖它。
+		if (probed.length && (source === "local" || (source === "ledger" && ctx.ledger.entries[tool.id]?.by === "user")))
+			return probed[0]!;
+		if (good.length) {
+			const winner = good[0]!;
+			const candidates = dedupe(probed.flatMap((p) => [...Object.values(p.bin), ...(p.candidates ?? [])]));
+			if (probed.some((p) => p.status !== winner.status))
+				return { ...winner, status: "ambiguous", candidates, installable };
+			return { ...winner, candidates: probed.length > 1 ? candidates : undefined };
 		}
-
-		if (good.length > 0 && bad.length > 0) {
-			// 同一档内多个候选,版本满足情况却不一致 —— 不能替用户悄悄挑一个能用的:
-			// 见文件头 CubeIDE 10.3 / 独立装 13.2 那个真实场景,悄悄选错的代价是"编
-			// 得过,炸在很远的地方"。把两种都亮出来,交给用户或人工确认。
-			const winner = good[0];
-			return {
-				id: tool.id,
-				status: "ambiguous",
-				optional,
-				bin: winner.bin,
-				version: winner.version,
-				wanted,
-				source,
-				candidates: dedupe(probed.map((p) => p.primary).filter((p): p is string => p !== undefined)),
-				why: tool.why,
-				installable,
-			};
+		for (const result of probed) {
+			firstFailure ??= result;
+			seen.push(...Object.values(result.bin), ...(result.candidates ?? []));
 		}
-
-		// 这一档命中了,但没有一个满足版本 —— 记下来,交给下一档碰碰运气(下一档
-		// 可能是版本更合适的安装)。只记第一次撞见的 source/version 做为参考:
-		// 后面几档即使同样不满足,报告里"最先在哪撞见的"已经够用,不需要罗列每一档。
-		if (missSource === undefined) {
-			missSource = source;
-			missVersion = probed.find((p) => p.version !== undefined)?.version;
-		}
-		for (const p of probed) if (p.primary !== undefined) seen.push(p.primary);
 	}
-
-	const hint = installHint(ctx.manifest, tool, ctx.platform);
-
-	if (seen.length > 0) {
-		// 全部七档都探过一遍,没有一个满足版本 —— 定案。bin 留空:没有任何一个候选
-		// "赢",candidates 是唯一能看到"到底找到了什么、只是版本不对"的地方。
-		return {
-			id: tool.id,
-			status: "version-mismatch",
-			optional,
-			bin: {},
-			version: missVersion,
-			wanted,
-			source: missSource,
-			candidates: dedupe(seen),
-			hint,
-			why: tool.why,
-			installable,
-		};
-	}
-
-	return { id: tool.id, status: "missing", optional, bin: {}, wanted, hint, why: tool.why, installable };
+	if (firstFailure) return { ...firstFailure, candidates: dedupe(seen) };
+	return {
+		...base,
+		status: "missing",
+		bin: {},
+		hint,
+		installable,
+		checks: { entry: "missing", execution: "unverified", version: wanted ? "unknown" : "not-required" },
+	};
 }
 
 // ─── 顶层入口 ────────────────────────────────────────────────────────────────
@@ -364,7 +389,7 @@ export async function resolveToolchain(opts: {
 	projectDir: string;
 	configDir?: string;
 	/**
-	 * 跳过账本读取,当作"这台机器还没确认过任何工具"重新探测一遍。
+	 * 跳过自动发现的账本缓存;用户选择仍保留并重新验证。
 	 *
 	 * 跳过的只是**读**:写回账本仍由调用方做(tools/toolchain.ts 的 rememberFreshResults)
 	 * —— resolve 动作的语义就是"不信旧记录,重新看一遍,再把新答案记下来"。
@@ -404,8 +429,10 @@ export async function resolveToolchain(opts: {
 	const manifest = manifestForSide(parsed.manifest, side);
 	const [localOverrides, ledger] = await Promise.all([
 		readLocalOverrides(opts.projectDir),
-		opts.skipLedger ? emptyLedger() : readLedger(opts.configDir),
+		readLedger(opts.configDir),
 	]);
+	// 重新探测只丢弃自动发现缓存,用户明确选择仍是配置,必须重新验证而不是遗忘。
+	if (opts.skipLedger) ledger.entries = Object.fromEntries(Object.entries(ledger.entries).filter(([, entry]) => entry.by === "user"));
 
 	// 工具之间并发:ctx 全只读、resolveTool 不写任何东西(账本要不要写是上层的决定,
 	// 见文件头),顺序由 Promise.all 保住。收益来自 probeVersion 与 well-known 的 glob;
@@ -429,10 +456,14 @@ export async function resolveToolchain(opts: {
 // ─── 子进程环境 ──────────────────────────────────────────────────────────────
 
 /**
- * 解析结果 -> 子进程环境:把每个 ok 工具的 bin 所在目录前置进 PATH,再按 exports
+ * 解析结果 -> 子进程环境:完整可执行入口的目录前置进 PATH,再按 exports
  * 填变量。base 里已有的同名变量:exports 不覆盖(用户显式设的赢),PATH 是前置
  * 不是替换。
  */
+export function hasExecutableEntries(tool: ResolvedTool): boolean {
+	return tool.status === "ok" || (tool.status === "unverified" && tool.checks?.entry === "found");
+}
+
 export function shellEnvFor(r: ToolchainResolution, base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 	const out: NodeJS.ProcessEnv = { ...base };
 
@@ -442,7 +473,7 @@ export function shellEnvFor(r: ToolchainResolution, base: NodeJS.ProcessEnv): No
 	const dirs: string[] = [];
 	const seenDirs = new Set<string>();
 	for (const tool of r.tools) {
-		if (tool.status !== "ok") continue;
+		if (!hasExecutableEntries(tool)) continue;
 		for (const binPath of Object.values(tool.bin)) {
 			const dir = path.dirname(binPath);
 			if (seenDirs.has(dir)) continue;
@@ -466,15 +497,9 @@ export function shellEnvFor(r: ToolchainResolution, base: NodeJS.ProcessEnv): No
 			const exportsSpec = toolSpec.exports;
 			if (!exportsSpec) continue;
 			const resolved = r.tools.find((t) => t.id === toolSpec.id);
-			// 只对 ok 的工具应用 exports:工具没解析成功时塞一个指向不存在路径的
-			// 环境变量,比压根不设更容易把 agent 引去撞一个看起来毫不相关的错误。
-			if (!resolved || resolved.status !== "ok") continue;
-			const primary = primaryBinPath(resolved.bin, toolSpec.bin ?? []);
-			if (primary === undefined) continue;
-			for (const [varName, template] of Object.entries(exportsSpec)) {
-				if (out[varName] !== undefined) continue; // 用户 / base 显式设的赢,exports 不覆盖
-				out[varName] = template.replaceAll("{bin}", primary);
-			}
+			// 目录配置可作为资源环境值交给消费者验证,但永远不加入可执行 PATH。
+			if (!resolved || (!hasExecutableEntries(resolved) && resolved.status !== "configured")) continue;
+			applyToolExports(toolSpec, resolved.bin, out);
 		}
 	}
 
@@ -492,6 +517,10 @@ function lineFor(t: ResolvedTool): string {
 		const versionPart = t.version ? `version ${t.version}` : "version unknown";
 		return `- ${label}: OK —${need}, resolved to ${primary} (${versionPart}, source: ${t.source ?? "unknown"}).`;
 	}
+
+	if (t.status === "configured") return `- ${label}: CONFIGURED — ${Object.values(t.bin)[0]}. Resource directory recorded; its contents and consuming capability are checked by the resource provider, not by an executable probe.`;
+	if (t.status === "recorded") return `- ${label}: RECORDED — ${(t.candidates ?? Object.values(t.bin)).join(", ")}. No declared executable entry was located; saving a path does not make this tool ready.`;
+	if (t.status === "unverified") return `- ${label}: UNVERIFIED — ${Object.values(t.bin).join(", ")}. ${t.missingBins?.length ? `Missing required entries: ${t.missingBins.join(", ")}.` : "Entry located, but execution/version verification did not pass. The explicit selection remains available; do not claim it is ready."}`;
 
 	// Yoma 自己能装的:让模型直接用 toolchain 工具的 install 动作,不必先去问用户。
 	// 下载来源是 catalog 钉死的官方发布 + sha256 校验,这一步没有需要人拍板的东西。

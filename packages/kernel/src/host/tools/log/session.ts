@@ -11,6 +11,7 @@
 
 import { mkdir } from "node:fs/promises"
 import path from "node:path"
+import { executionEnvSnapshot } from "../../domain/execution-env.ts"
 
 import type { AgentHarnessTool, AgentToolResult, ExecutionToolContext } from "@earendil-works/pi-agent-core"
 
@@ -34,6 +35,7 @@ import {
   normalizeSerialPort,
   prepareSerial,
   serialArgv,
+  serialPowershellExe,
   serialLabel,
   serialOpenConfirmMs,
 } from "./serial.ts"
@@ -68,16 +70,16 @@ function logFileName(now = new Date()): string {
  * 串口那条路的失败十有八九是"名字写成了别的样子"或者"口不在了",而 errno 本身指不出下一步动作。
  * 抛出去之前把这台机器上真实存在的口贴上 —— 否则模型会去查线。
  */
-async function portHint(): Promise<string> {
-  const ports = await listSerialPorts().catch(() => [])
+async function portHint(env: NodeJS.ProcessEnv): Promise<string> {
+  const ports = await listSerialPorts(process.platform, env).catch(() => [])
   return ports.length > 0 ? ` — ports on this machine: ${ports.map((entry) => entry.path).join(", ")}` : ""
 }
 
-async function withPortHints<T>(run: () => T): Promise<T> {
+async function withPortHints<T>(run: () => T, env: NodeJS.ProcessEnv): Promise<T> {
   try {
     return run()
   } catch (error) {
-    throw new Error(`log start: ${error instanceof Error ? error.message : String(error)}${await portHint()}`)
+    throw new Error(`log start: ${error instanceof Error ? error.message : String(error)}${await portHint(env)}`)
   }
 }
 
@@ -154,8 +156,10 @@ export function createLogTool(): LogTool {
       if (!active) return
       await active.stop().catch(() => {})
     },
-    execute: (_toolCallId, params, onUpdate, toolContext, _invocation, context) =>
-      serialize(() => executeAction(params, onUpdate, toolContext.env.cwd, context.abortSignal)),
+    execute: (_toolCallId, params, onUpdate, toolContext, _invocation, context) => {
+      const env = executionEnvSnapshot(toolContext.env)
+      return serialize(() => executeAction(params, onUpdate, toolContext.env.cwd, context.abortSignal, env))
+    },
   }
 
   async function executeAction(
@@ -163,6 +167,7 @@ export function createLogTool(): LogTool {
     onUpdate: Parameters<LogTool["execute"]>[2],
     cwd: string,
     abortSignal: AbortSignal | undefined,
+    env: NodeJS.ProcessEnv,
   ): Promise<AgentToolResult<LogDetails>> {
     {
       switch (params.action) {
@@ -190,11 +195,17 @@ export function createLogTool(): LogTool {
           )
           if (sources.length > 1) throw new Error(`log start: pass exactly one source, got ${sources.join(" + ")}`)
           if (params.port) {
-            const device = await withPortHints(() => normalizeSerialPort(params.port!))
+            const device = await withPortHints(() => normalizeSerialPort(params.port!), env)
             serial = { device, baud: clamp(params.baud, DEFAULT_BAUD, MIN_BAUD, MAX_BAUD) }
             const baud = serial.baud
             // Windows 上这一步会因为找不到 PowerShell 5.1 而抛:与其余串口步骤同形,带 `log start:` 前缀与端口清单。
-            source = { kind: "child", argv: await withPortHints(() => serialArgv(device, baud)) }
+            source = {
+              kind: "child",
+              argv: await withPortHints(
+                () => serialArgv(device, baud, process.platform, serialPowershellExe(undefined, env)),
+                env,
+              ),
+            }
             label = serialLabel(device, serial.baud)
           } else if (params.command) {
             const argv = splitArgv(params.command)
@@ -221,9 +232,11 @@ export function createLogTool(): LogTool {
           // 串口在这里才真打开:前面任何一步抛错都不该留下一个开着的设备。
           // 拿到的 fd 立刻交给 LogCapture,从此由它负责关(见 LogSource 的 hold)。
           const opening = serial
-          const hold = opening ? await withPortHints(() => prepareSerial(opening.device, opening.baud)) : undefined
+          const hold = opening
+            ? await withPortHints(() => prepareSerial(opening.device, opening.baud, process.platform, env), env)
+            : undefined
           if (hold !== undefined && source.kind === "child") source = { ...source, hold }
-          const started = new LogCapture(source, label, file, cwd)
+          const started = new LogCapture(source, label, file, cwd, { env })
           try {
             await started.start()
           } catch (error) {
@@ -242,7 +255,7 @@ export function createLogTool(): LogTool {
                 .join("; ")
                 .trim()
               await started.stop()
-              throw new Error(`log start: could not open ${label}${said ? `: ${said}` : ""}${await portHint()}`)
+              throw new Error(`log start: could not open ${label}${said ? `: ${said}` : ""}${await portHint(env)}`)
             }
           }
 
@@ -370,7 +383,7 @@ Next: \`log wait\` with a pattern (e.g. "boot|fault|error") — it blocks until 
         }
 
         case "ports": {
-          const ports = await listSerialPorts()
+          const ports = await listSerialPorts(process.platform, env)
           if (ports.length === 0) {
             const text =
               `no serial ports on this machine (${process.platform}). ` +

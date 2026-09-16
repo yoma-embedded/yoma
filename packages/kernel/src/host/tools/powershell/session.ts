@@ -25,6 +25,7 @@
 
 import { accessSync, constants, existsSync, statSync } from "node:fs"
 import path from "node:path"
+import { executionEnvSnapshot } from "../../domain/execution-env.ts"
 
 import {
   type AgentHarnessTool,
@@ -93,18 +94,13 @@ function isExecutableFile(file: string): boolean {
  * 而"问机器状态"那些路(Get-PnpDevice / System.IO.Ports / WMI)恰恰只有 inbox 5.1 一定有。
  * 非 Windows 只认 pwsh(PowerShell 7 跨平台),装了就用。
  */
-export function powershellExe(explicit?: string): string | undefined {
+export function powershellExe(explicit?: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
   if (explicit) return explicit
-  if (process.platform !== "win32") return findOnPath("pwsh")
-  const inbox = path.join(
-    process.env.SystemRoot ?? "C:\\Windows",
-    "System32",
-    "WindowsPowerShell",
-    "v1.0",
-    "powershell.exe",
-  )
+  const pathValue = Object.entries(env).find(([key]) => key.toLowerCase() === "path")?.[1]
+  if (process.platform !== "win32") return findOnPath("pwsh", pathValue)
+  const inbox = path.join(env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
   if (existsSync(inbox)) return inbox
-  return findOnPath("powershell.exe") ?? findOnPath("pwsh.exe")
+  return findOnPath("powershell.exe", pathValue) ?? findOnPath("pwsh.exe", pathValue)
 }
 
 /**
@@ -189,9 +185,10 @@ export function createPowerShellTool(
     parameters: POWERSHELL_CONTRACT.parameters,
     execute: async (_toolCallId, params, onUpdate, toolContext, _invocation, context) => {
       const env = toolContext.env
+      const processEnv = executionEnvSnapshot(env)
       // 这一轮已经被用户停掉:不要再起一个进程。runEngine 要到 spawn 之后才看信号。
       if (context.abortSignal?.aborted) throw new Error("powershell was aborted")
-      const exe = powershellExe(options.exe)
+      const exe = powershellExe(options.exe, processEnv)
       if (!exe) throw new Error(POWERSHELL_MISSING)
       const argv = powershellArgv(params.command, env.cwd)
       const timeoutMs = clamp(
@@ -206,7 +203,7 @@ export function createPowerShellTool(
       let liveErr = ""
       const result = await runEngine(exe, argv, {
         cwd: env.cwd,
-        env: powershellEnv(exe),
+        env: powershellEnv(exe, processEnv),
         signal: context.abortSignal,
         timeoutMs,
         onOutput: ({ stream, text }) => {

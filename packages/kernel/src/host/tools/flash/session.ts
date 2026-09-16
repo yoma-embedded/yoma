@@ -29,6 +29,7 @@
 import { createHash } from "node:crypto"
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises"
 import path from "node:path"
+import { executionEnvSnapshot } from "../../domain/execution-env.ts"
 
 import type { AgentHarnessTool, ExecutionToolContext } from "@earendil-works/pi-agent-core"
 
@@ -72,7 +73,9 @@ export interface FlashState {
 export const FLASH_STATE_FILE = path.join(".yoma", "flash-state.json")
 
 export async function sha256File(file: string): Promise<string> {
-  return createHash("sha256").update(await readFile(file)).digest("hex")
+  return createHash("sha256")
+    .update(await readFile(file))
+    .digest("hex")
 }
 
 /** 读不到/读坏了都返回 undefined:这是提示信息,不该成为烧录或调试的拦路虎。 */
@@ -99,7 +102,11 @@ async function fileExists(file: string): Promise<boolean> {
   )
 }
 
-export function createFlashTool(): AgentHarnessTool<ExecutionToolContext, typeof FLASH_CONTRACT.parameters, FlashDetails> {
+export function createFlashTool(): AgentHarnessTool<
+  ExecutionToolContext,
+  typeof FLASH_CONTRACT.parameters,
+  FlashDetails
+> {
   return {
     name: FLASH_CONTRACT.name,
     label: FLASH_CONTRACT.label,
@@ -111,9 +118,12 @@ export function createFlashTool(): AgentHarnessTool<ExecutionToolContext, typeof
     // 的代价可能是一块砖,而"上次烧到哪一步"内核并不知道。
     execute: async (_toolCallId, params, onUpdate, toolContext, _invocation, context) => {
       const cwd = toolContext.env.cwd
+      const processEnv = executionEnvSnapshot(toolContext.env)
       const command = params.command
       if (command.length === 0 || !command[0]?.trim()) {
-        throw new Error('flash requires command — the flasher argv, e.g. ["openocd","-f",...] or ["JLink","-CommanderScript",...]')
+        throw new Error(
+          'flash requires command — the flasher argv, e.g. ["openocd","-f",...] or ["JLink","-CommanderScript",...]',
+        )
       }
       const elf = params.elfPath ? resolveToCwd(cwd, params.elfPath) : undefined
       // 预检存在性:烧一个不存在的镜像时,烧录器自己的报错五花八门,而这一句是确定的。
@@ -135,6 +145,7 @@ export function createFlashTool(): AgentHarnessTool<ExecutionToolContext, typeof
       try {
         result = await runEngine(command[0], command.slice(1), {
           cwd,
+          env: processEnv,
           signal: context.abortSignal,
           timeoutMs: flashTimeoutMs(params.timeoutMs),
           onOutput: ({ text }) => {

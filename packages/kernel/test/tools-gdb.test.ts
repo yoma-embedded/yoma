@@ -24,6 +24,7 @@ import { BACKGROUND_CONTEXT, type Context, withAbortSignal } from "@earendil-wor
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node"
 
 import { claimProbe, probeLockFile, releaseProbe } from "../src/host/domain/engines.ts"
+import { bindExecutionEnv } from "../src/host/domain/execution-env.ts"
 import { ELF_MACHINE, RUN_CONTROL_OPS } from "../src/host/domain/gdb/index.ts"
 import { confirmNeeded } from "../src/host/tools/contracts.ts"
 import { FLASH_STATE_FILE, readFlashState, sha256File } from "../src/host/tools/flash/session.ts"
@@ -109,6 +110,7 @@ const CMDLOG = ${JSON.stringify(join(dir, "commands.log"))}
 const PIDFILE = ${JSON.stringify(join(dir, "gdb.pid"))}
 const mode = () => { try { return JSON.parse(readFileSync(MODE, "utf8")) } catch { return {} } }
 writeFileSync(PIDFILE, String(process.pid))
+writeFileSync(${JSON.stringify(join(dir, "gdb-env.json"))}, JSON.stringify({ marker: process.env.YOMA_ENV_TEST }))
 let buf = ""
 const out = (s) => process.stdout.write(s)
 out('=thread-group-added,id="i1"\n(gdb) \n')
@@ -263,6 +265,7 @@ import { writeFileSync } from "node:fs"
 const c = process.argv.indexOf("-c")
 const port = Number(/gdb_port (\d+)/.exec(process.argv[c + 1])[1])
 writeFileSync(${JSON.stringify(pidFile)}, String(process.pid))
+writeFileSync(${JSON.stringify(join(dir, "server-env.json"))}, JSON.stringify({ marker: process.env.YOMA_ENV_TEST }))
 const srv = net.createServer((sock) => sock.on("error", () => {}))
 srv.listen(port, "127.0.0.1", () => console.error("Info : Listening on port " + port + " for gdb connections"))
 setInterval(() => {}, 1000)
@@ -337,6 +340,35 @@ describe("契约", () => {
     expect(gdbSummary({ action: "stop" })).toBe("stop")
     expect(gdbSummary({})).toBe("")
   })
+})
+
+describe("项目执行环境", () => {
+  it("GDB选择、server选择与两次spawn使用同一份项目快照,不污染宿主PATH", async () => {
+    const originalPath = process.env.PATH
+    for (const marker of ["project-A", "project-B"]) {
+      const cwd = createTempDir()
+      const { gdbPath } = writeFakeGdb(cwd)
+      installFakeOpenocd(cwd)
+      const variables: NodeJS.ProcessEnv = { ...process.env, YOMA_GDB: gdbPath, YOMA_ENV_TEST: marker }
+      const pathKey = Object.keys(variables).find((key) => key.toLowerCase() === "path") ?? "PATH"
+      variables[pathKey] = cwd + delimiter + (variables[pathKey] ?? "")
+      const env = bindExecutionEnv(new NodeExecutionEnv({ cwd, shellEnv: variables }), variables)
+      const tool = createGdbTool()
+      openTools.push(tool)
+      await tool.execute(
+        "start",
+        { action: "start", server: "openocd", config: ["fake.cfg"], elfPath: FIXTURE_ELF },
+        () => {},
+        { env },
+        invocation,
+        BACKGROUND_CONTEXT,
+      )
+      expect(JSON.parse(readFileSync(join(cwd, "gdb-env.json"), "utf8"))).toEqual({ marker })
+      expect(JSON.parse(readFileSync(join(cwd, "server-env.json"), "utf8"))).toEqual({ marker })
+      await tool.dispose()
+    }
+    expect(process.env.PATH).toBe(originalPath)
+  }, 30_000)
 })
 
 describe("buildServerArgv", () => {

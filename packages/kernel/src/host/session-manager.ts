@@ -38,6 +38,8 @@ import {
   type ThinkingLevel,
 } from "@earendil-works/pi-agent-core"
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node"
+import { bindExecutionEnv } from "./domain/execution-env.ts"
+import { inspectStm32Availability, type Stm32Availability } from "./domain/stm32/availability.ts"
 import {
   findEnvKey,
   machinePathDirs,
@@ -135,8 +137,10 @@ function isOpen(entry: Entry): boolean {
  * 嵌入式那一套(flash/gdb/la/scope/…)2026-09-10 归零,旧实现留在 kernel/attic/tools
  * 作重写参考;2026-09-11 起按 host/tools/<名字>/ 的样板逐个回来。host 自检也走这里。
  */
-export function createAgentTools(options: RegisteredToolOptions = {}): RegisteredTool[] {
-  return [
+export function createAgentTools(
+  options: RegisteredToolOptions & { invocationEnv?: () => NodeExecutionEnv } = {},
+): RegisteredTool[] {
+  const tools: RegisteredTool[] = [
     // 图片走 host/domain/image:大图先压到供应商的内嵌上限以内,BMP 之类先转成 PNG。不接这个钩子的话,
     // 发动机对 BMP 直接回一句"配个 imageProcessor",对十几 MB 的照片则原样发出去 —— 而超限不是"这张图没了",
     // 是整段对话被拒。
@@ -155,6 +159,14 @@ export function createAgentTools(options: RegisteredToolOptions = {}): Registere
     createWriteTool(),
     ...createRegisteredTools(options),
   ]
+  if (!options.invocationEnv) return tools
+  // Upstream resolves toolContext once per batch. Refresh it here for every invocation so a
+  // toolchain setting completed by an earlier call is visible to the next call in that batch.
+  return tools.map((tool) => ({
+    ...tool,
+    execute: (id, params, onUpdate, context, invocation, ctx) =>
+      tool.execute(id, params, onUpdate, { ...context, env: options.invocationEnv!() }, invocation, ctx),
+  }))
 }
 
 /**
@@ -170,22 +182,11 @@ function withEnginesOnPath(env: NodeJS.ProcessEnv, enginesDir?: string): NodeJS.
   if (!existsSync(bin)) return env
   const pathKey = findEnvKey(env, "PATH") ?? "PATH"
   const current = env[pathKey] ?? ""
-  if (current.split(path.delimiter).includes(bin)) return env
+  const dirs = current.split(path.delimiter).filter(Boolean)
+  if (dirs[0] === bin) return env
   const out: NodeJS.ProcessEnv = { ...env }
-  out[pathKey] = [bin, current].filter(Boolean).join(path.delimiter)
+  out[pathKey] = [bin, ...dirs.filter((dir) => dir !== bin)].join(path.delimiter)
   return out
-}
-
-/**
- * 把机器级目录前置进**内核进程自己的** PATH。幂等(已在的不重复);写回原键(Windows 的
- * "Path")。只此一处改 process.env —— 理由见 sessionShellEnv。
- */
-export function applyMachinePathToProcess(dirs: string[], env: NodeJS.ProcessEnv = process.env): void {
-  if (dirs.length === 0) return
-  const next = withMachineOnPath(env, dirs)
-  if (next === env) return
-  const pathKey = findEnvKey(env, "PATH") ?? "PATH"
-  env[pathKey] = next[pathKey]
 }
 
 interface Entry {
@@ -208,7 +209,9 @@ interface Entry {
    * prompt() 在 accept 之前的准备期(压缩附件图片,可能要几秒)。这段时间 lane 还是 idle,
    * stop() 找不到任何在飞的操作 —— 没有这个标记,用户按下的"停止"会被整个吞掉。
    */
-  preparing?: { cancelled: boolean }
+  preparing?: { cancelled: boolean; controller: AbortController }
+  activeToolNames?: string[]
+  stm32Availability?: Stm32Availability
   /**
    * 正在打开。**每个调用方都 await 这同一个 Promise** —— 两个并发的 ensureOpen 各自
    * 去 repo.open 的话,其中一个必然撞上内核的 `Session is already open`,而另一种时序
@@ -249,6 +252,8 @@ export interface SessionManagerOptions {
    * 上下文文件与技能的全局目录,默认 `~/.yoma`。测试用它隔离开发机上的真实目录。
    */
   configDir?: string
+  /** 本机资源探测边界;测试注入以隔离真实安装。 */
+  inspectStm32Availability?: typeof inspectStm32Availability
   /**
    * 模型目录的来源。默认复用 yoma 的 resolveModel()(读 `<configDir>/auth.json`)。
    * 可注入是为了两件事:测试用 pi-ai 的 faux provider 跑完整一轮而不需要网络和 key;
@@ -307,6 +312,7 @@ export class SessionManager {
   /** 每份注册表自动联网一次;凭据变化重建注册表时重置。 */
   private modelRefreshStarted = false
   private readonly entries = new Map<string, Entry>()
+  private envRefreshGeneration = 0
   private readonly options: SessionManagerOptions
   /** 凭据、技能、上下文文件共用的一个目录。 */
   private readonly configDir: string
@@ -675,7 +681,16 @@ export class SessionManager {
     entry.touched = Date.now()
     // 正在销毁:它会把 lane/projection 逐个清掉,这中间交出去的 entry 是半关的。
     if (entry.closing) await entry.closing.catch(() => {})
-    if (entry.opening) await entry.opening
+    if (entry.opening) {
+      const preparation = entry.preparing
+      try {
+        await entry.opening
+      } catch (error) {
+        // A new prompt/history read may arrive while an aborted first probe is still closing.
+        // Wait for that cleanup, then reopen; genuine opening failures still reach the caller.
+        if (!readOnly || !preparation?.cancelled) throw error
+      }
+    }
     if (isOpen(entry) || (readOnly && entry.projection)) return entry
     entry.opening ??= (readOnly ? this.readEntry(entry) : this.openEntry(entry)).finally(() => {
       entry.opening = undefined
@@ -695,6 +710,7 @@ export class SessionManager {
   }
 
   private async openEntry(entry: Entry): Promise<Entry> {
+    const preparationSignal = entry.preparing?.controller.signal
     // 工具链解析必须在造 NodeExecutionEnv **之前**拿到结果:shellEnv 只能通过构造参数
     // 一次性灌进去(私有字段,没有 setter),而子进程认的是造 env 那一刻的环境 ——
     // 运行时再对着已经造好的 env 补 PATH 不会生效(根 CLAUDE.md「会咬人的地方」第一条)。
@@ -702,7 +718,11 @@ export class SessionManager {
     // 不能像 loadContextFiles/discoverSkills 那样并进它们那个 Promise.all —— 那两个
     // 的入参正是 env,而 env 本身要等这次解析完才能造出来,凑一起就是循环依赖。
     // 真正同类(不依赖 env、建会话时只读一次的快照)又能安全并发的是 ensureModels()。
-    const [{ models, model }, toolchain] = await Promise.all([this.ensureModels(), this.resolveToolchainSafe(entry)])
+    const baseEnv = this.baseShellEnv(await this.machineDirs())
+    const [{ models, model }, toolchain] = await Promise.all([
+      this.ensureModels(),
+      this.resolveToolchainSafe(entry, baseEnv),
+    ])
 
     const session = entry.session ?? (await this.repo.open(entry.meta, this.context))
     entry.session = session
@@ -710,7 +730,7 @@ export class SessionManager {
     // engines/bin 前置进 PATH:bash 工具里要有 rg(在例程语料里 grep 全靠它,Windows
     // 没有内置 grep)。机器级目录(Yoma 装的 + 用户手指的)夹在中间:项目清单解析到的
     // 赢过它们,它们赢过 process.env 里原有的。
-    entry.shellEnv = await this.sessionShellEnv(toolchain)
+    entry.shellEnv = this.sessionShellEnv(toolchain, baseEnv)
     const env = this.toolEnv(entry)
     let harness: AgentHarness<ExecutionToolContext> | undefined
     try {
@@ -737,13 +757,11 @@ export class SessionManager {
       // path 给一个不会真实存在的假名,模型才看得出这不是一份项目文件。promptSectionFor
       // 对"没有清单"和"清单存在但全部 ok"都返回 undefined,所以绝大多数项目不追加任何
       // 东西,系统提示词字节不变。
-      const toolchainSection = promptSectionFor(toolchain)
-      const contextFilesWithToolchain = toolchainSection
-        ? [...contextFiles, { path: "<toolchain>", content: toolchainSection }]
-        : contextFiles
 
       const tools = createAgentTools({
         enginesDir: this.options.enginesDir,
+        configDir: this.configDir,
+        invocationEnv: () => this.toolEnv(entry),
         toolchain: {
           configDir: this.configDir,
           side: this.options.toolchainSide ?? "mother",
@@ -756,6 +774,11 @@ export class SessionManager {
         // 手册服务器地址从同一个 configDir 的 .env 解析:设置页、手册库页、agent 说同一个地址。
         datasheet: { configDir: this.configDir },
       })
+      entry.stm32Availability = await this.inspectStm32(entry, preparationSignal)
+      preparationSignal?.throwIfAborted()
+      entry.activeToolNames = tools
+        .map((tool) => tool.name)
+        .filter((name) => entry.stm32Availability!.available || name !== "stm32config")
       const created = await AgentHarness.create<ExecutionToolContext>(
         {
           session,
@@ -772,16 +795,24 @@ export class SessionManager {
               }
             : {}),
           tools,
-          activeToolNames: tools.map((tool) => tool.name),
+          activeToolNames: entry.activeToolNames,
           // 函数形态:每轮重新解析一次,于是 refreshMachineEnv 换掉 shellEnv 之后
           // 下一条 bash 命令就看得见新 PATH,不用重开会话。
           toolContext: () => ({ env: this.toolEnv(entry) }),
-          systemPrompt: buildSystemPrompt({
-            cwd: entry.cwd,
-            selectedTools: tools.map((tool) => tool.name),
-            contextFiles: contextFilesWithToolchain,
-            skills: discovered.skills,
-          }),
+          systemPrompt: () => {
+            const toolchainSection = promptSectionFor(entry.toolchain ?? toolchain)
+            return buildSystemPrompt({
+              cwd: entry.cwd,
+              selectedTools: entry.activeToolNames,
+              contextFiles: toolchainSection
+                ? [...contextFiles, { path: "<toolchain>", content: toolchainSection }]
+                : contextFiles,
+              skills: discovered.skills,
+              appendSystemPrompt: entry.stm32Availability?.available
+                ? undefined
+                : `STM32 configuration is unavailable on this machine: ${entry.stm32Availability?.reason ?? "local CubeMX resources are unavailable"}. Do not call stm32config or use netlist with part, and do not bypass this unavailable capability by invoking its engine or pretending handwritten initialization came from stm32config. Ordinary firmware coding remains allowed. Explain the missing local resource only when relevant; do not install or configure CubeMX just to enable this tool. Existing source settings can enable it on the next user turn. Netlist without part and other tools remain available.`,
+            })
+          },
           // lane.skill() 从这里查技能。
           resources: { skills: discovered.skills },
         },
@@ -806,6 +837,9 @@ export class SessionManager {
         }
       }
       entry.title = (await harness.getName(this.context)) ?? entry.title
+      // 持久化旧会话可能保留旧工具名单;本机实际能力优先于历史配置。
+      preparationSignal?.throwIfAborted()
+      await lane.setActiveTools(entry.activeToolNames, this.context)
 
       // 模型与档位是 lane 存下来的(上面那组种子只给新 lane 用)。但存下来的那个可能已经
       // 不在注册表里了(用户撤了 key、或者注入的目录换了一套)—— getModel 这时返回
@@ -901,35 +935,65 @@ export class SessionManager {
   }
 
   /**
-   * 一个会话的 bash 基础环境:engines/bin ⊕ 项目清单解析到的目录 ⊕ 机器级目录 ⊕ process.env。
-   * 顺带把机器级目录也前置进内核进程自己的 PATH —— host 侧自己起子进程时用的是
-   * process.env,不是会话的 shellEnv。
+   * 一个会话所有执行器的环境:engines/bin ⊕ 项目清单目录 ⊕ 机器级目录 ⊕ process.env。
+   * 宿主环境不修改:另一个项目和已经启动的进程不会随本会话的配置变化。
    */
-  private async sessionShellEnv(toolchain: ToolchainResolution, dirs?: string[]): Promise<NodeJS.ProcessEnv> {
-    const machine = dirs ?? (await this.machineDirs())
-    applyMachinePathToProcess(machine)
-    return withEnginesOnPath(withMachineOnPath(shellEnvFor(toolchain, process.env), machine), this.options.enginesDir)
+  private baseShellEnv(machineDirs: string[]): NodeJS.ProcessEnv {
+    return withEnginesOnPath(withMachineOnPath({ ...process.env }, machineDirs), this.options.enginesDir)
+  }
+
+  private sessionShellEnv(toolchain: ToolchainResolution, baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+    return withEnginesOnPath(shellEnvFor(toolchain, baseEnv), this.options.enginesDir)
   }
 
   /** 会话当前的执行环境。shellEnv 换过之后(refreshMachineEnv)这里会重建一个。 */
   private toolEnv(entry: Entry): NodeExecutionEnv {
-    entry.env ??= new NodeExecutionEnv({ cwd: entry.cwd, ...(entry.shellEnv ? { shellEnv: entry.shellEnv } : {}) })
+    if (!entry.env) {
+      const shellEnv = { ...(entry.shellEnv ?? process.env) }
+      entry.env = bindExecutionEnv(new NodeExecutionEnv({ cwd: entry.cwd, shellEnv }), shellEnv)
+    }
     return entry.env
+  }
+
+  private inspectStm32(entry: Entry, signal?: AbortSignal): Promise<Stm32Availability> {
+    return (this.options.inspectStm32Availability ?? inspectStm32Availability)({
+      enginesDir: this.options.enginesDir,
+      configDir: this.configDir,
+      projectDir: entry.cwd,
+      env: entry.shellEnv,
+      signal,
+    })
+  }
+
+  private async refreshAvailability(entry: Entry, signal: AbortSignal): Promise<void> {
+    const availability = await this.inspectStm32(entry, signal)
+    signal.throwIfAborted()
+    const names = entry
+      .tools!.map((tool) => tool.name)
+      .filter((name) => availability.available || name !== "stm32config")
+    await entry.lane!.setActiveTools(names, this.context)
+    entry.stm32Availability = availability
+    entry.activeToolNames = names
   }
 
   /**
    * 工具链装好之后调:重算每个**活着的**会话的 bash 环境,让下一条命令就看得见新目录,
-   * 不用重开会话;同时更新内核进程自己的 PATH。清单解析也重跑一遍 —— 刚装的可能正是
+   * 不用重开会话。清单解析也重跑一遍 —— 刚装的可能正是
    * 清单里 MISSING 的那个。被 LRU 淘汰的会话 dispose 时清掉了 env,这里不会为它们
    * 白起 --version 子进程。
    */
   async refreshMachineEnv(): Promise<void> {
-    const dirs = await this.machineDirs()
+    const generation = ++this.envRefreshGeneration
+    const baseEnv = this.baseShellEnv(await this.machineDirs())
     for (const entry of this.entries.values()) {
       if (!isOpen(entry)) continue
-      const toolchain = await this.resolveToolchainSafe(entry)
+      const toolchain = await this.resolveToolchainSafe(entry, baseEnv)
+      if (generation !== this.envRefreshGeneration) return
+      if (!isOpen(entry)) continue
+      // Publish the resolution and its environment together; a slower old refresh cannot
+      // overwrite a newer settings change after its probe finally exits.
       entry.toolchain = toolchain
-      entry.shellEnv = await this.sessionShellEnv(toolchain, dirs)
+      entry.shellEnv = this.sessionShellEnv(toolchain, baseEnv)
       // 下一轮的 toolContext 会按新 shellEnv 造一个。在飞的那个还拿着旧环境 ——
       // 它可能正有子进程在跑,不能就地替;但也不能直接丢引用,否则那些子进程会活过
       // 整个会话(**硬件安全**:可能是一条烧录命令)。退役存起来,这一轮结束或
@@ -937,8 +1001,6 @@ export class SessionManager {
       if (entry.env) (entry.retiredEnvs ??= []).push(entry.env)
       entry.env = undefined
     }
-    // 内核进程自己的 PATH 无条件刷一次(幂等):没有开着的会话时上面的循环不会碰它。
-    applyMachinePathToProcess(dirs)
   }
 
   /**
@@ -949,7 +1011,7 @@ export class SessionManager {
    * kernel.error 诊断,折叠回同一种空结果 —— 调用方(shellEnvFor / promptSectionFor)
    * 因此不用关心"没有清单"和"清单解析失败"是两回事。
    */
-  private async resolveToolchainSafe(entry: Entry): Promise<ToolchainResolution> {
+  private async resolveToolchainSafe(entry: Entry, env: NodeJS.ProcessEnv): Promise<ToolchainResolution> {
     const side = this.options.toolchainSide ?? "mother"
     try {
       return await resolveToolchain({
@@ -957,6 +1019,7 @@ export class SessionManager {
         configDir: this.configDir,
         side,
         manifestText: this.options.toolchainManifestText,
+        env,
       })
     } catch (error) {
       this.options.emit([
@@ -1207,11 +1270,11 @@ export class SessionManager {
   // -------------------------------------------------------------------------
 
   async prompt(sessionID: string, input: PromptInput): Promise<{ messageID: string }> {
-    const entry = await this.ensureOpen(sessionID)
-    const lane = entry.lane!
+    // 先只打开历史,把耗时的初始资源探测也纳入可取消的准备期。
+    const entry = await this.ensureOpen(sessionID, true)
 
     // 一条 lane 同时只有一个操作:忙的时候 accept 回 LaneBusy。先中断,再等真的回到 idle。
-    if (entry.status.type !== "idle") await this.stop(entry)
+    if (entry.status.type !== "idle" || entry.preparing) await this.stop(entry)
 
     const messageID = input.messageID ?? Identifier.ascending("message")
     entry.pendingUserID = messageID
@@ -1222,10 +1285,14 @@ export class SessionManager {
     const notes: string[] = []
     const omitted: string[] = []
     // 这一段要花秒级时间,而 lane 还没有操作可中断:给它一个可取消的标记(见 Entry.preparing 与 stop)。
-    const preparing = { cancelled: false }
+    const preparing = { cancelled: false, controller: new AbortController() }
     entry.preparing = preparing
     try {
+      const alreadyOpen = isOpen(entry)
+      await this.ensureOpen(sessionID)
+      if (!preparing.cancelled && alreadyOpen) await this.refreshAvailability(entry, preparing.controller.signal)
       for (const file of input.files ?? []) {
+        if (preparing.cancelled) break
         if (!file.mime.startsWith("image/")) continue
         const base64 = /^data:[^;]+;base64,(.*)$/s.exec(file.url)?.[1]
         if (base64 === undefined) continue
@@ -1241,8 +1308,13 @@ export class SessionManager {
         notes.push(...processed.hints)
         images.push({ type: "image", data: processed.data, mimeType: processed.mimeType })
       }
+    } catch (error) {
+      if (!preparing.cancelled) {
+        entry.pendingUserID = undefined
+        throw error
+      }
     } finally {
-      entry.preparing = undefined
+      if (entry.preparing === preparing) entry.preparing = undefined
     }
     // 准备期里用户按了停止:这一轮就此作罢,别让它在"已经点过停止"之后才开跑。
     if (preparing.cancelled) {
@@ -1274,6 +1346,7 @@ export class SessionManager {
     const request: OperationRequest = images.length
       ? { kind: "prompt", prompt: text, images }
       : { kind: "prompt", prompt: text }
+    const lane = entry.lane!
     const accepted = await lane.accept(request, this.context)
     if (!accepted.ok) {
       entry.pendingUserID = undefined
@@ -1309,7 +1382,10 @@ export class SessionManager {
    */
   private async stop(entry: Entry): Promise<void> {
     // 还在准备期(压缩附件)的那一轮:lane 上什么都没有,只能靠这个标记让它别再开跑。
-    if (entry.preparing) entry.preparing.cancelled = true
+    if (entry.preparing) {
+      entry.preparing.cancelled = true
+      entry.preparing.controller.abort()
+    }
     // **先结算未决的确认**:挂起中的钩子占着这一轮的 drive,requestAbort 与 waitForIdle 都要等它
     // 先回来。顺序反了的表现是"点停止没反应",一直到确认台十分钟超时才动。
     this.desk.cancel(entry.id)
@@ -1332,7 +1408,7 @@ export class SessionManager {
 
   async abort(sessionID: string): Promise<void> {
     const entry = this.entries.get(sessionID)
-    if (!entry || !isOpen(entry)) return
+    if (!entry || (!isOpen(entry) && !entry.preparing)) return
     await this.stop(entry)
     this.options.emit(this.setStatus(entry, { type: "idle" }))
   }

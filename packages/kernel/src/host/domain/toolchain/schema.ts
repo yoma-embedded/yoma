@@ -19,6 +19,10 @@ export interface ToolSpec {
 	id: string;
 	/** 可执行文件名,不带扩展名 —— PATHEXT / `.exe` 展开是 locations.ts 的事,不是这里。 */
 	bin?: string[];
+	/** all: 每个名字都是必需入口;any(默认): 名字是可替代入口。 */
+	binMode?: "all" | "any";
+	/** dir 仅记录资源位置,不启动程序、不宣称可执行。默认 exe。 */
+	pathKind?: "exe" | "dir";
 	/** 版本范围,如 ">=3.22"、"^3.11"、"12"。语法由 version.ts 的 satisfies() 认。 */
 	version?: string;
 	/** 缺省 "mother"。 */
@@ -28,7 +32,7 @@ export interface ToolSpec {
 	from?: string;
 	/** 覆盖(不是合并)provider 的 install。 */
 	install?: Partial<Record<PlatformKey, string>>;
-	/** 值里的 "{bin}" 会被替换成解析到的第一个 bin 绝对路径 —— 替换逻辑在 resolve.ts。 */
+	/** {bin}/{path} 替换成选择的入口或资源目录绝对路径;目录资源只导出变量,不加 PATH。 */
 	exports?: Record<string, string>;
 	/** 非可执行产物(如动态库),只做存在性说明,不参与探测顺序。 */
 	provides?: string[];
@@ -211,6 +215,14 @@ export function parseManifest(text: string): ParseManifestResult {
 			};
 		}
 		seenIds.set(id, i);
+		for (const [key, allowed] of [["binMode", ["all", "any"]], ["pathKind", ["exe", "dir"]]] as const) {
+			if (tool[key] !== undefined && !allowed.includes(tool[key] as never)) {
+				return { ok: false, error: `${MANIFEST_RELATIVE}: tools[${i}].${key} must be ${allowed.join(" or ")}` };
+			}
+		}
+		if (tool.bin !== undefined && (!Array.isArray(tool.bin) || tool.bin.some((name) => typeof name !== "string" || !name.trim()))) {
+			return { ok: false, error: `${MANIFEST_RELATIVE}: tools[${i}].bin must be an array of non-empty names` };
+		}
 	}
 
 	const rawProviders = parsed.providers;

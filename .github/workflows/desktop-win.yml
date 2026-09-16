@@ -7,11 +7,11 @@
 #   tag `v*` 和 engines=build —— 当场 `npm run engines:build -- --dist`
 #                               (cargo + PyInstaller + MSYS2 编 yoma-la)。
 #                               不依赖另一份 engines-v* Release。
-#   engines=prebuilt(仅手动触发的默认)—— 按 packages/desktop/engines.lock.json 下载。
+#   engines=prebuilt(仅手动触发可选)—— 按 packages/desktop/engines.lock.json 下载。
 #                               跨平台复用预编译 zip 时才用。
 #
-# GitHub 托管机没有 CubeMX,`--dist --allow-missing-irpacks` 仍出网表引擎;
-# 安装包里没有 STM32 配置 irpack。本机有 CubeMX 时去掉该 flag 再编即可补上。
+# 构建不需要 CubeMX。安装包只带 STM32 引擎与本地转换器;
+# 器件库、irpack 和 HAL/CMSIS 来自用户自己的 CubeMX,不上传、不分发。
 # yoma-la 在 Windows 上硬依赖 MSYS2 ucrt64 —— 漏装会直接红,不会默默少一个引擎。
 #
 # 产出的是**未签名**包:装的时候 SmartScreen 会拦,点「更多信息 → 仍要运行」。
@@ -25,7 +25,7 @@ on:
       engines:
         description: 引擎从哪来
         type: choice
-        default: prebuilt
+        default: build
         options: [prebuilt, build]
       channel:
         description: 渠道(决定 appId / 产品名 / 自动更新)
@@ -108,13 +108,17 @@ jobs:
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-ninja
 
-      # 当场冻结可分发引擎。托管机没有 CubeMX,允许缺 irpack,否则 --dist 会硬失败。
+      # 当场冻结可分发引擎;转换器随包交付,构建不读取 CubeMX 数据。
       # setup-msys2 装在 ${runner.temp}\msys64;build.ts 按 YOMA_LA_MSYS2 找 ucrt64。
       - name: 构建可分发引擎
         if: env.BUILD_ENGINES == 'true'
         env:
           YOMA_LA_MSYS2: ${{ format('{0}\msys64', runner.temp) }}
-        run: npm run engines:build -- --dist --allow-missing-irpacks --out engines-dist
+        run: npm run engines:build -- --dist --out engines-dist
+
+      - name: 验证本地 CubeMX 定位器契约(隔离测试数据)
+        if: env.BUILD_ENGINES == 'true'
+        run: cargo test --release --manifest-path engines/stm32-config-kernel/Cargo.toml -p stm32ck-importer --test probe
 
       - name: 构建 renderer / main / preload
         env:
@@ -182,7 +186,7 @@ jobs:
       - name: 安装产物首次会话验收
         run: npm run e2e:renderer -w packages/desktop
 
-      - name: 安装产物引擎与器件数据验收
+      - name: 安装产物引擎与本地数据边界验收
         run: npm run smoke -w packages/desktop
 
       # 同一条首屏闸门。注意它跑的是工作区里的 out/(未打包),不是刚装好的 app.asar:
@@ -241,9 +245,9 @@ jobs:
             > Windows 安装包目前未做代码签名。请只从本 Release 下载、核对 `SHA256SUMS.txt`,
             > 并预期首次安装时会看到 SmartScreen 的“未知发布者”提示。
 
-            此发布流程允许缺少 STM32 器件数据包（irpacks），也不携带 HAL/CMSIS 源码。
-            缺器件数据时仅 STM32 schema 与原始网表解析可用，其余 STM32 配置命令和 board_ir 不可用。
-            安装冒烟会报告实际数据覆盖；真实板子调试与完整工程生成需另行验收。
+            STM32 器件数据库和 HAL/CMSIS 来自您本机安装的 CubeMX 与已下载的固件仓库。
+            Yoma 随包携带本地转换器，使用 STM32 功能时生成本地器件缓存；不上传或随包分发这些数据。
+            请先安装 CubeMX 并下载所用芯片族的固件包；真实板子调试与完整工程生成需另行验收。
           files: |
             release/yoma-win-x64.exe
             release/yoma-win-x64.exe.blockmap

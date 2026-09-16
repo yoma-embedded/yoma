@@ -92,8 +92,8 @@ const getBase = (appId: string): Configuration => ({
   extraResources: [
     // opencode 时代这里还有一个 native/(mac_window.node + swift-build)条目,
     // fork 后该目录已不存在,源码里也无引用,引用一个不存在的 from 会让打包绊倒。
-    // 嵌入式引擎(stm32kernel / controller_map / board_ir / connections)
-    // 和 stm32 数据包。**必须走 extraResources 而不是 files** —— 它们是原生可执行文件,
+    // 嵌入式引擎(stm32kernel / stm32ck-import / controller_map / board_ir / connections)。
+    // **必须走 extraResources 而不是 files** —— 它们是原生可执行文件,
     // 打进 asar 之后不能直接 spawn,而 yoma 的工具就是 argv 进 JSON 出的黑盒 CLI。
     // 运行时由 main/index.ts 的 resolveEnginesDir() 解析到 process.resourcesPath/engines。
     //
@@ -109,6 +109,8 @@ const getBase = (appId: string): Configuration => ({
     {
       from: ".engines-stage/data/",
       to: "engines/data/",
+      // staging 已按白名单筛选;打包器再次排除历史 STM32 数据。
+      filter: ["**/*", "!stm32{,/**/*}", "!**/*.irpack"],
     },
     {
       from: ".engines-stage/manifest.json",
@@ -133,9 +135,8 @@ const getBase = (appId: string): Configuration => ({
     entitlements: "resources/entitlements.plist",
     entitlementsInherit: "resources/entitlements.plist",
     notarize: hasAppleNotaryCreds,
-    // engines/data 是给单片机的固件包/芯片数据库/文档,不是 macOS 二进制
-    // (里面的 .elf 是 ARM Cortex-M 的,公证也不看)。不跳过的话,签名器会把
-    // 几万个数据文件逐个 codesign,一次打包跑几个小时。engines/bin 正常签。
+    // engines/data 是逻辑分析仪固件、解码器及资源,不是 macOS 二进制。
+    // STM32 数据由用户本机生成,不进入安装包。engines/bin 正常签。
     // schema 只收字符串(按正则源解释),不收 RegExp 对象。
     signIgnore: ["Resources/engines/data"],
     target: ["dmg", "zip"],

@@ -64,18 +64,13 @@ YOMA_DATASHEET_SERVER=http://你的服务器:端口
 
 ### 5. 第一次生成 STM32 驱动
 
-需要两份不同的资源：器件数据包（irpacks）用于查询与配置，HAL/CMSIS 源码用于生成完整工程。
-器件包可随引擎分发，但当前 Windows 发布流程允许缺失；缺失时只有 `schema` 和原始网表解析可用，
-其余 STM32 配置命令及 `board_ir` 不可用。HAL/CMSIS 不随安装包交付，目前也没有自动下载入口。
+先在本机安装 STM32CubeMX。生成完整工程时，还需要通过 CubeMX 下载所用芯片族的固件包。
+如果安装在自定义位置，在 Yoma 工具链设置中指定 CubeMX 安装目录和固件仓库。
+
+Yoma 安装包携带配置引擎和本地转换器。首次使用时，从你的 CubeMX 数据库生成器件缓存；
+生成工程再读取你已下载的 HAL/CMSIS。数据库或引擎变化后，会生成新的缓存版本。
+**这些数据不上传、不随 Yoma 安装包分发。** 缺少资源时会提示补充本机配置；`schema` 和原始网表解析不依赖 CubeMX。
 详见[引擎和数据的交付边界](docs/桌面版发布流程.md#引擎和数据的交付边界)。
-
-以下命令适用于源码检出，按所用芯片族获取 HAL/CMSIS：
-
-```powershell
-powershell -File engines/stm32-config-kernel/tools/fetch-fw.ps1 -Families STM32F1
-```
-
-当已经安装了 CubeMX 时从其安装目录拷贝，否则从 ST 官方 GitHub 仓库拉。产物例如 `engines/data/stm32/fw/STM32F1/`（相对仓库根目录）。
 
 ## 从源码运行
 
@@ -83,7 +78,7 @@ powershell -File engines/stm32-config-kernel/tools/fetch-fw.ps1 -Families STM32F
 git clone https://github.com/yoma-embedded/yoma.git yoma
 cd yoma
 npm install
-npm run engines:build    # 网表解析 / STM32 工具。STM32 配置需要本机已装 CubeMX：build 会解析器件库生成 irpack
+npm run engines:build    # 构建引擎和 CubeMX 本地转换器；用户数据在使用功能时准备
 npm run dev:desktop         # 改内核要重启这条命令
 ```
 

@@ -8,8 +8,8 @@
 # yoma-la(C,GPL)带着 MinGW DLL、固件、150 个解码器和裁过的 Python 标准库(仅 Windows)。
 # `npm run engines:build -- --dist` 末尾会自检这一点,不通过就红。
 #
-# fw/(ST 官方 HAL,1.1GB)**不在产物里** —— 只有 stm32kernel generate 用得到,
-# 而那条命令本来就收 --fw-dir。见 engines/build.ts 文件头。
+# CubeMX 数据库、irpack 与 HAL/CMSIS 不在产物里;只带本地转换器,
+# 用户资源由运行时从本机 CubeMX 准备。构建不需要安装 CubeMX。
 
 name: engines
 
@@ -58,8 +58,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       # 引擎源码已吸收进本仓(engines/ 是普通目录),checkout 一步到位,不再需要
-      # 私有 submodule 的 ENGINES_TOKEN。data/fw 不在库里;*.irpack 也是构建产物,
-      # --dist 会在本机有 CubeMX(或 STM32CK_CUBEMX_DB)时解析生成。没有 CubeMX 会红。
+      # 私有 submodule 的 ENGINES_TOKEN。用户 CubeMX 数据不参与构建或上传。
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
@@ -108,6 +107,9 @@ jobs:
         env:
           YOMA_LA_MSYS2: ${{ runner.os == 'Windows' && format('{0}\msys64', runner.temp) || '' }}
         run: npm run engines:build -- --dist --out dist
+
+      - name: 验证本地 CubeMX 定位器契约(隔离测试数据)
+        run: cargo test --release --manifest-path engines/stm32-config-kernel/Cargo.toml -p stm32ck-importer --test probe
 
       - name: 打包
         shell: bash

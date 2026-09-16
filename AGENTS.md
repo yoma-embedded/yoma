@@ -439,9 +439,12 @@ text part,不过滤的话提示词会原样出现在终报的"根因分析"里)�
   "名字叫 engines 且存在",会高高兴兴找到一个没有 `bin/` 的空壳,然后报
   "去跑 `npm run engines:build`",让你以为是没编译。合库后 `engines/` 就是仓内真目录
   (引擎源码 + build.ts;2026-08-17 起两个引擎仓已整个吸收进本仓,不再是 submodule
-  —— `data/*.irpack` 是 CubeMX 解析出的构建产物,不入库;`npm run engines:build`
-  本机有 CubeMX 时会导入。`data/fw/` 这 1.1GB 的 HAL/CMSIS 除外,要跑
-  stm32-config-kernel 的编译门禁测试先 `tools/fetch-fw.ps1`)。
+  —— 2026-09-16 起 `npm run engines:build` 只构建程序,不探测/导入 CubeMX。
+  安装包必须带 `stm32ck-import`;器件包和 HAL/CMSIS 都来自用户本机 CubeMX,
+  由 `host/domain/stm32/` 在使用时准备版本化缓存,不上传、不分发。
+  `stm32ck-import --probe` 是数据库位置探测的唯一实现;不要再写一套 TS 平台路径表。
+  原生引擎的单独开发数据仍可用 importer / `tools/fetch-fw.ps1` 显式准备,
+  但桌面运行时不调用固件下载脚本,stage 只复制登记过的公共数据目录)。
 - **探针栈不在引擎里**(2026-08-17 起,probe-rs 整体移除):烧录命令由模型自带
   (OpenOCD / J-Link / 厂商 CLI),flash 工具只管探针租约 + 超时杀树 + flash-state
   落账;RTT 从 gdb server 的 TCP 口读(J-Link 19021 / OpenOCD `rtt server start`,

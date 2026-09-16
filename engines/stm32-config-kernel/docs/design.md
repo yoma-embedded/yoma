@@ -14,7 +14,7 @@
 
 | 决策 | 结论 |
 |---|---|
-| 芯片数据源 | **IR 是构建产物,不进源码仓**。开发期用导入器解析本机 CubeMX db(v6.x;安装位置自动探测,`STM32CK_CUBEMX_DB` 可覆盖)。桌面安装包可以带上打包机解析出的 pack,源码树不能带。 |
+| 芯片数据源 | **IR 是用户本机缓存,不进源码仓、不随安装包分发**(2026-09-16 修订)。安装包携带导入器,使用时解析用户本机 CubeMX db(v6.x;安装位置自动探测,已保存配置或 `STM32CK_CUBEMX_DB` 可覆盖)。HAL/CMSIS 同样来自用户已下载的本机 CubeMX 固件仓库。 |
 | 家族范围 | 起步 **F1 + F4**(F103 BluePill 为主力;F4 证明 AF 号体制与现代 PLL/VCO 约束),2026-07-31 起加入 **H5 + H7**(小数 PLL、Cortex-M33、多区内存布局)。导入器写成全库通用,其余 18 家族仅跑解析冒烟 |
 | 生成目标 | **HAL + 完整可编译工程**(main/msp/it/gpio/clock + 启动文件 + 链接脚本 + CMake + HAL 源码子集);LL 属 v2 |
 | API 模型 | **无状态命令 + 查询命令**,JSON stdin/stdout;配置文档是唯一真相文件(可入 git,类比 .ioc) |
@@ -35,12 +35,12 @@
 - `db/templates/*.ftl`:**不复用**(FreeMarker 方言 + Java 对象图 + `#t/#n` 后处理;所有难点在 Java 侧已做完)。只复刻其输出约定:`MX_<inst>_<halMode>_Init` 命名、USER CODE 区段、`{0}` 局部初始化、`!= HAL_OK → Error_Handler()`、MSP 中时钟使能先于 GPIO。
 - 条件表达式 DSL 全库统一且极小:`& | ! = < >` + 括号 + 标识符(信号量/参数名);无 `<=`(写作 `(a<b)|(a=b)`);无 Die/Family 引用(家族差异靠文件分派)。
 - `db/contextual/`:纯帮助文本,忽略。`families.xml`:器件目录(搜索/上限用)。
-- HAL 固件包(启动文件/链接脚本/HAL 源码/CMSIS)为 BSD-3-Clause,可自由再分发;从 ST 官方 GitHub(STM32CubeF1/F4)获取子集打包。
+- HAL 固件包(启动文件/链接脚本/HAL 源码/CMSIS)从用户本机 CubeMX 已下载的固件仓库读取,不随 Yoma 打包或上传。
 
 ## 4. 架构
 
 ```
-CubeMX db ──(构建期)──> importer ──> IR 包(per-family, postcard+zstd, 不进 git)
+用户本机 CubeMX db ──(使用时)──> importer ──> IR 缓存(per-family, postcard+zstd, 不进 git)
                                         │
 配置文档 JSON ──> cli ──> engine(validate/solve:模式树+参数+时钟+引脚+NVIC/DMA)
                                         │

@@ -1,12 +1,10 @@
-// Build every capability engine, install the products into the single runtime
-// layout (engines/bin + engines/data), then report what the tools resolve.
+// Build capability executables and public runtime assets. STM32 user resources
+// are discovered and prepared on the user's machine, never during app builds.
 //   tsx engines/build.ts           # build + install + doctor
 //   tsx engines/build.ts --check   # doctor only
 //   tsx engines/build.ts --dist    # 产出可分发的自包含产物到 engines/dist/
-//   tsx engines/build.ts --dist --allow-missing-irpacks
-//     # 没 CubeMX 时仍冻结网表引擎;STM32 配置不进产物(CI 出 Windows 包用)
 // Needs cargo (stm32-config-kernel) and uv (controller_map). logic-analyzer (yoma-la, C/CMake,
-// Windows 上要 MSYS2 ucrt64)没有工具链时跳过 —— 像没有 CubeMX 时跳过 irpack 一样,但 manifest 里会写明。
+// Windows 上要 MSYS2 ucrt64)没有工具链时跳过,但 manifest 里会写明。
 //
 // 运行时只认一种布局:bin/ 放可执行文件,data/<name>/ 放数据 —— 开发期由这里
 // 用符号链接填充(重新 cargo build 后无需重装),分发时 --dist 往同样的布局里放真文件。
@@ -18,14 +16,9 @@
 // 而且报的错是"找不到解释器",看起来像没编译。--dist 用 PyInstaller 把解释器和依赖
 // 冻结进可执行文件本身,产出真正与路径无关的二进制(dist 阶段会验这一点)。
 //
-// data 分两半,处理方式不同:
-//   - irpacks —— CubeMX 器件库经 stm32ck-import 解析出的构建产物,**不进 git**。
-//     本机有 CubeMX(或 STM32CK_CUBEMX_DB)时,build.ts 会自己导入;装进运行时
-//     布局 / --dist 产物。没有 CubeMX 时开发构建跳过 STM32 配置(网表引擎照装),
-//     --dist 仍然硬失败 —— 安装包不能默默少一族。
-//   - fw/(ST 官方 HAL 组件,**1.1GB**,压缩后仍有 ~174MB)—— **不进分发产物**。
-//     它只有 `stm32kernel generate` 用得到,而那条命令本来就收 --fw-dir,
-//     所以按族按需取(STM32G4 压缩后才 4MB)远比让每个人下 1.1GB 合理。
+// STM32 CubeMX 数据库、irpacks、HAL/CMSIS 都属于用户本机资源,不上传、不随包交付。
+// 安装包只交付 stm32kernel + stm32ck-import;内核在使用时定位本机 CubeMX 并生成缓存。
+// 开发者若要单独导入,显式运行 bin/stm32ck-import --all --out <本地目录>。
 
 import { $, which } from "../scripts/shell.ts";
 import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
@@ -36,11 +29,11 @@ import { fileURLToPath } from "node:url";
 // 经由工具同一套解析代码取路径,报告不会和运行时行为漂移。
 import { engineBin, exe } from "../packages/kernel/src/host/domain/engines.ts";
 import { buildLa, findLaToolchain, installLa, selfCheckLa } from "./logic-analyzer/build.ts";
+import { assertNoStm32Data, STM32_RESOURCE_POLICY } from "./distribution.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const checkOnly = process.argv.includes("--check");
 const dist = process.argv.includes("--dist");
-const allowMissingIrpacks = process.argv.includes("--allow-missing-irpacks");
 const rgOnly = process.argv.includes("--rg-only");
 const distDir = (() => {
 	const at = process.argv.indexOf("--out");
@@ -129,31 +122,6 @@ function sha256(file: string): string {
 }
 
 const kernelDir = path.join(here, "stm32-config-kernel");
-const kernelData = path.join(kernelDir, "data");
-// irpack 数量是"这份产物到底支持几个芯片族"的唯一体现 —— 少了就静默少一大半,
-// 用户侧表现成"这个族不支持",看起来像产品限制而不是构建产物缺料
-// (实测:一次 CI 只产出 2 个,本机是 27 个)。少于阈值就红。
-const MIN_IRPACKS = 20;
-
-function countIrpacks(dir: string): number {
-	if (!existsSync(dir)) return 0;
-	return readdirSync(dir).filter((entry) => entry.endsWith(".irpack")).length;
-}
-
-function errorText(error: unknown): string {
-	const asText = (part: unknown): string => {
-		if (part == null) return "";
-		if (typeof part === "string") return part;
-		if (part instanceof Uint8Array) return new TextDecoder().decode(part);
-		if (typeof Buffer !== "undefined" && Buffer.isBuffer(part)) return part.toString("utf8");
-		return String(part);
-	};
-	if (error && typeof error === "object") {
-		const e = error as { stderr?: unknown; stdout?: unknown; message?: unknown };
-		return [e.stderr, e.stdout, e.message].map(asText).join("\n");
-	}
-	return String(error);
-}
 
 // ripgrep 不是本仓构建的,是 BurntSushi 的预编译产物 —— agent 在例程语料里 grep
 // 全靠它(Windows 没有内置 grep;rg 的速度与 .gitignore 语义都是选它的理由)。
@@ -248,49 +216,19 @@ async function extractRipgrep(archive: string, dest: string): Promise<void> {
 	}
 }
 
-/** 缺 pack 就对着本机 CubeMX db 解析。已经够数则跳过(解析全库要几分钟)。 */
-async function ensureIrpacks(required: boolean): Promise<number> {
-	mkdirSync(kernelData, { recursive: true });
-	const have = countIrpacks(kernelData);
-	if (have >= MIN_IRPACKS) {
-		console.log(`  irpacks ${have} 个族(已解析,跳过导入)`);
-		return have;
-	}
-	console.log(`\n[import] CubeMX db → ${kernelData} (现有 ${have},需要 ≥${MIN_IRPACKS})`);
-	console.log("  装过 STM32CubeMX 会自动探测;否则设 STM32CK_CUBEMX_DB 或传 --cubemx-db");
-	try {
-		await $`cargo run --release -p stm32ck-importer -- --all --out data`.cwd(kernelDir);
-	} catch (error) {
-		if (!required && /no CubeMX db found/i.test(errorText(error))) {
-			console.warn("  ↷ 跳过 irpack 导入:本机没有 CubeMX。STM32 配置不可用,网表/其它引擎不受影响。");
-			return countIrpacks(kernelData);
-		}
-		throw error;
-	}
-	const after = countIrpacks(kernelData);
-	if (after < MIN_IRPACKS) {
-		throw new Error(
-			`stm32ck-import 只写出 ${after} 个 irpack(期望 ≥${MIN_IRPACKS})。` +
-				`装 STM32CubeMX,或设 STM32CK_CUBEMX_DB 指向其 db/ 目录(含 mcu/)。`,
-		);
-	}
-	return after;
-}
-
 if (dist) {
 	await need("cargo", "install Rust via https://rustup.rs");
 	await need("uv", "install uv via https://docs.astral.sh/uv/getting-started/installation/");
 
-	console.log("\n[1/5] stm32-config-kernel — cargo build --release + import irpacks");
+	console.log("\n[1/5] stm32-config-kernel — cargo build --release (kernel + local importer)");
 	await $`cargo build --release`.cwd(kernelDir);
-	await ensureIrpacks(!allowMissingIrpacks);
 
 	console.log("\n[2/5] controller_map — uv sync");
 	await $`uv sync`.cwd(path.join(here, "controller_map"));
 
 	rmSync(distDir, { recursive: true, force: true });
 	mkdirSync(path.join(distDir, "bin"), { recursive: true });
-	mkdirSync(path.join(distDir, "data", "stm32"), { recursive: true });
+	mkdirSync(path.join(distDir, "data"), { recursive: true });
 
 	console.log("\n[3/5] freeze — PyInstaller(把解释器打进可执行文件,摆脱 venv 绝对路径)");
 	const work = path.join(distDir, ".freeze");
@@ -301,18 +239,10 @@ if (dist) {
 	rmSync(work, { recursive: true, force: true });
 
 	console.log("\n[4/5] collect — 真文件,不是软链");
-	copyFileSync(
-		path.join(here, "stm32-config-kernel", "target", "release", exe("stm32kernel")),
-		path.join(distDir, "bin", exe("stm32kernel")),
-	);
-	await ensureRipgrep(path.join(distDir, "bin"));
-	// irpacks 是本机解析产物,打进包;fw/ 故意不带 —— 见文件头。
-	let irpacks = 0;
-	for (const entry of readdirSync(kernelData)) {
-		if (!entry.endsWith(".irpack")) continue;
-		copyFileSync(path.join(kernelData, entry), path.join(distDir, "data", "stm32", entry));
-		irpacks++;
+	for (const name of ["stm32kernel", "stm32ck-import"]) {
+		copyFileSync(path.join(kernelDir, "target", "release", exe(name)), path.join(distDir, "bin", exe(name)));
 	}
+	await ensureRipgrep(path.join(distDir, "bin"));
 
 	console.log("\n[5/5] logic-analyzer — yoma-la(cmake)+ DLL + res/decoders/python");
 	let la: { bundled: boolean; dlls?: number; python?: boolean; why?: string } = { bundled: false };
@@ -320,7 +250,7 @@ if (dist) {
 		const { tc, why } = findLaToolchain();
 		if (!tc) {
 			// Windows 是逻辑分析仪的主战场,CI 的 Windows 岗装了 MSYS2;这里缺工具链多半是 pacman 包名或
-			// setup-msys2 变了 —— 和 irpack 同一条规矩:安装包不能默默少一个引擎。别的平台暂时只警告。
+			// setup-msys2 变了 —— 安装包不能默默少一个引擎。别的平台暂时只警告。
 			if (process.platform === "win32" && !process.env.YOMA_LA_SKIP) {
 				throw new Error(`yoma-la 构建不了:${why}。装 MSYS2 ucrt64(见 engines/logic-analyzer/CMakeLists.txt),或 YOMA_LA_SKIP=1 明确放弃逻辑分析仪。`);
 			}
@@ -335,23 +265,12 @@ if (dist) {
 	}
 
 	const { problems, notes } = auditDist(distDir);
-	if (irpacks < MIN_IRPACKS) {
-		const detail =
-			`只收到 ${irpacks} 个 irpack(期望 ≥${MIN_IRPACKS})—— CubeMX 解析没跑完。` +
-			`装 STM32CubeMX 或设 STM32CK_CUBEMX_DB,再跑 \`tsx engines/build.ts --dist\`。`;
-		if (allowMissingIrpacks) {
-			notes.push(detail + "已显式允许缺 irpack:安装包里没有 STM32 配置数据。");
-		} else {
-			problems.push(detail);
-		}
-	}
+	assertNoStm32Data(distDir);
 	const manifest = {
 		platform: process.platform,
 		arch: process.arch,
 		builtAt: new Date().toISOString(),
-		irpacks,
-		// fw 不在产物里:1.1GB(压缩后仍 ~174MB),而且只有 generate 用得到。
-		firmware: "not-bundled",
+		stm32: STM32_RESOURCE_POLICY,
 		// 逻辑分析仪引擎:没工具链的构建机会缺它,这里必须写明,别让"少一个引擎"静默。
 		la,
 		bin: Object.fromEntries(
@@ -367,7 +286,7 @@ if (dist) {
 	for (const [name, info] of Object.entries(manifest.bin)) {
 		console.log(`  ${name.padEnd(18)} ${(info.bytes / 1048576).toFixed(1)} MB`);
 	}
-	console.log(`  ${"irpacks".padEnd(18)} ${irpacks} 个族`);
+	console.log("  STM32 数据:用户本机 CubeMX → 本地缓存,不随引擎分发");
 	console.log(`\n产物:${distDir}`);
 
 	for (const note of notes) console.log(`  ℹ ${note}`);
@@ -390,20 +309,20 @@ if (!checkOnly) {
 	await need("cargo", "install Rust via https://rustup.rs");
 	await need("uv", "install uv via https://docs.astral.sh/uv/getting-started/installation/");
 
-	console.log("\n[1/4] stm32-config-kernel — cargo build --release + import irpacks");
+	console.log("\n[1/4] stm32-config-kernel — cargo build --release (kernel + local importer)");
 	await $`cargo build --release`.cwd(kernelDir);
-	await ensureIrpacks(false);
 
 	console.log("\n[2/4] controller_map — uv sync");
 	await $`uv sync`.cwd(path.join(here, "controller_map"));
 
 	console.log("\n[3/4] install — engines/bin + engines/data");
 	const venvBin = path.join(here, "controller_map", ".venv", process.platform === "win32" ? "Scripts" : "bin");
-	install(path.join(kernelDir, "target", "release", exe("stm32kernel")), path.join(here, "bin", exe("stm32kernel")), "file");
+	for (const name of ["stm32kernel", "stm32ck-import"]) {
+		install(path.join(kernelDir, "target", "release", exe(name)), path.join(here, "bin", exe(name)), "file");
+	}
 	for (const entry of ["controller_map", "board_ir", "connections"]) {
 		install(path.join(venvBin, exe(entry)), path.join(here, "bin", exe(entry)), "file");
 	}
-	install(kernelData, path.join(here, "data", "stm32"), "dir");
 	await ensureRipgrep(path.join(here, "bin"));
 
 	console.log("\n[4/4] logic-analyzer — yoma-la");
@@ -431,6 +350,7 @@ function probe(label: string, fn: () => string, opts: { optional?: boolean } = {
 const at = { enginesDir: here };
 const rows = [
 	probe("stm32kernel", () => engineBin("stm32kernel", at)),
+	probe("stm32ck-import", () => engineBin("stm32ck-import", at)),
 	probe("controller_map", () => engineBin("controller_map", at)),
 	probe("board_ir", () => engineBin("board_ir", at)),
 	probe("rg", () => engineBin("rg", at)),
@@ -444,19 +364,10 @@ for (const [name, loc, ok] of rows) {
 	console.log(`  ${ok === true ? "✓" : ok === "skip" ? "↷" : "✗"} ${name.padEnd(16)} ${loc}`);
 }
 
-const irpackCount = countIrpacks(path.join(here, "data", "stm32"));
-if (irpackCount >= MIN_IRPACKS) {
-	console.log(`  ✓ ${"irpacks".padEnd(16)} ${irpackCount} families`);
-} else {
-	console.log(`  ↷ ${"irpacks".padEnd(16)} ${irpackCount} packs — STM32 配置跳过(需要本机 CubeMX)`);
-}
+console.log("  STM32 数据在使用时从用户本机 CubeMX 准备;引擎构建不读取数据库或固件。");
 
 if (bad === 0) {
-	if (irpackCount >= MIN_IRPACKS) {
-		console.log("\nAll good — the stm32config / netlist / flash tools will resolve these binaries.");
-	} else {
-		console.log("\nAll good — netlist engines ready. STM32 config skipped (no CubeMX / irpack).");
-	}
+	console.log("\nAll good — engine executables ready; STM32 user resources are checked when requested.");
 } else {
 	console.log(`\n${bad} item(s) missing — run \`tsx engines/build.ts\` to build and install.`);
 	process.exit(1);

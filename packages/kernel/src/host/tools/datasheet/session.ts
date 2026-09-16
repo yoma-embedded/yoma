@@ -28,6 +28,7 @@
 import type { AgentHarnessTool, ExecutionToolContext } from "@earendil-works/pi-agent-core"
 
 import { datasheetEnvFile, resolveDatasheetServer } from "../../datasheet-server.ts"
+import { executionEnvSnapshot } from "../../domain/execution-env.ts"
 import {
   artifactPathProblem,
   capped,
@@ -149,16 +150,20 @@ function pinnedMissNote(family: ChipFamily, rev: string): string {
 }
 
 export function createDatasheetTool(options: DatasheetToolOptions = {}): DatasheetTool {
-  const run = async (params: DatasheetInput, signal: AbortSignal | undefined): Promise<Result> => {
+  const run = async (
+    params: DatasheetInput,
+    signal: AbortSignal | undefined,
+    env: NodeJS.ProcessEnv,
+  ): Promise<Result> => {
     const configuration = resolveDatasheetServer({
       explicit: options?.server,
-      env: options?.env,
+      env,
       configDir: options?.configDir,
       builtIn: options?.builtIn,
     })
     const server = configuration.url
     if (!server) {
-      return textResult(noServerHelp(datasheetEnvFile({ env: options.env, configDir: options.configDir })), {
+      return textResult(noServerHelp(datasheetEnvFile({ env, configDir: options.configDir })), {
         action: params.action,
       })
     }
@@ -556,6 +561,7 @@ export function createDatasheetTool(options: DatasheetToolOptions = {}): Datashe
     label: DATASHEET_CONTRACT.label,
     description: DATASHEET_CONTRACT.description,
     parameters: DATASHEET_CONTRACT.parameters,
-    execute: (_toolCallId, params, _onUpdate, _toolContext, _invocation, context) => run(params, context.abortSignal),
+    execute: (_toolCallId, params, _onUpdate, toolContext, _invocation, context) =>
+      run(params, context.abortSignal, options.env ?? executionEnvSnapshot(toolContext.env)),
   }
 }

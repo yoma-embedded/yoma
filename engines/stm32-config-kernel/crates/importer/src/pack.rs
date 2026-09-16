@@ -298,19 +298,21 @@ fn attr_in(head: &str, name: &str) -> Option<String> {
     Some(rest[..j].to_string())
 }
 
-fn read_db_version(db: &Path) -> Option<String> {
-    // db/package.xml carries a version attribute; plain string scan keeps us
-    // independent of its schema.
-    let text = fs::read_to_string(db.join("package.xml")).ok()?;
-    for token in ["Version=\"", "version=\""] {
-        if let Some(i) = text.find(token) {
-            let rest = &text[i + token.len()..];
-            if let Some(j) = rest.find('"') {
-                return Some(rest[..j].to_string());
-            }
-        }
+pub fn read_db_version(db: &Path) -> Option<String> {
+    // CubeMX's database release is PackDescription@Release. Package@DBVersion
+    // describes the XML format, and the XML declaration has its own version.
+    // Substring matching "Version=" used to mistake DBVersion="2.0" for the
+    // installed database release, making every CubeMX version look identical.
+    let text = crate::read_text(&db.join("package.xml")).ok()?;
+    let doc = roxmltree::Document::parse(&text).ok()?;
+    if let Some(release) = doc.descendants()
+        .filter(|node| node.has_tag_name("PackDescription"))
+        .find_map(|node| node.attribute("Release"))
+    {
+        return Some(release.to_string());
     }
-    None
+    let root = doc.root_element();
+    root.attribute("Version").or_else(|| root.attribute("version")).map(str::to_string)
 }
 
 // ---------------------------------------------------------------------------

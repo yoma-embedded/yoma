@@ -9,10 +9,11 @@ import { existsSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { writeLedgerEntry } from "./ledger.ts";
+import { readLedger, writeLedgerEntry } from "./ledger.ts";
 import { findOnPath, withPath } from "./locations.ts";
 import type { ToolchainResolution } from "./resolve.ts";
 import { MANIFEST_RELATIVE, parseManifest } from "./schema.ts";
+import type { ToolSpec } from "./schema.ts";
 import { probeVersion } from "./version.ts";
 
 /**
@@ -24,8 +25,9 @@ import { probeVersion } from "./version.ts";
  * 串行的代价可以忽略。
  */
 export async function rememberFreshResults(resolution: ToolchainResolution, configDir: string | undefined): Promise<void> {
+	const existing = await readLedger(configDir);
 	for (const tool of resolution.tools) {
-		if (tool.status !== "ok" || tool.source === "local") continue;
+		if (tool.status !== "ok" || tool.source === "local" || existing.entries[tool.id]?.by === "user") continue;
 		await writeLedgerEntry(
 			{ id: tool.id, bin: tool.bin, version: tool.version, confirmedAt: Date.now(), by: "auto" },
 			configDir,
@@ -57,8 +59,8 @@ export interface RecordedToolchainPath {
  * well-known/registry 档同一套口径([dir, dir/bin] 两层、findOnPath 的 PATHEXT
  * 展开),用户"把安装目录整个贴进来"于是和自动探测撞见同一个目录时行为一致。
  */
-function resolveBinsInDir(dir: string, bins: string[]): Record<string, string> {
-	const synthetic = withPath(process.env, [dir, path.join(dir, "bin")]);
+function resolveBinsInDir(dir: string, bins: string[], env: NodeJS.ProcessEnv): Record<string, string> {
+	const synthetic = withPath(env, [dir, path.join(dir, "bin")]);
 	const found: Record<string, string> = {};
 	for (const name of bins) {
 		const hit = findOnPath(name, synthetic);
@@ -93,6 +95,7 @@ export async function recordToolchainPath(opts: {
 	id: string;
 	path: string;
 	configDir?: string;
+	env?: NodeJS.ProcessEnv;
 	probe?: "version" | "exists";
 	/** 该工具声明的可执行名(清单 tool.bin / 平台预设)。给了它,目录输入才解析得动。 */
 	bins?: string[];
@@ -110,7 +113,7 @@ export async function recordToolchainPath(opts: {
 	// 目录里解析得到就用解析结果;解析不到(或压根没有 bins 可解析)就原样记录 ——
 	// 见文件头「照单全收」那段的理由。
 	let bin: Record<string, string> =
-		statSync(rawPath).isDirectory() && (opts.bins?.length ?? 0) > 0 ? resolveBinsInDir(rawPath, opts.bins!) : {};
+		statSync(rawPath).isDirectory() && (opts.bins?.length ?? 0) > 0 ? resolveBinsInDir(rawPath, opts.bins!, opts.env ?? process.env) : {};
 	if (Object.keys(bin).length === 0) {
 		bin = { [execNameOf(rawPath)]: rawPath };
 	}
@@ -121,7 +124,7 @@ export async function recordToolchainPath(opts: {
 
 	let version: string | undefined;
 	if ((opts.probe ?? "version") === "version" && !statSync(primary).isDirectory()) {
-		version = await probeVersion(primary);
+		version = await probeVersion(primary, opts.env);
 	}
 
 	await writeLedgerEntry({ id: opts.id, bin, version, confirmedAt: Date.now(), by: "user" }, opts.configDir);
@@ -140,6 +143,14 @@ export async function declaredToolBins(opts: {
 	projectDir?: string;
 	manifestText?: string;
 }): Promise<string[] | undefined> {
+	return (await declaredToolSpec(opts))?.bin;
+}
+
+export async function declaredToolSpec(opts: {
+	id: string;
+	projectDir?: string;
+	manifestText?: string;
+}): Promise<ToolSpec | undefined> {
 	let text = opts.manifestText;
 	if (text === undefined) {
 		if (opts.projectDir === undefined) return undefined;
@@ -151,5 +162,5 @@ export async function declaredToolBins(opts: {
 	}
 	const parsed = parseManifest(text);
 	if (!parsed.ok) return undefined;
-	return parsed.manifest.tools.find((tool) => tool.id === opts.id)?.bin;
+	return parsed.manifest.tools.find((tool) => tool.id === opts.id);
 }

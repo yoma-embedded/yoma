@@ -48,7 +48,7 @@ export type ToolchainInput = Static<typeof toolchainParameters>
 /** 卡片 metadata 只收能 JSON 往返的字段,所以这里是 ResolvedTool 的三格摘要,不是它本身。 */
 export interface ToolchainToolSummary {
   id: string
-  status: "ok" | "version-mismatch" | "ambiguous" | "missing"
+  status: "ok" | "configured" | "recorded" | "unverified" | "version-mismatch" | "ambiguous" | "missing"
   optional: boolean
 }
 

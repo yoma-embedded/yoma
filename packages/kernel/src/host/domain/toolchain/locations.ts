@@ -63,16 +63,18 @@ function candidateExtensions(env: NodeJS.ProcessEnv): string[] {
 }
 
 /**
- * 把 env 的 PATH 换成给定目录,其余不动。**必须先删掉原来那个键**:Windows 上真
+ * 把 env 的 PATH 换成给定目录,其余不动。**必须先删掉所有同名键**:Windows 上真
  * `process.env` 的键叫 "Path",`{...env, PATH: …}` 展开后两个键并存,findEnvKey 扫
  * Object.keys 先撞见旧的 "Path" —— 于是 findOnPath 扫的是机器真实 PATH,不是你指的
  * 目录。实测(2026-08-23):CI 的 Windows 岗上"贴目录解析可执行文件"两条测试因此红了三次,
- * 而 Mac 上键本来就叫 PATH,覆盖掉了,本地永远绿。
+ * 而 Mac 上键本来就叫 PATH,覆盖掉了,本地永远绿。输入本身也可能同时有 PATH / Path,
+ * 只删第一个会留下另一个旧值,让手选目录重新命中机器全局工具。
  */
 export function withPath(env: NodeJS.ProcessEnv, dirs: string[]): NodeJS.ProcessEnv {
 	const out: NodeJS.ProcessEnv = { ...env };
-	const key = findEnvKey(out, "PATH");
-	if (key !== undefined) delete out[key];
+	for (const key of Object.keys(out)) {
+		if (key.toLowerCase() === "path") delete out[key];
+	}
 	out.PATH = dirs.join(path.delimiter);
 	return out;
 }

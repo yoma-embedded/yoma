@@ -12,7 +12,8 @@
  * 为什么不用 bash 工具那条 env.exec 路径:它吃 shell 字符串(参数会被二次解释)、
  * 带 shell 初始化和面向交互的输出截断;引擎调用需要 argv 精确传参、JSON 原样收集。
  *
- * 布局只有一种:engines/bin/ 放全部可执行文件,engines/data/<name>/ 放数据。
+ * engines/bin/ 放可执行文件,engines/data/<name>/ 只放可分发资源。
+ * STM32 的用户本地数据与固件由 domain/stm32/resources.ts 准备,不从安装目录读取。
  * `npm run engines:build` 构建后用符号链接填充;打包时由 desktop 的
  * `scripts/stage-engines.ts` 把同样的 bin/ + data/ 布局实体化(dereference)到
  * `.engines-stage/` 再进 extraResources,这里的代码不变(electron-builder 对
@@ -20,7 +21,7 @@
  * 显式传 enginesDir。
  */
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -53,7 +54,7 @@ export interface EnginePathOptions {
 }
 
 /** engines/bin 下必须有的可执行文件。 */
-export const ENGINE_BINARIES = ["stm32kernel", "controller_map", "board_ir", "connections", "rg"] as const;
+export const ENGINE_BINARIES = ["stm32kernel", "stm32ck-import", "controller_map", "board_ir", "connections", "rg"] as const;
 
 /** 向上找带 bin/ 的 engines 目录,跳过空壳。 */
 export function findEnginesDir(start: string): string {
@@ -104,28 +105,13 @@ export function engineBin(name: string, options?: EnginePathOptions): string {
 	throw new Error(engineMissingMessage(name, file, root));
 }
 
-/** engines/data/ 下的数据目录,如 engineDataDir("stm32")。 */
+/** engines/data/ 下可分发的运行时资源,如 engineDataDir("la")。 */
 export function engineDataDir(name: string, options?: EnginePathOptions): string {
 	const dir = path.join(options?.enginesDir ?? enginesDir(), "data", name);
 	if (!existsSync(dir)) {
 		throw new Error(`engine data \`${name}\` not found at ${dir}. Run \`npm run engines:build\` to install it.`);
 	}
 	return dir;
-}
-
-/**
- * 内核实际装了哪些族 —— 从 data/stm32/*.irpack 的文件名读,不写死。
- *
- * 写死过一次,代价很具体:描述里留着"currently STM32F1 and STM32F4",而数据目录
- * 里躺着 27 个 pack。模型照着这句话把一颗完全支持的 G473 判成不支持,掉头去手写
- * 寄存器代码 —— 工具没坏,是工具的自述把它关在门外了。能力清单必须由能力本身生成。
- */
-export function stm32Families(options?: EnginePathOptions): string[] {
-	const dir = engineDataDir("stm32", options);
-	return readdirSync(dir)
-		.filter((f) => f.endsWith(".irpack"))
-		.map((f) => f.slice(0, -".irpack".length).toUpperCase())
-		.sort();
 }
 
 // ─── 探针租约 ────────────────────────────────────────────────────────────────
@@ -621,14 +607,15 @@ const MAX_LINES_STDERR_CHARS = 8 * 1024;
 
 export function runEngineLines(bin: string, args: string[], options: EngineLinesOptions): Promise<EngineLinesResult> {
 	const timeoutMs = options.timeoutMs ?? DEFAULT_ENGINE_TIMEOUT_MS;
+	const env = options.env ?? process.env;
 	return new Promise((resolve, reject) => {
 		const child = spawn(bin, args, {
 			cwd: options.cwd,
 			stdio: ["ignore", "pipe", "pipe"],
 			env: {
-				...process.env,
-				PYTHONIOENCODING: process.env.PYTHONIOENCODING || "utf-8",
-				PYTHONUTF8: process.env.PYTHONUTF8 || "1",
+				...env,
+				PYTHONIOENCODING: env.PYTHONIOENCODING || "utf-8",
+				PYTHONUTF8: env.PYTHONUTF8 || "1",
 			},
 			detached: process.platform !== "win32",
 			windowsHide: true,

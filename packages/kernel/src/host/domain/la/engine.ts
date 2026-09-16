@@ -16,6 +16,7 @@ import { type EnginePathOptions, type EngineRunResult, assertEngineSettled, engi
 export interface LaEngineContext extends EnginePathOptions {
 	cwd?: string;
 	signal?: AbortSignal;
+	env?: NodeJS.ProcessEnv;
 }
 
 export interface LaDevice {
@@ -131,18 +132,18 @@ function parseJsonStdout<T>(r: EngineRunResult, what: string): T {
 }
 
 export async function laVersion(ctx: LaEngineContext = {}): Promise<{ "yoma-la": string; dsview: string; dsview_commit: string; libsigrokdecode: string }> {
-	const r = assertEngineSettled(await runEngine(binOf(ctx), ["--version"], { cwd: ctx.cwd, signal: ctx.signal, timeoutMs: 10_000 }), "yoma-la --version");
+	const r = assertEngineSettled(await runEngine(binOf(ctx), ["--version"], { cwd: ctx.cwd, signal: ctx.signal, env: ctx.env, timeoutMs: 10_000 }), "yoma-la --version");
 	return parseJsonStdout(r, "--version");
 }
 
 export async function laDevices(ctx: LaEngineContext = {}): Promise<{ devices: LaDevice[]; count: number }> {
-	const r = assertEngineSettled(await runEngine(binOf(ctx), ["devices", "--json", ...dataArgs(ctx, "res")], { cwd: ctx.cwd, signal: ctx.signal, timeoutMs: 30_000 }), "yoma-la devices");
+	const r = assertEngineSettled(await runEngine(binOf(ctx), ["devices", "--json", ...dataArgs(ctx, "res")], { cwd: ctx.cwd, signal: ctx.signal, env: ctx.env, timeoutMs: 30_000 }), "yoma-la devices");
 	if (r.exitCode !== 0) throw new Error(`yoma-la devices failed (exit ${r.exitCode}): ${stderrLines(r)}`);
 	return parseJsonStdout(r, "devices");
 }
 
 export async function laDecoders(ctx: LaEngineContext = {}, ids: string[] = []): Promise<{ decoders_dir: string; decoders: LaDecoderInfo[] }> {
-	const r = assertEngineSettled(await runEngine(binOf(ctx), ["decoders", "--json", ...dataArgs(ctx, "decoders"), ...ids], { cwd: ctx.cwd, signal: ctx.signal, timeoutMs: 60_000 }), "yoma-la decoders");
+	const r = assertEngineSettled(await runEngine(binOf(ctx), ["decoders", "--json", ...dataArgs(ctx, "decoders"), ...ids], { cwd: ctx.cwd, signal: ctx.signal, env: ctx.env, timeoutMs: 60_000 }), "yoma-la decoders");
 	const parsed = parseJsonStdout<{ decoders_dir: string; decoders: LaDecoderInfo[] }>(r, "decoders");
 	if (r.exitCode !== 0 && parsed.decoders.length === 0) throw new Error(`yoma-la decoders failed: ${stderrLines(r)}`);
 	return parsed;
@@ -170,7 +171,7 @@ export function captureArgs(spec: CaptureSpec, outDir: string, name: string): st
 export async function laCapture(ctx: LaEngineContext, spec: CaptureSpec, outDir: string, name: string): Promise<LaCaptureReport> {
 	const engineTimeout = (spec.timeoutMs ?? 30_000) + 5_000;
 	const r = assertEngineSettled(
-		await runEngine(binOf(ctx), [...captureArgs(spec, outDir, name), ...dataArgs(ctx, "res")], { cwd: ctx.cwd, signal: ctx.signal, timeoutMs: engineTimeout + 30_000 }),
+		await runEngine(binOf(ctx), [...captureArgs(spec, outDir, name), ...dataArgs(ctx, "res")], { cwd: ctx.cwd, signal: ctx.signal, env: ctx.env, timeoutMs: engineTimeout + 30_000 }),
 		"yoma-la capture",
 	);
 	const text = r.stdout.trim();
@@ -193,7 +194,7 @@ export async function laDecode(ctx: LaEngineContext, spec: DecodeSpec, outFile: 
 	for (const pd of spec.pds) args.push("--pd", pd);
 	if (spec.from !== undefined) args.push("--from", String(spec.from));
 	if (spec.to !== undefined) args.push("--to", String(spec.to));
-	const r = assertEngineSettled(await runEngine(binOf(ctx), args, { cwd: ctx.cwd, signal: ctx.signal, timeoutMs: 10 * 60_000 }), "yoma-la decode");
+	const r = assertEngineSettled(await runEngine(binOf(ctx), args, { cwd: ctx.cwd, signal: ctx.signal, env: ctx.env, timeoutMs: 10 * 60_000 }), "yoma-la decode");
 	if (r.exitCode !== 0) throw new Error(`yoma-la decode failed (exit ${r.exitCode}):\n${stderrLines(r) || "(no diagnostics)"}`);
 	const tail = await lastLine(outFile);
 	let end: { annotations: number; elapsed_ms: number; ok: boolean };

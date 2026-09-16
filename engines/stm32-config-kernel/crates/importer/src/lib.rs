@@ -68,7 +68,11 @@ const WIN_DB_LAYOUTS: &[&str] = &[
 /// macOS / Linux layouts. Existence is *not* checked here.
 const UNIX_DB_LAYOUTS: &[&str] = &[
     "/Applications/STMicroelectronics/STM32CubeMX.app/Contents/Resources/db",
+    "/Applications/STMicroelectronics/STM32CubeMX.app/Contents/MacOs/db",
+    "/Applications/STMicroelectronics/STM32CubeMX.app/Contents/MacOS/db",
     "/Applications/STM32CubeMX.app/Contents/Resources/db",
+    "/Applications/STM32CubeMX.app/Contents/MacOs/db",
+    "/Applications/STM32CubeMX.app/Contents/MacOS/db",
     "/usr/local/STMicroelectronics/STM32Cube/STM32CubeMX/db",
     "/opt/STMicroelectronics/STM32Cube/STM32CubeMX/db",
 ];
@@ -110,11 +114,45 @@ pub fn db_candidates() -> Vec<PathBuf> {
 /// Locate the CubeMX db: `STM32CK_CUBEMX_DB` if set, else the first existing
 /// [`db_candidates`] entry. `None` = no local CubeMX installation found.
 pub fn discover_db() -> Option<PathBuf> {
-    if let Ok(env) = std::env::var("STM32CK_CUBEMX_DB") {
-        let p = PathBuf::from(env);
-        return p.is_dir().then_some(p);
-    }
-    db_candidates().into_iter().find(|p| p.is_dir())
+    resolve_db(None).ok()
+}
+
+/// Normalize a configured installation root, app bundle, executable or db path.
+/// This is also the runtime locator: desktop and bench use the importer's
+/// `--probe` command instead of maintaining another platform-specific path list.
+pub fn normalize_db(path: &Path) -> Option<PathBuf> {
+    let root = if path.is_file() { path.parent()? } else { path };
+    [
+        root.to_path_buf(),
+        root.join("db"),
+        root.join("Contents/Resources/db"),
+        root.join("Contents/MacOs/db"),
+        root.join("Contents/MacOS/db"),
+    ]
+    .into_iter()
+    .find(|candidate| candidate.join("mcu").is_dir())
+}
+
+/// Explicit configuration is authoritative. A broken override must never
+/// silently select another database and generate from a different version.
+pub fn resolve_db(explicit: Option<&Path>) -> anyhow::Result<PathBuf> {
+    let from_env = std::env::var_os("STM32CK_CUBEMX_DB").map(PathBuf::from);
+    let configured = explicit.or(from_env.as_deref());
+    let found = if let Some(path) = configured {
+        anyhow::ensure!(!path.as_os_str().is_empty(), "configured CubeMX path is empty");
+        normalize_db(path).ok_or_else(|| anyhow::anyhow!(
+            "configured CubeMX path `{}` does not contain a db/mcu directory; select the CubeMX installation or its db directory",
+            path.display()
+        ))?
+    } else {
+        db_candidates().into_iter().find_map(|path| normalize_db(&path)).ok_or_else(|| {
+            anyhow::anyhow!(
+                "no CubeMX db found; pass --cubemx-db or set STM32CK_CUBEMX_DB.\nProbed:\n{}",
+                db_candidates().iter().map(|p| format!("  {}", p.display())).collect::<Vec<_>>().join("\n")
+            )
+        })?
+    };
+    Ok(if found.is_absolute() { found } else { std::env::current_dir()?.join(found) })
 }
 
 /// The db used by importer tests on a dev machine; tests skip when absent.

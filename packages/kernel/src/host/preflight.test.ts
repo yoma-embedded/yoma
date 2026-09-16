@@ -7,6 +7,7 @@ import { NO_AMBIENT_AUTH } from "./models.ts"
 
 import { inspectEngines } from "./preflight.ts"
 import { createKernelHost } from "./index.ts"
+import { ENGINE_BINARIES } from "./domain/engines.ts"
 
 const roots: string[] = []
 afterEach(() => {
@@ -38,7 +39,7 @@ describe("inspectEngines", () => {
     const bin = path.join(ok, "bin")
     mkdirSync(bin, { recursive: true })
     const exe = process.platform === "win32" ? ".exe" : ""
-    for (const name of ["stm32kernel", "controller_map", "board_ir", "connections", "rg"]) {
+    for (const name of ENGINE_BINARIES) {
       writeFileSync(path.join(bin, name + exe), "")
     }
     expect(inspectEngines(ok)).toEqual({ ok: true, code: "ok", dir: ok, missing: [] })
@@ -49,13 +50,23 @@ describe("inspectEngines", () => {
     const bin = path.join(dir, "bin")
     mkdirSync(bin, { recursive: true })
     const exe = process.platform === "win32" ? ".exe" : ""
-    for (const name of ["stm32kernel", "controller_map", "board_ir", "connections"]) {
+    for (const name of ENGINE_BINARIES.filter((name) => name !== "rg")) {
       writeFileSync(path.join(bin, name + exe), "")
     }
     const report = inspectEngines(dir)
     expect(report.ok).toBe(false)
     expect(report.code).toBe("missingBin")
     expect(report.missing).toEqual(["rg"])
+  })
+
+  test("旧引擎包缺本地转换器时不能报告 ready", () => {
+    const dir = tempDir("yoma-eng-noimport-")
+    const bin = path.join(dir, "bin")
+    mkdirSync(bin, { recursive: true })
+    for (const name of ENGINE_BINARIES.filter((name) => name !== "stm32ck-import")) {
+      writeFileSync(path.join(bin, name + (process.platform === "win32" ? ".exe" : "")), "")
+    }
+    expect(inspectEngines(dir).missing).toEqual(["stm32ck-import"])
   })
 })
 

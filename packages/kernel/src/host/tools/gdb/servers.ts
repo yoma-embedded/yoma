@@ -73,7 +73,8 @@ const SERVER_BINARIES: Record<Exclude<GdbServerKind, "external">, readonly strin
 
 export function findOnPath(name: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
   const binary = exe(name)
-  for (const dir of (env.PATH ?? "").split(path.delimiter)) {
+  const pathKey = Object.keys(env).find((key) => key.toLowerCase() === "path")
+  for (const dir of ((pathKey && env[pathKey]) || "").split(path.delimiter)) {
     if (!dir) continue
     const candidate = path.join(dir, binary)
     if (existsSync(candidate)) return candidate
@@ -223,9 +224,16 @@ export interface ServerProcess {
  */
 const liveServers = new Set<ServerProcess>()
 
-export function spawnServer(argv: string[], port: number, cwd: string, logFile?: string): ServerProcess {
+export function spawnServer(
+  argv: string[],
+  port: number,
+  cwd: string,
+  logFile?: string,
+  env?: NodeJS.ProcessEnv,
+): ServerProcess {
   const child = spawn(argv[0]!, argv.slice(1), {
     cwd,
+    env,
     stdio: ["ignore", "pipe", "pipe"],
     detached: process.platform !== "win32",
     windowsHide: true,
@@ -341,11 +349,11 @@ function waitForServerExit(server: ServerProcess, ms: number): Promise<boolean> 
 
 /** 关闭完成才交还探针。J-Link single-run 在 GDB 断开后自己清理;其余后端先收 SIGTERM。 */
 export async function stopServer(server: ServerProcess, waitForNaturalExit: boolean): Promise<{ forced: boolean }> {
-  if (waitForNaturalExit && await waitForServerExit(server, 3000)) return { forced: false }
+  if (waitForNaturalExit && (await waitForServerExit(server, 3000))) return { forced: false }
   if (!server.exited) killTree(server.child, "SIGTERM")
   if (await waitForServerExit(server, 3000)) return { forced: true }
   server.killNow()
-  if (!await waitForServerExit(server, 3000)) {
+  if (!(await waitForServerExit(server, 3000))) {
     throw new Error(`gdb server pid ${server.child.pid} did not exit; the debug probe has not been released`)
   }
   return { forced: true }

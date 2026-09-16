@@ -14,7 +14,7 @@
  * set 的路径验证失败则直接 reject:那是用户刚敲进输入框的东西,拒绝理由要原地报。
  */
 import {
-  declaredToolBins,
+  declaredToolSpec,
   familyManifestText,
   findToolchainFamily,
   installKey,
@@ -63,11 +63,19 @@ export async function toolchainStatus(opts: ToolchainRpcOptions & { fresh?: bool
   }
 }
 
-export async function toolchainSet(opts: ToolchainRpcOptions & { id: string; path: string }): Promise<ToolchainStatusView> {
+export async function toolchainSet(
+  opts: ToolchainRpcOptions & { id: string; path: string },
+): Promise<ToolchainStatusView> {
   // bins 让"贴整个安装目录"的输入直接可用(在目录及其 bin/ 里解析声明的可执行名);
   // 清单读不出来就退化为原样记录 —— 查询本身尽力而为,见 declaredToolBins。
-  const bins = await declaredToolBins({ id: opts.id, projectDir: opts.directory })
-  await recordToolchainPath({ id: opts.id, path: opts.path, configDir: opts.configDir, bins })
+  const spec = await declaredToolSpec({ id: opts.id, projectDir: opts.directory })
+  await recordToolchainPath({
+    id: opts.id,
+    path: opts.path,
+    configDir: opts.configDir,
+    bins: spec?.bin,
+    probe: spec?.pathKind === "dir" ? "exists" : "version",
+  })
   // 记完再核一遍账:UI 拿到的是落账后的真实状态,而不是"大概成功了"。注意 local
   // 覆盖(toolchain.local.json)仍然压过刚写的账本条目 —— 那是解析顺序的既有语义,
   // 结果里的 source 字段会如实说明是谁赢了。
@@ -126,7 +134,13 @@ export async function toolchainFamilyStatus(
       manifestText: familyManifestText(family),
     })
     if (opts.fresh) await rememberFreshResults(resolution, opts.configDir)
-    return { declared: true, manifestPath: undefined, side: resolution.side, ok: resolution.ok, tools: resolution.tools }
+    return {
+      declared: true,
+      manifestPath: undefined,
+      side: resolution.side,
+      ok: resolution.ok,
+      tools: resolution.tools,
+    }
   } catch (error) {
     // 预设清单坏了理论上被 kernel/test 的 families 测试拦在合并前;真到这儿就如实
     // 摆出来,和项目清单坏了同一个排查面。

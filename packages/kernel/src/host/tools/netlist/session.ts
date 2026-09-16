@@ -9,8 +9,7 @@
  *   截断后内联,全图只报路径(模型要看再 read)。
  *
  * 两个引擎对这两种模式而言非零退出都是真失败(不像 stm32kernel 的 exit 1 与 flash 的烧录器),抛错带上 stderr。
- * board_ir 要器件数据包(irpack):显式允许缺数据的分发构建可能不带,话要说成"这台机器没有器件数据、原始图仍可用",
- * 不是"引擎坏了"。
+ * board_ir 和 stm32config 向同一个资源模块申请本机 CubeMX 的器件缓存,不读取安装目录里的数据。
  *
  * 2026-09-15 按新内核接口重写:cwd 每次 execute 现取;中止走 context.abortSignal(并在 spawn 前先看一眼);
  * 文件访问直接 node:fs;探测行边跑边上卡片;主控 ref 与信心从 controller_map 的 JSON 里读出来进 details。
@@ -18,6 +17,7 @@
 
 import { mkdir, mkdtemp, readFile, stat } from "node:fs/promises"
 import path from "node:path"
+import { executionEnvSnapshot } from "../../domain/execution-env.ts"
 
 import type { AgentHarnessTool, ExecutionToolContext } from "@earendil-works/pi-agent-core"
 
@@ -26,16 +26,19 @@ import {
   assertEngineSettled,
   capEngineOutput,
   engineBin,
-  engineDataDir,
   type EnginePathOptions,
   runEngine,
-  stm32Families,
 } from "../../domain/engines.ts"
+import { prepareStm32Resources } from "../../domain/stm32/resources.ts"
 import { createToolOutputDir, engineErrorText, parseEngineObject, previewToolOutput } from "../../domain/tool-output.ts"
 import { resolveToCwd } from "../../domain/paths.ts"
 import { NETLIST_CONTRACT, type NetlistDetails } from "./contract.ts"
 
-export type NetlistToolOptions = EnginePathOptions
+export interface NetlistToolOptions extends EnginePathOptions {
+  configDir?: string
+  /** 测试注入资源边界;生产环境始终走统一资源模块。 */
+  prepare?: typeof prepareStm32Resources
+}
 
 export type NetlistTool = AgentHarnessTool<ExecutionToolContext, typeof NETLIST_CONTRACT.parameters, NetlistDetails>
 
@@ -66,20 +69,6 @@ export function detectedController(stdout: string): { controller?: string; lowCo
   }
 }
 
-/** board_ir 要的器件数据:不在时说清是数据不在、原始图仍可用。 */
-function requireDataDir(options?: EnginePathOptions): string {
-  try {
-    const dir = engineDataDir("stm32", options)
-    if (stm32Families(options).length === 0) throw new Error("empty")
-    return dir
-  } catch {
-    throw new Error(
-      "netlist board_ir: the board IR needs the STM32 device data packs (irpacks) that stm32config uses, and none are installed in this build. Use an engine distribution containing data/stm32/*.irpack; source builders can import them from STM32CubeMX with npm run engines:build. " +
-        "Run netlist without `part` for the raw per-pin connection map, and take pin / peripheral facts from the datasheet tool.",
-    )
-  }
-}
-
 async function fileExists(file: string): Promise<boolean> {
   return stat(file).then(
     (info) => info.isFile(),
@@ -95,6 +84,7 @@ export function createNetlistTool(options: NetlistToolOptions = {}): NetlistTool
     parameters: NETLIST_CONTRACT.parameters,
     execute: async (_toolCallId, params, onUpdate, toolContext, _invocation, context) => {
       const cwd = toolContext.env.cwd
+      const env = executionEnvSnapshot(toolContext.env)
       const mode: NetlistDetails["mode"] = params.part ? "board_ir" : "map"
       const engineLabel = mode === "map" ? "controller_map" : "board_ir"
       if (context.abortSignal?.aborted) throw new Error(`${engineLabel} was aborted`)
@@ -108,6 +98,7 @@ export function createNetlistTool(options: NetlistToolOptions = {}): NetlistTool
         const result = assertEngineSettled(
           await runEngine(bin, args, {
             cwd,
+            env,
             signal: context.abortSignal,
             onOutput: ({ text }) => {
               live = appendTail(live, text)
@@ -155,7 +146,20 @@ export function createNetlistTool(options: NetlistToolOptions = {}): NetlistTool
       }
       const bin = engineBin("board_ir", options)
       const kernel = engineBin("stm32kernel", options)
-      const dataDir = requireDataDir(options)
+      const resources = await (options.prepare ?? prepareStm32Resources)({
+        enginesDir: options.enginesDir,
+        configDir: options.configDir,
+        projectDir: cwd,
+        env,
+        signal: context.abortSignal,
+        part: params.part,
+        onProgress: (message) =>
+          onUpdate({
+            content: [{ type: "text", text: message }],
+            details: { mode, netlist, part: params.part },
+          }),
+      })
+      if (context.abortSignal?.aborted) throw new Error(`${engineLabel} was aborted`)
 
       const stem = sanitizeStem(netlist)
       // 每次调用保留自己的证据:同名网表、不同 part、并发调用都不能互相覆盖。
@@ -178,7 +182,7 @@ export function createNetlistTool(options: NetlistToolOptions = {}): NetlistTool
         "--stm32kernel",
         kernel,
         "--data-dir",
-        dataDir,
+        resources.dataDir,
         "--part",
         params.part,
         "--out-dir",

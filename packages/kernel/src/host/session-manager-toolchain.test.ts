@@ -17,14 +17,23 @@
  *    让**已经开着的**会话下一条命令就看得见,不用重开。
  */
 import { afterEach, describe, expect, test } from "vitest"
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, type Model } from "@earendil-works/pi-ai"
+import {
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxText,
+  fauxToolCall,
+  type Model,
+} from "@earendil-works/pi-ai"
 
 import type { KernelEvent } from "../protocol.ts"
 import type { ToolPart } from "../types.ts"
-import { applyMachinePathToProcess, SessionManager } from "./session-manager.ts"
+import { SessionManager } from "./session-manager.ts"
+import { createKernelHost } from "./index.ts"
+import { fakeExeName, writeFakeExe as writeNativeFakeExe } from "../../test/fixtures/fake-exe.ts"
 
 const roots: string[] = []
 afterEach(() => {
@@ -52,13 +61,15 @@ function harnessWith(steps: unknown[]) {
   return { models, model: faux.getModel() as Model<string> }
 }
 
-function makeManager(steps: unknown[], options: { configDir?: string } = {}) {
+function makeManager(steps: unknown[], options: { configDir?: string; enginesDir?: string } = {}) {
   const events: KernelEvent[] = []
   const manager = new SessionManager({
     sessionsRoot: tempDir("yoma-tc-sessions-"),
     // 隔离开发机真实的 ~/.yoma —— 不传的话 resolveToolchain 会去读它的
     // toolchains.json 账本,测试结果就取决于跑测试的机器上账本记了什么。
     configDir: options.configDir ?? tempDir("yoma-tc-config-"),
+    enginesDir: options.enginesDir,
+    inspectStm32Availability: async () => ({ available: true }),
     emit: (batch) => events.push(...batch),
     resolveModels: async () => harnessWith(steps),
   })
@@ -74,7 +85,9 @@ async function waitFor(check: () => boolean, timeoutMs = 10_000): Promise<void> 
 }
 
 function toolPartsOf(events: KernelEvent[]): ToolPart[] {
-  return events.flatMap((e) => (e.type === "message.part.updated" && e.part.type === "tool" ? [e.part as ToolPart] : []))
+  return events.flatMap((e) =>
+    e.type === "message.part.updated" && e.part.type === "tool" ? [e.part as ToolPart] : [],
+  )
 }
 
 function kernelErrorsOf(events: KernelEvent[]): Array<{ type: "kernel.error"; message: string; sessionID?: string }> {
@@ -92,12 +105,9 @@ describe("有清单且工具解析成功", () => {
       tools: [{ id: "gizmo", bin: ["gizmofake"], exports: { YOMA_TC_TEST_BIN: "{bin}" } }],
     })
 
-    // 本机账本覆盖(不提交):直接给一个真实存在的假文件。不需要它真能跑——清单里
-    // 没写 version,resolveTool 的 satisfiesWanted 对"没有版本要求"永远为真,
-    // probeVersion 探测这个假文件必然失败(它不是可执行文件)也不影响最终 status。
+    // 本机覆盖使用可执行入口,真实跨过版本探测与进程环境边界。
     const binDir = tempDir("yoma-tc-bin-")
-    const binPath = path.join(binDir, "gizmofake")
-    writeFileSync(binPath, "")
+    const binPath = writeFakeExe(binDir, "gizmofake")
     writeJSON(path.join(workspace, ".yoma", "toolchain.local.json"), {
       gizmo: { id: "gizmo", bin: { gizmofake: binPath }, confirmedAt: Date.now(), by: "user" },
     })
@@ -114,7 +124,9 @@ describe("有清单且工具解析成功", () => {
     const session = await manager.create(workspace)
     await manager.prompt(session.id, { text: "看看环境变量" })
 
-    await waitFor(() => toolPartsOf(events).some((part) => part.state.status === "completed" || part.state.status === "error"))
+    await waitFor(() =>
+      toolPartsOf(events).some((part) => part.state.status === "completed" || part.state.status === "error"),
+    )
 
     let output: string | undefined
     for (const part of toolPartsOf(events)) {
@@ -229,18 +241,9 @@ describe("清单存在但内容损坏", () => {
 // 断言全部走 bash 工具真 spawn 出来的子进程看到的 $PATH —— 与本文件第一条测试同一条
 // 理由:PATH 是跨进程边界的东西,mock 掉构造参数证明不了它真的到了子进程。
 
-/** 造一个假可执行文件(不需要真能跑:这一档只看目录有没有被前置进 PATH)。 */
+/** 使用真实启动器,入口探测和子进程 PATH 均走生产代码。 */
 function writeFakeExe(dir: string, name: string): string {
-  mkdirSync(dir, { recursive: true })
-  if (process.platform === "win32") {
-    const file = path.join(dir, `${name}.bat`)
-    writeFileSync(file, "@echo off\r\necho 1.0.0\r\n")
-    return file
-  }
-  const file = path.join(dir, name)
-  writeFileSync(file, "#!/bin/sh\necho 1.0.0\n")
-  chmodSync(file, 0o755)
-  return file
+  return writeNativeFakeExe(dir, name, 'console.log("1.0.0")')
 }
 
 /** 按 install.ts 的 ManagedInstall 布局摆一个"Yoma 装过"的包,返回它的 binDir。 */
@@ -281,21 +284,14 @@ function completedOutputs(events: KernelEvent[]): string[] {
 const echoPath = () => fauxAssistantMessage([fauxToolCall("bash", { command: 'echo "$PATH"' })])
 
 describe("机器级目录进会话 PATH", () => {
-  // sessionShellEnv 会顺带改**内核进程自己的** process.env.PATH(生产行为:gdb/flash
-  // 用 process.env 起子进程)。测试之间必须还原,否则前一条用例的临时目录会留在
-  // 后一条的 PATH 里,断言就不再说明问题了。
-  let savedPath: { key: string; value: string | undefined } | undefined
-  afterEach(() => {
-    if (savedPath) {
-      if (savedPath.value === undefined) delete process.env[savedPath.key]
-      else process.env[savedPath.key] = savedPath.value
-      savedPath = undefined
-    }
-  })
+  const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "PATH"
+  let savedPath: string | undefined
   function guardProcessPath(): void {
-    const key = Object.keys(process.env).find((k) => k.toLowerCase() === "path") ?? "PATH"
-    savedPath = { key, value: process.env[key] }
+    savedPath = process.env[pathKey]
   }
+  afterEach(() => {
+    expect(process.env[pathKey]).toBe(savedPath)
+  })
 
   test("没有项目清单时也前置:managed 的 bin 与账本 by:user 的目录在,by:auto 的不在", async () => {
     guardProcessPath()
@@ -362,29 +358,212 @@ describe("机器级目录进会话 PATH", () => {
   }, 30_000)
 })
 
-describe("applyMachinePathToProcess", () => {
-  // 注入 env 对象,绝不动真的 process.env —— 这个函数的生产调用点就是改进程自己的
-  // PATH,测试里跟着改会污染同进程的其它用例。
-  test("前置一次、可重复调用不重复前置", () => {
-    const env: NodeJS.ProcessEnv = { PATH: ["/usr/bin", "/bin"].join(path.delimiter) }
-    applyMachinePathToProcess(["/opt/yoma/bin"], env)
-    expect(env.PATH).toBe(["/opt/yoma/bin", "/usr/bin", "/bin"].join(path.delimiter))
+describe("内置执行器使用会话工具链", () => {
+  const binary = "yoma-native-fixture"
+  function fixture(dir: string, marker: string): string {
+    return writeNativeFakeExe(
+      dir,
+      binary,
+      `
+      if (process.argv.includes("--version")) console.log("1.0.0");
+      else console.log(${JSON.stringify(marker)} + "|" + process.env.YOMA_PROJECT_EXPORT);
+    `,
+    )
+  }
+  function project(): string {
+    const workspace = tempDir("yoma-native-project-")
+    mkdirSync(path.join(workspace, ".yoma"))
+    writeJSON(path.join(workspace, ".yoma", "toolchain.json"), {
+      schema: "yoma/toolchain@1",
+      tools: [{ id: binary, bin: [binary], exports: { YOMA_PROJECT_EXPORT: "{bin}" } }],
+    })
+    return workspace
+  }
+  function local(workspace: string, exe: string): void {
+    writeJSON(path.join(workspace, ".yoma", "toolchain.local.json"), {
+      [binary]: { id: binary, bin: { [binary]: exe }, confirmedAt: Date.now(), by: "user" },
+    })
+  }
+  const call = () => fauxAssistantMessage([fauxToolCall("flash", { command: [fakeExeName(binary)] })])
+  const done = () => fauxAssistantMessage([fauxText("done")])
 
-    applyMachinePathToProcess(["/opt/yoma/bin"], env)
-    expect(env.PATH).toBe(["/opt/yoma/bin", "/usr/bin", "/bin"].join(path.delimiter))
-    expect(Object.keys(env)).toEqual(["PATH"])
-  })
+  test("version probes and native calls both receive engine PATH, machine PATH, and declared exports", async () => {
+    const configDir = tempDir("yoma-native-config-")
+    const enginesDir = tempDir("yoma-native-engines-")
+    writeNativeFakeExe(path.join(enginesDir, "bin"), "yoma-engine-helper", 'console.log("engine")')
+    const machineExe = writeNativeFakeExe(
+      tempDir("yoma-native-machine-"),
+      "yoma-machine-helper",
+      'console.log("machine")',
+    )
+    writeLedger(configDir, {
+      "yoma-machine-helper": {
+        id: "yoma-machine-helper",
+        bin: { "yoma-machine-helper": machineExe },
+        confirmedAt: Date.now(),
+        by: "user",
+      },
+    })
+    const workspace = project()
+    const executable = writeNativeFakeExe(
+      tempDir("yoma-native-probe-"),
+      binary,
+      `
+      import { execFileSync } from "node:child_process";
+      if (!process.env.YOMA_PROJECT_EXPORT) process.exit(5);
+      const a = execFileSync(${JSON.stringify(fakeExeName("yoma-engine-helper"))}, [], { windowsHide: true }).toString().trim();
+      const b = execFileSync(${JSON.stringify(fakeExeName("yoma-machine-helper"))}, [], { windowsHide: true }).toString().trim();
+      console.log(process.argv.includes("--version") ? "1.0.0" : a + "|" + b + "|" + process.env.YOMA_PROJECT_EXPORT);
+    `,
+    )
+    local(workspace, executable)
+    let prompt = ""
+    const { manager, events } = makeManager(
+      [
+        (context: { systemPrompt?: string }) => {
+          prompt = context.systemPrompt ?? ""
+          return call()
+        },
+        done(),
+      ],
+      { configDir, enginesDir },
+    )
+    try {
+      const session = await manager.create(workspace)
+      await manager.prompt(session.id, { text: "verify configured environment" })
+      await waitFor(() => completedOutputs(events).length === 1 && statusesOf(events).at(-1) === "idle")
+      expect(prompt).not.toContain("Project toolchain requirements")
+      expect(completedOutputs(events)[0]).toContain(`engine|machine|${executable}`)
+    } finally {
+      await manager.disposeAll()
+    }
+  }, 30_000)
 
-  test("dirs 为空是彻底的 no-op", () => {
-    const env: NodeJS.ProcessEnv = { PATH: "/usr/bin" }
-    applyMachinePathToProcess([], env)
-    expect(env.PATH).toBe("/usr/bin")
-  })
+  test("two projects resolve the same command to different binaries/exports, ahead of a conflicting machine entry", async () => {
+    const processPath = process.env.PATH
+    const configDir = tempDir("yoma-native-config-")
+    const a = project()
+    const b = project()
+    const aExe = fixture(tempDir("yoma-native-a-"), "A")
+    const bExe = fixture(tempDir("yoma-native-b-"), "B")
+    local(a, aExe)
+    local(b, bExe)
+    writeLedger(configDir, {
+      [binary]: {
+        id: binary,
+        bin: { [binary]: fixture(tempDir("yoma-native-machine-"), "MACHINE") },
+        confirmedAt: Date.now(),
+        by: "user",
+      },
+    })
+    const { manager, events } = makeManager([call(), done(), call(), done(), call(), done()], { configDir })
+    try {
+      const first = await manager.create(a)
+      const second = await manager.create(b)
+      for (const [index, id] of [first.id, second.id, first.id].entries()) {
+        await manager.prompt(id, { text: "run fake native command" })
+        await waitFor(() => completedOutputs(events).length > index && statusesOf(events).at(-1) === "idle")
+      }
+      const outputs = completedOutputs(events)
+      expect(outputs[0]).toContain(`A|${aExe}`)
+      expect(outputs[1]).toContain(`B|${bExe}`)
+      expect(outputs[2]).toContain(`A|${aExe}`)
+      expect(outputs.join("\n")).not.toContain("MACHINE|")
+      expect(process.env.PATH).toBe(processPath)
+    } finally {
+      await manager.disposeAll()
+    }
+  }, 30_000)
 
-  test("键叫 Path 时写回 Path,不另开一个 PATH(子进程认哪个是未定义行为)", () => {
-    const env: NodeJS.ProcessEnv = { Path: "C:\\Windows\\System32" }
-    applyMachinePathToProcess(["C:\\yoma\\bin"], env)
-    expect(Object.keys(env)).toEqual(["Path"])
-    expect(env.Path).toBe(["C:\\yoma\\bin", "C:\\Windows\\System32"].join(path.delimiter))
-  })
+  test("settings set and fresh resolution update native calls and system prompt in an already-open session", async () => {
+    const configDir = tempDir("yoma-native-config-")
+    const workspace = project()
+    const events: KernelEvent[] = []
+    const prompts: string[] = []
+    const capture = (run: boolean) => (context: { systemPrompt?: string }) => {
+      prompts.push(context.systemPrompt ?? "")
+      return run ? call() : done()
+    }
+    const host = createKernelHost({
+      sessionsRoot: tempDir("yoma-native-sessions-"),
+      configDir,
+      stateDir: tempDir("yoma-native-state-"),
+      onEvents: (batch) => events.push(...batch),
+      inspectStm32Availability: async () => ({ available: true }),
+      resolveModels: async () => harnessWith([capture(false), capture(true), done(), capture(true), done()]),
+    })
+    try {
+      const session = await host.handle("session.create", { directory: workspace })
+      await host.handle("session.prompt", { sessionID: session.id, input: { text: "inspect missing tool" } })
+      await waitFor(() => prompts.length === 1 && statusesOf(events).at(-1) === "idle")
+      expect(prompts[0]).toContain("MISSING")
+      const firstExe = fixture(tempDir("yoma-native-first-"), "FIRST")
+      await host.handle("toolchain.set", { directory: workspace, id: binary, path: firstExe })
+      await host.handle("session.prompt", { sessionID: session.id, input: { text: "run after setting" } })
+      await waitFor(() => completedOutputs(events).length === 1 && statusesOf(events).at(-1) === "idle")
+      expect(completedOutputs(events)[0]).toContain(`FIRST|${firstExe}`)
+      expect(prompts[1]).not.toContain("Project toolchain requirements")
+
+      const secondExe = fixture(tempDir("yoma-native-second-"), "SECOND")
+      writeLedger(configDir, {
+        [binary]: { id: binary, bin: { [binary]: secondExe }, confirmedAt: Date.now(), by: "user" },
+      })
+      await host.handle("toolchain.status", { directory: workspace, fresh: true })
+      await host.handle("session.prompt", { sessionID: session.id, input: { text: "run after reprobe" } })
+      await waitFor(() => completedOutputs(events).length === 2 && statusesOf(events).at(-1) === "idle")
+      expect(completedOutputs(events)[1]).toContain(`SECOND|${secondExe}`)
+    } finally {
+      await host.dispose()
+    }
+  }, 30_000)
+
+  test("a slow old refresh cannot overwrite a newer settings environment", async () => {
+    const configDir = tempDir("yoma-native-config-")
+    const workspace = project()
+    const oldDir = tempDir("yoma-native-old-")
+    const started = path.join(oldDir, "started")
+    const release = path.join(oldDir, "release")
+    const delay = path.join(oldDir, "delay")
+    const oldExe = writeNativeFakeExe(
+      oldDir,
+      binary,
+      `
+      import { existsSync, writeFileSync } from "node:fs";
+      if (process.argv.includes("--version")) {
+        if (existsSync(${JSON.stringify(delay)})) {
+          writeFileSync(${JSON.stringify(started)}, "started");
+          while (!existsSync(${JSON.stringify(release)})) await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        console.log("1.0.0");
+      } else console.log("OLD|" + process.env.YOMA_PROJECT_EXPORT);
+    `,
+    )
+    const newExe = fixture(tempDir("yoma-native-new-"), "NEW")
+    const select = (exe: string) =>
+      writeLedger(configDir, {
+        [binary]: { id: binary, bin: { [binary]: exe }, confirmedAt: Date.now(), by: "user" },
+      })
+    select(oldExe)
+    const { manager, events } = makeManager([done(), call(), done()], { configDir })
+    let oldRefresh: Promise<void> | undefined
+    try {
+      const session = await manager.create(workspace)
+      await manager.prompt(session.id, { text: "open session" })
+      await waitFor(() => statusesOf(events).at(-1) === "idle")
+      writeFileSync(delay, "delay")
+      oldRefresh = manager.refreshMachineEnv()
+      await waitFor(() => existsSync(started))
+      select(newExe)
+      await manager.refreshMachineEnv()
+      writeFileSync(release, "release")
+      await oldRefresh
+      await manager.prompt(session.id, { text: "run with latest settings" })
+      await waitFor(() => completedOutputs(events).length === 1 && statusesOf(events).at(-1) === "idle")
+      expect(completedOutputs(events)[0]).toContain(`NEW|${newExe}`)
+    } finally {
+      writeFileSync(release, "release")
+      await oldRefresh
+      await manager.disposeAll()
+    }
+  }, 30_000)
 })

@@ -74,6 +74,7 @@ export type LogSource =
 
 export interface LogCaptureOptions {
   maxBufferLines?: number
+  env?: NodeJS.ProcessEnv
 }
 
 export interface WaitOutcome {
@@ -106,6 +107,7 @@ export class LogCapture {
   readonly label: string
   readonly file: string
   readonly cwd: string
+  private readonly env: NodeJS.ProcessEnv
 
   private child?: ChildProcess
   private socket?: net.Socket
@@ -136,6 +138,7 @@ export class LogCapture {
     this.label = label
     this.file = file
     this.cwd = cwd
+    this.env = { ...(options?.env ?? process.env) }
     this.maxBufferLines = options?.maxBufferLines ?? DEFAULT_BUFFER_LINES
     this.hold = source.kind === "child" ? source.hold : undefined
   }
@@ -195,6 +198,7 @@ export class LogCapture {
     try {
       child = spawn(argv[0]!, argv.slice(1), {
         cwd: this.cwd,
+        env: this.env,
         stdio: [this.hold ?? "ignore", "pipe", "pipe"],
         // 自成进程组,stop 才能连孙子进程一起收掉(见 killTree)。
         detached: process.platform !== "win32",

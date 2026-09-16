@@ -171,6 +171,11 @@ function familyOpts(pathDirs: string[] = [], extraEnv: Record<string, string> = 
   }
 }
 
+function writeArmToolchain() {
+  for (const name of ["arm-none-eabi-g++", "arm-none-eabi-objcopy", "arm-none-eabi-size"]) writeFakeExe(binDir, name, "13.2.1")
+  return writeFakeExe(binDir, "arm-none-eabi-gcc", "13.2.1")
+}
+
 describe("toolchain.families", () => {
   it("目录带全预设平台,工具行带 title/pathKind;账本为空时 recordedIds 为空", async () => {
     const view = await toolchainFamilies({ configDir })
@@ -185,7 +190,7 @@ describe("toolchain.families", () => {
   })
 
   it("记过账后 recordedIds 里能看到 —— 首跑提醒的消失条件", async () => {
-    const exe = writeFakeExe(binDir, "arm-none-eabi-gcc", "13.2.1")
+    const exe = writeArmToolchain()
     await toolchainFamilySet({ ...familyOpts(), family: "stm32", id: "arm-gcc", path: exe })
     const view = await toolchainFamilies({ configDir })
     expect(view.recordedIds).toEqual(["arm-gcc"])
@@ -198,7 +203,7 @@ describe("toolchain.familyStatus", () => {
   })
 
   it("不需要项目:declared 恒为 true,PATH 上的工具判 ok,其余 missing 且带安装指引", async () => {
-    writeFakeExe(binDir, "arm-none-eabi-gcc", "13.2.1")
+    writeArmToolchain()
 
     const view = await toolchainFamilyStatus({ ...familyOpts([binDir]), family: "stm32" })
     expect(view.declared).toBe(true)
@@ -216,15 +221,15 @@ describe("toolchain.familyStatus", () => {
     expect((await readLedger(configDir)).entries).toEqual({})
   })
 
-  it("env 档:IDF_PATH 指向存在的目录即判 ok(目录型工具,版本未知不碍事)", async () => {
+  it("env 档:IDF_PATH 指向存在的目录标记 configured,不冒充执行就绪", async () => {
     const view = await toolchainFamilyStatus({ ...familyOpts([], { IDF_PATH: binDir }), family: "esp32" })
     const idf = view.tools.find((tool) => tool.id === "idf")
-    expect(idf?.status).toBe("ok")
+    expect(idf?.status).toBe("configured")
     expect(idf?.source).toBe("env")
   })
 
   it("fresh:true 把探到的结果写回机器账本(by:auto)", async () => {
-    writeFakeExe(binDir, "arm-none-eabi-gcc", "13.2.1")
+    writeArmToolchain()
     await toolchainFamilyStatus({ ...familyOpts([binDir]), family: "stm32", fresh: true })
     const ledger = await readLedger(configDir)
     expect(ledger.entries["arm-gcc"]?.by).toBe("auto")
@@ -234,7 +239,7 @@ describe("toolchain.familyStatus", () => {
 
 describe("toolchain.familySet", () => {
   it("exe 型走严格档:好路径带版本入账,返回的核账里该工具 ok 且 source 是 ledger", async () => {
-    const exe = writeFakeExe(binDir, "arm-none-eabi-gcc", "13.2.1")
+    const exe = writeArmToolchain()
     const view = await toolchainFamilySet({ ...familyOpts(), family: "stm32", id: "arm-gcc", path: exe })
     const armGcc = view.tools.find((tool) => tool.id === "arm-gcc")
     expect(armGcc?.status).toBe("ok")
@@ -245,13 +250,13 @@ describe("toolchain.familySet", () => {
     expect(ledger.entries["arm-gcc"]?.version).toBe("13.2.1")
   })
 
-  it("dir 型只验存在:目录入账无版本,核账靠账本记录判 ok —— GUI/目录条目的正门", async () => {
+  it("dir 型只验存在:目录入账无版本,核账只标记 configured", async () => {
     const installDir = path.join(binDir, "STM32CubeMX")
     mkdirSync(installDir, { recursive: true })
 
     const view = await toolchainFamilySet({ ...familyOpts(), family: "stm32", id: "stm32cubemx", path: installDir })
     const cubemx = view.tools.find((tool) => tool.id === "stm32cubemx")
-    expect(cubemx?.status).toBe("ok")
+    expect(cubemx?.status).toBe("configured")
     expect(cubemx?.source).toBe("ledger")
 
     const ledger = await readLedger(configDir)
@@ -260,23 +265,24 @@ describe("toolchain.familySet", () => {
   })
 
   it("exe 型贴目录:按预设声明的 bin 名解析出可执行文件再入账(截图里 JLink_V958 那种输入)", async () => {
-    const exe = writeFakeExe(binDir, "arm-none-eabi-gcc", "13.2.1")
+    const exe = writeArmToolchain()
 
     const view = await toolchainFamilySet({ ...familyOpts(), family: "stm32", id: "arm-gcc", path: binDir })
     const armGcc = view.tools.find((tool) => tool.id === "arm-gcc")
     expect(armGcc?.status).toBe("ok")
 
     const ledger = await readLedger(configDir)
-    expect(Object.values(ledger.entries["arm-gcc"]?.bin ?? {}).map((p) => p.toLowerCase())).toEqual([exe.toLowerCase()])
+    expect(Object.values(ledger.entries["arm-gcc"]?.bin ?? {}).map((p) => p.toLowerCase())).toContain(exe.toLowerCase())
+    expect(Object.keys(ledger.entries["arm-gcc"]!.bin)).toHaveLength(4)
   })
 
-  it("exe 型贴了没有对应可执行文件的目录:不 reject,原样记录目录本身,核账因账本记录判 ok", async () => {
+  it("exe 型贴了没有入口的目录:保存成功,核账明确标记 recorded", async () => {
     const uv4Dir = path.join(binDir, "UV4")
     mkdirSync(uv4Dir, { recursive: true })
 
     const view = await toolchainFamilySet({ ...familyOpts(), family: "stm32", id: "keil", path: uv4Dir })
     const keil = view.tools.find((tool) => tool.id === "keil")
-    expect(keil?.status).toBe("ok")
+    expect(keil?.status).toBe("recorded")
 
     const ledger = await readLedger(configDir)
     expect(Object.values(ledger.entries.keil?.bin ?? {})).toEqual([uv4Dir])

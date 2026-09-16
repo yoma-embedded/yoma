@@ -19,6 +19,24 @@ function node(script: string): [string, string[]] {
 }
 
 describe("runEngineLines", () => {
+  it("传入的环境到达真实流式子进程,包含独立变量与编码选项", async () => {
+    const [bin, args] = node(
+      `console.log([process.env.YOMA_LINES_TEST, process.env.PYTHONUTF8, process.env.PYTHONIOENCODING].join("|"))`,
+    )
+    const outputs = await Promise.all(
+      ["project-A", "project-B"].map(async (marker) => {
+        const lines: string[] = []
+        const result = await runEngineLines(bin, args, {
+          env: { ...process.env, YOMA_LINES_TEST: marker, PYTHONUTF8: "0", PYTHONIOENCODING: "utf-16" },
+          onLine: (line) => void lines.push(line),
+        })
+        expect(result.exitCode).toBe(0)
+        return lines
+      }),
+    )
+    expect(outputs).toEqual([["project-A|0|utf-16"], ["project-B|0|utf-16"]])
+  })
+
   it("逐行回调,最后一行没有换行符也照样交付", async () => {
     const lines: string[] = []
     // 故意分三次写、最后一行不带 \n:一次 data 事件不等于一行,而收尾的冲刷是独立的一支。

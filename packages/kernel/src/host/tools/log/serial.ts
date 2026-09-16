@@ -156,6 +156,7 @@ export function prepareSerial(
   device: string,
   baud: number,
   platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
 ): number | undefined {
   if (platform === "win32") return undefined
   // 在碰设备之前问清楚:这台机器的 stty 设得了这个速率吗。
@@ -176,7 +177,7 @@ export function prepareSerial(
     const stty = spawnSync("stty", buildSttyArgs(baud), {
       stdio: [configuring, "ignore", "pipe"],
       encoding: "utf8",
-      env: process.env,
+      env,
     })
     if (stty.error) throw new Error(`could not configure ${device}: stty did not run (${String(stty.error)})`)
     if (stty.status !== 0) {
@@ -199,16 +200,10 @@ export function prepareSerial(
  * "Unable to find type [System.IO.Ports.SerialPort]",读起来像"这台机器没串口",而不是"用错了 PowerShell"。
  * 找不到 5.1 就返回 undefined,由调用方报那句能照着做的"没找到 powershell.exe"。
  */
-export function serialPowershellExe(pathEnv: string | undefined = process.env.PATH): string | undefined {
-  const inbox = path.join(
-    process.env.SystemRoot ?? "C:\\Windows",
-    "System32",
-    "WindowsPowerShell",
-    "v1.0",
-    "powershell.exe",
-  )
+export function serialPowershellExe(pathEnv?: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const inbox = path.join(env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
   if (existsSync(inbox)) return inbox
-  return findOnPath("powershell.exe", pathEnv)
+  return findOnPath("powershell.exe", pathEnv ?? Object.entries(env).find(([key]) => key.toLowerCase() === "path")?.[1])
 }
 
 /**
@@ -368,12 +363,15 @@ function listLinux(): SerialPortInfo[] {
 /**
  * 这台机器上的串口。**只读枚举,不打开任何设备**—— 与 flash 同一个立场(那边也不抢探针租约)。
  */
-export async function listSerialPorts(platform: NodeJS.Platform = process.platform): Promise<SerialPortInfo[]> {
+export async function listSerialPorts(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<SerialPortInfo[]> {
   if (platform === "darwin") return listDev((name) => name.startsWith("cu.") && !DARWIN_NOISE.has(name))
   if (platform !== "win32") return listLinux()
 
-  const argv = serialPowershellArgv(WINDOWS_LIST_SCRIPT, serialPowershellExe())
-  const result = await runEngine(argv[0]!, argv.slice(1), { timeoutMs: 30_000 }).catch((error: unknown) => {
+  const argv = serialPowershellArgv(WINDOWS_LIST_SCRIPT, serialPowershellExe(undefined, env))
+  const result = await runEngine(argv[0]!, argv.slice(1), { timeoutMs: 30_000, env }).catch((error: unknown) => {
     throw new Error(`could not list serial ports: ${error instanceof Error ? error.message : String(error)}`)
   })
   if (result.exitCode !== 0) {

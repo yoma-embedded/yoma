@@ -19,6 +19,9 @@ import { BACKGROUND_CONTEXT, type Context, withAbortSignal } from "@earendil-wor
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node"
 
 import { LogCapture } from "../src/host/tools/log/capture.ts"
+import { bindExecutionEnv } from "../src/host/domain/execution-env.ts"
+import { fakeExeName, writeFakeExe } from "./fixtures/fake-exe.ts"
+import { delimiter } from "node:path"
 import type { LogDetails, LogInput } from "../src/host/tools/log/contract.ts"
 import {
   clipText,
@@ -83,6 +86,66 @@ function makeTool() {
     tool.execute("c1", params, onUpdate, { env: new NodeExecutionEnv({ cwd }) }, invocation, context)
   return { tool, run, cwd }
 }
+
+describe("日志进程的项目环境", () => {
+  it("两项目分别解析命令与exports;刷新只影响下次start,在飞进程保持启动快照", async () => {
+    const originalPath = process.env.PATH
+    const makeContext = (cwd: string, marker: string) => {
+      const variables: NodeJS.ProcessEnv = { ...process.env, YOMA_ENV_TEST: marker }
+      const pathKey = Object.keys(variables).find((key) => key.toLowerCase() === "path") ?? "PATH"
+      variables[pathKey] = cwd + delimiter + (variables[pathKey] ?? "")
+      return { env: bindExecutionEnv(new NodeExecutionEnv({ cwd, shellEnv: variables }), variables) }
+    }
+    const projects = ["A", "B"].map((marker) => {
+      const cwd = createTempDir()
+      writeFakeExe(
+        cwd,
+        "tc-emitter",
+        `setInterval(() => console.log(${JSON.stringify(marker)} + ':' + process.env.YOMA_ENV_TEST), 30)`,
+      )
+      const tool = createLogTool()
+      openTools.push(tool)
+      return { cwd, tool, context: makeContext(cwd, marker) }
+    })
+    for (const project of projects)
+      await project.tool.execute(
+        "start",
+        { action: "start", command: fakeExeName("tc-emitter") },
+        () => {},
+        project.context,
+        invocation,
+        BACKGROUND_CONTEXT,
+      )
+    const first = projects[0]!
+    const newer = makeContext(first.cwd, "updated")
+    const read = (project: typeof first, pattern: string, context = project.context) =>
+      project.tool.execute(
+        "wait",
+        {
+          action: "wait",
+          pattern,
+          timeoutMs: 3000,
+        },
+        () => {},
+        context,
+        invocation,
+        BACKGROUND_CONTEXT,
+      )
+    expect(textOf(await read(first, "A:A", newer))).toContain("A:A")
+    expect(textOf(await read(projects[1]!, "B:B"))).toContain("B:B")
+    await first.tool.execute("stop", { action: "stop" }, () => {}, newer, invocation, BACKGROUND_CONTEXT)
+    await first.tool.execute(
+      "start",
+      { action: "start", command: fakeExeName("tc-emitter") },
+      () => {},
+      newer,
+      invocation,
+      BACKGROUND_CONTEXT,
+    )
+    expect(textOf(await read(first, "A:updated", newer))).toContain("A:updated")
+    expect(process.env.PATH).toBe(originalPath)
+  }, 15_000)
+})
 
 function textOf(result: AgentToolResult<LogDetails>): string {
   return result.content.map((part) => (part.type === "text" ? part.text : "")).join("")
@@ -850,53 +913,57 @@ describe("log tool", () => {
 
   // Inherited Node stdio survives its parent on POSIX; Windows does not guarantee this.
   // Windows tree cleanup and detached sources are exercised by the adjacent tests.
-  it.skipIf(process.platform === "win32")("shell 退了、孙进程还握着管道:仍算在采,第二个 start 被拒,stop 连孙进程一起收", async () => {
-    const dir = createTempDir()
-    const grandchild = join(dir, "grandchild.mjs")
-    writeFileSync(
-      grandchild,
-      `console.log("grandchild " + process.pid); setInterval(() => console.log("tick"), 20); process.send?.("ready");`,
-    )
-    const parent = join(dir, "parent.mjs")
-    writeFileSync(
-      parent,
-      `import { spawn } from "node:child_process";\nconst child = spawn(${JSON.stringify(process.execPath)}, [${JSON.stringify(grandchild)}], { stdio: ["ignore", "inherit", "inherit", "ipc"], windowsHide: true });\nchild.once("message", () => process.exit(0));`,
-    )
-    const { run } = makeTool()
-    await run({ action: "start", command: `"${process.execPath}" "${parent}"` })
-    await waitForLines(run, 4)
-    // 父进程已经退了(exit 事件到了),但 stdout 还被孙进程握着 —— 行还在来,这不是"源退了"。
-    await new Promise((resolve) => setTimeout(resolve, 200))
-    const status = await run({ action: "status" })
-    expect(textOf(status)).toContain("source: running")
-    expect(status.details!.running).toBe(true)
-    const before = status.details!.totalLines
-    await expect(run({ action: "start", command: writeSource(ALIVE_FOREVER) })).rejects.toThrow(/already capturing/)
-    // 被拒之后旧采集器还在收行(孙进程每 20ms 一行)。
-    await waitForLines(run, before + 1)
-    const pid = Number(
-      /grandchild (\d+)/.exec(textOf(await run({ action: "read", pattern: "grandchild", since: 0 })))![1],
-    )
-    const stopped = await run({ action: "stop" })
-    expect(stopped.details!.running).toBe(false)
-    if (process.platform !== "win32") {
-      // POSIX 上 stop 杀的是进程组:shell 死了组还在,孙进程跟着走。Windows 没有进程组,这条兜不住。
-      await waitFor(() => {
+  it.skipIf(process.platform === "win32")(
+    "shell 退了、孙进程还握着管道:仍算在采,第二个 start 被拒,stop 连孙进程一起收",
+    async () => {
+      const dir = createTempDir()
+      const grandchild = join(dir, "grandchild.mjs")
+      writeFileSync(
+        grandchild,
+        `console.log("grandchild " + process.pid); setInterval(() => console.log("tick"), 20); process.send?.("ready");`,
+      )
+      const parent = join(dir, "parent.mjs")
+      writeFileSync(
+        parent,
+        `import { spawn } from "node:child_process";\nconst child = spawn(${JSON.stringify(process.execPath)}, [${JSON.stringify(grandchild)}], { stdio: ["ignore", "inherit", "inherit", "ipc"], windowsHide: true });\nchild.once("message", () => process.exit(0));`,
+      )
+      const { run } = makeTool()
+      await run({ action: "start", command: `"${process.execPath}" "${parent}"` })
+      await waitForLines(run, 4)
+      // 父进程已经退了(exit 事件到了),但 stdout 还被孙进程握着 —— 行还在来,这不是"源退了"。
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      const status = await run({ action: "status" })
+      expect(textOf(status)).toContain("source: running")
+      expect(status.details!.running).toBe(true)
+      const before = status.details!.totalLines
+      await expect(run({ action: "start", command: writeSource(ALIVE_FOREVER) })).rejects.toThrow(/already capturing/)
+      // 被拒之后旧采集器还在收行(孙进程每 20ms 一行)。
+      await waitForLines(run, before + 1)
+      const pid = Number(
+        /grandchild (\d+)/.exec(textOf(await run({ action: "read", pattern: "grandchild", since: 0 })))![1],
+      )
+      const stopped = await run({ action: "stop" })
+      expect(stopped.details!.running).toBe(false)
+      if (process.platform !== "win32") {
+        // POSIX 上 stop 杀的是进程组:shell 死了组还在,孙进程跟着走。Windows 没有进程组,这条兜不住。
+        await waitFor(() => {
+          try {
+            process.kill(pid, 0)
+            return false
+          } catch {
+            return true
+          }
+        })
+      } else {
         try {
-          process.kill(pid, 0)
-          return false
+          process.kill(pid, "SIGKILL")
         } catch {
-          return true
+          // 已经没了。
         }
-      })
-    } else {
-      try {
-        process.kill(pid, "SIGKILL")
-      } catch {
-        // 已经没了。
       }
-    }
-  }, 20_000)
+    },
+    20_000,
+  )
 
   it("读进程逃出了进程组(setsid / Windows):stop 等 1 秒冲刷就收场,并如实说设备可能还被占着", async () => {
     const dir = createTempDir()
@@ -926,7 +993,12 @@ describe("log tool", () => {
         // 已经没了。
       }
       await waitFor(() => {
-        try { process.kill(pid, 0); return false } catch { return true }
+        try {
+          process.kill(pid, 0)
+          return false
+        } catch {
+          return true
+        }
       })
     }
   }, 20_000)

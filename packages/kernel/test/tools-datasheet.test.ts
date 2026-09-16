@@ -29,6 +29,7 @@ import { BACKGROUND_CONTEXT, type Context, withAbortSignal } from "@earendil-wor
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node"
 
 import { DEFAULT_DATASHEET_SERVER } from "../src/host/datasheet-server.ts"
+import { bindExecutionEnv } from "../src/host/domain/execution-env.ts"
 import { encodeRel, type ManifestEntry, type SearchHit } from "../src/host/domain/datasheet/index.ts"
 import { loadPhoton } from "../src/host/domain/image/photon.ts"
 import { confirmNeeded, toolContract } from "../src/host/tools/contracts.ts"
@@ -478,6 +479,28 @@ describe("datasheet contract", () => {
 // ─── 2. 地址 ──────────────────────────────────────────────────────────────────
 
 describe("datasheet server address", () => {
+  it("同一工具每次从调用快照选服务器,两个项目的地址互不串用", async () => {
+    const first = await fakeServer()
+    const second = await fakeServer()
+    const dir = createTempDir()
+    const tool = createDatasheetTool({ configDir: dir })
+    for (const url of [first.url, second.url]) {
+      const variables = { YOMA_DATASHEET_SERVER: url }
+      const env = bindExecutionEnv(new NodeExecutionEnv({ cwd: dir, shellEnv: variables }), variables)
+      const result = await tool.execute(
+        "environment",
+        { action: "chips" },
+        () => {},
+        { env },
+        invocation,
+        BACKGROUND_CONTEXT,
+      )
+      expect(textOf(result)).toContain("STM32F4")
+    }
+    expect(first.requests.some((request) => request.path === "/api/manifest")).toBe(true)
+    expect(second.requests.some((request) => request.path === "/api/manifest")).toBe(true)
+  })
+
   it("nothing configured resolves to the built-in default — install and query, no address to type", () => {
     expect(serverUrl({ env: {}, configDir: createTempDir() })).toBe(DEFAULT_DATASHEET_SERVER)
   })

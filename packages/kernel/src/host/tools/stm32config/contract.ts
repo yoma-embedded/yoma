@@ -3,8 +3,7 @@
  *
  * 确定性的 STM32 配置内核(`engines/bin/stm32kernel`,Rust):校验一份 JSON 配置文档(时钟树、外设、引脚、DMA、
  * NVIC、中间件),生成完整可编译的 CMake + HAL 工程。七个子命令原样透出。器件数据(irpack)是 CubeMX 器件库的
- * 解析产物、不进 git、分发构建可随包交付 —— "这台机器覆盖哪些族"是运行期事实,由厨房在描述末尾追加一行,
- * 这里只写不随机器变的部分。
+ * 解析产物,按需从本机 CubeMX 生成用户缓存,不随安装包分发。工程生成所需固件同样来自本机下载仓库。
  *
  * 门规同 flash / log / la / gdb / datasheet:只许 import typebox 与工具目录内的相对路径。
  *
@@ -83,9 +82,11 @@ export interface Stm32ConfigDetails {
   /** 输出被截断时,可用 read 读取的完整结果。 */
   outputFile?: string
   out?: string
+  /** 成功生成时随工程保存的资源版本记录。 */
+  resourceManifest?: string
 }
 
-const STM32CONFIG_DESCRIPTION = `Deterministic STM32 configuration kernel: validates a JSON configuration document describing the hardware setup (clock tree, peripherals, pins, DMA, NVIC, middleware) and generates a complete, compilable CMake + HAL driver project from it. This is how you produce driver code for supported chips — never hand-write peripheral init/register code when this tool covers the chip. Coverage depends on the device data packs installed on this machine (see the last line of this description and list-mcus); without packs only \`schema\` works.
+const STM32CONFIG_DESCRIPTION = `Deterministic STM32 configuration kernel: validates a JSON configuration document describing the hardware setup (clock tree, peripherals, pins, DMA, NVIC, middleware) and generates a complete, compilable CMake + HAL driver project from it. This is how you produce driver code for supported chips — never hand-write peripheral init/register code when this tool covers the chip. Device data is prepared automatically from the user's local STM32CubeMX database; generate additionally uses firmware already downloaded by CubeMX. No device data or firmware is downloaded or distributed by this tool. Use list-mcus to query the local database. \`schema\` works without CubeMX. If a resource is missing, follow the reported configuration or download instruction; missing local resources do not mean the chip is unsupported.
 
 Part numbers: the db spells them with a wildcard package suffix (STM32G473RCTx), while schematics and BOMs carry the orderable code (STM32G473RCT6). They denote the same die — pass the db spelling, and if a part is not found, read the diagnostic's suggestion list rather than concluding the chip is unsupported.
 
@@ -104,7 +105,7 @@ Rules:
 - This is a native tool; the stm32kernel CLI is NOT on PATH — never invoke it (or "stm32config") through the bash tool.
 - Keep configuration documents inside the working directory (e.g. board.json in the project root), never in /tmp; configPath and out resolve relative to the working directory.
 - The kernel's output is authoritative. Do NOT edit generated files to change hardware behavior; edit the configuration document and re-run generate. Application code belongs only inside /* USER CODE BEGIN/END */ sections, which regeneration preserves.
-- The same config + same kernel version always produces byte-identical output; treat the config document as the single source of truth and keep it in the project.
+- Keep the config document and the generated stm32-resources.json version record in the project to trace the exact engine, device database and firmware inputs. The record reports the versions used; it does not install or pin them for later generation.
 - Clock setup: either give frequency targets (clock.targets, then solve-clock) or pin the tree explicitly (clock.assignments, preferred when reproducing a known board design). Assignment keys follow CubeMX naming and unknown keys are silently ignored — copy them exactly. Example for STM32F4, HSE 8 MHz crystal → 168 MHz SYSCLK:
   "clock": { "sources": { "HSE": { "kind": "crystal", "freqHz": 8000000 } },
              "assignments": { "SYSCLKSource": "RCC_SYSCLKSOURCE_PLLCLK", "PLLSourceVirtual": "RCC_PLLSOURCE_HSE",
@@ -119,9 +120,9 @@ export const STM32CONFIG_CONTRACT = {
   description: STM32CONFIG_DESCRIPTION,
   parameters: stm32ConfigParameters,
   // 这两行进系统提示词、每一轮都读、压过工具描述,所以不写族名:曾经一句过时的 "STM32F1/F4" 把模型赶去给
-  // 明明支持的 G473 手写寄存器。覆盖范围由厨房从数据目录生成、写在工具描述末尾。
+  // 明明支持的 G473 手写寄存器。覆盖范围以本机 CubeMX 数据的查询结果为准。
   guidelines: [
-    "For STM32 driver code, never hand-write peripheral init when stm32config has device data for the part: author a config document, then stm32config validate → fix diagnostics → generate. When stm32config reports that no device data packs are installed, say so and fall back to the datasheet + HAL by hand.",
+    "For STM32 driver code, author a config document, then stm32config validate → fix diagnostics → generate. Device data and firmware come from the user's local CubeMX resources. If those resources are missing, report the exact missing resource and resolve its configuration; do not replace the deterministic generation pipeline with hand-written peripheral init.",
     "stm32config describe-mcu is authoritative for a part's pads, signals and ADC channels — do not go to the datasheet for pin/signal mapping when it covers the part.",
   ],
   summary: stm32ConfigSummary,

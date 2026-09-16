@@ -21,8 +21,8 @@
  * install 文案是设置页用户看的:中文为主,内嵌命令与官网域名。**不许出现绝对路径**
  * (parseManifest 全文档扫描会拒),"默认装在哪个目录"的知识属于 locations.ts。
  *
- * pathKind 是给"手填路径"用的验证档位:
- * - "exe" —— 填可执行文件,记账前要真跑出一个版本号(actions.ts 的默认严格档);
+ * pathKind 是资源与可执行入口的共同契约:
+ * - "exe" —— 路径宽松保存,解析时单独验证入口、执行和版本;
  * - "dir" —— 填安装目录(STM32CubeMX、ESP-IDF 根目录、Zephyr SDK):它们没有能安全
  *   `--version` 的入口(对 GUI spawn 会真的弹起程序),只验"绝对路径 + 存在"。
  */
@@ -31,7 +31,7 @@ import type { ProviderSpec, ToolchainManifest, ToolSpec } from "./schema.ts";
 
 export type ToolchainFamilyPathKind = "exe" | "dir";
 
-/** 预设工具 = 清单工具 + 两个 UI 专用字段;side 由 familyManifest 统一钉 "both",预设不许写。 */
+/** 预设工具 = 清单工具 + UI 标题;side 由 familyManifest 统一钉 "both",预设不许写。 */
 export interface ToolchainFamilyTool extends Omit<ToolSpec, "side"> {
 	/** 设置页行标题 —— 专有名词(Arm GNU Toolchain / ESP-IDF / …),中英一致,不进 i18n。 */
 	title: string;
@@ -69,8 +69,9 @@ const ARM_GCC: ToolchainFamilyTool = {
 	title: "Arm GNU 交叉编译器(arm-none-eabi-gcc)",
 	pathKind: "exe",
 	// 与 bk64.jsonc 同形:cmake 工具链文件把四个角色都钉死成这几个名字,官方分发装在
-	// 同一目录,实践中一起解析到。
+	// 同一目录,必须全部定位并通过执行检查。
 	bin: ["arm-none-eabi-gcc", "arm-none-eabi-g++", "arm-none-eabi-objcopy", "arm-none-eabi-size"],
+	binMode: "all",
 	from: "arm-gnu-toolchain",
 };
 
@@ -80,6 +81,7 @@ const ARM_GDB: ToolchainFamilyTool = {
 	pathKind: "exe",
 	optional: true,
 	bin: ["arm-none-eabi-gdb", "gdb-multiarch"],
+	binMode: "any",
 	from: "arm-gnu-toolchain",
 	install: {
 		// win32/darwin 回落 provider 的指引;linux 单独写 —— apt 的 gcc-arm-none-eabi 不带 gdb。
@@ -173,13 +175,23 @@ const STM32CUBEMX: ToolchainFamilyTool = {
 	title: "STM32CubeMX(安装目录)",
 	pathKind: "dir",
 	optional: true,
-	// 没有 bin:装完自己用的 GUI,resolve.ts 对 bin 为空的工具只认账本/覆盖记录 ——
-	// 在设置页手填安装目录就是把它记进账本的正门(locations.ts 的表键留着,给
-	// 将来有 bin 的场景;bin 为空时 well-known/registry 两档不会被碰)。
+	// 记录本地数据源,运行时由 STM32 资源模块发现/验证 db,不会启动 GUI。
 	install: {
 		win32: "从 st.com 下载 STM32CubeMX(需免费 ST 账号)",
 		darwin: "从 st.com 下载 STM32CubeMX(需免费 ST 账号)",
 		linux: "从 st.com 下载 STM32CubeMX(需免费 ST 账号)",
+	},
+};
+
+const STM32CUBE_REPOSITORY: ToolchainFamilyTool = {
+	id: "stm32cube-repository",
+	title: "STM32Cube 固件 Repository(目录)",
+	pathKind: "dir",
+	optional: true,
+	install: {
+		win32: "在 CubeMX 中下载所需芯片族的固件;非默认位置可在此选择已有 Repository 目录",
+		darwin: "在 CubeMX 中下载所需芯片族的固件;非默认位置可在此选择已有 Repository 目录",
+		linux: "在 CubeMX 中下载所需芯片族的固件;非默认位置可在此选择已有 Repository 目录",
 	},
 };
 
@@ -293,7 +305,7 @@ export const TOOLCHAIN_FAMILIES: readonly ToolchainFamily[] = [
 		id: "stm32",
 		name: "STM32",
 		providers: ARM_GNU_PROVIDER,
-		tools: [ARM_GCC, ARM_GDB, CMAKE, NINJA, OPENOCD, STM32CUBEPROG, JLINK, STM32CUBEMX, KEIL, GIT],
+		tools: [ARM_GCC, ARM_GDB, CMAKE, NINJA, OPENOCD, STM32CUBEPROG, JLINK, STM32CUBEMX, STM32CUBE_REPOSITORY, KEIL, GIT],
 	},
 	{
 		id: "esp32",
@@ -328,7 +340,7 @@ export function familyManifest(family: ToolchainFamily): ToolchainManifest {
 	return {
 		schema: "yoma/toolchain@1",
 		providers: family.providers,
-		tools: family.tools.map(({ title: _title, pathKind: _pathKind, ...spec }) => ({ ...spec, side: "both" as const })),
+		tools: family.tools.map(({ title: _title, ...spec }) => ({ ...spec, side: "both" as const })),
 	};
 }
 

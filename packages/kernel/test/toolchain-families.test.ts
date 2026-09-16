@@ -99,11 +99,11 @@ describe("familyManifest / familyManifestText", () => {
 		}
 	});
 
-	it("生成的清单不携带 UI 专用字段(title/pathKind 不是 ToolSpec 的一部分)", () => {
+	it("title 留在 UI;pathKind 是探测契约,必须传入解析器", () => {
 		for (const family of TOOLCHAIN_FAMILIES) {
 			for (const tool of familyManifest(family).tools) {
 				expect("title" in tool).toBe(false);
-				expect("pathKind" in tool).toBe(false);
+				expect(["dir", "exe"]).toContain(tool.pathKind);
 			}
 		}
 	});

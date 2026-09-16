@@ -2,7 +2,7 @@
 
 确定性 STM32「配置 → 校验 → 代码生成」内核。AI(yoma)决定配置什么;本内核保证如何正确生成 —— LLM 绝不书写驱动代码。
 
-- 数据:CubeMX db 经导入器编译为 IR 包(构建产物,不进 git;开发期需要本机 CubeMX)。
+- 数据:用户本机 CubeMX db 经导入器编译为 IR 缓存(不进 git、不随安装包分发)。Yoma 安装版携带转换器,使用时自动准备本机资源。
 - 引擎:忠实实现 CubeMX 数据语义(条件 DSL、信号量黑板、参数重载、OR/XOR 模式树、时钟 DAG)。
 - 输出:HAL 完整可编译工程(CMake + arm-none-eabi-gcc)。
 - 契约:`stm32kernel` CLI,JSON stdin/stdout,无状态;同版本 + 同 IR + 同输入 → **字节级相同输出**。
@@ -67,10 +67,14 @@ cmake --build build
 
 ## 开发期数据管道
 
+以下命令用于单独开发/验证原生引擎,不是 Yoma 用户的安装步骤。
+Yoma 的运行时资源模块统一读取本机 CubeMX 与已下载固件,不调用这里的固件下载脚本。
+
 ```powershell
 # ST 发布新 CubeMX 后,重新导入(需要本机 CubeMX 安装;
 # db 路径自动探测,也可用 --cubemx-db / $env:STM32CK_CUBEMX_DB 指定)
 cargo run --release -p stm32ck-importer -- --all --out data/
+cargo run --release -p stm32ck-importer -- --probe  # 只读 JSON: dbPath / dbVersion / families
 cargo run --release -p stm32ck-importer -- --families STM32H7 --out data/   # 单个家族
 # 全库解析冒烟(不发射)
 cargo run --release -p stm32ck-importer -- --smoke --out /tmp/x

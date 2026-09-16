@@ -18,17 +18,9 @@
 import { spawnSync } from "node:child_process"
 import { which } from "../../../scripts/shell.ts"
 import { createHash } from "node:crypto"
-import {
-  chmodSync,
-  copyFileSync,
-  cpSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-} from "node:fs"
+import { ENGINE_BINARIES } from "../../kernel/src/host/domain/engines.ts"
+import { materializeEngineResources } from "../../../engines/distribution.ts"
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -143,21 +135,7 @@ function verifyManifest(root: string): void {
   }
   const manifest = JSON.parse(readFileSync(manifestFile, "utf8")) as {
     bin?: Record<string, { sha256?: string }>
-    irpacks?: number
   }
-  const data = path.join(root, "data", "stm32")
-  const packs = existsSync(data)
-    ? readdirSync(data).filter((name) => name.endsWith(".irpack") && statSync(path.join(data, name)).isFile()).length
-    : 0
-  if (manifest.irpacks !== undefined && manifest.irpacks !== packs) {
-    fail(
-      `STM32 数据数量与 manifest 不符:声明 ${manifest.irpacks},实际 ${packs}`,
-      "这份引擎产物不完整,请重新获取或构建。",
-    )
-  }
-  console.log(
-    `[stage-engines] STM32 器件包:${packs};HAL/CMSIS ${existsSync(path.join(data, "fw")) ? "目录存在(未验证)" : "未随包交付"}`,
-  )
   for (const [name, info] of Object.entries(manifest.bin ?? {})) {
     const file = path.join(root, "bin", name)
     if (!existsSync(file)) {
@@ -268,7 +246,7 @@ verifyManifest(enginesDir)
 const nonPortable: string[] = []
 const foreign: string[] = []
 let nativeCount = 0
-for (const sub of ["bin", "data"] as const) {
+for (const sub of ["bin"] as const) {
   const dir = path.join(enginesDir, sub)
   let entries: string[]
   try {
@@ -287,7 +265,7 @@ for (const sub of ["bin", "data"] as const) {
     } catch {
       fail(`engines/${sub}/${name} 是悬空软链(构建产物不在)`)
     }
-    if (sub !== "bin" || !stat.isFile()) continue
+    if (!stat.isFile()) continue
     const head = readFileSync(target)
     const format = detectFormat(head)
     if (format === "script") {
@@ -306,6 +284,17 @@ for (const sub of ["bin", "data"] as const) {
       foreign.push(`${name}(${format},目标要 ${expected.label})`)
     }
   }
+}
+
+const missing = ENGINE_BINARIES.filter(
+  (name) => !existsSync(path.join(enginesDir, "bin", TARGET === "win32" ? `${name}.exe` : name)),
+)
+if (missing.length) {
+  fail(
+    `引擎缺少 ${missing.join(", ")};STM32 本地数据准备需要随包的 stm32ck-import`,
+    "旧预编译包不兼容本地资源流程。请用当前源码运行 `npm run engines:build -- --dist`," +
+      "并用 YOMA_ENGINES_DIR 指定新产物;使用预编译 Release 时,为目标平台重新发布引擎并更新 engines.lock.json。",
+  )
 }
 
 if (foreign.length > 0 || nativeCount === 0) {
@@ -336,16 +325,12 @@ if (nonPortable.length > 0) {
 // ---- 实体化 ------------------------------------------------------------
 
 rmSync(stageDir, { recursive: true, force: true })
-for (const sub of ["bin", "data"] as const) {
-  // dereference: 把所有软链(含 data 深处的)替换成真实内容;权限位默认保留,
-  // 二进制的可执行位跟着过来。内部若有悬空软链,cpSync 抛错 = 响亮失败。
-  cpSync(path.join(enginesDir, sub), path.join(stageDir, sub), { recursive: true, dereference: true })
-}
-if (existsSync(path.join(enginesDir, "manifest.json"))) {
-  copyFileSync(path.join(enginesDir, "manifest.json"), path.join(stageDir, "manifest.json"))
-}
+// Only public engine assets are copied. Developer CubeMX databases, irpacks and
+// firmware are excluded even when staging directly from a populated source tree.
+materializeEngineResources(enginesDir, stageDir)
+console.log("[stage-engines] STM32 数据归用户本机 CubeMX 所有,不随安装包分发")
 
-// data 里的文件全部剥掉可执行位。它们是芯片数据库/固件包/文档,不是 mac 可执行文件,
+// data 里的文件全部剥掉可执行位。它们是逻辑分析仪固件/解码器/文档,不是 mac 可执行文件,
 // 但源树里不少带着 755 —— electron-builder 的签名器按可执行位收集"待签二进制",
 // 会把几万个数据文件一个一个 codesign(实测签到 CMSIS 文档的 PNG 上,一次打包要跑几小时)。
 // 配置里同时给签名器加了 signIgnore,这里是双保险 + 权限卫生。

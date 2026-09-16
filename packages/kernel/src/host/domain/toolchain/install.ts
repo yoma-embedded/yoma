@@ -68,6 +68,8 @@ import {
 	TOOLCHAIN_MIRROR_ENV,
 } from "./catalog.ts";
 import { findFamilyTool } from "./families.ts";
+import { executableEntries } from "./entries.ts";
+import type { ToolSpec } from "./schema.ts";
 import type { Ledger } from "./ledger.ts";
 import { findEnvKey, findOnPath, withPath } from "./locations.ts";
 
@@ -281,16 +283,10 @@ export function machinePathDirs(opts: { configDir?: string; ledger?: Ledger }): 
 	for (const install of listManagedInstalls(opts.configDir)) push(install.binDir);
 	for (const entry of Object.values(opts.ledger?.entries ?? {})) {
 		if (entry.by !== "user") continue;
-		for (const binPath of Object.values(entry.bin)) {
-			if (!existsSync(binPath)) continue;
-			let dir: string;
-			try {
-				dir = statSync(binPath).isDirectory() ? binPath : path.dirname(binPath);
-			} catch {
-				continue;
-			}
-			push(dir);
-		}
+		const spec: ToolSpec = findFamilyTool(entry.id) ?? { id: entry.id };
+		const bins = executableEntries(spec, entry.bin, process.env);
+		if (spec.binMode === "all" && spec.bin?.some((name) => !bins[name])) continue;
+		for (const binPath of Object.values(bins)) push(path.dirname(binPath));
 	}
 	return dirs;
 }

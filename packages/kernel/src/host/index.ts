@@ -50,6 +50,7 @@ export interface KernelHostOptions {
   resolveModels?: SessionManagerOptions["resolveModels"]
   /** 凭据解析看哪个环境。测试接缝(传 NO_AMBIENT_AUTH 挡住开发机的真实 key);生产不传。 */
   authContext?: SessionManagerOptions["authContext"]
+  inspectStm32Availability?: SessionManagerOptions["inspectStm32Availability"]
   /** 没人选档时的思考档位。不传则 `"off"`。桌面端和 bench 都传 `max`。 */
   defaultThinkingLevel?: SessionManagerOptions["defaultThinkingLevel"]
   /**
@@ -89,6 +90,7 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     configDir: options.configDir,
     resolveModels: options.resolveModels,
     authContext: options.authContext,
+    inspectStm32Availability: options.inspectStm32Availability,
     defaultThinkingLevel: options.defaultThinkingLevel,
     toolchainSide: options.toolchainSide,
     toolchainManifestText: options.toolchainManifestText,
@@ -131,7 +133,6 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     "session.setModel": ({ sessionID, providerID, modelID, thinking }) =>
       sessions.setModel(sessionID, providerID, modelID, thinking),
 
-
     "model.list": () => sessions.providers(),
     // 唯一一条主动碰模型目录网络的 RPC(开会话只恢复磁盘缓存)。设置页的"刷新模型列表"走它。
     "model.refresh": () => sessions.refreshModels(),
@@ -166,37 +167,49 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
 
     // side 与会话同源(桌面端不传即 mother):设置页核的账必须和系统提示词里那份
     // 一致,两边一边 mother 一边 runner 的话,UI 打的勾对不上 agent 看到的 MISSING。
-    "toolchain.status": ({ directory, fresh }) =>
-      toolchainStatus({
+    "toolchain.status": async ({ directory, fresh }) => {
+      const result = await toolchainStatus({
         directory,
         fresh,
         configDir: options.configDir ?? yomaConfigDir(),
         side: options.toolchainSide ?? "mother",
-      }),
-    "toolchain.set": ({ directory, id, path: binPath }) =>
-      toolchainSet({
+      })
+      if (fresh) await sessions.refreshMachineEnv()
+      return result
+    },
+    "toolchain.set": async ({ directory, id, path: binPath }) => {
+      const result = await toolchainSet({
         directory,
         id,
         path: binPath,
         configDir: options.configDir ?? yomaConfigDir(),
         side: options.toolchainSide ?? "mother",
-      }),
+      })
+      await sessions.refreshMachineEnv()
+      return result
+    },
     "toolchain.families": () => toolchainFamilies({ configDir: options.configDir ?? yomaConfigDir() }),
-    "toolchain.familyStatus": ({ family, fresh }) =>
-      toolchainFamilyStatus({
+    "toolchain.familyStatus": async ({ family, fresh }) => {
+      const result = await toolchainFamilyStatus({
         family,
         fresh,
         configDir: options.configDir ?? yomaConfigDir(),
         side: options.toolchainSide ?? "mother",
-      }),
-    "toolchain.familySet": ({ family, id, path: binPath }) =>
-      toolchainFamilySet({
+      })
+      if (fresh) await sessions.refreshMachineEnv()
+      return result
+    },
+    "toolchain.familySet": async ({ family, id, path: binPath }) => {
+      const result = await toolchainFamilySet({
         family,
         id,
         path: binPath,
         configDir: options.configDir ?? yomaConfigDir(),
         side: options.toolchainSide ?? "mother",
-      }),
+      })
+      await sessions.refreshMachineEnv()
+      return result
+    },
     "toolchain.install": ({ id }) =>
       toolchainInstall({
         id,
@@ -204,7 +217,7 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
         side: options.toolchainSide ?? "mother",
         emit: (events) => sink.push(events),
         registry: installs,
-        // 装完立刻让在飞会话的 bash 与内核进程自己的 PATH 都看见新目录。
+        // 下一次工具调用使用新环境,已启动的进程保留原快照。
         onInstalled: () => sessions.refreshMachineEnv(),
       }),
     "toolchain.installCancel": ({ id }) => {

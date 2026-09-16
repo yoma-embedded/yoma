@@ -22,6 +22,7 @@
  */
 
 import path from "node:path"
+import { executionEnvSnapshot } from "../../domain/execution-env.ts"
 
 import {
   type AgentHarnessTool,
@@ -73,6 +74,7 @@ export function createFindTool(
     parameters: FIND_CONTRACT.parameters,
     execute: async (_toolCallId, params, _onUpdate, toolContext, _invocation, context) => {
       const env = toolContext.env
+      const processEnv = executionEnvSnapshot(env)
       const cwd = env.cwd
       // 这一轮已经被用户停掉:不起子进程。runEngineLines 要到 spawn 之后才看信号。
       if (context.abortSignal?.aborted) throw new Error("find was aborted")
@@ -111,6 +113,7 @@ export function createFindTool(
       let result: Awaited<ReturnType<typeof runEngineLines>>
       try {
         result = await runEngineLines(rg, args, {
+          env: processEnv,
           cwd: searchPath,
           signal: context.abortSignal,
           timeoutMs,

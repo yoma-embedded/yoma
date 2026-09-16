@@ -74,6 +74,7 @@ const liveSessions = new Set<GdbSession>()
 export interface GdbSessionOptions {
   gdbPath: string
   cwd: string
+  env?: NodeJS.ProcessEnv
   /** 解码后的可读转录,给模型 grep、给人 tail -f。 */
   logFile: string
   /** 原始 MI,只给调工具用。 */
@@ -150,6 +151,7 @@ export class GdbSession {
 
     const child = spawn(this.options.gdbPath, ["--interpreter=mi3", "-nx", "-q"], {
       cwd: this.options.cwd,
+      env: this.options.env,
       stdio: ["pipe", "pipe", "pipe"],
       detached: process.platform !== "win32",
       windowsHide: true,

@@ -16,10 +16,11 @@
  */
 
 import type { AgentHarnessTool, ExecutionToolContext } from "@earendil-works/pi-agent-core"
+import { executionEnvSnapshot } from "../../domain/execution-env.ts"
 
 import {
   catalogPackageFor,
-  declaredToolBins,
+  declaredToolSpec,
   installKey,
   installToolchain,
   recordToolchainPath,
@@ -94,6 +95,12 @@ export function renderToolLine(tool: ResolvedTool): string {
   const label = tool.optional ? `${tool.id} (optional)` : tool.id
   const need = tool.wanted ? ` (needs ${tool.wanted})` : ""
   switch (tool.status) {
+    case "configured":
+      return `- ${label}: CONFIGURED — ${Object.values(tool.bin).join(", ")}; directory recorded, capability validation belongs to its resource provider`
+    case "recorded":
+      return `- ${label}: RECORDED — ${(tool.candidates ?? Object.values(tool.bin)).join(", ")}; no declared executable entry located`
+    case "unverified":
+      return `- ${label}: UNVERIFIED${need} — ${Object.values(tool.bin).join(", ")}; ${tool.missingBins?.length ? `missing required entries: ${tool.missingBins.join(", ")}` : "execution/version probe did not pass; the explicit entry remains available, readiness is not confirmed"}`
     case "ok": {
       const primary = Object.values(tool.bin)[0] ?? "(unknown path)"
       return `- ${label}: OK${need} — ${primary}, version ${tool.version ?? "unknown"}, via ${tool.source ?? "unknown"}`
@@ -175,9 +182,10 @@ export function createToolchainTool(
     // replay 不声明(默认 never):install 有副作用(下载、解压、改 PATH),崩溃恢复不该自动重跑。
     execute: async (_toolCallId, params, onUpdate, toolContext, _invocation, context) => {
       const cwd = toolContext.env.cwd
+      const invocationOptions = { ...options, env: options.env ?? executionEnvSnapshot(toolContext.env) }
       const action = params.action
-      if (action === "set") return runSet(params, cwd, options)
-      if (action === "install") return runInstall(params, options, onUpdate, context.abortSignal)
+      if (action === "set") return runSet(params, cwd, invocationOptions)
+      if (action === "install") return runInstall(params, invocationOptions, onUpdate, context.abortSignal)
 
       const resolution = await resolveToolchain({
         projectDir: cwd,
@@ -186,10 +194,13 @@ export function createToolchainTool(
         skipLedger: action === "resolve",
         side: options.side,
         platform: options.platform,
-        env: options.env,
+        env: invocationOptions.env,
         manifestText: options.manifestText,
       })
-      if (action === "resolve") await rememberFreshResults(resolution, options.configDir)
+      if (action === "resolve") {
+        await rememberFreshResults(resolution, options.configDir)
+        await options.onInstalled?.()
+      }
       const rendered = renderResolution(resolution, action)
       return { content: [{ type: "text", text: rendered.text }], details: rendered.details }
     },
@@ -212,8 +223,16 @@ async function runSet(
   const given = params.path?.trim()
   if (!given) throw new Error('toolchain set requires "path" (the absolute path the user gave you)')
 
-  const bins = await declaredToolBins({ id, projectDir: cwd, manifestText: options.manifestText })
-  const recorded = await recordToolchainPath({ id, path: given, configDir: options.configDir, bins })
+  const spec = await declaredToolSpec({ id, projectDir: cwd, manifestText: options.manifestText })
+  const recorded = await recordToolchainPath({
+    id,
+    path: given,
+    configDir: options.configDir,
+    bins: spec?.bin,
+    env: options.env,
+    probe: spec?.pathKind === "dir" ? "exists" : "version",
+  })
+  await options.onInstalled?.()
   const versionNote = recorded.version ? ` (version ${recorded.version})` : ""
   const text = `Recorded ${recorded.id} -> ${recorded.binPath}${versionNote}. Every later session on this machine finds it automatically — no need to ask again.`
   return { content: [{ type: "text", text }], details: { action: "set", ok: true, id } }

@@ -45,7 +45,7 @@ import "./settings-v2.css"
 
 const FAMILY_STORAGE_KEY = "yoma.toolchain.family"
 
-const primaryBin = (tool: ToolchainResolvedTool) => Object.values(tool.bin)[0]
+const primaryBin = (tool: ToolchainResolvedTool) => Object.values(tool.bin)[0] ?? tool.candidates?.[0]
 
 /**
  * 安装进度按工具 id 存一份,**模块级**而不是组件级:装 Arm 工具链要几分钟,用户离开设置页
@@ -98,7 +98,7 @@ const ToolRow: Component<{
     <div class="settings-v2-toolchain-row" data-status={props.tool.status} data-tool={props.tool.id}>
       <div class="settings-v2-toolchain-row-head">
         <Icon
-          name={props.tool.status === "ok" ? "circle-check" : "warning"}
+          name={props.tool.status === "ok" ? "circle-check" : props.tool.status === "configured" ? "folder" : "warning"}
           class="settings-v2-toolchain-icon"
           data-ok={props.tool.status === "ok"}
         />
@@ -120,10 +120,24 @@ const ToolRow: Component<{
         </Show>
       </div>
 
-      <Show when={props.tool.status === "ok" && primaryBin(props.tool)}>
+      <Show when={primaryBin(props.tool)}>
         <div class="settings-v2-toolchain-path">
           {primaryBin(props.tool)}
           <Show when={props.tool.source}> · {props.tool.source}</Show>
+        </div>
+      </Show>
+
+      <Show
+        when={
+          props.tool.status === "configured" || props.tool.status === "recorded" || props.tool.status === "unverified"
+        }
+      >
+        <div class="settings-v2-toolchain-note">
+          {language.t(`settings.toolchain.detail.${props.tool.status as "configured" | "recorded" | "unverified"}`)}
+          <Show when={props.tool.missingBins?.length}>
+            {" "}
+            {language.t("settings.toolchain.missingEntries", { names: props.tool.missingBins!.join(", ") })}
+          </Show>
         </div>
       </Show>
 
@@ -171,7 +185,12 @@ const ToolRow: Component<{
                     </ButtonV2>
                   }
                 >
-                  <ButtonV2 size="normal" variant="neutral" data-action="install-cancel" onClick={() => props.onCancelInstall?.()}>
+                  <ButtonV2
+                    size="normal"
+                    variant="neutral"
+                    data-action="install-cancel"
+                    onClick={() => props.onCancelInstall?.()}
+                  >
                     {language.t("settings.toolchain.cancel")}
                   </ButtonV2>
                 </Show>
@@ -188,7 +207,9 @@ const ToolRow: Component<{
             value={props.pathValue}
             onInput={(event) => props.onPath(event.currentTarget.value)}
             placeholder={language.t(
-              props.meta?.pathKind === "dir" ? "settings.toolchain.dirPlaceholder" : "settings.toolchain.pathPlaceholder",
+              props.meta?.pathKind === "dir"
+                ? "settings.toolchain.dirPlaceholder"
+                : "settings.toolchain.pathPlaceholder",
             )}
           />
           <Show when={props.onBrowse}>
@@ -271,7 +292,8 @@ export const SettingsToolchainV2: Component = () => {
   const clearSettledProgress = (view: ToolchainStatusView | undefined) => {
     if (!view) return
     for (const tool of view.tools) {
-      if (tool.status === "ok" && installs[tool.id] && !isInstallInFlight(installs[tool.id])) setInstalls(tool.id, undefined)
+      if (tool.status === "ok" && installs[tool.id] && !isInstallInFlight(installs[tool.id]))
+        setInstalls(tool.id, undefined)
     }
   }
 
@@ -397,7 +419,12 @@ export const SettingsToolchainV2: Component = () => {
 
   const familySummary = (view: ToolchainStatusView) => {
     const ok = view.tools.filter((tool) => tool.status === "ok").length
-    return language.t("settings.toolchain.machine.summary", { ok: String(ok), total: String(view.tools.length) })
+    const configured = view.tools.filter((tool) => tool.status === "configured").length
+    return language.t("settings.toolchain.machine.summary", {
+      ok: String(ok),
+      configured: String(configured),
+      total: String(view.tools.length),
+    })
   }
 
   // ── 当前工程清单 ──────────────────────────────────────────────────────────
@@ -556,7 +583,9 @@ export const SettingsToolchainV2: Component = () => {
                   fallback={
                     <Show
                       when={view().error}
-                      fallback={<p class="settings-v2-toolchain-note">{language.t("settings.toolchain.notDeclared")}</p>}
+                      fallback={
+                        <p class="settings-v2-toolchain-note">{language.t("settings.toolchain.notDeclared")}</p>
+                      }
                     >
                       <div class="settings-v2-toolchain-error">
                         <p>{language.t("settings.toolchain.parseError")}</p>
