@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
@@ -165,7 +165,8 @@ describe("STM32 local resource lifecycle", () => {
     const settings = path.join(f.root, ".stm32cubemx/plugins/updater/updater.ini")
     await mkdir(f.repository)
     await put(settings, `[Path]\nRepositoryPath=${f.repository}\n`)
-    expect(await firmwareRepository(undefined, { USERPROFILE: f.root })).toBe(f.repository)
+    // Windows CI tmpdir is often an 8.3 path (RUNNER~1); firmwareRepository realpath()s it.
+    expect(await firmwareRepository(undefined, { USERPROFILE: f.root })).toBe(await realpath(f.repository))
   })
 })
 
