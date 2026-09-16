@@ -1,4 +1,3 @@
-import { Binary } from "@yoma-desktop/util/binary"
 import type { AssistantMessage, Message, Part, SessionStatus, UserMessage } from "@yoma-desktop/kernel"
 import { createMemo, mapArray, type Accessor } from "solid-js"
 import { Timeline, TimelineRow } from "./rows"
@@ -27,20 +26,9 @@ export function createTimelineProjection(input: {
     return result
   })
   const activeMessageID = createMemo(() => {
-    const parentID = input
-      .messages()
-      .findLast(
-        (message): message is AssistantMessage =>
-          message.role === "assistant" && typeof message.time.completed !== "number",
-      )?.parentID
-    if (parentID) {
-      const messages = input.messages()
-      const result = Binary.search(messages, parentID, (message) => message.id)
-      const message = result.found ? messages[result.index] : messages.find((item) => item.id === parentID)
-      if (message?.role === "user") return message.id
-    }
-
     if (input.status().type === "idle") return
+    // A session runs one turn at a time; queued drafts enter history only when sent.
+    // Old toolUse responses have no time.completed, so they cannot identify the active turn.
     return input.messages().findLast((message) => message.role === "user")?.id
   })
   const modelRetry = createMemo(() => {
