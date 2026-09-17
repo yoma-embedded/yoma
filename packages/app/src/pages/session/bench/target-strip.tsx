@@ -123,12 +123,27 @@ export function TargetStrip(props: {
   onSelect?: (id: InstrumentId) => void
   /** 一格都没有时显示的提示;不给就整条不渲染。 */
   emptyHint?: string
+  /**
+   * 把这几格的灯提到 `attention`。
+   *
+   * 布局知道一些状态条不知道的事 —— v2-console 里是"控制台收着的这段时间里日志又来了几条
+   * error"。那不是 `BenchStatus` 的一部分(它只认 transcript),但它正是状态栏该替用户记着的事。
+   * `fail` 不被覆盖:红比黄要紧。
+   */
+  attention?: ReadonlySet<InstrumentId>
 }) {
   const language = useLanguage()
   const t = (key: string) => language.t(key as Parameters<typeof language.t>[0])
   // memo:这个函数在一次渲染里被读三次(Show / Index / 内层 Show),而 benchChips 每次
   // 都造一批新对象 —— 不 memo 的话状态一变全部状态片重建,正被键盘聚焦的那颗会丢焦点。
-  const chips = createMemo(() => benchChips(props.status, t))
+  const chips = createMemo(() => {
+    const list = benchChips(props.status, t)
+    const raise = props.attention
+    if (!raise?.size) return list
+    return list.map((chip) =>
+      chip.id && raise.has(chip.id) && chip.state !== "fail" ? { ...chip, state: "attention" as const } : chip,
+    )
+  })
 
   return (
     <Show when={chips().length > 0 || props.emptyHint}>

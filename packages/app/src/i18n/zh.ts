@@ -317,6 +317,22 @@ export const dict = {
   "session.bench.gdb.noStop": "已经接上了,但目标还没停过。",
   "session.bench.gdb.noStopHint": "断点命中、单步或者出故障之后,停止现场会出现在这里。",
 
+  // ---- v2-console:底部控制台(文本流仪器)+ 贯穿的状态栏 + 右栏的按需仪器页
+  "session.console.title": "控制台",
+  "session.console.toggle": "显示 / 隐藏控制台",
+  "session.console.show": "控制台:{{name}}",
+  "session.console.maximize": "最大化控制台",
+  "session.console.restore": "还原控制台高度",
+  "session.console.close": "关闭控制台",
+  "session.console.resize": "拖动改变控制台高度",
+  "session.statusBar.label": "目标板状态栏",
+  "session.statusBar.unreadErrors": "{{count}} 条 error 没看过",
+  "session.statusBar.unreadErrorsHint": "控制台里还没露过面的 error 级日志行。",
+  "session.rail.label": "波形仪器",
+  "session.rail.empty": "现在没有在场的波形仪器。",
+  "session.rail.emptyHint":
+    "示波器与逻辑分析仪在 agent 用过、这个工程磁盘上有采集、或者你手动钉住时才出现。日志与调试器在最底下的控制台里。",
+
   "session.new.title": "构建任何东西",
   "session.new.lastModified": "最后修改",
   "session.header.search.placeholder": "搜索 {{project}}",
