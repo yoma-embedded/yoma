@@ -257,7 +257,8 @@ export const ErrorPage: Component<ErrorPageProps> = (props) => {
 
   const updateVersion = () => {
     const state = platform.updater?.state()
-    if (state?.status !== "ready") return
+    // available:这份安装不能自己升级,同一个按钮由 main 接到发布页 —— 崩在错误页上的人最需要知道有新版。
+    if (state?.status !== "ready" && state?.status !== "available") return
     return state.version
   }
 

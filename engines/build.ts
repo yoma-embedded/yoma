@@ -246,12 +246,21 @@ if (dist) {
 
 	console.log("\n[5/5] logic-analyzer — yoma-la(cmake)+ DLL + res/decoders/python");
 	let la: { bundled: boolean; dlls?: number; python?: boolean; why?: string } = { bundled: false };
-	{
+	if (process.platform !== "win32") {
+		// 可分发的 yoma-la 目前只有 Windows 一条路:installLa 只会收 MinGW 的 DLL 与裁过的 Python 标准库。
+		// macOS / Linux 上构建机**有**工具链时照样编得出来、自检也过,但产物链着构建机的
+		// /opt/homebrew/…/libglib-2.0.dylib 与系统 Python —— 拷到用户机器上是 dyld 报错,而 la 工具
+		// 会把它说成"引擎崩了",不是那句干净的"这份安装里没有逻辑分析仪引擎"。所以分发时明确跳过,
+		// 等 dylib 收集 + install_name_tool + 标准库随包做完再放开。开发期(非 --dist)不受影响。
+		const why = `${process.platform} 上 yoma-la 的可分发打包还没做(动态库与 Python 标准库不随包)`;
+		console.warn(`  ↷ 跳过 yoma-la:${why}。逻辑分析仪工具在这份产物里不可用。`);
+		la = { bundled: false, why };
+	} else {
 		const { tc, why } = findLaToolchain();
 		if (!tc) {
 			// Windows 是逻辑分析仪的主战场,CI 的 Windows 岗装了 MSYS2;这里缺工具链多半是 pacman 包名或
-			// setup-msys2 变了 —— 安装包不能默默少一个引擎。别的平台暂时只警告。
-			if (process.platform === "win32" && !process.env.YOMA_LA_SKIP) {
+			// setup-msys2 变了 —— 安装包不能默默少一个引擎。
+			if (!process.env.YOMA_LA_SKIP) {
 				throw new Error(`yoma-la 构建不了:${why}。装 MSYS2 ucrt64(见 engines/logic-analyzer/CMakeLists.txt),或 YOMA_LA_SKIP=1 明确放弃逻辑分析仪。`);
 			}
 			console.warn(`  ↷ 跳过 yoma-la:${why}。逻辑分析仪工具在这份产物里不可用。`);

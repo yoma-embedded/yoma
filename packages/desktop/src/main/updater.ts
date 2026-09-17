@@ -1,8 +1,9 @@
-import { app, dialog } from "electron"
+import { app, dialog, shell } from "electron"
 import pkg from "electron-updater"
-import { UPDATER_ENABLED } from "./constants"
+import { RELEASE_REPO, UPDATER_ENABLED, UPDATER_SELF_UPDATE } from "./constants"
 import {
   createUpdaterController,
+  releasePageUrl,
   type UpdaterDownloadProgress,
   type UpdaterReadyRecord,
   type UpdaterReleaseNotes,
@@ -52,8 +53,10 @@ export function setupAutoUpdater(stop: () => Promise<void>) {
   autoUpdater.autoDownload = false
   // 下好的更新在正常退出时自动装上(before-quit 已经先 stopSidecars):用户没点"重启"
   // 也不会一直停在旧版本 —— 这是"热升级"里最省心的那一半。
-  autoUpdater.autoInstallOnAppQuit = true
+  // 只通知模式(没有 Developer ID 的 mac 包)什么都不会下载,退出时也就没有东西可装。
+  autoUpdater.autoInstallOnAppQuit = UPDATER_SELF_UPDATE
   logger.log("auto updater configured", {
+    selfUpdate: UPDATER_SELF_UPDATE,
     channel: autoUpdater.channel,
     allowPrerelease: autoUpdater.allowPrerelease,
     allowDowngrade: autoUpdater.allowDowngrade,
@@ -65,6 +68,8 @@ export function setupAutoUpdater(stop: () => Promise<void>) {
   const prefs = updaterAutoCheckPrefs()
   return createUpdaterController({
     enabled: UPDATER_ENABLED,
+    selfUpdate: UPDATER_SELF_UPDATE,
+    openReleasePage: (version) => shell.openExternal(releasePageUrl(RELEASE_REPO, version)),
     currentVersion: app.getVersion(),
     backend: {
       checkForUpdates: async () => {
@@ -117,6 +122,19 @@ export async function showUpdaterDialog(controller: ReturnType<typeof setupAutoU
   if (state.status === "up-to-date") {
     if (!alertOnFail) return
     await dialog.showMessageBox({ type: "info", message: "You're up to date.", title: "No Updates" })
+    return
+  }
+  if (state.status === "available") {
+    const response = await dialog.showMessageBox({
+      type: "info",
+      message: `Yoma ${state.version} is available.`,
+      detail: "This installation can't update itself. Download the new version from the release page.",
+      title: "Update Available",
+      buttons: ["Open Download Page", "Later"],
+      defaultId: 0,
+      cancelId: 1,
+    })
+    if (response.response === 0) await controller.install()
     return
   }
   if (state.status !== "ready") return

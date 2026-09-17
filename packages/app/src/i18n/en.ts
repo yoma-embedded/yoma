@@ -359,14 +359,20 @@ export const dict = {
   "settings.updates.action.checking": "Checking...",
   "settings.updates.action.downloading": "Downloading...",
   "settings.updates.action.installing": "Installing...",
+  "settings.updates.action.openDownload": "Open download page",
   "settings.updates.toast.latest.title": "You're up to date",
   "settings.updates.toast.latest.description": "You're running the latest version of Yoma.",
   "settings.updates.version": "Current version {{version}}",
   "settings.updates.state.upToDate": "You're on the latest version",
   "settings.updates.state.downloading": "Downloading {{version}}… {{percent}}%",
   "settings.updates.state.ready": "Version {{version}} downloaded — it installs when you quit, or restart now",
+  "settings.updates.state.available":
+    "Version {{version}} is available — this installation can't update itself, download it from the release page",
   "settings.updates.state.error": "Update check failed: {{message}}",
   "settings.updates.notes": "What's new",
+  "settings.updates.toast.available.title": "Update available",
+  "settings.updates.toast.available.description":
+    "Yoma {{version}} has been released. This installation can't update itself — download it from the release page.",
   "settings.updates.toast.ready.title": "Update ready",
   "settings.updates.toast.ready.description":
     "Yoma {{version}} has been downloaded. It installs the next time you quit, or restart now from Settings → Updates.",

@@ -24,6 +24,8 @@ const windowsControlsBaseWidth = 138 // 3 native Windows caption buttons at 46px
 
 export type TitlebarUpdate = {
   version: () => string | undefined
+  /** 药丸的无障碍名。缺省是"安装并重启";只通知模式(动作是打开发布页)由调用方换掉。 */
+  actionLabel?: () => string
   installing: () => boolean
   install: () => void
 }
@@ -88,7 +90,7 @@ export function Titlebar(props: {
       visible: version !== undefined || installing,
       installing,
       label: "Update",
-      ariaLabel: language.t("toast.update.action.installRestart"),
+      ariaLabel: props.update?.actionLabel?.() ?? language.t("toast.update.action.installRestart"),
       title: version ? `Update ${version}` : undefined,
       onInstall: () => props.update?.install(),
     }

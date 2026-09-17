@@ -37,7 +37,8 @@
 
 安装包发在 [GitHub Releases](https://github.com/yoma-embedded/yoma/releases)。
 
-下载 `yoma-win-x64.exe`后。安装可能提示“Windows 已保护你的电脑”：选 **更多信息 → 仍要运行**。
+- **Windows**：下载 `yoma-win-x64.exe`。安装可能提示“Windows 已保护你的电脑”：选 **更多信息 → 仍要运行**。
+- **macOS（Apple Silicon）**：下载 `yoma-mac-arm64.dmg`，打开后把 Yoma 拖进「应用程序」。安装包目前没有 Apple 开发者签名，首次打开会被拦：到 **系统设置 → 隐私与安全性**，在底部点 **仍要打开**；或在终端执行 `xattr -dr com.apple.quarantine /Applications/Yoma.app`。这种包不会自动安装更新：有新版本时应用里会提示，点一下打开下载页，下载后覆盖安装（需要再放行一次）。Intel Mac 暂无安装包；逻辑分析仪引擎暂未随 macOS 包提供。
 
 ### 2. 配 API key
 

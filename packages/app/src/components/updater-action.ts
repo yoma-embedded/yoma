@@ -17,6 +17,9 @@ export function updaterAction(state: UpdaterState | undefined) {
       }
     case "ready":
       return { label: "toast.update.action.installRestart" as const, run: "install" as const }
+    case "available":
+      // 这份安装不能自己升级(没有 Developer ID 的 mac 包):同一个 install(),main 那边把它接到发布页。
+      return { label: "settings.updates.action.openDownload" as const, run: "install" as const }
     case "installing":
       return { label: "settings.updates.action.installing" as const }
     case "disabled":

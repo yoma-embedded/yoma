@@ -38,6 +38,11 @@ const CONTRACT_KEYS = [
   "settings.updates.notes",
   "settings.updates.toast.ready.title",
   "settings.updates.toast.ready.description",
+  // 只通知模式(这份安装不能自己升级:没有 Developer ID 的 mac 包)
+  "settings.updates.action.openDownload",
+  "settings.updates.state.available",
+  "settings.updates.toast.available.title",
+  "settings.updates.toast.available.description",
 ] as const
 
 const enDict: Record<string, unknown> = en
