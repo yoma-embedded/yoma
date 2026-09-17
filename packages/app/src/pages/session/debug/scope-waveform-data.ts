@@ -1,7 +1,9 @@
 import type { ScopeViewResult } from "@yoma-desktop/kernel"
+import { BENCH_CHANNEL_COLORS } from "../bench/bench-theme"
 
 export type ScopeTrace = ScopeViewResult["channels"][number]
-export const SCOPE_COLORS = ["#b99a00", "#347fe2", "#cf4b86", "#389562"]
+/** 通道色的真源在 `bench/bench-theme.ts`(CSS 那份是 `--bench-ch1..ch4`,同解由测试钉住)。 */
+export const SCOPE_COLORS: readonly string[] = BENCH_CHANNEL_COLORS
 
 /** Times stay relative to the trigger, including negative pre-trigger windows. */
 export function scopeWindow(from: number, to: number, fullFrom: number, fullTo: number, minSpan: number) {
