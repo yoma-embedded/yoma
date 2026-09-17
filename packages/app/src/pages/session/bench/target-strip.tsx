@@ -11,7 +11,7 @@
 import { createMemo, Index, Show } from "solid-js"
 import { useLanguage } from "@/context/language"
 import type { BenchStatus, InstrumentId } from "./bench-status"
-import { gdbHeadline, logHeadline } from "./bench-status"
+import { gdbEnded, gdbHeadline, logHeadline } from "./bench-status"
 import type { InstrumentState } from "./instruments"
 
 /** 状态条上的一格。`id` 有值时这一格可点(交给 `onSelect`)。 */
@@ -60,8 +60,15 @@ export function benchChips(status: BenchStatus, t: (key: string) => string): Ben
       key: "gdb",
       id: "gdb",
       label: t("session.bench.chip.gdb"),
-      value: gdb.fault ? [t("session.bench.state.fault"), gdb.location].filter(Boolean).join(" ") : gdbHeadline(gdb),
-      state: gdb.fault
+      value: gdb.fault
+        ? [gdbEnded(gdb) ? t("session.bench.gdb.state.ended") : undefined, t("session.bench.state.fault"), gdb.faultLocation ?? gdb.location]
+            .filter(Boolean)
+            .join(" ")
+        : gdbHeadline(gdb),
+      // 会话收了之后故障是"历史",不再是要人立刻去看的事:LED 回到离线,字还在。
+      state: gdbEnded(gdb)
+        ? "offline"
+        : gdb.fault
         ? "attention"
         : gdb.state === "running"
           ? "active"

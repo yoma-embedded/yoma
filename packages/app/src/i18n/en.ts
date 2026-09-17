@@ -319,6 +319,7 @@ export const dict = {
   "session.bench.gdb.state.running": "running",
   "session.bench.gdb.state.exited": "target exited",
   "session.bench.gdb.state.lost": "connection lost",
+  "session.bench.gdb.state.ended": "ended",
   "session.bench.gdb.history": "Stops this session",
   "session.bench.gdb.empty": "No debugger session in this conversation.",
   "session.bench.gdb.emptyHint": "Ask the agent to attach with the gdb tool (OpenOCD / J-Link / QEMU).",

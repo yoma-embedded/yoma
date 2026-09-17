@@ -7,6 +7,7 @@ import type { ToolPart } from "@yoma-desktop/kernel"
 import {
   deriveBenchStatus,
   formatCommand,
+  gdbEnded,
   gdbHeadline,
   logHeadline,
   parseLogSource,
@@ -239,6 +240,12 @@ describe("gdb", () => {
     ])
     expect(status.gdb?.fault).toContain("HardFault")
     expect(status.gdb?.stops.at(-1)?.fault).toContain("HardFault")
+    // 出事的那一行(main.c:200),不是现在停着的 HardFault 处理函数(fault.c:24)。
+    expect(status.gdb?.faultLocation).toBe("main.c:200")
+    expect(
+      parseStopReport("■ stopped#2: breakpoint-hit\n  故障(BusFault):PRECISERR\n  出事 PC 0x080004b6 = foc_zero_isense + 10 in section .text (Core/Src/foc.c:45)")
+        .faultLocation,
+    ).toBe("foc.c:45")
   })
 
   test("同一次停止被 exec 与 status 各报一遍,历史里只留一条", () => {
@@ -304,6 +311,26 @@ describe("gdb", () => {
     expect(deriveBenchStatus([attached, errored("gdb", { action: "eval" }, "no gdb session")]).gdb?.state).toBe("halted")
     const stopped = completed("gdb", { action: "stop" }, "", { action: "stop", state: "no-session", epoch: 0, stopId: 0 })
     expect(deriveBenchStatus([attached, stopped]).gdb?.state).toBe("none")
+  })
+
+  test("stop 收掉会话之后,故障现场与停止历史还在(details 的 epoch 归零不算换目标)", () => {
+    // 真实形状:演示会话里 `gdb stop` 的 details 就是 { state: "no-session", epoch: 0, stopId: 0 }。
+    const status = deriveBenchStatus([
+      completed("gdb", { action: "exec" }, FAULT_OUTPUT, { action: "exec", state: "halted", epoch: 1, stopId: 2 }),
+      completed("gdb", { action: "stop" }, "gdb session stopped", { action: "stop", state: "no-session", epoch: 0, stopId: 0 }),
+    ])
+    expect(status.gdb?.state).toBe("none")
+    expect(status.gdb?.fault).toContain("HardFault")
+    expect(status.gdb?.report?.startsWith("■ stopped#2:")).toBe(true)
+    expect(status.gdb?.stops).toHaveLength(1)
+    expect(gdbEnded(status.gdb)).toBe(true)
+    expect(gdbHeadline(status.gdb)).toBe("ended main.c:200")
+    // 从没停过的会话收掉之后,不算"已结束的现场" —— 面板回到空态。
+    const bare = deriveBenchStatus([
+      completed("gdb", { action: "stop" }, "", { action: "stop", state: "no-session", epoch: 0, stopId: 0 }),
+    ])
+    expect(gdbEnded(bare.gdb)).toBe(false)
+    expect(gdbHeadline(bare.gdb)).toBeUndefined()
   })
 
   test("start 跑成了但 metadata 说不出状态时,落到 attached 而不是 none", () => {
