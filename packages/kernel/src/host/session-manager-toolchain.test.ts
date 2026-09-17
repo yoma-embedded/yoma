@@ -16,7 +16,7 @@
  *    (账本 by:"user")前置进同一条 PATH,by:"auto" 的不前置;装完 refreshMachineEnv()
  *    让**已经开着的**会话下一条命令就看得见,不用重开。
  */
-import { afterEach, describe, expect, test } from "vitest"
+import { afterEach, beforeAll, describe, expect, test } from "vitest"
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
@@ -35,6 +35,15 @@ import { SessionManager } from "./session-manager.ts"
 import { createKernelHost } from "./index.ts"
 import { fakeExeName, writeFakeExe as writeNativeFakeExe } from "../../test/fixtures/fake-exe.ts"
 import { patient } from "../../test/patience.ts"
+
+// 真 ~/.yoma/probe.lock 归用户,测试绝不碰它。这个文件里有用例会真跑 flash,flash 要先拿探针租约,而租约
+// 除了进程内那份还落一把**跨进程**的锁文件。不隔离的话,vitest 分给不同 worker 进程的用例文件共用机器上
+// 同一把锁:两边的 flash 一重叠,后到的拿不到租约、工具回 "探针被占"(error 不是 completed),等"完成数
+// 恰好为 N"的那一处就永远等不到 —— ci 时红时绿里反复出现的两条(这个文件一条、host.test.ts 一条)就是这么来的
+// (2026-09-17 用一个活着的外部进程占锁原样复现过)。它同时还会误伤开发机上正开着的 Yoma。
+beforeAll(() => {
+  process.env.YOMA_PROBE_LOCK = path.join(tmpdir(), `yoma-probe-test-${process.pid}.lock`)
+})
 
 const roots: string[] = []
 afterEach(() => {

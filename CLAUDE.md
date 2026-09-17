@@ -475,6 +475,14 @@ typecheck 全绿、单测全绿、`e2e:ipc` 全绿,照样可以在这一跳把�
   边界闸门、端到端 host)与 `kernel-domain`(并包搬来的 `test/**`,25 个文件 546 个用例,
   配置在 `vitest.domain.config.ts`,`fileParallelism: false` **串行**跑 —— 它们碰真实文件系统与子进程)。
   根 `vitest.config.ts` 里显式列了第二份;CI 的 Windows 岗跑的就是 `--project kernel-domain`。
+- **会真跑 flash / gdb 的用例文件必须隔离探针锁**(2026-09-17):`beforeAll` 里把 `YOMA_PROBE_LOCK` 指到
+  `tmpdir()/yoma-probe-test-<pid>.lock`。探针租约除了进程内那份还落一把**跨进程**的锁(`~/.yoma/probe.lock`),
+  而 vitest 把用例文件分给不同的 worker **进程**:不隔离的两个文件共用机器上同一把锁,flash 一重叠,后到的拿不到
+  租约、工具回 "探针被占"(error 不是 completed),等"完成数恰好为 N"的那一处就**永远**等不到。这是 `ci` 时红时绿
+  里反复出现那两条的根因 —— `host.test.ts` 的「flash 跑之前先问用户」与 `session-manager-toolchain.test.ts` 的
+  「settings set…」,恰好是仅有的两个会跑 flash 却没隔离的文件(kernel-domain 那三个早就隔离了)。先前把它当成
+  "被饿到"去放大等待,第一轮 CI 就露馅:平时 1.2 秒的用例 **30 秒**都没等到 —— 等不到和等得慢是两回事,
+  放大期限只治后者。用一个活着的外部进程占锁原样复现过(同一行的「等待超时」)。不隔离还会误伤开发机上正开着的 Yoma。
 - **CI 上的等待是放大过的**(2026-09-17,`packages/kernel/test/patience.ts`)。那之前 develop 的 `ci` 时红时绿,
   每次挂的用例都不一样、全是超时,真回归会被淹在里面。用例自己的期限大多已给到 20–30 秒,先到期的是**里面**
   那些 5 / 10 / 15 秒的轮询等待,和没写期限、吃 vitest 缺省 5 秒的用例。拿一次绿的 Windows 运行对过:同一条
