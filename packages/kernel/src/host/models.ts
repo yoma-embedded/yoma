@@ -36,6 +36,7 @@ import {
 import { builtinProviders, getBuiltinModelDataGeneratedAt } from "@earendil-works/pi-ai/providers/all";
 import { catalogBaseUrlFromEnv, withRemoteCatalog } from "./model-catalog.ts";
 import { FileModelsStore } from "./models-store.ts";
+import { streamIdleMsFromEnv, withStreamGuard } from "./stream-guard.ts";
 
 function readJson(path: string): any {
 	try {
@@ -157,12 +158,16 @@ export interface ResolvedModel {
 export async function resolveModel(configDir: string, options?: ResolveModelOptions): Promise<ResolvedModel> {
 	const authPath = join(configDir, "auth.json");
 	const settings = readJson(join(configDir, "settings.json")) ?? {};
-	const models = createModels({
-		credentials: new FileCredentialStore(authPath),
-		authContext: options?.authContext,
-		// 模型目录的本机缓存。内建目录是随版本冻结的快照,厂商上新比我们发版快 —— 见 models-store.ts。
-		modelsStore: new FileModelsStore(configDir),
-	});
+	// 流的空闲看门狗挂在这一层:所有宿主的每次请求都经这个 Models 的 streamSimple(见 stream-guard.ts)。
+	const models = withStreamGuard(
+		createModels({
+			credentials: new FileCredentialStore(authPath),
+			authContext: options?.authContext,
+			// 模型目录的本机缓存。内建目录是随版本冻结的快照,厂商上新比我们发版快 —— 见 models-store.ts。
+			modelsStore: new FileModelsStore(configDir),
+		}),
+		{ idleMs: streamIdleMsFromEnv() },
+	);
 
 	// 每个 provider 都包一层远端目录(自带 refreshModels 的原样返回)。不包的话,静态 provider
 	// 的模型表就是随版本冻结的那一份,厂商新出的模型永远不会出现 —— 见 model-catalog.ts。

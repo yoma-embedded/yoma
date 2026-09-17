@@ -81,6 +81,11 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
   每个工具挂 `withFriendlyArguments`(`host/tools/arguments.ts`)—— 走发动机留的 `prepareArguments` 口,先跑工具自己的
   归一(scope 的 `normalizeScopeArguments`:2 / "C2" / {ch:2} 同义),再按契约用发动机同款规矩预校验,失败就抛出
   指名字段、允许值、实收值的一句话。不要在契约文案里"补充说明合法值"来绕这件事,也不要碰 `packages/ai` 的校验。
+- **模型流的空闲看门狗**(2026-09-17,`host/stream-guard.ts`):无头验证里 DeepSeek 的流静默断掉后内核等了 15 分钟 ——
+  OpenAI SDK 的 timeout 到响应头为止,node fetch 的正文空闲超时约 45 分钟,harness 没有"多久没字节"的概念。修在传输层:
+  `resolveModel` 用 `withStreamGuard` 包 `Models`,给 `streamSimple` 默认注入带正文看门狗的 `fetch`(pi-ai 文档写明的注入口),
+  正文 90 s 没字节就把流置错,错误文本带 "timeout",发动机按可重试处理、harness 自己重发。`YOMA_STREAM_IDLE_MS` 改阈值,
+  写 0 关掉。不要改成 session-manager 里调 `session.abort` 的看门狗 —— 那是用户取消的语义,丢重试。
 - **工具进度链路**(2026-09-14):execute 的第三个参数 `onUpdate(partial)` 是工具边跑边上卡片的口。发动机把它
   转成 `tool_update` 事件;`host/session-manager.ts` 的 subscribe 里过一道 `host/tool-progress.ts` 的
   `ToolProgressThrottle`(按调用节流:前沿立即、之后每 100ms 一次、尾沿补发,`tool_end` 时丢掉尾沿),
