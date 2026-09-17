@@ -8,6 +8,7 @@ import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/pi-agent-co
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node"
 import { createPowerShellTool } from "../src/host/tools/powershell/session.ts"
 import type { PowerShellDetails, PowerShellInput } from "../src/host/tools/powershell/contract.ts"
+import { patient } from "./patience.ts"
 
 const dirs: string[] = []
 const spills: string[] = []
@@ -47,7 +48,7 @@ function setup() {
   return { cwd: realpathSync.native(cwd), run }
 }
 async function until(check: () => boolean, ms = 10_000) {
-  const deadline = Date.now() + ms
+  const deadline = Date.now() + patient(ms)
   while (!check()) {
     if (Date.now() > deadline) throw new Error("Windows child did not reach the expected state")
     await new Promise((resolve) => setTimeout(resolve, 25))

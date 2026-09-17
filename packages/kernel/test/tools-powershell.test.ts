@@ -33,6 +33,7 @@ import {
   stripClixml,
 } from "../src/host/tools/powershell/session.ts"
 import { writeFakeExe } from "./fixtures/fake-exe.ts"
+import { patient } from "./patience.ts"
 
 const tempDirs: string[] = []
 const originalPath = process.env.PATH
@@ -93,7 +94,7 @@ function printThenHang(lines: number): string {
 }
 
 async function waitForFile(file: string, timeoutMs = 10_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs
+  const deadline = Date.now() + patient(timeoutMs)
   while (!existsSync(file)) {
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${file}`)
     await new Promise((resolve) => setTimeout(resolve, 20))
