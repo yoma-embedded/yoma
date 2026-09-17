@@ -48,10 +48,16 @@ import {
 	findBlockHeader,
 	formatScpiAddress,
 	openScpi,
+	parseIdn,
 	parseScpiAddress,
 	pngComplete,
 } from "../src/host/domain/scope/scpi.ts";
-import { SiglentScope, fmt, normalizeChannel, normalizeSource, parseIdn } from "../src/host/domain/scope/siglent.ts";
+import { SIGLENT_DRIVER, SiglentScope, fmt, normalizeChannel, normalizeSource } from "../src/host/domain/scope/siglent.ts";
+import { baseTop } from "../src/host/domain/scope/analyze.ts";
+import { formatScopeAddress, parseScopeAddress, scopeAddressKey } from "../src/host/domain/scope/driver.ts";
+import { canonicalDepth, siglentFamily } from "../src/host/domain/scope/limits.ts";
+import { DEMO_DRIVER, DemoScope } from "../src/host/domain/scope/demo.ts";
+import { openScope, parseRegisteredAddress, scopeDrivers } from "../src/host/domain/scope/registry.ts";
 import * as scopeNamespace from "../src/host/domain/scope/index.ts";
 import { FakeSds, PREAMBLE_RESPONSE, SCREEN_PNG, SCREEN_PNG_FILE, defaultSquare, nr3 } from "./fixtures/scope/fake-sds.ts";
 
@@ -357,7 +363,7 @@ describe("波形分析", () => {
 	});
 
 	it("空数组不炸", () => {
-		expect(waveStats(new Int16Array(0), SQUARE_SCALE, INTERVAL)).toEqual({ min: 0, max: 0, pp: 0, mean: 0, rms: 0, edges: 0 });
+		expect(waveStats(new Int16Array(0), SQUARE_SCALE, INTERVAL)).toEqual({ min: 0, max: 0, pp: 0, mean: 0, rms: 0, acRms: 0, edges: 0 });
 	});
 
 	it("envelope:列数按请求给,点数不够时退到点数", () => {
@@ -602,13 +608,54 @@ describe("SiglentScope(对着假 SDS)", () => {
 			firmware: "4.8.12.1.1.6.5",
 		});
 		expect(scope.label).toBe(fake.address);
-		expect(scope.address).toEqual({ kind: "tcp", host: "127.0.0.1", port: fake.port });
+		expect(scope.address).toEqual({ kind: "tcp", host: "127.0.0.1", port: fake.port, driver: "siglent" });
+		expect(scope.driver).toBe("siglent");
+		expect(scope.warnings).toEqual([]);
+		expect(scope.family.family).toBe("SDS800X_HD");
 	});
 
-	it("open:不是 Siglent 就不认", async () => {
+	it("open:连接时钉 CHDR OFF,免得别的客户端留下的长应答头把数字读坏", () => {
+		expect(fake.log).toContain("CHDR OFF");
+		expect(fake.header).toBe("OFF");
+	});
+
+	it("open:不是 Siglent 就不认;是 Siglent 但不是示波器也不认", async () => {
 		const other = await FakeSds.start({ idn: "Rigol Technologies,DS1054Z,DS1ZA,00.04" });
 		await expect(SiglentScope.open(other.address)).rejects.toThrow(/not a Siglent scope/);
 		await other.close();
+		const generator = await FakeSds.start({ idn: "Siglent Technologies,SDG2042X,SDG2XCAX,2.01" });
+		await expect(SiglentScope.open(generator.address)).rejects.toThrow(/not a Siglent SDS oscilloscope/);
+		await generator.close();
+	});
+
+	it("open:未验证的型号也连,但 warnings 里要说,能力表按家族给", async () => {
+		const other = await FakeSds.start({ idn: "Siglent Technologies,SDS2104X HD,SDS2HX,1.2.3.4" });
+		const s = await SiglentScope.open(other.address);
+		try {
+			expect(s.warnings.join(" ")).toMatch(/SDS2104X HD has not been verified/);
+			expect(s.family.family).toBe("SDS2000X_HD");
+			expect(s.capabilities().memoryDepths).toEqual([]);
+			expect(s.capabilities().verified).toBe(false);
+		} finally {
+			await s.close();
+			await other.close();
+		}
+	});
+
+	it("capabilities:存储深度表随已开通道数缩", async () => {
+		await scope.status();
+		expect(scope.capabilities().enabledChannels).toBe(1);
+		expect(scope.capabilities().memoryDepths).toEqual(["10k", "100k", "1M", "10M", "100M"]);
+		expect(Math.max(...scope.capabilities().sampleRates)).toBe(2e9);
+		expect(scope.capabilities().triggerSources).toEqual(["C1", "C2", "C3", "C4", "LINE"]);
+		await scope.setChannel({ ch: 2, on: true });
+		try {
+			const st = await scope.status();
+			expect(scope.capabilities(st).memoryDepths).toEqual(["10k", "100k", "1M", "10M", "50M"]);
+			expect(Math.max(...scope.capabilities(st).sampleRates)).toBe(1e9);
+		} finally {
+			await scope.setChannel({ ch: 2, on: false });
+		}
 	});
 
 	it("status:四个通道 + 时基 + 触发 + 采集", async () => {
@@ -649,6 +696,7 @@ describe("SiglentScope(对着假 SDS)", () => {
 	});
 
 	it("setChannel:1 V/A 电流探头的 A 单位贯穿状态和波形,数值不二次缩放", async () => {
+		await scope.setChannel({ ch: 3, on: true });
 		const before = await scope.readWaveform(3, { maxPoints: 100 });
 		try {
 			const result = await scope.setChannel({ ch: 3, on: true, unit: "A", probe: 1, vdiv: 0.1 });
@@ -808,8 +856,64 @@ describe("SiglentScope(对着假 SDS)", () => {
 			const bytes = await original(command, options);
 			return command === ":WAVeform:DATA?" ? bytes.subarray(0, bytes.length - 2) : bytes;
 		});
-		try { await expect(scope.readWaveform(1)).rejects.toThrow(/incomplete.*expected 300 samples, received 299/); }
+		// 每窗少一点不算错(按交付数推进重读),但总数永远凑不齐:最后一窗只剩 1 点,剥掉 2 字节就是空块 → 报错,不当成功
+		try { await expect(scope.readWaveform(1)).rejects.toThrow(/returned no samples|incomplete C1 waveform/); }
 		finally { query.mockRestore(); }
+	});
+
+	it("一窗少给几点(不遵守 MAXPoint 的固件):按实际交付数推进,整条记录照样拼齐", async () => {
+		const short = await FakeSds.start({ recordPoints: 1000, maxPoint: 300, shortWindow: 250 });
+		const s = await SiglentScope.open(short.address);
+		try {
+			const w = await s.readWaveform(1, { stride: 1 });
+			expect(w.codes.length).toBe(1000);
+			for (let i = 0; i < 1000; i += 97) expect(w.codes[i]).toBe(defaultSquare(i));
+			await s.raw("*OPC?");
+			const starts = short.log.filter((c) => /^:WAVeform:STARt /i.test(c)).map((c) => Number(c.split(" ")[1]));
+			expect(starts.slice(0, 4)).toEqual([0, 250, 500, 750]);
+		} finally {
+			await s.close();
+			await short.close();
+		}
+	});
+
+	it("readWaveform:关着的通道直接拒绝,不去读一段谁都说不清的数据", async () => {
+		expect(fake.channels[3]!.on).toBe(false);
+		await expect(scope.readWaveform(4)).rejects.toThrow(/C4 is off/);
+	});
+
+	it("setTimebase:改时基前切 AUTO 触发模式,改完放回原模式,读回读到稳为止", async () => {
+		await scope.setTrigger({ mode: "normal" });
+		await flush();
+		expect(fake.trigger.mode).toBe("NORMAL");
+		fake.clearLog();
+		const r = await scope.setTimebase({ scale: 2e-7 });
+		expect(r.mismatches).toEqual([]);
+		await flush();
+		const auto = fake.log.indexOf(":TRIGger:MODE AUTO");
+		const scale = fake.log.indexOf(":TIMebase:SCALe 2E-7");
+		const back = fake.log.indexOf(":TRIGger:MODE NORMAL");
+		expect(auto).toBeGreaterThanOrEqual(0);
+		expect(scale).toBeGreaterThan(auto);
+		expect(back).toBeGreaterThan(scale);
+		expect(fake.log.filter((c) => c === ":TIMebase:SCALe?").length).toBeGreaterThanOrEqual(2);
+		expect(fake.trigger.mode).toBe("NORMAL");
+		await scope.setTrigger({ mode: "auto" });
+	});
+
+	it("setMemoryDepth:差异提示里的合法档位来自型号表,按已开通道数给", async () => {
+		await scope.status();
+		const r = await scope.setMemoryDepth("50M");
+		expect(r.mismatches[0]).toMatch(/accepts 10k 100k 1M 10M 100M with 1 channel\(s\) on/);
+	});
+
+	it("waitForStop:词表之外的状态是失步,立刻报错而不是空转到超时", async () => {
+		fake.setStatusScript(["Bogus"]);
+		try {
+			await expect(scope.waitForStop(2000)).rejects.toThrow(/unexpected trigger status "Bogus"/);
+		} finally {
+			fake.setStatusScript([]);
+		}
 	});
 
 	it("measure:没测出来的槽位给 null,有值的按 NR3 解", async () => {
@@ -951,5 +1055,344 @@ describe("readWaveform 的窗口语义", () => {
 		} finally {
 			await fake.close();
 		}
+	});
+});
+
+// ─── 4. 驱动接口、地址、注册表、型号表 ───────────────────────────────────────
+
+describe("地址:driver@transport", () => {
+	it("带前缀 / 不带前缀 / 独立驱动名", () => {
+		expect(parseScopeAddress("siglent@usb:SN1")).toEqual({ kind: "usb", serial: "SN1", driver: "siglent" });
+		expect(parseScopeAddress("Rigol@192.168.1.5:5555")).toEqual({ kind: "tcp", host: "192.168.1.5", port: 5555, driver: "rigol" });
+		expect(parseScopeAddress("usb")).toEqual({ kind: "usb", serial: undefined });
+		expect(parseScopeAddress("demo", ["demo"])).toEqual({ kind: "none", driver: "demo" });
+		// 没登记成独立驱动时,"demo" 只是个主机名
+		expect(parseScopeAddress("demo")).toEqual({ kind: "tcp", host: "demo", port: 5025 });
+		expect(parseScopeAddress("demo@none")).toEqual({ kind: "none", driver: "demo" });
+		expect(() => parseScopeAddress("none")).toThrow(/needs a driver name/);
+	});
+
+	it("格式化与租约键:租约按传输部分算,带不带驱动前缀是同一台仪器", () => {
+		expect(formatScopeAddress(parseScopeAddress("siglent@usb:SN1"))).toBe("siglent@usb:SN1");
+		expect(formatScopeAddress(parseScopeAddress("usb:SN1"))).toBe("usb:SN1");
+		expect(formatScopeAddress({ kind: "none", driver: "demo" })).toBe("demo");
+		expect(scopeAddressKey(parseScopeAddress("siglent@usb:SN1"))).toBe("usb:SN1");
+		expect(scopeAddressKey(parseScopeAddress("usb:SN1"))).toBe("usb:SN1");
+		expect(scopeAddressKey({ kind: "none", driver: "demo" })).toBe("none:demo");
+	});
+
+	it("注册表:缺省只有 siglent,YOMA_SCOPE_DEMO 打开才有 demo", () => {
+		expect(scopeDrivers({}).map((d) => d.name)).toEqual(["siglent"]);
+		expect(scopeDrivers({ YOMA_SCOPE_DEMO: "1" }).map((d) => d.name)).toEqual(["siglent", "demo"]);
+		expect(scopeDrivers({ YOMA_SCOPE_DEMO: "0" }).map((d) => d.name)).toEqual(["siglent"]);
+		expect(parseRegisteredAddress("demo", [SIGLENT_DRIVER, DEMO_DRIVER])).toEqual({ kind: "none", driver: "demo" });
+	});
+});
+
+describe("openScope:按 *IDN? 自动挑驱动", () => {
+	it("裸地址 → 问 *IDN? → siglent 接管;带前缀直接给驱动", async () => {
+		const fake = await FakeSds.start();
+		try {
+			const auto = await openScope(fake.address, { drivers: [SIGLENT_DRIVER] });
+			expect(auto.driver).toBe("siglent");
+			expect(auto.identity.model).toBe("SDS824X HD");
+			expect(formatScopeAddress(auto.address)).toBe(`siglent@${fake.address}`);
+			await auto.close();
+			const explicit = await openScope(`siglent@${fake.address}`, { drivers: [SIGLENT_DRIVER] });
+			expect(explicit.driver).toBe("siglent");
+			await explicit.close();
+		} finally {
+			await fake.close();
+		}
+	});
+
+	it("没有驱动认这台仪器 → 报错并关掉连接;驱动名不存在 → 列出可用的", async () => {
+		const rigol = await FakeSds.start({ idn: "Rigol Technologies,DS1054Z,DS1ZA,00.04" });
+		try {
+			await expect(openScope(rigol.address, { drivers: [SIGLENT_DRIVER] })).rejects.toThrow(/no driver for this instrument/);
+			await expect(openScope(`nope@${rigol.address}`, { drivers: [SIGLENT_DRIVER] })).rejects.toThrow(/unknown driver "nope"; available: siglent/);
+		} finally {
+			await rigol.close();
+		}
+		const generator = await FakeSds.start({ idn: "Siglent Technologies,SDG2042X,SDG2XCAX,2.01" });
+		try {
+			await expect(openScope(generator.address, { drivers: [SIGLENT_DRIVER] })).rejects.toThrow(/no driver for this instrument/);
+		} finally {
+			await generator.close();
+		}
+	});
+
+	it("独立驱动:demo 不需要传输", async () => {
+		const d = await openScope("demo", { drivers: [SIGLENT_DRIVER, DEMO_DRIVER] });
+		expect(d).toBeInstanceOf(DemoScope);
+		expect(d.warnings.join(" ")).toMatch(/DEMO instrument/);
+		await d.close();
+		// demo 不在表里时,"demo" 只是个连不上的主机名
+		await expect(openScope("demo", { drivers: [SIGLENT_DRIVER] })).rejects.toThrow(/demo/);
+	});
+});
+
+describe("Siglent 型号表", () => {
+	it("SDS800X HD:带宽与通道数从型号串来,深度表按已开通道数缩", () => {
+		const f = siglentFamily("SDS824X HD");
+		expect(f).toMatchObject({ family: "SDS800X_HD", bandwidthMHz: 200, channels: 4, verified: true, interCommandMs: 5, customProbe: true });
+		expect(f.memoryDepths(1)).toEqual(["10k", "100k", "1M", "10M", "100M"]);
+		expect(f.memoryDepths(2)).toEqual(["10k", "100k", "1M", "10M", "50M"]);
+		expect(f.memoryDepths(4)).toEqual(["10k", "100k", "1M", "10M", "25M"]);
+		expect(Math.max(...f.sampleRates(1))).toBe(2e9);
+		expect(Math.max(...f.sampleRates(3))).toBe(5e8);
+		const small = siglentFamily("SDS804X HD");
+		expect(small).toMatchObject({ bandwidthMHz: 70, channels: 4, verified: false });
+		expect(small.memoryDepths(1)).toEqual(["10k", "100k", "1M", "10M", "50M"]);
+		expect(small.memoryDepths(4)).toEqual(["10k", "100k", "1M", "10M"]);
+		expect(siglentFamily("SDS812X HD")).toMatchObject({ bandwidthMHz: 100, channels: 2 });
+	});
+
+	it("其它家族:认得出的给家族名与间隔,认不出的保守 50 ms、没有表", () => {
+		expect(siglentFamily("SDS2354X Plus")).toMatchObject({ family: "SDS2000X_PLUS", interCommandMs: 50, channels: 4 });
+		expect(siglentFamily("SDS2104X HD")).toMatchObject({ family: "SDS2000X_HD", interCommandMs: 5 });
+		expect(siglentFamily("SDS1104X HD")).toMatchObject({ family: "SDS1000X_HD", channels: 4 });
+		expect(siglentFamily("SDS3054X HD").family).toBe("SDS3000X_HD");
+		const unknown = siglentFamily("SDS9999");
+		expect(unknown).toMatchObject({ family: "unknown", interCommandMs: 50, verified: false, customProbe: false });
+		expect(unknown.memoryDepths(1)).toEqual([]);
+	});
+
+	it("canonicalDepth:10K / 10k / 10000 是同一档", () => {
+		expect(canonicalDepth("10K")).toBe("10k");
+		expect(canonicalDepth("10000")).toBe("10k");
+		expect(canonicalDepth("1M")).toBe("1M");
+		expect(canonicalDepth("1000000")).toBe("1M");
+		expect(canonicalDepth("2.5M")).toBe("2500k");
+	});
+});
+
+// ─── 5. 测量算法修正(按 ngscopeclient 的测量滤波器) ─────────────────────────
+
+describe("波形分析:电平、边沿位置、估频、削波", () => {
+	const SCALE: VoltScale = { gain: 1, offset: 0, codePerDiv: 1000, probe: 1 };
+	const INTERVAL = 1e-6;
+
+	it("baseTop:方波给出两个稳态电平,三角波和噪声给不出", () => {
+		const square = new Int16Array(8000);
+		for (let i = 0; i < square.length; i++) square[i] = i % 1000 < 500 ? 1000 : -1000;
+		expect(baseTop(square, -1000, 1000)).toEqual({ base: -1000, top: 1000 });
+		const tri = new Int16Array(8000);
+		for (let i = 0; i < tri.length; i++) {
+			const x = (i % 1000) / 1000;
+			tri[i] = Math.round(x < 0.5 ? -1000 + 4000 * x : 3000 - 4000 * x);
+		}
+		expect(baseTop(tri, -1000, 1000)).toBeUndefined();
+		const noise = new Int16Array(8000);
+		let seed = 7;
+		for (let i = 0; i < noise.length; i++) {
+			seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+			noise[i] = ((seed >>> 16) % 2001) - 1000;
+		}
+		expect(baseTop(noise, -1000, 1000)).toBeUndefined();
+	});
+
+	it("有 20% 过冲的方波:阈值和 10/90 参考电平按稳态电平算,上升时间不再被过冲抬高", () => {
+		// 高电平 1000,每个上升沿后第一个点冲到 1200;低电平 -1000
+		const codes = new Int16Array(8000);
+		for (let i = 0; i < codes.length; i++) {
+			const p = i % 1000;
+			codes[i] = p < 500 ? (p === 0 ? 1200 : 1000) : -1000;
+		}
+		const s = waveStats(codes, SCALE, INTERVAL);
+		expect(s.top).toBeCloseTo(1, 2);
+		expect(s.base).toBeCloseTo(-1, 2);
+		expect(s.max).toBeCloseTo(1.2, 9);
+		expect(s.overshoot).toBeCloseTo(0.2, 2);
+		expect(s.undershoot).toBeCloseTo(0, 9);
+		expect(s.freq).toBeDefined();
+		expect(Math.abs(s.freq! - 1000) / 1000).toBeLessThan(1e-3);
+		expect(s.duty).toBeCloseTo(0.5, 2);
+		// 老算法用 max=1.2 V 当 90% 参考,90% 线(0.98 V)在稳态 1 V 之下没问题,但 min/max 中值也会偏;这里钉住新算法给的理想台阶
+		expect(s.rise).toBeDefined();
+		expect(s.rise!).toBeLessThan(INTERVAL);
+		expect(s.acRms).toBeCloseTo(s.rms, 1);
+	});
+
+	it("慢边沿:边沿位置在阈值处插值,不在滞回带被穿越的样本处", () => {
+		// -1000 → 1000 的线性斜坡,从 500 开始每点 +100:阈值 0 正好在 510 处穿过
+		const codes = new Int16Array(1200).fill(-1000);
+		for (let i = 500; i < 520; i++) codes[i] = -1000 + (i - 500) * 100;
+		codes.fill(1000, 520);
+		const edges = findEdges(codes, 0, 200);
+		expect(edges).toHaveLength(1);
+		expect(edges[0]!.rising).toBe(true);
+		expect(edges[0]!.index).toBeCloseTo(510, 6);
+	});
+
+	it("上升快、下降慢的方波:占空比按 50% 电平算,不被下降沿的滞回宽度拉偏", () => {
+		// 周期 1000:0..300 高电平,300..340 线性下降,其余低电平。50% 电平在下降 20 点处 → 高电平时长 320
+		const codes = new Int16Array(8000);
+		for (let i = 0; i < codes.length; i++) {
+			const p = i % 1000;
+			codes[i] = p < 300 ? 1000 : p < 340 ? Math.round(1000 - ((p - 300) / 40) * 2000) : -1000;
+		}
+		const s = waveStats(codes, SCALE, INTERVAL);
+		expect(s.duty).toBeDefined();
+		expect(Math.abs(s.duty! - 0.32)).toBeLessThan(0.003);
+		expect(s.fall).toBeDefined();
+		// 90%→10% 跨 80% 的斜坡 = 32 个点
+		expect(s.fall! / INTERVAL).toBeCloseTo(32, 0);
+	});
+
+	it("估频按整段跨度平均:比单个间隔的中位数准一个数量级", () => {
+		const f0 = 1234.5;
+		const sine = new Int16Array(20_000);
+		for (let i = 0; i < sine.length; i++) sine[i] = Math.round(900 * Math.sin(2 * Math.PI * f0 * i * INTERVAL));
+		const s = waveStats(sine, SCALE, INTERVAL);
+		expect(s.freq).toBeDefined();
+		expect(Math.abs(s.freq! - f0) / f0).toBeLessThan(1e-4);
+		// 正弦的直方图两端也是尖的(反正弦分布):top/base 是接近幅值的"停留最久的电平",不是 max/min
+		expect(s.top).toBeGreaterThan(0.85);
+		expect(s.top).toBeLessThan(0.9);
+		expect(s.base).toBeGreaterThan(-0.9);
+		expect(s.base).toBeLessThan(-0.85);
+	});
+
+	it("贴轨的样本记进 clipped,峰值只是下界", () => {
+		const codes = new Int16Array(4000);
+		for (let i = 0; i < codes.length; i++) codes[i] = i % 100 < 50 ? 32767 : -20000;
+		const s = waveStats(codes, SCALE, INTERVAL);
+		expect(s.clipped).toEqual({ low: 0, high: 2000 });
+		const fine = new Int16Array(4000);
+		for (let i = 0; i < fine.length; i++) fine[i] = i % 100 < 50 ? 30000 : -30000;
+		expect(waveStats(fine, SCALE, INTERVAL).clipped).toBeUndefined();
+	});
+
+	it("acRms:去掉直流后的纹波大小", () => {
+		const codes = new Int16Array(4000);
+		for (let i = 0; i < codes.length; i++) codes[i] = 2000 + Math.round(100 * Math.sin(2 * Math.PI * 5000 * i * INTERVAL));
+		const s = waveStats(codes, SCALE, INTERVAL);
+		expect(s.mean).toBeCloseTo(2, 2);
+		expect(s.acRms).toBeCloseTo(0.1 / Math.SQRT2, 2);
+	});
+});
+
+// ─── 6. Demo 驱动 ─────────────────────────────────────────────────────────
+
+describe("DemoScope", () => {
+	it("合成信号有可核对的数:C2 是 3.3 V / 1 kHz / 30% 方波,C4 的毛刺在完整采样里能找到", async () => {
+		const d = new DemoScope({ triggerDelayMs: 5 });
+		await d.setChannel({ ch: 2, on: true, vdiv: 1 });
+		await d.setChannel({ ch: 4, on: true, vdiv: 0.5, offset: -1.8 });
+		await d.setMemoryDepth("100k");
+		// 10 ms 窗口 = 10 个周期(一致性门要 ≥3 个完整周期),100k 点 → 10 MSa/s,200 ns 的毛刺占 2 个样本
+		await d.setTimebase({ scale: 1e-3 });
+		await d.stop();
+		const c2 = await d.readWaveform(2, { stride: 1 });
+		expect(c2.codes.length).toBe(100_000);
+		const s = waveStats(c2.codes, c2.scale, c2.time.interval);
+		expect(s.top).toBeCloseTo(3.3, 1);
+		expect(s.base).toBeCloseTo(0, 1);
+		expect(Math.abs(s.freq! - 1000) / 1000).toBeLessThan(2e-3);
+		expect(Math.abs(s.duty! - 0.3)).toBeLessThan(0.01);
+		expect(s.overshoot).toBeGreaterThan(0.1);
+		const c4 = await d.readWaveform(4, { stride: 1 });
+		const s4 = waveStats(c4.codes, c4.scale, c4.time.interval);
+		expect(s4.min).toBeLessThan(0.1);
+		expect(s4.max).toBeGreaterThan(1.7);
+		const m = await d.measure([{ type: "FREQ", source: "C2" }, { type: "DUTY", source: "C2" }, { type: "NOPE", source: "C2" }]);
+		expect(m.results[0]!.value).toBeCloseTo(1000, -1);
+		expect(m.results[1]!.value).toBeCloseTo(30, 0);
+		expect(m.results[2]!.value).toBeNull();
+		expect(m.mismatches[0]).toMatch(/NOPE/);
+		const png = await d.screenshot();
+		expect(pngComplete(png)).toBe(png.length);
+		await d.close();
+	});
+
+	it("单次触发:single 后不是 Stop,片刻后自己触发成 Stop;关着的通道读不出波形", async () => {
+		const d = new DemoScope({ triggerDelayMs: 5 });
+		await d.single();
+		expect(await d.triggerStatus()).toBe("Ready");
+		expect((await d.waitForStop(1000)).ok).toBe(true);
+		await expect(d.readWaveform(3)).rejects.toThrow(/C3/);
+		const r = await d.setTrigger({ source: "C3" });
+		expect(r.state.source).toBe("LINE");
+		expect(r.mismatches[0]).toMatch(/turn the channel on/);
+		await d.close();
+	});
+});
+
+// ─── 7. 2026-09-17 真机上发现的行为(SDS824X HD,C1 悬空) ───────────────────────
+
+describe("SiglentScope:没触发的单次与电平量化(对着假 SDS)", () => {
+	let fake: FakeSds;
+	let scope: SiglentScope;
+
+	beforeAll(async () => {
+		fake = await FakeSds.start({ recordPoints: 1000, maxPoint: 300 });
+		scope = await SiglentScope.open(fake.address);
+	});
+
+	afterAll(async () => {
+		await scope.close();
+		await fake.close();
+	});
+
+	it("武装单次后触发前 STOP:readWaveform 说清楚'没有完成的采集',不是'描述块非法'", async () => {
+		await scope.single();
+		await scope.stop();
+		await expect(scope.readWaveform(1)).rejects.toThrow(/no completed acquisition \(trigger mode SINGLE, status Stop\)/);
+		// SINGle 模式下 RUN 只是再武装,记录照样空
+		await scope.run();
+		await scope.stop();
+		await expect(scope.readWaveform(1)).rejects.toThrow(/no completed acquisition/);
+		// AUTO 下跑一下再停,记录就有了
+		const r = await scope.setTrigger({ mode: "auto" });
+		expect(r.mismatches).toEqual([]);
+		await scope.run();
+		await scope.stop();
+		expect((await scope.readWaveform(1)).codes.length).toBe(1000);
+	});
+
+	it("触发电平按源通道 vdiv 量化:偏差在 vdiv/20 内不算 mismatch,被夹在 ±4.1 格才算", async () => {
+		fake.triggerLevelQuantumDiv = 1 / 60;
+		try {
+			const ch = await scope.setChannel({ ch: 1, on: true, probe: 1, vdiv: 1 });
+			expect(ch.mismatches).toEqual([]);
+			const fine = await scope.setTrigger({ source: "C1", level: 0.508 });
+			expect(fine.state.level).toBeCloseTo(0.5, 3);
+			expect(fine.mismatches).toEqual([]);
+			const clamped = await scope.setTrigger({ level: 10 });
+			expect(clamped.state.level).toBeCloseTo(4.1, 3);
+			expect(clamped.mismatches.join(" ")).toMatch(/trigger level: asked 10, scope reports 4.1/);
+		} finally {
+			fake.triggerLevelQuantumDiv = 0;
+		}
+	});
+
+	it("能力枚举:SDS800X HD 报 customProbe,菜单外的探头系数也照收", async () => {
+		expect(scope.capabilities().customProbe).toBe(true);
+	});
+
+	it("关着的通道上 vdiv/offset 被仪器丢掉:驱动先开、设完再关,'停着改量程'与'配好再停掉'一次调用都成", async () => {
+		const chan3 = (l: string) => /^:CHANnel3:(SWITch|SCALe|OFFSet|PROBe) /.test(l); // 只看写命令,不看读回
+		expect((await scope.channel(3)).on).toBe(false);
+		let mark = fake.log.length;
+		const closed = await scope.setChannel({ ch: 3, probe: 1, vdiv: 2, offset: 0.5 });
+		await scope.raw("*OPC?");
+		expect(closed.mismatches).toEqual([]);
+		expect(closed.state).toMatchObject({ on: false, vdiv: 2, offset: 0.5 });
+		expect(fake.log.slice(mark).filter(chan3)).toEqual([":CHANnel3:SWITch ON", ":CHANnel3:PROBe VALue,1", ":CHANnel3:SCALe 2", ":CHANnel3:OFFSet 0.5", ":CHANnel3:SWITch OFF"]);
+		// 开着的通道:配好再停掉,OFF 放在最后
+		await scope.setChannel({ ch: 3, on: true });
+		mark = fake.log.length;
+		const parked = await scope.setChannel({ ch: 3, on: false, vdiv: 1 });
+		await scope.raw("*OPC?");
+		expect(parked.mismatches).toEqual([]);
+		expect(parked.state).toMatchObject({ on: false, vdiv: 1 });
+		expect(fake.log.slice(mark).filter(chan3)).toEqual([":CHANnel3:SCALe 1", ":CHANnel3:SWITch OFF"]);
+		// 只改探头不用开:探头在关着的通道上照收
+		mark = fake.log.length;
+		const probeOnly = await scope.setChannel({ ch: 3, probe: 10 });
+		await scope.raw("*OPC?");
+		expect(probeOnly.mismatches).toEqual([]);
+		expect(fake.log.slice(mark).filter(chan3)).toEqual([":CHANnel3:PROBe VALue,10"]);
 	});
 });

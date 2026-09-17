@@ -20,12 +20,15 @@ export function captureInfo(meta: ScopeCaptureMeta, dir: string): ScopeCaptureIn
     stride: ch.stride ?? meta.stride,
     interval: ch.time?.interval ?? meta.interval,
     t0: ch.time ? timeOfIndex(0, ch.time) : meta.timebase.delay - 5 * meta.timebase.scale,
+    ...(ch.clipped ? { clipped: ch.clipped } : {}),
   }))
   return {
     id: meta.id,
     dir,
     createdAt: meta.createdAt,
+    ...(meta.acquiredAt ? { acquiredAt: meta.acquiredAt } : {}),
     address: meta.address,
+    ...(meta.driver ? { driver: meta.driver } : {}),
     model: meta.model,
     serial: meta.serial,
     mode: meta.mode,

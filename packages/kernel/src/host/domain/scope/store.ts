@@ -30,13 +30,20 @@ export interface StoredChannel {
   stride?: number
   recordPoints?: number
   sampleRate?: number
+  /** Samples within 1% of the ADC rails at capture time; peaks in such a channel are bounds, not readings. */
+  clipped?: { low: number; high: number }
 }
 
 export interface ScopeCaptureMeta {
   schema?: "yoma/scope@1"
   id: string
+  /** Host clock when the file was written. */
   createdAt: number
+  /** Instrument's own acquisition time (local time, no zone) when the driver can read it. */
+  acquiredAt?: string
   address: string
+  /** Registry name of the driver that produced this capture (siglent / demo / …). */
+  driver?: string
   model?: string
   serial?: string
   firmware?: string
@@ -120,11 +127,22 @@ export function validateCapture(meta: ScopeCaptureMeta): void {
     if (ch.stride !== undefined) integer(ch.stride, "channel.stride")
     if (ch.recordPoints !== undefined) integer(ch.recordPoints, "channel.recordPoints")
     if (ch.sampleRate !== undefined) number(ch.sampleRate, "channel.sampleRate", true)
+    if (ch.clipped !== undefined) {
+      if (typeof ch.clipped !== "object" || ch.clipped === null) throw new Error("scope: invalid capture clipped")
+      for (const key of ["low", "high"] as const) {
+        const value = ch.clipped[key]
+        if (!Number.isSafeInteger(value) || value < 0) throw new Error("scope: invalid capture clipped")
+      }
+    }
     if (meta.quality === "exact" && (ch.stride ?? meta.stride) !== 1)
       throw new Error("scope: exact capture cannot be decimated")
     if (meta.quality === "exact" && ch.points !== (ch.recordPoints ?? meta.recordPoints))
       throw new Error("scope: exact capture is incomplete")
   }
+  if (meta.driver !== undefined && (typeof meta.driver !== "string" || meta.driver.length > 32))
+    throw new Error("scope: invalid capture driver")
+  if (meta.acquiredAt !== undefined && (typeof meta.acquiredAt !== "string" || meta.acquiredAt.length > 40))
+    throw new Error("scope: invalid capture acquiredAt")
   if (meta.screenshot) {
     filename(meta.screenshot.file, /^[a-zA-Z0-9_-]+\.png$/)
     number(meta.screenshot.createdAt, "screenshot.createdAt", true)

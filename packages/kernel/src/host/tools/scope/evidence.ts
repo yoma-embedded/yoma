@@ -2,9 +2,9 @@
 import { randomUUID } from "node:crypto"
 import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
-import { asciiPlot, findEdges, si, waveStats } from "../../domain/scope/analyze.ts"
+import { asciiPlot, findEdges, si, statsUnits, waveStats } from "../../domain/scope/analyze.ts"
+import type { ScopeDriver } from "../../domain/scope/driver.ts"
 import { codeToVolts, indexOfTime, timeOfIndex, type TimeScale, type VoltScale } from "../../domain/scope/preamble.ts"
-import type { SiglentScope } from "../../domain/scope/siglent.ts"
 import {
   listCaptures,
   readChannelCodes,
@@ -15,31 +15,8 @@ import {
 } from "../../domain/scope/store.ts"
 import { MAX_SCOPE_POINTS, type ScopeAction, type ScopeDetails, type ScopeInput } from "./contract.ts"
 
-export type ScopeDevice = Pick<
-  SiglentScope,
-  | "address"
-  | "identity"
-  | "label"
-  | "client"
-  | "close"
-  | "status"
-  | "channel"
-  | "trigger"
-  | "triggerStatus"
-  | "setChannel"
-  | "setTimebase"
-  | "setMemoryDepth"
-  | "setTrigger"
-  | "autoset"
-  | "run"
-  | "stop"
-  | "single"
-  | "waitForStop"
-  | "readWaveform"
-  | "measure"
-  | "readMeasurements"
-  | "screenshot"
->
+/** The tool talks to any driver through the declared interface; vendors are a registry concern (domain/scope/registry.ts). */
+export type ScopeDevice = ScopeDriver
 
 export function acquisitionBudget(params: ScopeInput): {
   quality: "exact" | "overview"
@@ -94,6 +71,8 @@ export async function saveEvidence(
     captureId: id,
     dir,
     address: s.label,
+    driver: s.driver,
+    ...(s.warnings.length ? { warnings: [...s.warnings] } : {}),
     model: s.identity.model,
     serial: s.identity.serial,
     sampleRate: first.sampleRate,
@@ -107,6 +86,7 @@ export async function saveEvidence(
   }
   const lines = [
     `capture ${id}: ${budget.quality}; ${waves.length} channel(s), ${first.codes.length} points on C${first.ch}; interval ${si(first.time.interval, "s")}, stride ${first.stride}.`,
+    ...s.warnings.map((w) => `Warning: ${w}`),
   ]
   let image: { type: "image"; data: string; mimeType: string } | undefined
   let screenshotFailed = false
@@ -134,19 +114,37 @@ export async function saveEvidence(
       stride: wave.stride,
       recordPoints: wave.recordPoints,
       sampleRate: wave.sampleRate,
+      ...(stats.clipped ? { clipped: stats.clipped } : {}),
     })
-    details.channels!.push({ ...state, points: wave.codes.length, interval: wave.time.interval, stats })
+    details.channels!.push({
+      ...state,
+      points: wave.codes.length,
+      interval: wave.time.interval,
+      stats,
+      units: statsUnits(wave.unit),
+    })
+    const levels = stats.top !== undefined && stats.base !== undefined ? `, top ${si(stats.top, wave.unit)}, base ${si(stats.base, wave.unit)}` : ""
+    const timing = stats.freq
+      ? `, crossing frequency estimate ${si(stats.freq, "Hz")}${stats.duty !== undefined ? ` (duty ${(stats.duty * 100).toFixed(1)}%)` : ""}`
+      : ""
     lines.push(
-      `C${wave.ch}${state.label ? ` (${state.label})` : ""}: min ${si(stats.min, wave.unit)}, max ${si(stats.max, wave.unit)}, pp ${si(stats.pp, wave.unit)}, mean ${si(stats.mean, wave.unit)}, rms ${si(stats.rms, wave.unit)}${stats.freq ? `, crossing frequency estimate ${si(stats.freq, "Hz")}` : ""}; probe ${wave.probe}×, ${si(wave.time.interval, "s")}/point.`,
+      `C${wave.ch}${state.label ? ` (${state.label})` : ""}: min ${si(stats.min, wave.unit)}, max ${si(stats.max, wave.unit)}, pp ${si(stats.pp, wave.unit)}, mean ${si(stats.mean, wave.unit)}, rms ${si(stats.rms, wave.unit)}, ac rms ${si(stats.acRms, wave.unit)}${levels}${timing}; probe ${wave.probe}×, ${si(wave.time.interval, "s")}/point.`,
     )
+    if (stats.clipped)
+      lines.push(
+        `C${wave.ch}: CLIPPED — ${stats.clipped.high} sample(s) at the top and ${stats.clipped.low} at the bottom of the ADC range; min/max/pp are bounds, not readings. Increase vdiv and capture again.`,
+      )
     if (stats.pp < state.vdiv * 0.2)
       lines.push(`C${wave.ch}: small signal relative to range; check wiring and vdiv before trusting frequency/duty.`)
     if (params.plot) lines.push(asciiPlot(wave.codes, wave.scale, wave.time, { label: `C${wave.ch}`, unit: wave.unit }))
   }
+  const acquiredAt = waves.find((w) => w.acquiredAt)?.acquiredAt
   const meta: ScopeCaptureMeta = {
     id,
     createdAt: Date.now(),
+    ...(acquiredAt ? { acquiredAt } : {}),
     address: s.label,
+    driver: s.driver,
     model: s.identity.model,
     serial: s.identity.serial,
     firmware: s.identity.firmware,
@@ -230,9 +228,13 @@ export async function savedSamples(
     lines.push(
       `Overview acquisition: ${stored.points} stored points of a ${recordPoints}-point record; absence of a glitch is not established.`,
     )
+  if (stored.clipped)
+    lines.push(
+      `Clipped at capture time (${stored.clipped.high} top / ${stored.clipped.low} bottom samples at the ADC rail); extreme values are bounds.`,
+    )
   if (params.edges) {
     const stats = waveStats(win, scale, time.interval)
-    const threshold = params.threshold ?? (stats.min + stats.max) / 2
+    const threshold = params.threshold ?? (stats.top !== undefined && stats.base !== undefined ? (stats.top + stats.base) / 2 : (stats.min + stats.max) / 2)
     const level = ((threshold / scale.probe + scale.offset) * scale.codePerDiv) / scale.gain
     const hysteresis = Math.max(2, (((stats.pp * 0.1) / scale.probe) * scale.codePerDiv) / scale.gain)
     const edges = findEdges(win, level, hysteresis, limit + 1)
@@ -255,6 +257,7 @@ export async function savedSamples(
       action: "samples",
       captureId: meta.id,
       dir: meta.dir,
+      ...(meta.driver ? { driver: meta.driver } : {}),
       points: win.length,
       interval: time.interval,
       truncated,

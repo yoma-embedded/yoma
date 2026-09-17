@@ -38,7 +38,7 @@ const parameters = Type.Object({
   address: Type.Optional(
     Type.String({
       description:
-        'USB: "usb" or "usb:<serial>". Omit after connect. With multiple instruments always select a serial.',
+        'Instrument address: "usb" / "usb:<serial>" (USBTMC) or "<ip>[:5025]" (LAN), optionally prefixed with a driver name ("siglent@usb:<serial>"); a bare address auto-detects the driver from *IDN?. Omit after connect. With multiple instruments always select a serial.',
     }),
   ),
   channels: Type.Optional(
@@ -83,6 +83,11 @@ const parameters = Type.Object({
   ),
   trigger: Type.Optional(
     Type.Object({
+      type: Type.Optional(
+        Type.String({
+          description: "Trigger type from capabilities.triggerTypes; default edge (the only type today).",
+        }),
+      ),
       mode: Type.Optional(Type.Union([Type.Literal("auto"), Type.Literal("normal")])),
       source: Type.Optional(Type.String({ description: "C1..C4 or LINE. Enable the source channel first." })),
       level: Type.Optional(
@@ -93,7 +98,8 @@ const parameters = Type.Object({
   ),
   mdepth: Type.Optional(
     Type.String({
-      description: "Acquisition memory depth, e.g. 10k, 100k, 1M. For exact captures choose at most 2M points/channel.",
+      description:
+        "Acquisition memory depth, e.g. 10k, 100k, 1M; legal values depend on the model and how many channels are on (capabilities.memoryDepths from connect/status). For exact captures choose at most 2M points/channel.",
     }),
   ),
   run: Type.Optional(Type.Union([Type.Literal("run"), Type.Literal("stop")])),
@@ -183,17 +189,75 @@ export interface ScopeChannelDetails {
     pp: number
     mean: number
     rms: number
+    /** RMS with the DC component removed (ripple / noise). */
+    acRms?: number
+    /** Histogram-mode settled levels; absent when the signal has no two settled levels (sine, ramp, noise). */
+    top?: number
+    base?: number
+    overshoot?: number
+    undershoot?: number
     freq?: number
     period?: number
+    /** Ratio 0..1 (instrument DUTY measurements are in percent). */
     duty?: number
     rise?: number
     fall?: number
     edges?: number
+    /** Samples within 1% of the ADC rails; when present, min/max are bounds, not readings. */
+    clipped?: { low: number; high: number }
   }
+  /** Unit of every stats field, so the agent never guesses seconds vs samples or ratio vs percent. */
+  units?: Record<string, string>
 }
+
+/**
+ * What the connected instrument can be set to right now. Mirrors `ScopeCapabilities` in
+ * host/domain/scope/driver.ts (this menu file cannot import the tool room); session.ts assigns one to the other,
+ * so a drift between the two fails typecheck. Lists depend on current state (memory depth shrinks with enabled
+ * channels); an empty list means unknown or unsupported, not an error.
+ */
+export interface ScopeCapabilities {
+  driver: string
+  model: string
+  /** True only for models yoma has exercised on hardware. */
+  verified: boolean
+  channels: number
+  enabledChannels: number
+  units: string[]
+  couplings: string[]
+  bwlimits: string[]
+  probes: number[]
+  /** True when the instrument also accepts probe factors outside `probes` (custom current probes, shunts). */
+  customProbe: boolean
+  timebase: { min: number; max: number; steps: string }
+  triggerTypes: string[]
+  triggerSources: string[]
+  triggerSlopes: string[]
+  triggerModes: string[]
+  memoryDepths: string[]
+  sampleRates: number[]
+  measureTypes: string[]
+  externalTrigger: boolean
+  screenshot: boolean
+  measurements: boolean
+}
+
 export interface ScopeDetails {
   action: ScopeAction
   address?: string
+  /** Registry name of the driver behind this instrument. */
+  driver?: string
+  /** Driver warnings (unverified model, demo instrument); repeated on every result while connected. */
+  warnings?: string[]
+  /** connect/status only: legal values for the current state. */
+  capabilities?: ScopeCapabilities
+  /** devices only. */
+  devices?: { serial?: string; product?: string; vendorId?: number }[]
+  drivers?: {
+    name: string
+    description: string
+    models: { model: string; transports: string[]; example: string; verified: string; note?: string }[]
+  }[]
   model?: string
   serial?: string
   firmware?: string
@@ -231,8 +295,8 @@ export const SCOPE_CONTRACT = {
   name: "scope",
   label: "示波器",
   parameters,
-  description: `Siglent SDS824X HD oscilloscope over USB: capture analog waveforms, measure channel levels/timing with confirmed probe scaling, and read screenshots.
-devices lists USB instruments; connect selects one and remembers its address; status reads current settings.
+  description: `Bench oscilloscope over USBTMC or LAN (drivers: Siglent SDS ':' command tree, verified on the SDS824X HD): capture analog waveforms, measure channel levels/timing with confirmed probe scaling, and read screenshots.
+devices lists USB instruments plus the driver catalog with example addresses; connect selects one (auto-detects the driver from *IDN?, or use driver@address) and remembers its address; status reads current settings. Both return capabilities: the legal couplings, probes, trigger sources, memory depths and sample rates for the current channel configuration, and warnings such as an unverified model.
 setup applies channels/timebase/trigger/mdepth and reports actual readback and mismatches. Use arm (optional settings), perform the flash/reset/physical action, then collect to capture a transient. collect timeout keeps waiting; stop discards the armed operation. disconnect releases the instrument for another session or application.
 capture defaults to exact (stride=1), max 2M points per channel; it refuses a larger record, so lower mdepth before capture. quality=overview intentionally decimates: useful for shape, unable to prove absence of a glitch. mode=current freezes the existing record; mode=single waits for a new trigger.
 All samples and acquisition settings are saved under .yoma/scope/<id>. list and samples read this evidence offline, with time relative to trigger. measure uses the instrument's own measurements; screenshot attaches a PNG. Raw samples never enter the conversation history; use a bounded samples window instead.
@@ -243,6 +307,7 @@ Only one session owns an instrument at a time. An armed acquisition retains owne
     "For current probes confirm model, selected range/sensitivity (V/A or mV/A), zeroing and clamp orientation. Preserve the reported channel unit and existing probe factor initially; bandwidth is not a scaling factor. If the instrument reports V, report displayed voltage; derive current only after accounting for the instrument probe factor and confirmed sensitivity, applying each exactly once. Unit A alone does not calibrate an unknown probe.",
     "Arm before triggering the board event, then collect. A timed-out trigger or an overview with decimated samples cannot establish that a transient/glitch is absent. Cite the saved capture and time window supporting the conclusion.",
     "Capture frequency/period/duty are threshold-crossing estimates with a consistency check, not proof of periodicity. Missing estimates mean insufficient or irregular crossings, not zero frequency. Inspect the waveform and compare instrument measurements before attributing a physical cause to ripple or noise.",
+    "Propose only values listed in capabilities (memory depths, couplings, trigger sources, measurement types; probes too unless customProbe is true); re-read status after enabling or disabling channels because legal depths change with the channel count. Treat driver warnings (unverified model, demo instrument) as 'readbacks are the only source of truth'. A capture whose stats report clipped samples gives bounds, not peak readings: raise vdiv and capture again.",
   ],
   summary(input: Partial<ScopeInput>): string {
     if (!input.action) return ""

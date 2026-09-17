@@ -5,8 +5,20 @@ import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import type { AgentHarnessTool, ExecutionToolContext } from "@earendil-works/pi-agent-core"
 import { si } from "../../domain/scope/analyze.ts"
-import { formatScpiAddress, listUsbScopes, parseScpiAddress, type ScpiAddress } from "../../domain/scope/scpi.ts"
-import { SiglentScope, type ScopeStatus } from "../../domain/scope/siglent.ts"
+import {
+  formatScopeAddress,
+  scopeAddressKey,
+  type ScopeAddress,
+  type ScopeDriverSpec,
+  type ScopeStatus,
+} from "../../domain/scope/driver.ts"
+import {
+  discoverUsbScopes,
+  openScope,
+  parseRegisteredAddress,
+  scopeCatalog,
+  scopeDrivers,
+} from "../../domain/scope/registry.ts"
 import {
   ensureScopeDir,
   listCaptures,
@@ -19,8 +31,11 @@ import { SCOPE_CONTRACT, type ScopeDetails, type ScopeInput } from "./contract.t
 import { acquisitionBudget, saveEvidence, savedSamples, type ScopeDevice } from "./evidence.ts"
 
 export interface ScopeToolOptions {
-  open?: (address: ScpiAddress, signal?: AbortSignal) => Promise<ScopeDevice>
-  listUsb?: () => Promise<{ serial?: string; product?: string }[]>
+  /** Test seam: replaces the registry's openScope. Production resolves the driver from the address or *IDN?. */
+  open?: (address: ScopeAddress, signal?: AbortSignal) => Promise<ScopeDevice>
+  listUsb?: () => Promise<{ serial?: string; product?: string; vendorId?: number }[]>
+  /** Registry to use; default scopeDrivers() (siglent, plus demo when YOMA_SCOPE_DEMO is set). */
+  drivers?: readonly ScopeDriverSpec[]
   idleCloseMs?: number
 }
 export type ScopeTool = AgentHarnessTool<ExecutionToolContext, typeof SCOPE_CONTRACT.parameters, ScopeDetails> & {
@@ -49,13 +64,14 @@ function measurementUnit(type: string, channelUnit = "unknown"): string {
 }
 
 export function createScopeTool(options: ScopeToolOptions = {}): ScopeTool {
-  const open = options.open ?? ((address, signal) => SiglentScope.open(address, { signal }))
-  const listUsb = options.listUsb ?? listUsbScopes
+  const drivers = options.drivers ?? scopeDrivers()
+  const open = options.open ?? ((address, signal) => openScope(address, { signal, drivers }))
+  const listUsb = options.listUsb ?? (() => discoverUsbScopes(drivers))
   const owner = Symbol("scope session")
   const keys = new Set<string>()
   const lastCaptures = new Map<string, string>()
   let scope: ScopeDevice | undefined
-  let address: ScpiAddress | undefined
+  let address: ScopeAddress | undefined
   let armed: { at: number; params: ScopeInput; before: ScopeStatus; cwd: string } | undefined
   let queue: Promise<unknown> = Promise.resolve()
   let active: AbortController | undefined
@@ -113,31 +129,33 @@ export function createScopeTool(options: ScopeToolOptions = {}): ScopeTool {
   async function connect(cwd: string, requested?: string, signal?: AbortSignal): Promise<ScopeDevice> {
     signal?.throwIfAborted()
     let want = requested
-      ? parseScpiAddress(requested)
-      : (address ?? parseScpiAddress((await readScopeConfig(cwd))?.address ?? "usb"))
-    if (want.kind !== "usb")
-      throw new Error("scope: this release supports the SDS824X HD over USB; use address=usb or usb:<serial>")
-    if (!want.serial) {
+      ? parseRegisteredAddress(requested, drivers)
+      : (address ?? parseRegisteredAddress((await readScopeConfig(cwd))?.address ?? "usb", drivers))
+    if (want.kind === "usb" && !want.serial) {
       const found = await listUsb()
       if (!found.length)
         throw new Error(
-          "scope: no USB instrument found. Connect the rear USB Device port, power on the scope, and close EasyScopeX or other applications using it.",
+          "scope: no USB instrument found. Connect the rear USB Device port, power on the scope, and close EasyScopeX or other applications using it. LAN instruments take address=<ip>:5025.",
         )
       if (found.length > 1)
         throw new Error("scope: multiple USB instruments found; use devices and choose address=usb:<serial>")
-      want = { kind: "usb", serial: found[0]!.serial }
+      want = { ...want, serial: found[0]!.serial }
     }
-    if (scope && address && formatScpiAddress(want) === formatScpiAddress(address)) return scope
+    if (
+      scope &&
+      address &&
+      scopeAddressKey(want) === scopeAddressKey(address) &&
+      (!want.driver || want.driver === address.driver)
+    )
+      return scope
     if (armed) throw new Error("scope: cannot switch instruments while armed; stop or collect first")
     await drop()
     try {
-      claim(formatScpiAddress(want))
+      claim(scopeAddressKey(want))
       const device = await open(want, signal)
       scope = device
       signal?.throwIfAborted()
-      if (!/^SDS824X[ -]?HD$/i.test(device.identity.model.trim()))
-        throw new Error(`scope: unsupported instrument ${device.identity.model}; this tool targets SDS824X HD`)
-      if (device.identity.serial) claim(`usb:${device.identity.serial}`)
+      if (device.identity.serial && device.address.kind !== "none") claim(`usb:${device.identity.serial}`)
       if (device.identity.serial && keys.has("usb")) {
         leases.delete("usb")
         keys.delete("usb")
@@ -154,6 +172,8 @@ export function createScopeTool(options: ScopeToolOptions = {}): ScopeTool {
     return {
       action,
       address: s.label,
+      driver: s.driver,
+      ...(s.warnings.length ? { warnings: [...s.warnings] } : {}),
       model: st.idn.model,
       serial: st.idn.serial,
       firmware: st.idn.firmware,
@@ -166,15 +186,26 @@ export function createScopeTool(options: ScopeToolOptions = {}): ScopeTool {
       armed: !!armed,
     }
   }
-  function describe(st: ScopeStatus): string {
+  function describe(s: ScopeDevice, st: ScopeStatus): string {
     return [
-      `${st.idn.model} SN ${st.idn.serial}; ${si(st.timebase.scale, "s/div")}; ${st.acquire.points} points @ ${si(st.acquire.sampleRate, "Sa/s")}`,
+      ...s.warnings.map((w) => `Warning: ${w}`),
+      `${st.idn.model} SN ${st.idn.serial} via ${s.driver} driver at ${s.label}; ${si(st.timebase.scale, "s/div")}; ${st.acquire.points} points @ ${si(st.acquire.sampleRate, "Sa/s")}`,
       ...st.channels.map(
         (c) =>
           `C${c.ch} ${c.on ? "ON" : "OFF"} ${c.label ?? ""} ${si(c.vdiv, `${c.unit}/div`)} offset ${si(c.offset, c.unit)} ${c.coupling} probe ${c.probe}× BW ${c.bwlimit}`,
       ),
       `trigger ${st.trigger.type} ${st.trigger.source} ${st.trigger.slope} @ ${si(st.trigger.level, triggerUnit(st.trigger.source, st.channels))}, mode ${st.trigger.mode}, status ${st.trigger.status}`,
     ].join("\n")
+  }
+  function capabilityLines(
+    s: ScopeDevice,
+    st: ScopeStatus,
+  ): { text: string; capabilities: ScopeDetails["capabilities"] } {
+    const cap = s.capabilities(st)
+    const text = [
+      `capabilities (${cap.enabledChannels} channel(s) on${cap.verified ? "" : "; model not verified on hardware, tables are advisory"}): memory depths ${cap.memoryDepths.length ? cap.memoryDepths.join(" ") : "unknown"}; sample rates up to ${cap.sampleRates.length ? si(Math.max(...cap.sampleRates), "Sa/s") : "unknown"}; couplings ${cap.couplings.join("/")}; probes ${cap.probes.join(" ")}${cap.customProbe ? " (custom factors also accepted)" : ""}; trigger ${cap.triggerTypes.join("/")} from ${cap.triggerSources.join(" ")}; ${cap.measureTypes.length} measurement types (details.capabilities lists them).`,
+    ].join("\n")
+    return { text, capabilities: cap }
   }
   function triggerUnit(source: string, channels: ScopeStatus["channels"]): string {
     return channels.find((c) => `C${c.ch}` === source.toUpperCase())?.unit ?? "source units"
@@ -249,12 +280,18 @@ export function createScopeTool(options: ScopeToolOptions = {}): ScopeTool {
     const action = p.action
     if (action === "devices") {
       const found = await listUsb()
-      return textResult(
+      const catalog = scopeCatalog(drivers)
+      const lines = [
         found.length
-          ? found.map((d) => `${d.product ?? "Siglent"}: usb:${d.serial ?? "(unknown serial)"}`).join("\n")
-          : "No USB scope found. Connect its rear USB Device port and power it on; close other control applications.",
-        { action },
-      )
+          ? `USB instruments:\n${found.map((d) => `  ${d.product ?? "instrument"}: usb:${d.serial ?? "(unknown serial)"}`).join("\n")}`
+          : "No USB instrument found. Connect its rear USB Device port and power it on; close other control applications. LAN instruments take address=<ip>:5025.",
+        "Drivers and example addresses:",
+        ...catalog.map(
+          (d) =>
+            `  ${d.name}: ${d.description}\n${d.models.map((m) => `    ${m.model} (${m.transports.join("/")}; e.g. ${m.example}; ${m.verified === "hardware" ? "verified on hardware" : m.verified === "fake" ? "fake instrument" : "untested"}${m.note ? `; ${m.note}` : ""})`).join("\n")}`,
+        ),
+      ]
+      return textResult(lines.join("\n"), { action, devices: found, drivers: catalog })
     }
     if (action === "list") {
       const all = await listCaptures(cwd)
@@ -299,8 +336,12 @@ export function createScopeTool(options: ScopeToolOptions = {}): ScopeTool {
     const s = await connect(cwd, p.address, signal)
     if (action === "connect" || action === "status") {
       const st = await s.status(signal)
-      if (action === "connect") await writeScopeConfig(cwd, { address: s.label })
-      return textResult(describe(st), details(action, s, st))
+      if (action === "connect") await writeScopeConfig(cwd, { address: formatScopeAddress(s.address) })
+      const cap = capabilityLines(s, st)
+      return textResult(`${describe(s, st)}\n${cap.text}`, {
+        ...details(action, s, st),
+        capabilities: cap.capabilities,
+      })
     }
     if (action === "setup") {
       const lines = await settings(s, p, signal)
@@ -314,7 +355,7 @@ export function createScopeTool(options: ScopeToolOptions = {}): ScopeTool {
       }
       if (!lines.length) throw new Error("scope setup: supply channels/timebase/trigger/mdepth/run/autoset")
       const st = await s.status(signal)
-      return textResult([...lines, describe(st)].join("\n"), details(action, s, st))
+      return textResult([...lines, describe(s, st)].join("\n"), details(action, s, st))
     }
     if (action === "arm") {
       acquisitionBudget(p)
@@ -423,13 +464,20 @@ export function createScopeTool(options: ScopeToolOptions = {}): ScopeTool {
       })
       return textResult(
         [
+          ...s.warnings.map((w) => `Warning: ${w}`),
           ...measurements.map(
             (m) =>
               `${m.type} ${m.source}: ${m.value ?? "unavailable"} ${m.unit}; valid ${m.n}/${repeat}${m.n ? `, min ${m.min}, max ${m.max}, mean ${m.mean} ${m.unit}` : ""}`,
           ),
           ...first.mismatches.map((m) => `Mismatch: ${m}`),
         ].join("\n"),
-        { action, address: s.label, measurements },
+        {
+          action,
+          address: s.label,
+          driver: s.driver,
+          ...(s.warnings.length ? { warnings: [...s.warnings] } : {}),
+          measurements,
+        },
       )
     }
     if (action === "screenshot") {
@@ -442,12 +490,12 @@ export function createScopeTool(options: ScopeToolOptions = {}): ScopeTool {
       const content: Result["content"] = [
         {
           type: "text",
-          text: `Live instrument screenshot saved: ${file}. This standalone screenshot is not a saved waveform capture.`,
+          text: `Live instrument screenshot saved: ${file}. This standalone screenshot is not a saved waveform capture.${s.warnings.length ? `\n${s.warnings.map((w) => `Warning: ${w}`).join("\n")}` : ""}`,
         },
       ]
       if (png.byteLength <= 4 * 1024 * 1024)
         content.push({ type: "image", data: Buffer.from(png).toString("base64"), mimeType: "image/png" })
-      return { content, details: { action, file, bytes: png.byteLength, address: s.label } }
+      return { content, details: { action, file, bytes: png.byteLength, address: s.label, driver: s.driver } }
     }
     throw new Error(`scope: unknown action ${action}`)
   }
@@ -482,7 +530,7 @@ export function createScopeTool(options: ScopeToolOptions = {}): ScopeTool {
           if (
             signal.aborted ||
             (needsStop && !armed) ||
-            /closed|aborted|USB|EPIPE|ECONNRESET|timeout|timed out|not opened|No such device|acquisition (resumed|is no longer stopped)/i.test(
+            /closed|aborted|USB|EPIPE|ECONNRESET|timeout|timed out|not opened|No such device|acquisition (resumed|is no longer stopped)|out of sync/i.test(
               String(error),
             )
           )

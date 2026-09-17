@@ -177,6 +177,8 @@ export interface FakeSdsOptions {
 	sampleRate?: number;
 	/** `:WAVeform:MAXPoint?`:一次 DATA? 最多给多少点。真机默认 5e6,测试调小来逼分段。 */
 	maxPoint?: number;
+	/** 实际每窗最多给这么多点(可小于 MAXPoint):复刻"不遵守 MAXPoint"的固件(ngscopeclient 在 SDS2000X HD 1.2.3.1 上实测)。 */
+	shortWindow?: number;
 	/** 按源点序号产生 code,默认 defaultSquare */
 	generator?: (i: number) => number;
 	/** ADVanced 量测认得的类型名,默认 MEASURE_TYPE_MENU */
@@ -195,14 +197,21 @@ export class FakeSds {
 	wave: FakeWaveState = { source: 1, width: "WORD", start: 0, interval: 1, point: 0 };
 	measureOn = false;
 	measureMode = "SIMPLE";
+	/** CHDR 应答头模式;真机缺省 OFF */
+	header = "OFF";
 	/** 空 = 用 status 字段;非空 = 按脚本推进,最后一格粘住 */
 	statusScript: string[] = [];
 	statusIndex = 0;
 	status = "Stop";
+	/** 真机(SDS824X HD 2026-09-17):武装了单次(MODE SINGle,或 SINGle 模式下 RUN)且没触发就 STOP,记录是空的,preamble 数值全零 */
+	recordValid = true;
+	/** >0 时触发电平按源通道 vdiv × 这个比例量化,并夹在 ±4.1 格内(真机实测步长 1/60) */
+	triggerLevelQuantumDiv = 0;
 	recordPoints: number;
 	configuredPoints?: number;
 	sampleRate: number;
 	maxPoint: number;
+	shortWindow?: number;
 	generator: (i: number) => number;
 	measureTypes: string[];
 	readonly idn: string;
@@ -221,6 +230,7 @@ export class FakeSds {
 		this.configuredPoints = options.configuredPoints;
 		this.sampleRate = options.sampleRate ?? 2e9;
 		this.maxPoint = options.maxPoint ?? 5_000_000;
+		this.shortWindow = options.shortWindow;
 		this.generator = options.generator ?? defaultSquare;
 		this.measureTypes = options.measureTypes ?? MEASURE_TYPE_MENU;
 		this.idn = options.idn ?? "Siglent Technologies,SDS824X HD,SDS08A0D910802,4.8.12.1.1.6.5";
@@ -255,6 +265,16 @@ export class FakeSds {
 		for (const s of this.sockets) s.destroy();
 		this.sockets.clear();
 		await new Promise<void>((resolve) => this.server.close(() => resolve()));
+	}
+
+	/** 真机把电平量化到源通道 vdiv 的一个分数并夹在 ±4.1 格;只在 triggerLevelQuantumDiv > 0 时模拟 */
+	private quantizeLevel(level: number): number {
+		const q = this.triggerLevelQuantumDiv;
+		const src = /^C([1-4])$/.exec(this.trigger.source);
+		if (!(q > 0) || !src) return level;
+		const vdiv = this.channels[Number(src[1]) - 1]!.scale;
+		const clamped = Math.max(-4.1 * vdiv, Math.min(4.1 * vdiv, level));
+		return Math.round(clamped / (vdiv * q)) * (vdiv * q);
 	}
 
 	/** 下一条匹配的查询永不作答(一次性)。command 按原样、大小写不敏感比较。 */
@@ -371,6 +391,13 @@ export class FakeSds {
 		if (header === "SYST:ERR") return this.errors.shift() ?? '0,"No error"';
 		if (header === "PRIN") return query ? SCREEN_PNG : undefined;
 		if (header === "AUT") return undefined;
+		// 旧式应答头模式(真机认 OFF / SHORT / LONG;驱动连接时钉 OFF)
+		if (header === "CHDR") {
+			if (query) return this.header;
+			if (/^(OFF|SHORT|LONG)$/i.test(arg)) this.header = arg.toUpperCase();
+			else this.pushError(-224, "Illegal parameter value");
+			return undefined;
+		}
 		return UNKNOWN;
 	}
 
@@ -383,6 +410,8 @@ export class FakeSds {
 				return undefined;
 			case "SCAL": {
 				if (query) return nr3(c.scale);
+				// 真机(SDS824X HD 2026-09-17):关着的通道上 SCALe / OFFSet 静默丢掉,不报错
+				if (!c.on) return undefined;
 				const v = Number(arg);
 				// 真机:V/div 走 1-2-5 档,范围 500µV..10V(乘探头倍率)
 				if (Number.isFinite(v)) c.scale = snap125(v, 500e-6 * c.probe, 10 * c.probe);
@@ -390,6 +419,7 @@ export class FakeSds {
 			}
 			case "OFFS":
 				if (query) return nr3(c.offset);
+				if (!c.on) return undefined;
 				if (Number.isFinite(Number(arg))) c.offset = Number(arg);
 				return undefined;
 			case "COUP":
@@ -460,17 +490,19 @@ export class FakeSds {
 			case "MODE": {
 				if (query) return this.trigger.mode;
 				const full: Record<string, string> = { AUTO: "AUTO", NORM: "NORMAL", SING: "SINGLE", FTRIG: "FTRIG" };
-				const resolved = full[canonMnemonic(arg)];
+				const resolved = full[canonMnemonic(arg)] ?? full[Object.keys(full).find((k) => arg.toUpperCase().startsWith(k)) ?? ""];
 				if (!resolved) {
 					this.pushError(-224, "Illegal parameter value");
 					return undefined;
 				}
 				this.trigger.mode = resolved;
-				// 真机:重新武装单次会把触发状态从头走一遍
+				// 真机:重新武装单次会把触发状态从头走一遍;触发前记录是空的
 				if (resolved === "SINGLE") {
 					this.statusIndex = 0;
 					this.status = "Arm";
+					this.recordValid = false;
 				}
+				if (resolved === "FTRIG") this.recordValid = true;
 				return undefined;
 			}
 			case "TYPE":
@@ -491,12 +523,12 @@ export class FakeSds {
 			}
 			case "EDGE:LEV":
 				if (query) return nr3(this.trigger.level);
-				if (Number.isFinite(Number(arg))) this.trigger.level = Number(arg);
+				if (Number.isFinite(Number(arg))) this.trigger.level = this.quantizeLevel(Number(arg));
 				return undefined;
 			case "EDGE:SLOP": {
 				if (query) return this.trigger.slope;
 				const full: Record<string, string> = { RIS: "RISING", FALL: "FALLING", ALT: "ALTERNATE" };
-				const resolved = full[canonMnemonic(arg)];
+				const resolved = full[canonMnemonic(arg)] ?? full[Object.keys(full).find((k) => arg.toUpperCase().startsWith(k)) ?? ""];
 				if (resolved) this.trigger.slope = resolved;
 				else this.pushError(-224, "Illegal parameter value");
 				return undefined;
@@ -506,10 +538,19 @@ export class FakeSds {
 				if (this.statusScript.length === 0) return this.status;
 				const value = this.statusScript[Math.min(this.statusIndex, this.statusScript.length - 1)]!;
 				this.statusIndex++;
+				// 脚本走到触发/停止 = 仪器自己完成了这次采集
+				if (/trig|stop/i.test(value)) this.recordValid = true;
 				return value;
 			}
 			case "RUN":
-				this.status = "Trig'd";
+				if (this.trigger.mode === "SINGLE") {
+					// 真机:SINGle 模式下 RUN 只是再武装一次,不触发就没有记录
+					this.status = "Arm";
+					this.recordValid = false;
+				} else {
+					this.status = "Trig'd";
+					this.recordValid = true;
+				}
 				return undefined;
 			case "STOP":
 				this.status = "Stop";
@@ -591,6 +632,16 @@ export class FakeSds {
 	private preambleBlock(): Uint8Array {
 		const out = new Uint8Array(PREAMBLE_RESPONSE);
 		const dv = new DataView(out.buffer, 11);
+		if (!this.recordValid) {
+			// 真机(SDS824X HD 2026-09-17):没完成的采集,长度、增益、每格码数全零,采样间隔 NaN
+			dv.setInt32(60, 0, true);
+			dv.setInt32(116, 0, true);
+			dv.setFloat32(156, 0, true);
+			dv.setFloat32(160, 0, true);
+			dv.setFloat32(164, 0, true);
+			dv.setFloat32(176, Number.NaN, true);
+			return out;
+		}
 		dv.setInt32(60, this.recordPoints * 2, true);
 		dv.setInt32(116, this.recordPoints, true);
 		dv.setInt32(132, this.wave.start, true);
@@ -606,8 +657,8 @@ export class FakeSds {
 	private waveformBlock(): Uint8Array {
 		const { start, interval, point, width } = this.wave;
 		const stride = Math.max(1, interval);
-		const available = Math.max(0, this.recordPoints - start);
-		const window = Math.min(available, this.maxPoint);
+		const available = this.recordValid ? Math.max(0, this.recordPoints - start) : 0;
+		const window = Math.min(available, this.maxPoint, this.shortWindow ?? Number.POSITIVE_INFINITY);
 		const n = Math.min(Math.floor(window / stride), point > 0 ? point : Number.POSITIVE_INFINITY);
 		const body = new Uint8Array(width === "BYTE" ? n : n * 2);
 		const dv = new DataView(body.buffer);

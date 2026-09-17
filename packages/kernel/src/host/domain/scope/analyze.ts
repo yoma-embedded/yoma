@@ -1,6 +1,15 @@
 /**
  * 波形上的纯计算:统计、边沿、文本示意图。全部在 code 域上做(整型,快),最后一步才换算成伏。
  * 没有 DOM、没有 IO;工具与测试共用。
+ *
+ * 阈值与电平的取法(2026-09-16 按 ngscopeclient 的测量滤波器修正,BSD-3,见 NOTICE):
+ *  - 高/低稳态电平 base/top 用直方图众数(最低四分之一与最高四分之一各取一个峰),不用 min/max:
+ *    有过冲的方波用 min/max 当 10%/90% 参考会把 90% 线抬到稳态顶之上,上升时间系统性偏长甚至丢边沿。
+ *    三角波、噪声这类分布平坦的信号直方图不尖,退回 min/max;正弦两端也是尖的(反正弦分布),给出的是
+ *    "停留最久的电平",略小于幅值,作参考电平够用。
+ *  - 边沿在**阈值**处插值,不在滞回带被穿越的那个样本处:滞回只用来防抖,位置要回退到真正夹住阈值的样本对,
+ *    否则过渡跨多个样本时整条边沿偏晚一个滞回宽度,频率抵消、占空比不抵消。
+ *  - 频率过一致性门之后按"首末上升沿跨度 / 间隔数"算,整段平均;中位数只做门,不做估计器。
  */
 import { codeToVolts, type TimeScale, type VoltScale, timeOfIndex } from "./preamble.ts";
 
@@ -10,16 +19,26 @@ export interface WaveStats {
 	pp: number;
 	mean: number;
 	rms: number;
+	/** 去掉直流后的 RMS(纹波/噪声大小) */
+	acRms: number;
+	/** 直方图众数给出的停留最久的高/低电平;分布平坦的信号(三角、噪声)没有 */
+	top?: number;
+	base?: number;
+	/** max − top、base − min;只在有 top/base 时给 */
+	overshoot?: number;
+	undershoot?: number;
 	/** 中值穿越的频率估计;至少 3 个完整周期且间隔足够一致,不证明信号周期性 */
 	freq?: number;
 	period?: number;
 	/** 高电平占比估计 0..1;只在周期一致性检查通过时给出 */
 	duty?: number;
-	/** 10%–90% 上升/下降时间(s),对前若干个边沿取中位数 */
+	/** 10%–90% 上升/下降时间(s),参考电平是 base/top(没有就 min/max),对前若干个边沿取中位数 */
 	rise?: number;
 	fall?: number;
 	/** 中值穿越次数(上升 + 下降) */
 	edges: number;
+	/** 贴着 ADC 满量程 1% 以内的样本数;有就说明峰值只是下界,加大 vdiv */
+	clipped?: { low: number; high: number };
 }
 
 export interface Edge {
@@ -28,12 +47,16 @@ export interface Edge {
 	rising: boolean;
 }
 
-/** 中值 ± 滞回(pp 的 10%)的穿越检测:噪声不会在阈值附近来回抖出假边沿。 */
+/** int16 码域的"轨":距 ±32768 不到 1% 就算贴轨(12 位 ADC 左对齐后一个 LSB 是 16)。 */
+export const RAIL_MARGIN = 328;
+
+/** 中值 ± 滞回(pp 的 10%)的穿越检测:噪声不会在阈值附近来回抖出假边沿;边沿位置在 level 处插值。 */
 export function findEdges(codes: ArrayLike<number>, level: number, hysteresis: number, limit = Infinity): Edge[] {
 	const hi = level + hysteresis;
 	const lo = level - hysteresis;
 	const edges: Edge[] = [];
 	let state: 0 | 1 | -1 = -1; // -1 未知
+	let floor = 0;
 	for (let i = 0; i < codes.length && edges.length < limit; i++) {
 		const v = codes[i]!;
 		if (state === -1) {
@@ -43,13 +66,25 @@ export function findEdges(codes: ArrayLike<number>, level: number, hysteresis: n
 		}
 		if (state === 0 && v >= hi) {
 			state = 1;
-			edges.push({ index: interpolate(codes, i, level), rising: true });
+			edges.push({ index: crossingAt(codes, i, level, true, floor), rising: true });
+			floor = i;
 		} else if (state === 1 && v <= lo) {
 			state = 0;
-			edges.push({ index: interpolate(codes, i, level), rising: false });
+			edges.push({ index: crossingAt(codes, i, level, false, floor), rising: false });
+			floor = i;
 		}
 	}
 	return edges;
+}
+
+/** 从滞回带被穿越的样本 i 往回找真正夹住 level 的样本对,在那里插值;找不到就退回 i-1..i。 */
+function crossingAt(codes: ArrayLike<number>, i: number, level: number, rising: boolean, floor: number): number {
+	for (let j = i; j > floor && j > 0; j--) {
+		const a = codes[j - 1]!;
+		const b = codes[j]!;
+		if (rising ? a < level && b >= level : a > level && b <= level) return interpolate(codes, j, level);
+	}
+	return interpolate(codes, i, level);
 }
 
 /** 在 i-1..i 之间线性插值出穿越 level 的位置。 */
@@ -66,6 +101,36 @@ function median(values: number[]): number | undefined {
 	if (!values.length) return undefined;
 	const s = [...values].sort((x, y) => x - y);
 	return s[s.length >> 1];
+}
+
+/**
+ * 直方图众数的稳态电平(ngscopeclient Filter::GetBaseAndTopVoltage 的做法,峰内取样本均值而不是格中心):
+ * 最低四分之一里最高的格是 base,最高四分之一里最高的格是 top。两个峰都不比平均格高 2 倍以上就说明
+ * 信号没有稳态电平(正弦、三角、噪声),返回 undefined,调用方退回 min/max。
+ */
+export function baseTop(codes: ArrayLike<number>, min: number, max: number, bins = 100): { base: number; top: number } | undefined {
+	const n = codes.length;
+	const span = max - min;
+	if (n < 8 || !(span > 0)) return undefined;
+	const nb = Math.max(4, Math.min(bins, Math.floor(span) + 1));
+	const count = new Uint32Array(nb);
+	const sum = new Float64Array(nb);
+	for (let i = 0; i < n; i++) {
+		const v = codes[i]!;
+		const k = Math.min(nb - 1, Math.max(0, Math.floor(((v - min) / span) * nb)));
+		count[k]!++;
+		sum[k]! += v;
+	}
+	const peak = (from: number, to: number) => {
+		let best = from;
+		for (let k = from; k < to; k++) if (count[k]! > count[best]!) best = k;
+		return best;
+	};
+	const lo = peak(0, Math.max(1, Math.floor(nb / 4)));
+	const hi = peak(Math.floor((nb * 3) / 4), nb);
+	const meanCount = n / nb;
+	if (count[lo]! < 2 * meanCount || count[hi]! < 2 * meanCount) return undefined;
+	return { base: sum[lo]! / count[lo]!, top: sum[hi]! / count[hi]! };
 }
 
 /** 10%–90% 过渡时间:在每个边沿附近向两边找 10%/90% 电平的穿越点。 */
@@ -106,15 +171,19 @@ function transitionTimes(codes: ArrayLike<number>, edges: Edge[], low: number, h
 /** 统计一段 code。interval 是交付点间隔(s)。 */
 export function waveStats(codes: ArrayLike<number>, scale: VoltScale, interval: number): WaveStats {
 	const n = codes.length;
-	if (n === 0) return { min: 0, max: 0, pp: 0, mean: 0, rms: 0, edges: 0 };
+	if (n === 0) return { min: 0, max: 0, pp: 0, mean: 0, rms: 0, acRms: 0, edges: 0 };
 	let min = Infinity;
 	let max = -Infinity;
 	let sum = 0;
 	let sumSq = 0;
+	let railLow = 0;
+	let railHigh = 0;
 	for (let i = 0; i < n; i++) {
 		const v = codes[i]!;
 		if (v < min) min = v;
 		if (v > max) max = v;
+		if (v <= -32768 + RAIL_MARGIN) railLow++;
+		else if (v >= 32767 - RAIL_MARGIN) railHigh++;
 		sum += v;
 		sumSq += v * v;
 	}
@@ -123,29 +192,43 @@ export function waveStats(codes: ArrayLike<number>, scale: VoltScale, interval: 
 	const b = scale.offset * scale.probe;
 	// rms 是对真实电压(含偏置)算的:E[(k c − b)²] = k²E[c²] − 2kbE[c] + b²
 	const rms = Math.sqrt(Math.max(0, k * k * (sumSq / n) - 2 * k * b * meanCode + b * b));
+	const mean = codeToVolts(meanCode, scale);
 	const stats: WaveStats = {
 		min: codeToVolts(min, scale),
 		max: codeToVolts(max, scale),
 		pp: (max - min) * k,
-		mean: codeToVolts(meanCode, scale),
+		mean,
 		rms,
+		acRms: Math.sqrt(Math.max(0, rms * rms - mean * mean)),
 		edges: 0,
 	};
+	if (railLow || railHigh) stats.clipped = { low: railLow, high: railHigh };
 	const pp = max - min;
 	// 幅度太小(≤ 8 个 code,WORD 域约 0.1% 满幅)就是噪声,不找边沿
 	if (pp <= 8) return stats;
-	const level = (max + min) / 2;
-	const edges = findEdges(codes, level, pp * 0.1, 100_000);
+	const levels = baseTop(codes, min, max);
+	if (levels) {
+		stats.base = codeToVolts(levels.base, scale);
+		stats.top = codeToVolts(levels.top, scale);
+		stats.overshoot = Math.max(0, stats.max - stats.top);
+		stats.undershoot = Math.max(0, stats.base - stats.min);
+	}
+	const low = levels?.base ?? min;
+	const high = levels?.top ?? max;
+	const level = (high + low) / 2;
+	const edges = findEdges(codes, level, (high - low) * 0.1, 100_000);
 	stats.edges = edges.length;
 	const rising = edges.filter((e) => e.rising);
 	if (rising.length >= 4) {
 		const periods: number[] = [];
 		for (let i = 1; i < rising.length; i++) periods.push((rising[i]!.index - rising[i - 1]!.index) * interval);
-		const period = median(periods)!;
+		const typical = median(periods)!;
 		// 至少比较 3 个周期。允许采样/抖动带来 ±20% 偏差和最多 10% 异常间隔,
 		// 避免把随机穿越的中位间隔直接叫作频率;阈值是保守启发式,不证明周期性或测频准确度。
-		const consistent = period > 0 && periods.filter((p) => Math.abs(p - period) <= period * 0.2).length >= periods.length * 0.9;
+		const consistent = typical > 0 && periods.filter((p) => Math.abs(p - typical) <= typical * 0.2).length >= periods.length * 0.9;
 		if (consistent) {
+			// 过了门再按整段跨度平均:首末上升沿之间的时间 / 间隔数,时间误差摊到整条记录上
+			const period = ((rising[rising.length - 1]!.index - rising[0]!.index) * interval) / (rising.length - 1);
 			stats.period = period;
 			stats.freq = 1 / period;
 			// 占空比:每对上升→下降的高电平时长 / 周期
@@ -155,12 +238,11 @@ export function waveStats(codes: ArrayLike<number>, scale: VoltScale, interval: 
 				const b2 = edges[i + 1]!;
 				if (a.rising && !b2.rising) highs.push((b2.index - a.index) * interval);
 			}
-			const high = median(highs);
-			if (high !== undefined) stats.duty = Math.max(0, Math.min(1, high / period));
+			const h = median(highs);
+			if (h !== undefined) stats.duty = Math.max(0, Math.min(1, h / period));
 		}
 	}
-	// 顶/底电平:用 max/min 的 10%..90% 近似(方波够用;正弦的 rise 只是参考)
-	const t = transitionTimes(codes, edges, min, max, interval);
+	const t = transitionTimes(codes, edges, low, high, interval);
 	stats.rise = t.rise;
 	stats.fall = t.fall;
 	return stats;
@@ -272,6 +354,28 @@ function trimNumber(v: number, digits: number): string {
 	const decimals = abs >= 100 ? Math.max(0, digits - 3) : abs >= 10 ? Math.max(0, digits - 2) : Math.max(0, digits - 1);
 	const s = v.toFixed(decimals);
 	return decimals > 0 ? s.replace(/\.?0+$/, "") : s;
+}
+
+/** 统计字段的单位表:给 details 用,模型不用猜 rise 是秒还是采样点、duty 是 0..1 还是百分比。 */
+export function statsUnits(channelUnit: string): Record<keyof Omit<WaveStats, "clipped">, string> {
+	return {
+		min: channelUnit,
+		max: channelUnit,
+		pp: channelUnit,
+		mean: channelUnit,
+		rms: channelUnit,
+		acRms: channelUnit,
+		top: channelUnit,
+		base: channelUnit,
+		overshoot: channelUnit,
+		undershoot: channelUnit,
+		freq: "Hz",
+		period: "s",
+		duty: "ratio 0..1",
+		rise: "s (10%-90% of base..top)",
+		fall: "s (90%-10% of top..base)",
+		edges: "count",
+	};
 }
 
 /** SCPI 的 NR3("5.00E-02")或 "****"(无值)。 */

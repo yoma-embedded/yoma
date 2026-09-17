@@ -9,12 +9,13 @@ import type {
   Applied,
   ChannelSpec,
   ChannelState,
+  ScopeCapabilities,
   ScopeStatus,
   TimebaseSpec,
   TriggerSpec,
   Waveform,
-} from "../src/host/domain/scope/siglent.ts"
-import { listCaptures, readCaptureMeta, readChannelCodes } from "../src/host/domain/scope/store.ts"
+} from "../src/host/domain/scope/driver.ts"
+import { listCaptures, readCaptureMeta, readChannelCodes, readScopeConfig } from "../src/host/domain/scope/store.ts"
 import { SCOPE_ACTIONS, SCOPE_CONTRACT, type ScopeInput } from "../src/host/tools/scope/contract.ts"
 import { acquisitionBudget, type ScopeDevice } from "../src/host/tools/scope/evidence.ts"
 import { createScopeTool, type ScopeTool } from "../src/host/tools/scope/session.ts"
@@ -34,10 +35,11 @@ let cwd: string
 const tools: ScopeTool[] = []
 
 class FakeScope implements ScopeDevice {
-  address = { kind: "usb" as const, serial: "SCOPE-1" }
+  driver = "fake"
+  address = { kind: "usb" as const, serial: "SCOPE-1", driver: "fake" }
   identity = { vendor: "SIGLENT", model: "SDS824X HD", serial: "SCOPE-1", firmware: "test" }
   label = "usb:SCOPE-1"
-  client = {} as ScopeDevice["client"]
+  warnings: string[] = []
   closed = 0
   stopped = 0
   ran = 0
@@ -79,6 +81,31 @@ class FakeScope implements ScopeDevice {
   }
   async triggerStatus() {
     return this.st.trigger.status
+  }
+  capabilities(status: ScopeStatus = this.st): ScopeCapabilities {
+    return {
+      driver: this.driver,
+      model: this.identity.model,
+      verified: true,
+      channels: 4,
+      enabledChannels: status.channels.filter((c) => c.on).length,
+      units: ["V", "A"],
+      couplings: ["DC", "AC", "GND"],
+      bwlimits: ["FULL", "20M"],
+      probes: [1, 10],
+      customProbe: false,
+      timebase: { min: 1e-9, max: 10, steps: "1-2-5" },
+      triggerTypes: ["edge"],
+      triggerSources: ["C1", "C2", "C3", "C4", "LINE"],
+      triggerSlopes: ["rising", "falling"],
+      triggerModes: ["auto", "normal", "single"],
+      memoryDepths: status.channels.filter((c) => c.on).length > 1 ? ["32"] : ["32", "64"],
+      sampleRates: [3200],
+      measureTypes: ["FREQ", "RMS"],
+      externalTrigger: false,
+      screenshot: true,
+      measurements: true,
+    }
   }
   async setChannel(c: ChannelSpec): Promise<Applied<ChannelState>> {
     Object.assign(this.st.channels[c.ch - 1]!, c)
@@ -127,7 +154,6 @@ class FakeScope implements ScopeDevice {
     return {
       ch,
       codes: Int16Array.from({ length: count }, (_, i) => (i % 8 < 4 ? 10 : -10)),
-      desc: {} as Waveform["desc"],
       scale: { gain: 1, offset: 0, codePerDiv: 100, probe: 10 },
       time: { interval: stride / 3200, tdiv: 1e-3, delay: (ch - 1) * 0.001, grid: 10 },
       stride,
@@ -409,13 +435,72 @@ describe("scope lifecycle", () => {
     proceed()
     await first
   })
-  it("rejects a different Siglent instrument and releases the provisional lease", async () => {
-    const wrong = new FakeScope()
-    wrong.identity.model = "SDG2042X"
-    const f = fixture(wrong)
-    await expect(f.run({ action: "connect" })).rejects.toThrow(/unsupported instrument/)
-    expect(wrong.closed).toBe(1)
+  it("a driver that refuses the instrument releases the provisional lease for the next session", async () => {
+    let opens = 0
+    const tool = createScopeTool({
+      listUsb: async () => [{ product: "Siglent" }],
+      open: async () => {
+        opens++
+        throw new Error("scope: Siglent Technologies SDG2042X is not a Siglent SDS oscilloscope")
+      },
+      idleCloseMs: 0,
+    })
+    tools.push(tool)
+    await expect(
+      tool.execute("call", { action: "connect" }, () => {}, { env: new NodeExecutionEnv({ cwd }) }, invocation, BACKGROUND_CONTEXT),
+    ).rejects.toThrow(/not a Siglent SDS/)
+    expect(opens).toBe(1)
     await fixture().run({ action: "connect" })
+  })
+  it("connect and status return capabilities, the driver name and its warnings; config remembers driver@address", async () => {
+    const device = new FakeScope()
+    device.warnings = ["FakeScope: not hardware"]
+    const f = fixture(device)
+    const out = await f.run({ action: "connect" })
+    expect(out.details!.driver).toBe("fake")
+    expect(out.details!.warnings).toEqual(["FakeScope: not hardware"])
+    expect(out.details!.capabilities).toMatchObject({ driver: "fake", verified: true, enabledChannels: 2, memoryDepths: ["32"] })
+    expect(text(out)).toContain("Warning: FakeScope: not hardware")
+    expect(text(out)).toContain("memory depths 32")
+    expect((await readScopeConfig(cwd))?.address).toBe("fake@usb:SCOPE-1")
+    device.st.channels[1]!.on = false
+    const status = await f.run({ action: "status" })
+    expect(status.details!.capabilities!.memoryDepths).toEqual(["32", "64"])
+    const capture = await f.run({ action: "capture", channels: [{ ch: 1 }] })
+    expect(capture.details!.capabilities).toBeUndefined()
+    expect(capture.details!.warnings).toEqual(["FakeScope: not hardware"])
+    expect((await readCaptureMeta(capture.details!.dir!)).driver).toBe("fake")
+  })
+  it("accepts a LAN address and a driver-prefixed address instead of insisting on USB", async () => {
+    const seen: string[] = []
+    const device = new FakeScope()
+    const tool = createScopeTool({
+      open: async (address) => {
+        seen.push(JSON.stringify(address))
+        return device
+      },
+      listUsb: async () => [],
+      idleCloseMs: 0,
+    })
+    tools.push(tool)
+    const run = (params: ScopeInput) =>
+      tool.execute("call", params, () => {}, { env: new NodeExecutionEnv({ cwd }) }, invocation, BACKGROUND_CONTEXT)
+    await run({ action: "connect", address: "192.168.1.20" })
+    await run({ action: "disconnect" })
+    await run({ action: "connect", address: "fake@usb:SCOPE-1" })
+    expect(seen).toEqual([
+      JSON.stringify({ kind: "tcp", host: "192.168.1.20", port: 5025 }),
+      JSON.stringify({ kind: "usb", serial: "SCOPE-1", driver: "fake" }),
+    ])
+  })
+  it("devices lists the driver catalog even when no USB instrument is present", async () => {
+    const tool = createScopeTool({ listUsb: async () => [], idleCloseMs: 0 })
+    tools.push(tool)
+    const out = await tool.execute("call", { action: "devices" }, () => {}, { env: new NodeExecutionEnv({ cwd }) }, invocation, BACKGROUND_CONTEXT)
+    expect(out.details!.drivers!.map((d) => d.name)).toContain("siglent")
+    expect(out.details!.drivers!.map((d) => d.name)).not.toContain("demo")
+    expect(text(out)).toContain("SDS824X HD")
+    expect(text(out)).toContain("verified on hardware")
   })
   it("collect without arm never opens hardware", async () => {
     const f = fixture()

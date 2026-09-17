@@ -44,6 +44,11 @@ export interface WaveDesc {
 	fixedVertGainEnum: number;
 	bwLimitEnum: number;
 	waveSourceEnum: number;
+	/**
+	 * 偏移 296..309 的 TRIGGER_TIME(LeCroy 布局:double 秒 + 分/时/日/月各一字节 + uint16 年)。
+	 * Siglent 手册标 Reserved,SDS824X HD 固件 4.8.12.1.1.6.5 实测全零;非零时才给,且是仪器本地时间。
+	 */
+	triggerTime?: { seconds: number; minutes: number; hours: number; days: number; months: number; year: number };
 }
 
 export const WAVEDESC_LENGTH = 346;
@@ -57,6 +62,17 @@ function cstr(bytes: Uint8Array, offset: number, length: number): string {
 		out += String.fromCharCode(c);
 	}
 	return out.trim();
+}
+
+/**
+ * 仪器停在"武装了单次但还没触发"的状态时(SINGle 模式下 STOP;SINGle 模式下 RUN 只是再武装一次),`:WAVeform:PREamble?`
+ * 回的是一份数值全零的描述块:WAVE_ARRAY_COUNT、VERTICAL_GAIN、CODE_PER_DIV 都是 0,HORIZ_INTERVAL 是 NaN
+ * (SDS824X HD 固件 4.8.12.1.1.6.5 实测,2026-09-17)。这不是协议错,是"没有完成的采集";调用方要给能照着做的提示。
+ */
+export function isEmptyWaveDesc(bytes: Uint8Array): boolean {
+	if (bytes.length < WAVEDESC_LENGTH || cstr(bytes, 0, 16) !== "WAVEDESC") return false;
+	const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+	return dv.getInt32(116, true) === 0 && dv.getFloat32(156, true) === 0 && dv.getFloat32(164, true) === 0;
 }
 
 /** 解析 preamble 块内字节(≥ 346;序列模式后面还挂时间戳,只看前 346)。 */
@@ -97,7 +113,28 @@ export function parseWaveDesc(bytes: Uint8Array): WaveDesc {
 		if (!Number.isFinite(value) || value <= 0) throw new Error(`scope: invalid ${name} in waveform descriptor`);
 	}
 	if (!Number.isFinite(result.verticalOffset) || !Number.isFinite(result.horizOffset)) throw new Error("scope: invalid waveform offset");
+	const triggerTime = {
+		seconds: dv.getFloat64(296, true),
+		minutes: bytes[304]!,
+		hours: bytes[305]!,
+		days: bytes[306]!,
+		months: bytes[307]!,
+		year: dv.getUint16(308, true),
+	};
+	if (triggerTime.year >= 2000 && triggerTime.year < 2200 && triggerTime.months >= 1 && triggerTime.months <= 12 && triggerTime.days >= 1 && triggerTime.days <= 31 && Number.isFinite(triggerTime.seconds)) {
+		result.triggerTime = triggerTime;
+	}
 	return result;
+}
+
+/** 仪器自己记的采集时间,`YYYY-MM-DD HH:MM:SS.sss`(本地时间,不带时区);描述块没填就 undefined。 */
+export function waveDescTimestamp(desc: WaveDesc): string | undefined {
+	const t = desc.triggerTime;
+	if (!t) return undefined;
+	const pad = (n: number, w = 2) => String(n).padStart(w, "0");
+	const whole = Math.floor(t.seconds);
+	const ms = Math.round((t.seconds - whole) * 1000);
+	return `${pad(t.year, 4)}-${pad(t.months)}-${pad(t.days)} ${pad(t.hours)}:${pad(t.minutes)}:${pad(whole)}.${pad(ms, 3)}`;
 }
 
 /** 手册 Table 2 的 39 项时基枚举(索引 9 的 "200E-0" 是手册笔误,取 200e-9)。只做兜底,正路是查 `:TIMebase:SCALe?`。 */

@@ -188,6 +188,12 @@ export class TcpScpiTransport implements ScpiTransport {
 
 export const SIGLENT_USB_VID = 0xf4ec;
 
+/** *IDN? 的四段(IEEE 488.2 约定:厂商,型号,序列号,固件)。 */
+export function parseIdn(line: string): { vendor: string; model: string; serial: string; firmware: string } {
+	const [vendor = "", model = "", serial = "", firmware = ""] = line.split(",").map((s) => s.trim());
+	return { vendor, model, serial, firmware };
+}
+
 /** node-usb 3 的 WebUSB 形状里我们用到的那一小截(动态 import,类型自己写,免得把整个 usb 拖进类型图)。 */
 interface UsbEndpointLike {
 	endpointNumber: number;
@@ -241,13 +247,13 @@ function usbName(device: UsbDeviceLike, key: "serialNumber" | "productName"): st
 	try { return device[key] || undefined; } catch { return undefined; }
 }
 
-/** 列出总线上的 Siglent 仪器(不打开,不占用)。 */
-export async function listUsbScopes(): Promise<UsbScopeInfo[]> {
+/** 列出总线上这些厂商的仪器(不打开,不占用)。厂商 id 由驱动注册表汇总;缺省只看 Siglent。 */
+export async function listUsbScopes(vendorIds: readonly number[] = [SIGLENT_USB_VID]): Promise<UsbScopeInfo[]> {
 	const mod = await loadUsb();
 	if (!mod) return [];
 	const devices = await mod.usb.getDevices();
 	return devices
-		.filter((d) => d.vendorId === SIGLENT_USB_VID)
+		.filter((d) => vendorIds.includes(d.vendorId))
 		.map((d) => ({ vendorId: d.vendorId, productId: d.productId, product: usbName(d, "productName"), serial: usbName(d, "serialNumber") }));
 }
 
@@ -285,15 +291,15 @@ export class UsbTmcTransport implements ScpiTransport {
 		this.label = serial ? `usb:${serial}` : "usb";
 	}
 
-	static async open(serial?: string, signal?: AbortSignal): Promise<UsbTmcTransport> {
+	static async open(serial?: string, signal?: AbortSignal, vendorIds: readonly number[] = [SIGLENT_USB_VID]): Promise<UsbTmcTransport> {
 		if (signal?.aborted) throw abortError(signal);
 		const mod = await loadUsb();
 		if (!mod) throw new Error('scope: USB transport unavailable — the "usb" module (node-usb) did not load on this machine. Connect the scope over LAN instead (address "<ip>:5025").');
-		const all = (await mod.usb.getDevices()).filter((d) => d.vendorId === SIGLENT_USB_VID);
-		if (all.length === 0) throw new Error("scope: no Siglent instrument on USB. Is the scope's rear USB Device port cabled to this computer and the scope powered? (LAN works too: give address \"<ip>:5025\".)");
-		if (!serial && all.length > 1) throw new Error("scope: several Siglent USB instruments found — select usb:<serial>");
+		const all = (await mod.usb.getDevices()).filter((d) => vendorIds.includes(d.vendorId));
+		if (all.length === 0) throw new Error("scope: no supported instrument on USB. Is the scope's rear USB Device port cabled to this computer and the scope powered? (LAN works too: give address \"<ip>:5025\".)");
+		if (!serial && all.length > 1) throw new Error("scope: several USB instruments found — select usb:<serial>");
 		const device = serial ? all.find((d) => usbName(d, "serialNumber") === serial) : all[0]!;
-		if (!device) throw new Error(`scope: no Siglent instrument with serial ${serial} on USB; present: ${all.map((d) => `${usbName(d, "productName") ?? "?"} ${usbName(d, "serialNumber") ?? "?"}`).join(", ")}. ${usbOpenHint()}`);
+		if (!device) throw new Error(`scope: no USB instrument with serial ${serial}; present: ${all.map((d) => `${usbName(d, "productName") ?? "?"} ${usbName(d, "serialNumber") ?? "?"}`).join(", ")}. ${usbOpenHint()}`);
 		return UsbTmcTransport.fromDevice(device, signal);
 	}
 
@@ -490,7 +496,7 @@ export class ScpiClient {
 	private lastWrite = 0;
 	private dirty = false;
 	private closed = false;
-	private readonly interCommandMs: number;
+	private interCommandMs: number;
 	private readonly lifetime = new AbortController();
 
 	constructor(readonly transport: ScpiTransport, options: ScpiClientOptions = {}) {
@@ -499,6 +505,11 @@ export class ScpiClient {
 
 	get label(): string {
 		return this.transport.label;
+	}
+
+	/** 识别出机型之后再定命令间隔(老机型要 50 ms,ngscopeclient 的经验值)。 */
+	setInterCommandMs(ms: number): void {
+		if (Number.isFinite(ms) && ms >= 0) this.interCommandMs = ms;
 	}
 
 	/** 串行化:仪器只有一条响应队列,并发查询会把答案串位。 */
@@ -755,10 +766,10 @@ export function bmpComplete(buf: Uint8Array): number | undefined {
 	return buf.length >= total ? total : undefined;
 }
 
-/** 打开一个地址对应的传输并包成客户端。 */
-export async function openScpi(address: ScpiAddress, options: { connectTimeoutMs?: number; signal?: AbortSignal } & ScpiClientOptions = {}): Promise<ScpiClient> {
+/** 打开一个地址对应的传输并包成客户端。`usbVendorIds` 缺省只认 Siglent;注册表会传全部驱动的厂商 id。 */
+export async function openScpi(address: ScpiAddress, options: { connectTimeoutMs?: number; signal?: AbortSignal; usbVendorIds?: readonly number[] } & ScpiClientOptions = {}): Promise<ScpiClient> {
 	const transport = address.kind === "usb"
-		? await UsbTmcTransport.open(address.serial, options.signal)
+		? await UsbTmcTransport.open(address.serial, options.signal, options.usbVendorIds)
 		: await TcpScpiTransport.connect(address.host, address.port, options.connectTimeoutMs, options.signal);
 	return new ScpiClient(transport, options);
 }

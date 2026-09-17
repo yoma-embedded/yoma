@@ -12,13 +12,18 @@ export interface ScopeChannelInfo {
   stride: number
   interval: number
   t0: number
+  /** Samples within 1% of the ADC rails at capture time; peaks are bounds, not readings. */
+  clipped?: { low: number; high: number }
 }
 
 export interface ScopeCaptureInfo {
   id: string
   dir: string
   createdAt: number
+  /** Instrument's own acquisition time (local, no zone) when the driver reported one. */
+  acquiredAt?: string
   address: string
+  driver?: string
   model?: string
   serial?: string
   mode: string
