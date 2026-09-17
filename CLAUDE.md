@@ -1009,6 +1009,10 @@ NsisUpdater 的 blockmap 路径 —— 通道本来就通。这次修的是**用
 
 ### macOS 出包(`.github/workflows/desktop-mac.yml`,2026-09-17)
 
+**Release 说明只留自动生成的变更记录**(2026-09-17,维护者要求):两条流水线都不再往说明里写东西 —— 从前 desktop-win 写
+一个「未签名」Warning 框加一段 STM32 套话、desktop-mac 再追加一个 macOS 的 Warning 框,每版重复、把真正的变更挤到中间。
+安装时怎么放行写在两份 README 的「安装」一节;别再加回 Release 说明(应用里「更新内容」显示的也是这段说明)。
+
 tag `v*` 上与 `desktop-win.yml` 并行跑:当场编引擎 → `package:mac` → 验签 → 挂载 dmg 拷出 .app → 对装好的
 app.asar 跑 `e2e:renderer` / `smoke`,再 `e2e:paint` → 把 dmg / zip / blockmap / `latest-mac.yml` / `SHA256SUMS-mac.txt`
 追加到**同名 Release**。**Release 只由 desktop-win.yml 建**,这里轮询等它出现(两边抢着建会撞 already_exists;
