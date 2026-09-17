@@ -881,7 +881,7 @@ TS 侧的纪律:
 工具层只认 `domain/scope/driver.ts` 的 `ScopeDriver` 接口;厂商驱动在 `domain/scope/registry.ts` 登记(今天是 siglent,
 `YOMA_SCOPE_DEMO=1` 时多一个无硬件的 demo)。地址 `[driver@]transport`:`usb[:serial]`、`<ip>[:5025]`、`siglent@usb:SN`;
 裸地址按 `*IDN?` 自动挑驱动,USB 与 LAN 都开放,raw 命令仍不开放。租约按传输部分算,config.json 存带前缀的地址。
-`connect` / `status` 返回 `capabilities`(按已开通道数给的合法深度、采样率、耦合、探头、触发源、量测类型)与驱动 `warnings`
+`connect` / `status` 返回 `capabilities`(按已开通道数给的合法深度、采样率、耦合、探头、触发源、量测类型 —— 量测名是 `driver.ts` 的中性词表,`measurementName()` 认别名,仪器特有名走 `vendorMeasureTypes`)与驱动 `warnings`
 (未验证型号、demo)。设计约定、加厂商的步骤、不照搬 ngscopeclient 的清单在 `docs/scope-drivers.md`;
 `test/scope-conformance.ts` 是任何驱动都要过的一致性套件,`YOMA_SCOPE_HARDWARE=<address>` 时对真机再跑一遍。
 工具具备设备独占、设置读回、arm/collect、完整采样与显式概览抽样、截图、离线 samples。波形落在 `<工程>/.yoma/scope/<id>/`,

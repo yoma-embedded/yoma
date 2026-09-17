@@ -129,6 +129,8 @@ export interface MeasureItem {
 
 export interface MeasureResult extends MeasureItem {
   value: number | null
+  /** 仪器自己的量测名(词表名映到的指令,或透传的原名);type 是词表名时才和它不同 */
+  vendorType?: string
 }
 
 // ── 能力枚举 ──────────────────────────────────────────────────────────────
@@ -160,7 +162,10 @@ export interface ScopeCapabilities {
   memoryDepths: string[]
   /** 当前已开通道数下合法的采样率(Sa/s) */
   sampleRates: number[]
+  /** 这个驱动实现了的词表量测名(MEASUREMENT_NAMES 的子集) */
   measureTypes: string[]
+  /** 仪器特有、原样透传的量测名(词表之外);没有就空 */
+  vendorMeasureTypes: string[]
   externalTrigger: boolean
   screenshot: boolean
   measurements: boolean
@@ -285,4 +290,99 @@ export function formatScopeAddress(a: ScopeAddress): string {
   if (a.kind === "none") return a.driver ?? "none"
   const body = formatScpiAddress(a)
   return a.driver ? `${a.driver}@${body}` : body
+}
+
+// ── 量测词表(厂商无关)──────────────────────────────────────────────────
+
+/**
+ * 量测名只有这一套是接口的一部分:模型、契约、证据、conformance 都说这些名字。厂商驱动把它映到自家指令
+ * (Siglent 的 FREQ / PER / TOP…),`capabilities.measureTypes` 报的是这一套里它实现了的;仪器特有的量测走
+ * `vendorMeasureTypes` 原样透传。常见别名(FREQ、PERIOD、HIGH、LOW、VPP…)在 measurementName() 里认,模型怎么写
+ * 都落到同一个名字 —— 2026-09-17 真机验证里 agent 猜了 HIGH / LOW / PERIOD 三个名字,仪器一个都不认。
+ */
+export const MEASUREMENT_NAMES = [
+  "frequency",
+  "period",
+  "pkpk",
+  "amplitude",
+  "max",
+  "min",
+  "top",
+  "base",
+  "mean",
+  "rms",
+  "acrms",
+  "duty",
+  "rise",
+  "fall",
+  "pwidth",
+  "nwidth",
+  "overshoot",
+  "undershoot",
+] as const
+export type MeasurementName = (typeof MEASUREMENT_NAMES)[number]
+
+/** 量纲,决定结果单位;channel = 源通道自己的单位(V 或 A)。 */
+export const MEASUREMENT_UNITS: Record<MeasurementName, "Hz" | "s" | "%" | "channel"> = {
+  frequency: "Hz",
+  period: "s",
+  pkpk: "channel",
+  amplitude: "channel",
+  max: "channel",
+  min: "channel",
+  top: "channel",
+  base: "channel",
+  mean: "channel",
+  rms: "channel",
+  acrms: "channel",
+  duty: "%",
+  rise: "s",
+  fall: "s",
+  pwidth: "s",
+  nwidth: "s",
+  overshoot: "%",
+  undershoot: "%",
+}
+
+const MEASUREMENT_ALIASES: Record<string, MeasurementName> = {
+  FREQ: "frequency",
+  PER: "period",
+  VPP: "pkpk",
+  PP: "pkpk",
+  PEAKTOPEAK: "pkpk",
+  AMPL: "amplitude",
+  MAXIMUM: "max",
+  VMAX: "max",
+  MINIMUM: "min",
+  VMIN: "min",
+  HIGH: "top",
+  VTOP: "top",
+  LOW: "base",
+  VBASE: "base",
+  AVERAGE: "mean",
+  AVG: "mean",
+  VRMS: "rms",
+  CRMS: "acrms",
+  DUTYCYCLE: "duty",
+  RISETIME: "rise",
+  RTIME: "rise",
+  FALLTIME: "fall",
+  FTIME: "fall",
+  PWID: "pwidth",
+  POSITIVEWIDTH: "pwidth",
+  NWID: "nwidth",
+  NEGATIVEWIDTH: "nwidth",
+  OVSP: "overshoot",
+  OVSN: "undershoot",
+}
+
+/** 把模型写的量测名落到词表:大小写、下划线、空格不算;认不出返回 undefined(可能是仪器特有名,由驱动透传)。 */
+export function measurementName(text: string): MeasurementName | undefined {
+  const key = text
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+  const lower = key.toLowerCase()
+  if ((MEASUREMENT_NAMES as readonly string[]).includes(lower)) return lower as MeasurementName
+  return MEASUREMENT_ALIASES[key]
 }

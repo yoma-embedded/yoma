@@ -22,7 +22,7 @@ domain/scope/analyze.ts   统计与边沿(中性)
 domain/scope/store.ts     不可变采集目录(中性)
 ```
 
-## 五件定死的事(以后改会伤筋动骨)
+## 六件定死的事(以后改会伤筋动骨)
 
 1. **驱动接口只有中性类型**:通道号、伏/安、秒、int16 码。`Waveform` 不带厂商描述块;Siglent 的 `SiglentWaveform` 是它的子类型,
    `desc` 只给测试和诊断看,`evidence.ts` 不读。接口按工具的 13 个动作反推,不抄 libscopehal 的 150 个虚函数。
@@ -36,6 +36,12 @@ domain/scope/store.ts     不可变采集目录(中性)
 5. **合法取值向驱动问**:`capabilities(status)` 给存储深度、采样率、耦合、探头档位、触发源、量测类型。
    空数组 = 不支持或不知道,不是错误;列表随状态变(深度随已开通道数缩),开关通道后要重读。
    触发 `TriggerSpec` 从一开始就带 `type` 与 `params`(今天只有 edge),以后加脉宽/欠幅不改模型看到的形状。
+6. **量测名是中性词表**(2026-09-17 加,起因是真机验证里 agent 猜了 HIGH / LOW / PERIOD,仪器一个都不认):
+   `driver.ts` 的 `MEASUREMENT_NAMES`(frequency、period、pkpk、amplitude、max、min、top、base、mean、rms、acrms、duty、
+   rise、fall、pwidth、nwidth、overshoot、undershoot)加 `measurementName()` 认的别名,是模型、契约、证据、conformance
+   共同的语言;每个驱动把词表映到自家指令(Siglent 的 `MEASUREMENT_COMMANDS`),`capabilities.measureTypes` 报词表名,
+   仪器特有的量测放 `vendorMeasureTypes` 原样透传。结果里 `type` 是词表名、`vendorType` 是仪器名。
+   别在某个驱动里加别名表 —— 那会让 Demo 和下一家仪器各说各话。
 
 ## 加一个厂商
 
@@ -45,6 +51,8 @@ domain/scope/store.ts     不可变采集目录(中性)
 3. `test/scope-drivers.test.ts` 里用 `describeScopeDriver()` 对着一个假仪器跑一遍一致性套件;
    `YOMA_SCOPE_HARDWARE=<address>` 时同一套断言对真机再跑一遍,这就是及格线。
 4. 型号真机验过之前,`ScopeModelInfo.verified` 写 `untested`,`warnings` 里说"未验证,读回是唯一真相"。
+5. 量测:写一张 `Record<MeasurementName, string>` 把词表映到自家指令(实现不了的名字不放进 `capabilities.measureTypes`),
+   自家独有的量测名列进 `vendorMeasureTypes`。conformance 会用词表名和别名(HIGH、FREQ)各测一次。
 
 ## Siglent 驱动这一版从 ngscopeclient 移植的经验
 

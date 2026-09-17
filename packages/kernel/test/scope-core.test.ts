@@ -925,8 +925,9 @@ describe("SiglentScope(对着假 SDS)", () => {
 		]);
 		expect(mismatches).toEqual([]);
 		expect(results.length).toBe(2);
-		expect(results[0]).toEqual({ type: "FREQ", source: "C1", value: null });
-		expect(results[1]).toEqual({ type: "PKPK", source: "C1", value: 0.025 });
+		// 词表名回给调用方,仪器自己的名字放 vendorType
+		expect(results[0]).toEqual({ type: "frequency", source: "C1", value: null, vendorType: "FREQ" });
+		expect(results[1]).toEqual({ type: "pkpk", source: "C1", value: 0.025, vendorType: "PKPK" });
 		expect(fake.measureOn).toBe(true);
 		expect(fake.measureMode).toBe("ADVANCED");
 		expect(fake.measure[0]!.type).toBe("FREQ");

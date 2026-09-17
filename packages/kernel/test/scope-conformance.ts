@@ -9,7 +9,7 @@
  * (悬空通道上单次触发永远等不到,2026-09-17 就是这样发现"没触发就 STOP,记录是空的"这条真机规矩的)。
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
-import { isKnownTriggerStatus, type ScopeDriver } from "../src/host/domain/scope/driver.ts"
+import { isKnownTriggerStatus, measurementName, type ScopeDriver } from "../src/host/domain/scope/driver.ts"
 import { pngComplete } from "../src/host/domain/scope/scpi.ts"
 import { validateCapture, type ScopeCaptureMeta } from "../src/host/domain/scope/store.ts"
 
@@ -82,6 +82,7 @@ export function describeScopeDriver(name: string, open: () => Promise<Conformanc
         "memoryDepths",
         "sampleRates",
         "measureTypes",
+        "vendorMeasureTypes",
       ] as const)
         expect(Array.isArray(cap[key]), key).toBe(true)
       expect(typeof cap.verified).toBe("boolean")
@@ -248,19 +249,29 @@ export function describeScopeDriver(name: string, open: () => Promise<Conformanc
       expect(r.codes.length).toBeGreaterThan(0)
     })
 
-    it("measure: a listed type on a live channel yields a number or null and no mismatch", async () => {
+    it("measure: a listed neutral name on a live channel yields a number or null and no mismatch; aliases resolve to the neutral name", async () => {
       const cap = d.capabilities()
-      const type = cap.measureTypes.includes("PKPK") ? "PKPK" : cap.measureTypes[0]!
+      for (const name of cap.measureTypes) expect(measurementName(name), name).toBe(name)
+      const type = cap.measureTypes.includes("pkpk") ? "pkpk" : cap.measureTypes[0]!
       const r = await d.measure([{ type, source: `C${ch}` }])
       expect(r.mismatches).toEqual([])
       expect(r.results).toHaveLength(1)
+      expect(r.results[0]!.type).toBe(type)
       expect(r.results[0]!.value === null || Number.isFinite(r.results[0]!.value)).toBe(true)
       const again = await d.readMeasurements(1)
       expect(again).toHaveLength(1)
+      if (cap.measureTypes.includes("top") && cap.measureTypes.includes("frequency")) {
+        const alias = await d.measure([
+          { type: "HIGH", source: `C${ch}` },
+          { type: "FREQ", source: `C${ch}` },
+        ])
+        expect(alias.mismatches).toEqual([])
+        expect(alias.results.map((x) => x.type)).toEqual(["top", "frequency"])
+      }
     })
 
     it("measure: LINE is not a measurement source", async () => {
-      await expect(d.measure([{ type: "PKPK", source: "LINE" }])).rejects.toThrow(/source/)
+      await expect(d.measure([{ type: "pkpk", source: "LINE" }])).rejects.toThrow(/source/)
     })
 
     it("screenshot: a complete PNG", async () => {

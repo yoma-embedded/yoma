@@ -37,7 +37,10 @@ import {
 	type TriggerSpec,
 	type TriggerState,
 	type Waveform,
+	type MeasurementName,
+	MEASUREMENT_NAMES,
 	isKnownTriggerStatus,
+	measurementName,
 	parseScopeAddress,
 	scopeAddressKey,
 } from "./driver.ts";
@@ -66,6 +69,28 @@ export const MEASURE_TYPES = [
 	"CYCLES", "REDGES", "FEDGES", "EDGES", "PPULSES", "NPULSES",
 	"PHA", "SKEW", "FRR", "FRF", "FFR", "FFF", "LRR", "LRF", "LFR", "LFF", "PSLOPE", "NSLOPE", "TSR", "TSF", "THR", "THF",
 ] as const;
+
+/** 词表量测名 → ADVanced 量测的 TYPE 指令名。 */
+const MEASUREMENT_COMMANDS: Record<MeasurementName, string> = {
+	frequency: "FREQ",
+	period: "PER",
+	pkpk: "PKPK",
+	amplitude: "AMPL",
+	max: "MAX",
+	min: "MIN",
+	top: "TOP",
+	base: "BASE",
+	mean: "MEAN",
+	rms: "RMS",
+	acrms: "CRMS",
+	duty: "DUTY",
+	rise: "RISE",
+	fall: "FALL",
+	pwidth: "PWID",
+	nwidth: "NWID",
+	overshoot: "OVSP",
+	undershoot: "OVSN",
+};
 
 const SETTLE_TIMEBASE_MS = 500;
 const SETTLE_SHORT_MS = 60;
@@ -273,7 +298,8 @@ export class SiglentScope implements ScopeDriver {
 			triggerModes: ["auto", "normal", "single"],
 			memoryDepths: this.family.memoryDepths(Math.max(1, enabled)),
 			sampleRates: this.family.sampleRates(Math.max(1, enabled)),
-			measureTypes: [...MEASURE_TYPES],
+			measureTypes: [...MEASUREMENT_NAMES],
+			vendorMeasureTypes: [...MEASURE_TYPES],
 			externalTrigger: false,
 			screenshot: true,
 			measurements: true,
@@ -584,7 +610,11 @@ export class SiglentScope implements ScopeDriver {
 		await c.command(":MEASure ON", { signal });
 		await c.command(":MEASure:MODE ADVanced", { signal });
 		const mismatches: string[] = [];
-		const normalized = items.map((it) => ({ type: it.type.trim().toUpperCase(), source: normalizeSource(it.source) }));
+		// 词表名映到仪器指令;认不出的按仪器特有名原样发(读回对不上会报 mismatch)
+		const normalized = items.map((it) => {
+			const neutral = measurementName(it.type);
+			return { asked: it.type, neutral, type: neutral ? MEASUREMENT_COMMANDS[neutral] : it.type.trim().toUpperCase(), source: normalizeSource(it.source) };
+		});
 		for (let i = 0; i < normalized.length; i++) {
 			const p = `:MEASure:ADVanced:P${i + 1}`;
 			const it = normalized[i]!;
@@ -600,10 +630,11 @@ export class SiglentScope implements ScopeDriver {
 			const it = normalized[i]!;
 			const type = (await this.q(`${p}:TYPE?`, undefined, signal)).toUpperCase();
 			const source = (await this.q(`${p}:SOURce?`, undefined, signal)).toUpperCase();
-			if (type !== it.type && !type.startsWith(it.type.slice(0, 4))) mismatches.push(`P${i + 1}: asked type ${it.type}, scope reports ${type} — unknown measurement name? (see capabilities.measureTypes)`);
+			const applied = type === it.type || type.startsWith(it.type.slice(0, 4));
+			if (!applied) mismatches.push(`P${i + 1}: asked type ${it.asked}${it.neutral ? ` (${it.type})` : ""}, scope reports ${type} — unknown measurement name? (see capabilities.measureTypes and vendorMeasureTypes)`);
 			if (source !== it.source) mismatches.push(`P${i + 1}: asked source ${it.source}, scope reports ${source}`);
 			const value = parseNumber(await this.q(`${p}:VALue?`, undefined, signal));
-			results.push({ type: type || it.type, source, value });
+			results.push({ type: applied && it.neutral ? it.neutral : type || it.type, source, value, vendorType: type || it.type });
 		}
 		return { results, mismatches };
 	}

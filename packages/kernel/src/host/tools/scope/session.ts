@@ -7,6 +7,8 @@ import type { AgentHarnessTool, ExecutionToolContext } from "@earendil-works/pi-
 import { si } from "../../domain/scope/analyze.ts"
 import {
   formatScopeAddress,
+  MEASUREMENT_UNITS,
+  measurementName,
   scopeAddressKey,
   type ScopeAddress,
   type ScopeDriverSpec,
@@ -52,6 +54,12 @@ const offline = new Set(["samples", "list", "devices"])
 const whileArmed = new Set(["collect", "status", "screenshot", "stop", "disconnect"])
 
 function measurementUnit(type: string, channelUnit = "unknown"): string {
+  // 词表名按量纲表;仪器特有名(透传)按下面的名字规律猜
+  const neutral = measurementName(type)
+  if (neutral) {
+    const unit = MEASUREMENT_UNITS[neutral]
+    return unit === "channel" ? channelUnit : unit
+  }
   if (/FREQ/i.test(type)) return "Hz"
   if (/AREA/i.test(type)) return `${channelUnit}·s`
   if (/SLOPE/i.test(type)) return `${channelUnit}/s`
@@ -204,7 +212,7 @@ export function createScopeTool(options: ScopeToolOptions = {}): ScopeTool {
   ): { text: string; capabilities: ScopeDetails["capabilities"] } {
     const cap = s.capabilities(st)
     const text = [
-      `capabilities (${cap.enabledChannels} channel(s) on${cap.verified ? "" : "; model not verified on hardware, tables are advisory"}): memory depths ${cap.memoryDepths.length ? cap.memoryDepths.join(" ") : "unknown"}; sample rates up to ${cap.sampleRates.length ? si(Math.max(...cap.sampleRates), "Sa/s") : "unknown"}; couplings ${cap.couplings.join("/")}; probes ${cap.probes.join(" ")}${cap.customProbe ? " (custom factors also accepted)" : ""}; trigger ${cap.triggerTypes.join("/")} from ${cap.triggerSources.join(" ")}; ${cap.measureTypes.length} measurement types (details.capabilities lists them).`,
+      `capabilities (${cap.enabledChannels} channel(s) on${cap.verified ? "" : "; model not verified on hardware, tables are advisory"}): memory depths ${cap.memoryDepths.length ? cap.memoryDepths.join(" ") : "unknown"}; sample rates up to ${cap.sampleRates.length ? si(Math.max(...cap.sampleRates), "Sa/s") : "unknown"}; couplings ${cap.couplings.join("/")}; probes ${cap.probes.join(" ")}${cap.customProbe ? " (custom factors also accepted)" : ""}; trigger ${cap.triggerTypes.join("/")} from ${cap.triggerSources.join(" ")}; measurements ${cap.measureTypes.join(" ")}${cap.vendorMeasureTypes.length ? ` plus ${cap.vendorMeasureTypes.length} instrument-specific names (details.capabilities.vendorMeasureTypes)` : ""}.`,
     ].join("\n")
     return { text, capabilities: cap }
   }

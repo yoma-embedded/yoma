@@ -33,28 +33,32 @@ import {
   type TriggerSpec,
   type TriggerState,
   type Waveform,
+  type MeasurementName,
+  measurementName,
 } from "./driver.ts"
 import { codeToVolts, type VoltScale } from "./preamble.ts"
 
 const CODE_PER_DIV = 7680
 const PROBES = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000]
 const DEPTHS = ["1k", "10k", "100k", "1M"]
-const MEASURES = [
-  "PKPK",
-  "MAX",
-  "MIN",
-  "MEAN",
-  "RMS",
-  "CRMS",
-  "TOP",
-  "BASE",
-  "AMPL",
-  "OVSP",
-  "FREQ",
-  "PER",
-  "DUTY",
-  "RISE",
-  "FALL",
+/** 词表里这台假仪器算得出来的那些(脉宽两项 analyze.ts 还没有) */
+const MEASURES: readonly MeasurementName[] = [
+  "frequency",
+  "period",
+  "pkpk",
+  "amplitude",
+  "max",
+  "min",
+  "top",
+  "base",
+  "mean",
+  "rms",
+  "acrms",
+  "duty",
+  "rise",
+  "fall",
+  "overshoot",
+  "undershoot",
 ]
 const MAX_RATE = 2e9
 const CHANNEL_COLORS = ["#ffff00", "#ff6abc", "#00ffff", "#00c100"]
@@ -249,6 +253,7 @@ export class DemoScope implements ScopeDriver {
       memoryDepths: [...DEPTHS],
       sampleRates: [1e6, 1e7, 1e8, 1e9, 2e9].filter((r) => r <= MAX_RATE),
       measureTypes: [...MEASURES],
+      vendorMeasureTypes: [],
       externalTrigger: false,
       screenshot: true,
       measurements: true,
@@ -476,47 +481,53 @@ export class DemoScope implements ScopeDriver {
   }
 
   private measureOne(item: MeasureItem): MeasureResult & { known: boolean } {
-    const type = item.type.trim().toUpperCase()
+    const neutral = measurementName(item.type)
     const source = item.source.trim().toUpperCase().replace(/^CH/, "C")
     const n = /^C([1-4])$/.exec(source)
     if (!n) throw new Error("scope: measurement source must be C1..C4; LINE is a trigger source")
-    if (!MEASURES.includes(type)) return { type, source, value: null, known: false }
+    if (!neutral || !MEASURES.includes(neutral))
+      return { type: item.type.trim().toUpperCase(), source, value: null, known: false }
+    const type = neutral
     const c = this.st.channels[Number(n[1]) - 1]!
     if (!c.on) return { type, source, value: null, known: true }
     const s = this.stats(c.ch)
     const pick = (): number | undefined => {
       switch (type) {
-        case "PKPK":
+        case "pkpk":
           return s.pp
-        case "MAX":
+        case "max":
           return s.max
-        case "MIN":
+        case "min":
           return s.min
-        case "MEAN":
+        case "mean":
           return s.mean
-        case "RMS":
+        case "rms":
           return s.rms
-        case "CRMS":
+        case "acrms":
           return s.acRms
-        case "TOP":
+        case "top":
           return s.top
-        case "BASE":
+        case "base":
           return s.base
-        case "AMPL":
+        case "amplitude":
           return s.top !== undefined && s.base !== undefined ? s.top - s.base : undefined
-        case "OVSP":
+        case "overshoot":
           return s.overshoot !== undefined && s.top !== undefined && s.base !== undefined
             ? (100 * s.overshoot) / (s.top - s.base)
             : undefined
-        case "FREQ":
+        case "undershoot":
+          return s.undershoot !== undefined && s.top !== undefined && s.base !== undefined
+            ? (100 * s.undershoot) / (s.top - s.base)
+            : undefined
+        case "frequency":
           return s.freq
-        case "PER":
+        case "period":
           return s.period
-        case "DUTY":
+        case "duty":
           return s.duty !== undefined ? s.duty * 100 : undefined
-        case "RISE":
+        case "rise":
           return s.rise
-        case "FALL":
+        case "fall":
           return s.fall
         default:
           return undefined

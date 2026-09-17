@@ -157,7 +157,8 @@ const parameters = Type.Object({
     Type.Array(Type.Object({ type: Type.String(), source: Type.String() }), {
       minItems: 1,
       maxItems: 12,
-      description: 'measure: e.g. [{type:"FREQ",source:"C1"},{type:"PKPK",source:"C1"}].',
+      description:
+        'measure: e.g. [{type:"frequency",source:"C1"},{type:"pkpk",source:"C1"}]. type is a vendor-neutral name from capabilities.measureTypes (frequency, period, pkpk, amplitude, max, min, top, base, mean, rms, acrms, duty, rise, fall, pwidth, nwidth, overshoot, undershoot; common aliases such as FREQ, PER, HIGH, LOW, VPP are accepted) or an instrument-specific name from capabilities.vendorMeasureTypes.',
     }),
   ),
   repeat: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
@@ -273,7 +274,10 @@ export interface ScopeCapabilities {
   triggerModes: string[]
   memoryDepths: string[]
   sampleRates: number[]
+  /** Vendor-neutral measurement names this driver implements (frequency, period, pkpk, amplitude, max, min, top, base, mean, rms, acrms, duty, rise, fall, pwidth, nwidth, overshoot, undershoot). */
   measureTypes: string[]
+  /** Instrument-specific measurement names passed through verbatim; empty when none. */
+  vendorMeasureTypes: string[]
   externalTrigger: boolean
   screenshot: boolean
   measurements: boolean
@@ -313,7 +317,10 @@ export interface ScopeDetails {
   trigger?: { mode?: string; source?: string; level?: number; slope?: string; status?: string }
   channels?: ScopeChannelDetails[]
   measurements?: {
+    /** Vendor-neutral name when recognized, otherwise the instrument's own name. */
     type: string
+    /** The instrument's own measurement name behind `type`. */
+    vendorType?: string
     source: string
     value: number | null
     unit?: string
