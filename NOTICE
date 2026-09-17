@@ -27,6 +27,13 @@ This repository includes third-party software:
   are also not in this repository; fetch them locally with
   `tools/fetch-fw.ps1` if you need the compile-gate tests.
 - `engines/controller_map`: board netlist pin extraction.
+- `packages/kernel/src/host/domain/scope/{analyze,limits,siglent}.ts`:
+  measurement algorithms (histogram base/top, span-averaged frequency),
+  Siglent memory-depth / sample-rate tables and command-timing values
+  were ported as ideas from
+  [ngscopeclient / libscopehal](https://github.com/ngscopeclient/scopehal-apps)
+  (BSD-3-Clause, Copyright (c) Andrew D. Zonenberg and contributors).
+  No source was copied; see `docs/scope-drivers.md`.
 - `packages/kernel/test/fixtures/examples/cube-mini`: a stub
   fixture that mimics an STM32Cube tree layout. It is not ST HAL source.
 

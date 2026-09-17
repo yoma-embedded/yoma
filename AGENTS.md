@@ -12,7 +12,7 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
   网表 / 数据手册 / STM32 配置 / 逻辑分析仪 / 示波器)2026-09-10 **归零**:旧实现搬到
   `packages/kernel/attic/`(不编译、不跑),按新内核的工具接口一个个重写 —— 2026-09-11 起按样板
   `host/tools/<名字>/{contract.ts,session.ts}` 逐个重写,首个是 flash,2026-09-12 起有 grep / find / ls / powershell,2026-09-14 起有 log(串口 / TCP / 命令三种源)。示波器 2026-09-16 恢复为
-  `host/tools/scope/` + `host/domain/scope/`,首期仅开放 SDS824X HD USB,带只读历史波形面板;Mac 首轮真机检查通过,Windows 与故障恢复稳定性仍待验证,见 `docs/scope-usb.md`。
+  `host/tools/scope/` + `host/domain/scope/`,2026-09-17 分出 `ScopeDriver` 接口 + 驱动注册表(siglent 一族,USB 与 LAN;demo 按环境变量),带只读历史波形面板;Mac 首轮真机检查通过(重构后未再上真机),Windows 与故障恢复稳定性仍待验证,见 `docs/scope-usb.md` 与 `docs/scope-drivers.md`。
   例程库仍停在仓库外 `../yoma-parked/`。
 - **桌面端**(`packages/{desktop,app,kernel,ui,session-ui,util,bench}`)——
   Electron 外壳 + SolidJS UI,fork 自 opencode 的前端;`bench` 是无人值守调试台。

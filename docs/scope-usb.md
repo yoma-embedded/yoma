@@ -2,6 +2,20 @@
 
 2026-09-16。当前目标是让 agent 设置示波器、采集并读取证据，让工程师在前端查看同一份波形。接线、探头档位、焊接和更换元件由人完成。例程库及其他功能不在这次范围内。
 
+> 2026-09-17 补记：驱动层已按 `docs/scope-drivers.md` 重构（`ScopeDriver` 接口、注册表、`driver@` 地址、能力枚举、LAN 放开、
+> 算法与 Siglent 可靠性修正），**并已在这台 SDS824X HD 上重新验收**（C1 悬空、C2 接校准信号）：一致性套件
+> `YOMA_SCOPE_HARDWARE=usb:SDS08A0D910802 YOMA_SCOPE_HARDWARE_CHANNEL=2` 54/54，工具层端到端记录在 `.yoma/scope/acceptance-20260917/`。
+> 当天新确认的真机规矩（都已进驱动和 FakeSds）：
+>
+> - SINGle 模式下没触发就 STOP，或 SINGle 模式下 RUN（只是再武装一次）再 STOP，`:WAVeform:PREamble?` 回数值全零的描述块
+>   （WAVE_ARRAY_COUNT、VERTICAL_GAIN、CODE_PER_DIV 为 0，HORIZ_INTERVAL 为 NaN）；AUTO 模式下 RUN 再 STOP 才有记录。
+> - 单次触发不因 AUTO 模式自动完成：悬空通道上 single 一直停在 Ready。
+> - 触发电平量化到源通道 vdiv/60（7 V/div 时 0.5 → 0.467、0.4 → 0.35、1 → 1.05），并夹在约 ±4.1 格。
+> - 关着的通道上 `:CHANnel<n>:SCALe` / `:OFFSet` 静默丢掉、不报错；`PROBe`、`COUPling`、`BWLimit`、`UNIT`、`LABel` 照收。
+> - `:CHANnel<n>:PROBe VALue,7` 这种菜单外系数照收，读回 7×；探头系数一变，仪器保持 BNC 口量程不变，显示 vdiv/offset 按比例换算。
+>
+> "读回超时只有断电能恢复"那次事故，新驱动把时基改动也放进了 AUTO 触发窗口，这次验收没有再现，但仍不是根因结论。
+
 ## 已实现的链路
 
 `scope` 工具 → `host/domain/scope` 的 USBTMC / SCPI 驱动 → 仪器。执行与设备占用由宿主负责；前端只通过菜单的三个只读接口读取磁盘。上游发动机保持原样。

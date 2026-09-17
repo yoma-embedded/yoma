@@ -13,8 +13,9 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
   **归零**:旧实现搬到 `packages/kernel/attic/`(不编译、不跑),按新内核的工具接口一个个重写 ——
   2026-09-11 起按样板 `host/tools/<名字>/{contract.ts,session.ts}` 逐个重写,首个是 flash;2026-09-12 从 pi 的
   coding-agent 移植了 grep / find / ls / powershell(清单:四件套 + grep / find / ls / powershell + flash);
-  示波器 2026-09-16 恢复为 `host/tools/scope/` + `host/domain/scope/`,首期仅开放 SDS824X HD USB,
-  带只读历史波形面板,Mac 首轮真机检查通过,Windows 与故障恢复稳定性仍待验证;例程库仍停在仓库外 `../yoma-parked/`。
+  示波器 2026-09-16 恢复为 `host/tools/scope/` + `host/domain/scope/`,2026-09-17 分出 `ScopeDriver` 接口 + 驱动注册表
+  (siglent 一族,USB 与 LAN;demo 按环境变量),带只读历史波形面板,Mac 首轮真机检查通过(重构后未再上真机),
+  Windows 与故障恢复稳定性仍待验证;例程库仍停在仓库外 `../yoma-parked/`。
 - **桌面端**(`packages/{desktop,app,kernel,ui,session-ui,util,bench}`)——
   Electron 外壳 + SolidJS UI,fork 自 opencode 的前端;`bench` 是无人值守调试台。
 
@@ -871,12 +872,20 @@ TS 侧的纪律:
   25 MHz,I²C SDA=D0/SCL=D1、UART D5、SPI D12–15)。I²C 解出 **300 条注解 / 6 个事务**,UART 47 字节
   "DSLogic series USB-based LA from DreamSourceLab",SPI 5 次传输 288 字。smoke 与 `build.ts` 自检都钉这个数。
 
-### 示波器(`host/domain/scope` + `host/tools/scope`,2026-09-16 恢复)
+### 示波器(`host/domain/scope` + `host/tools/scope`,2026-09-16 恢复,2026-09-17 分出驱动层)
 
-首期工具仅接受 Siglent **SDS824X HD** 的 USB 地址,不开放底层留存的 TCP 与 raw 命令。工具具备设备独占、
-设置读回、arm/collect、完整采样与显式概览抽样、截图、离线 samples。波形落在 `<工程>/.yoma/scope/<id>/`,
+工具层只认 `domain/scope/driver.ts` 的 `ScopeDriver` 接口;厂商驱动在 `domain/scope/registry.ts` 登记(今天是 siglent,
+`YOMA_SCOPE_DEMO=1` 时多一个无硬件的 demo)。地址 `[driver@]transport`:`usb[:serial]`、`<ip>[:5025]`、`siglent@usb:SN`;
+裸地址按 `*IDN?` 自动挑驱动,USB 与 LAN 都开放,raw 命令仍不开放。租约按传输部分算,config.json 存带前缀的地址。
+`connect` / `status` 返回 `capabilities`(按已开通道数给的合法深度、采样率、耦合、探头、触发源、量测类型)与驱动 `warnings`
+(未验证型号、demo)。设计约定、加厂商的步骤、不照搬 ngscopeclient 的清单在 `docs/scope-drivers.md`;
+`test/scope-conformance.ts` 是任何驱动都要过的一致性套件,`YOMA_SCOPE_HARDWARE=<address>` 时对真机再跑一遍。
+工具具备设备独占、设置读回、arm/collect、完整采样与显式概览抽样、截图、离线 samples。波形落在 `<工程>/.yoma/scope/<id>/`,
 截图与采集元数据关联;本机仪器地址存 `.yoma/scope/config.json`(兼容读取旧 `.yoma/scope.json`),目录自带忽略规则。
 前端的 `scope.captures/view/screenshot` 只读磁盘,拖动和缩放不会操作硬件。完整原始数据不进会话历史。
+analyze.ts 2026-09-17 按 ngscopeclient 的测量滤波器修了三处(阈值处插值、直方图 base/top、跨度估频),新增 acRms / top /
+base / overshoot / clipped 与逐字段单位;Siglent 驱动把时基与深度都放进 AUTO 触发模式窗口里改并读到稳、连接时 `CHDR OFF`、
+容忍短窗、校验触发状态词表 —— **这些都还没在真机上验证**,只过了假仪器与一致性套件。
 
 USB 依赖 `usb@3.1.0` 同时登记在 kernel 与 desktop 的 dependencies,预编译 `@node-usb` 模块必须解出 asar。
 取消必须等待 native transfer 结算再释放租约;close 并不保证立即中断正在等待的USB读取,截图可能等约15秒。
