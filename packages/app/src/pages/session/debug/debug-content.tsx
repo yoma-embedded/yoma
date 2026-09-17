@@ -1,46 +1,14 @@
-import { For, Match, Switch } from "solid-js"
-import { debug, type Instrument, type Transport } from "./debug-data"
-import { LaBody } from "./la-waveform"
-import { ScopeBody } from "./scope-body"
+/**
+ * 右栏"调试"档的内容。
+ *
+ * 真正的装配在 `pages/session/bench/bench-panel.tsx`(状态条 + 注册表驱动的仪器窗口),
+ * 这里只剩一层壳:`debug-panel.css` 里的 `--d-*` token 与 `[data-component="la-body"]`
+ * / `[data-component="scope-body"]` 的样式仍住在这个目录,所以这份 import 是承重的 ——
+ * 两台老仪器的面板还在按那套变量画。
+ */
+import { BenchPanel } from "../bench/bench-panel"
 import "./debug-panel.css"
 
-const TRANSPORT_LABEL: Record<Transport, string> = {
-  usb: "USB",
-  scpi: "SCPI",
-  lan: "LAN",
-  gdb: "GDB",
-  serial: "UART",
-  api: "API",
-}
-
-// ------------------------------------------------------------ instrument window
-
-function InstrumentWindow(props: { ins: Instrument }) {
-  return (
-    <section class="ydbg-win" data-st={props.ins.status}>
-      <header class="ydbg-win-h">
-        <span class="ydbg-led" />
-        <span class="ydbg-win-name">{props.ins.name}</span>
-        <span class="ydbg-tp">{TRANSPORT_LABEL[props.ins.transport]}</span>
-        <span class="ydbg-win-detail ydbg-mono">{props.ins.detail}</span>
-      </header>
-      <div class="ydbg-win-b">
-        <Switch>
-          <Match when={props.ins.display.kind === "la"}><LaBody /></Match>
-          <Match when={props.ins.display.kind === "scope"}><ScopeBody /></Match>
-        </Switch>
-      </div>
-    </section>
-  )
-}
-
-// ------------------------------------------------------------ exports
-
-/** 调试模式主体：每台仪器一个大显示窗口，纵向堆叠 */
 export function DebugContent() {
-  return (
-    <div class="ydbg-wins">
-      <For each={debug.instruments}>{(ins) => <InstrumentWindow ins={ins} />}</For>
-    </div>
-  )
+  return <BenchPanel />
 }

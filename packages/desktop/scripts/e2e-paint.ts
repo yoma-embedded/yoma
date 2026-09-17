@@ -151,6 +151,24 @@ const workspace = (() => {
   return realpathSync(dir)
 })()
 
+// 硬件日志:log 面板读的是磁盘上的 `.yoma/logs/hw-*.log`(经真 file.list + file.read),
+// 不是 transcript。种一份带级别标记的语料,这一跳就能挡住"面板挑错文件 / 认错级别"。
+const logsDir = join(workspace, ".yoma", "logs")
+mkdirSync(logsDir, { recursive: true })
+// 两份:面板必须挑名字最新的那一份(file.list 没有 mtime,只能按时间戳文件名排)。
+writeFileSync(join(logsDir, "hw-20260101-000000000.log"), "I (1) old: 这是旧的一份,不该被选中\n")
+writeFileSync(
+  join(logsDir, "hw-20260918-101112345.log"),
+  [
+    "I (12) boot: paint-gate 固件 v1.2.3 起来了",
+    "D (18) sched: tick",
+    "W (24) adc: 通道 1 接近满量程",
+    "E (31) i2c: NACK @ 0x48",
+    "*** HardFault *** pc=0x080003c6",
+    "",
+  ].join("\n"),
+)
+
 // Known offline evidence: tests exercise the real RPC and renderer without touching a USB instrument.
 const scopeDir = join(workspace, ".yoma", "scope", "paint-scope")
 mkdirSync(scopeDir, { recursive: true })
@@ -544,6 +562,46 @@ try {
   })()`)
   check("prompt 编辑器收得下打的字", typed === TYPED_TEXT, typed)
   check(
+    "调试档的目标状态条在位(bench-target-strip)",
+    await waitFor(`!!document.querySelector('[data-component="bench-target-strip"]')`, APPEAR_TIMEOUT_MS),
+  )
+  check(
+    "日志面板(核心仪器,永远在)在位(bench-log-panel)",
+    await waitFor(`!!document.querySelector('[data-component="bench-log-panel"]')`, APPEAR_TIMEOUT_MS),
+  )
+  check(
+    "日志面板经真 file.list/file.read 读到最新那一份(不是旧的那份)",
+    await waitFor(
+      `(() => {
+    const panel = document.querySelector('[data-component="bench-log-panel"]')
+    if (!panel) return false
+    const text = panel.innerText ?? ""
+    return text.includes("hw-20260918-101112345.log") && text.includes("NACK @ 0x48") && !text.includes("不该被选中")
+  })()`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  check(
+    "日志行按嵌入式常见形态分了级(E/W 各有,HardFault 算 error)",
+    await evaluate<boolean>(`(() => {
+    const lines = [...document.querySelectorAll('[data-component="bench-log-panel"] [data-slot="line"]')]
+    const level = (needle) => lines.find((line) => (line.textContent ?? "").includes(needle))?.getAttribute("data-level")
+    return level("NACK @ 0x48") === "error" && level("接近满量程") === "warn"
+      && level("HardFault") === "error" && level("sched: tick") === "debug"
+  })()`),
+  )
+  // 逻辑分析仪现在**按需**露出(仪器注册表:核心 ∪ 本会话用过 ∪ 磁盘上有数据 ∪ 用户钉住)。
+  // 这份种出来的工程只有示波器采集,所以 LA 默认藏在"+ 仪器"里 —— 先钉住它再断言面板。
+  // 钉住是落 localStorage 的,所以第二次跑时它已经在了,两种情形都得认。
+  const pinnedLa = await evaluate<string>(`(() => {
+    if (document.querySelector('[data-component="bench-window"][data-instrument="la"]')) return "already"
+    const button = document.querySelector('[data-component="bench-instrument-picker"] button[data-instrument="la"]')
+    if (!button) return "no-button"
+    button.click()
+    return "clicked"
+  })()`)
+  check("「+ 仪器」里钉得住逻辑分析仪", pinnedLa !== "no-button", pinnedLa)
+  check(
     "右栏逻辑分析仪仪器体在位(la-body)",
     await waitFor(`!!document.querySelector('[data-component="la-body"]')`, APPEAR_TIMEOUT_MS),
   )
@@ -611,6 +669,10 @@ try {
     ),
   )
   if (process.env.YOMA_PAINT_SCREENSHOT) {
+    // 上面为了点游标把示波器滚到了屏幕中间;截图是给人看右栏整体的,先滚回顶上。
+    await evaluate(
+      `document.querySelector('[data-component="bench-panel"]')?.scrollIntoView({ block: "start" })`,
+    )
     const shot = await send("Page.captureScreenshot", { format: "png" })
     writeFileSync(process.env.YOMA_PAINT_SCREENSHOT, Buffer.from(shot.result!.data as string, "base64"))
   }
