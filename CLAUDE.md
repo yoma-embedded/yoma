@@ -475,6 +475,16 @@ typecheck 全绿、单测全绿、`e2e:ipc` 全绿,照样可以在这一跳把�
   边界闸门、端到端 host)与 `kernel-domain`(并包搬来的 `test/**`,25 个文件 546 个用例,
   配置在 `vitest.domain.config.ts`,`fileParallelism: false` **串行**跑 —— 它们碰真实文件系统与子进程)。
   根 `vitest.config.ts` 里显式列了第二份;CI 的 Windows 岗跑的就是 `--project kernel-domain`。
+- **CI 上的等待是放大过的**(2026-09-17,`packages/kernel/test/patience.ts`)。那之前 develop 的 `ci` 时红时绿,
+  每次挂的用例都不一样、全是超时,真回归会被淹在里面。用例自己的期限大多已给到 20–30 秒,先到期的是**里面**
+  那些 5 / 10 / 15 秒的轮询等待,和没写期限、吃 vitest 缺省 5 秒的用例。拿一次绿的 Windows 运行对过:同一条
+  用例平时 1.2–1.3 秒,挂的那次是 5 秒、10.4 秒(慢 4–8 倍);「真实 PowerShell 退出 0」平时就要 5.9 秒 ——
+  runner 只有 4 核,vitest 的 worker 把它吃满,而这些用例还要再起子进程。所以 `CI` 下:kernel 两个项目的
+  `testTimeout` 是 20 秒,七份轮询等待(`waitFor` / `waitForCall` / `until` …)的期限过 `patient()` ×4。
+  **本机不放大** —— 5 秒等不到的东西在开发机上就是坏了;慢机器用 `YOMA_TEST_PATIENCE=<倍数>`。
+  新写轮询等待时照着接 `patient()`;**"这段时间内不该发生"的断言窗口不要接**(放大只会让 CI 白等),
+  `vcs-watch` 那套自己调过节奏的也没接。另:笔记本用电池跑全量单测会被空闲睡眠打断,一段睡眠挂一条用例
+  (实测 6 段对 6 条,耗时逐段吻合)—— 长跑前套一层 `caffeinate -i`。
 
 ## 架构
 

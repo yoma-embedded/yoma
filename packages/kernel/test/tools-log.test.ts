@@ -33,6 +33,7 @@ import {
   splitChunk,
 } from "../src/host/tools/log/excerpt.ts"
 import { createLogTool, type LogTool, parseTcpTarget } from "../src/host/tools/log/session.ts"
+import { patient } from "./patience.ts"
 
 // ─── 脚手架 ──────────────────────────────────────────────────────────────────
 
@@ -153,7 +154,7 @@ function textOf(result: AgentToolResult<LogDetails>): string {
 
 /** status 不动游标,所以可以拿它做"行到齐了没"的轮询同步。 */
 async function waitForLines(run: ReturnType<typeof makeTool>["run"], count: number, timeoutMs = 6000): Promise<void> {
-  const deadline = Date.now() + timeoutMs
+  const deadline = Date.now() + patient(timeoutMs)
   while (Date.now() < deadline) {
     const status = await run({ action: "status" })
     if (status.details!.totalLines >= count) return
@@ -163,7 +164,7 @@ async function waitForLines(run: ReturnType<typeof makeTool>["run"], count: numb
 }
 
 async function waitFor(predicate: () => boolean, timeoutMs = 6000): Promise<void> {
-  const deadline = Date.now() + timeoutMs
+  const deadline = Date.now() + patient(timeoutMs)
   while (Date.now() < deadline) {
     if (predicate()) return
     await new Promise((resolve) => setTimeout(resolve, 20))

@@ -33,6 +33,7 @@ import {
 import { confirmNeeded } from "../src/host/tools/contracts.ts"
 import { createLaTool, type LaTool } from "../src/host/tools/la/session.ts"
 import { captureSpecOf, pulseStats, windowOf } from "../src/host/tools/la/stats.ts"
+import { patient } from "./patience.ts"
 
 const REPO = join(import.meta.dirname, "..", "..", "..")
 const DEMO = join(REPO, "engines", "logic-analyzer", "vendor", "demo", "logic", "protocol.demo")
@@ -101,7 +102,7 @@ ${branches}
 
 /** arm 不 await 子进程,所以断言 argv 之前要等它真的起来(轮询而不是睡死一个固定值)。 */
 async function waitForCall(sub: string, timeoutMs = 3000): Promise<string[]> {
-  const deadline = Date.now() + timeoutMs
+  const deadline = Date.now() + patient(timeoutMs)
   for (;;) {
     const hit = argvCalls().find((argv) => argv[0] === sub)
     if (hit) return hit

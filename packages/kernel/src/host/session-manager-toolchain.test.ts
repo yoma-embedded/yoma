@@ -34,6 +34,7 @@ import type { ToolPart } from "../types.ts"
 import { SessionManager } from "./session-manager.ts"
 import { createKernelHost } from "./index.ts"
 import { fakeExeName, writeFakeExe as writeNativeFakeExe } from "../../test/fixtures/fake-exe.ts"
+import { patient } from "../../test/patience.ts"
 
 const roots: string[] = []
 afterEach(() => {
@@ -79,7 +80,7 @@ function makeManager(steps: unknown[], options: { configDir?: string; enginesDir
 async function waitFor(check: () => boolean, timeoutMs = 10_000): Promise<void> {
   const started = Date.now()
   while (!check()) {
-    if (Date.now() - started > timeoutMs) throw new Error("等待超时")
+    if (Date.now() - started > patient(timeoutMs)) throw new Error("等待超时")
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
 }

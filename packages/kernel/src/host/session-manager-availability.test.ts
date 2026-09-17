@@ -5,6 +5,7 @@ import path from "node:path"
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText, type Model } from "@earendil-works/pi-ai"
 import type { KernelEvent } from "../protocol.ts"
 import { createAgentTools, SessionManager, type SessionManagerOptions } from "./session-manager.ts"
+import { patient } from "../../test/patience.ts"
 
 const roots: string[] = []
 const managers: SessionManager[] = []
@@ -18,7 +19,7 @@ function temp(): string {
   return dir
 }
 async function waitFor(check: () => boolean): Promise<void> {
-  for (let n = 0; n < 1000; n++) {
+  for (let n = 0; n < patient(1000); n++) {
     if (check()) return
     await new Promise((resolve) => setTimeout(resolve, 10))
   }

@@ -26,6 +26,7 @@ import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node"
 import { createKernelHost, SessionManager } from "./index.ts"
 import type { KernelEvent } from "../protocol.ts"
 import type { AssistantMessage, CompactionPart, Part, Session, ToolPart } from "../types.ts"
+import { patient } from "../../test/patience.ts"
 
 const roots: string[] = []
 afterEach(() => {
@@ -247,7 +248,7 @@ function statusesOf(events: KernelEvent[]): string[] {
 async function waitFor(check: () => boolean, timeoutMs = 5000): Promise<void> {
   const started = Date.now()
   while (!check()) {
-    if (Date.now() - started > timeoutMs) throw new Error("等待超时")
+    if (Date.now() - started > patient(timeoutMs)) throw new Error("等待超时")
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
 }
