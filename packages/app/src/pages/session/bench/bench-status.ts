@@ -82,6 +82,8 @@ export interface GdbStatus {
   report?: string
   /** 最后一次停止是故障时的摘要行。 */
   fault?: string
+  /** 故障发生处(`foc.c:45`);只在 `fault` 有值时才有。 */
+  faultLocation?: string
   /** 本次会话里的停止历史,源序,最多 `MAX_STOPS` 条。 */
   stops: GdbStop[]
   at: number
@@ -184,6 +186,8 @@ const BANNER_LOCATION = /^\[gdb #\d+ [a-z-]+ @ (\S+)/
 /** `  故障(HardFault):栈上的 PC 指向 …` —— 冒号可能是全角(源码里就是全角)。 */
 const FAULT_LINE = /^\s*故障[(（]([^)）]*)[)）]\s*[:：]?\s*(.*)$/
 /** 没有中文那一行时的兜底:Cortex-M 的故障名出现在停止报告里。 */
+/** `  出事 PC 0x080004b6 = foc_zero_isense + 10 in section .text (Core/Src/foc.c:45)` —— 真正出事的那一行源码。 */
+const FAULT_PC_LINE = /^\s*出事\s*PC\b.*\(([^()\s]+:\d+)\)\s*$/
 const FAULT_WORD = /\b(?:HardFault|BusFault|UsageFault|MemManage|NMI|hard\s?fault)\b/
 
 export interface ParsedStopReport {
@@ -193,6 +197,11 @@ export interface ParsedStopReport {
   stops: { n: number; reason: string; fault?: string }[]
   /** 最后一次停止的故障摘要。 */
   fault?: string
+  /**
+   * 故障真正发生的源码位置(`foc.c:45`),来自报告里"出事 PC"那一行。停止位置(横幅 / details)
+   * 指的是**现在停在哪** —— 出了故障时那是 HardFault 处理函数,不是人要看的那一行。
+   */
+  faultLocation?: string
   /** 横幅里的 `@ 位置`。 */
   location?: string
 }
@@ -239,6 +248,15 @@ export function parseStopReport(output: string): ParsedStopReport {
     if (!out.fault) {
       const hit = tail.find((line) => FAULT_WORD.test(line))
       if (hit) out.fault = hit.trim()
+    }
+    if (out.fault) {
+      for (const line of tail) {
+        const pc = FAULT_PC_LINE.exec(line)
+        if (!pc) continue
+        const [file, lineNo] = [pc[1].slice(0, pc[1].lastIndexOf(":")), pc[1].slice(pc[1].lastIndexOf(":") + 1)]
+        out.faultLocation = `${basename(file)}:${lineNo}`
+        break
+      }
     }
   }
   if (out.fault && out.stops.length > 0) out.stops[out.stops.length - 1].fault = out.fault
@@ -335,6 +353,7 @@ export function deriveBenchStatus(parts: readonly ToolPart[]): BenchStatus {
   let gdbLocation: string | undefined
   let gdbReport: string | undefined
   let gdbFault: string | undefined
+  let gdbFaultLocation: string | undefined
   const stops: GdbStop[] = []
   const stopKeys = new Set<string>()
 
@@ -396,7 +415,9 @@ export function deriveBenchStatus(parts: readonly ToolPart[]): BenchStatus {
         gdbSeen = true
         const startedOk = meta.action === "start" && part.state.status === "completed"
         const nextState = gdbStateOf(meta.state, gdbState, startedOk)
-        const epoch = num(meta.epoch) ?? gdbEpoch
+        // `stop` 之后的 no-session 不是"换了一条目标":details 里的 epoch 归零,照常比就会把刚拿到的
+        // 故障现场连同停止历史一起清掉 —— 会话一收尾,面板上最值钱的那条证据就没了。
+        const epoch = meta.state === "no-session" ? gdbEpoch : (num(meta.epoch) ?? gdbEpoch)
         /**
          * 边界有两种:
          * 1. **跨 epoch** —— 复位或重连,契约里写明旧地址与断点号一律作废。
@@ -413,6 +434,7 @@ export function deriveBenchStatus(parts: readonly ToolPart[]): BenchStatus {
           stopKeys.clear()
           gdbReport = undefined
           gdbFault = undefined
+          gdbFaultLocation = undefined
           gdbLocation = undefined
           gdbPath = undefined
           gdbLine = undefined
@@ -433,8 +455,13 @@ export function deriveBenchStatus(parts: readonly ToolPart[]): BenchStatus {
         const parsed = stopReportOf(part, outputOf(part))
         if (parsed.location) gdbLocation = parsed.location
         if (parsed.report) gdbReport = parsed.report
-        if (parsed.fault !== undefined) gdbFault = parsed.fault
-        else if (parsed.stops.length > 0) gdbFault = undefined
+        if (parsed.fault !== undefined) {
+          gdbFault = parsed.fault
+          gdbFaultLocation = parsed.faultLocation
+        } else if (parsed.stops.length > 0) {
+          gdbFault = undefined
+          gdbFaultLocation = undefined
+        }
         for (const stop of parsed.stops) {
           const key = `${epoch}:${stop.n}`
           if (stopKeys.has(key)) continue
@@ -456,6 +483,7 @@ export function deriveBenchStatus(parts: readonly ToolPart[]): BenchStatus {
           gdbPath = undefined
           gdbLine = undefined
           gdbFault = undefined
+          gdbFaultLocation = undefined
         }
         break
       }
@@ -493,6 +521,7 @@ export function deriveBenchStatus(parts: readonly ToolPart[]): BenchStatus {
       epoch: gdbEpoch,
       report: gdbReport,
       fault: gdbFault,
+      faultLocation: gdbFaultLocation,
       stops,
       at: gdbAt,
     }
@@ -513,6 +542,14 @@ export function basename(filePath: string): string {
 
 // ---------------------------------------------------------------- 一行读数
 
+/**
+ * gdb 会话已经收了(`stop`),但这次对话里留着停止现场。面板与状态条据此说"已结束"并继续展示
+ * 最后一次现场,而不是"没有会话" —— 对读对话的人来说,那份故障报告在会话结束之后才最有用。
+ */
+export function gdbEnded(gdb: GdbStatus | undefined): boolean {
+  return !!gdb && gdb.state === "none" && (gdb.stops.length > 0 || !!gdb.report)
+}
+
 /** `已停 main.c:200` / `运行中` —— 状态条上 gdb 那一格的值。 */
 export function gdbHeadline(gdb: GdbStatus | undefined): string | undefined {
   if (!gdb) return undefined
@@ -528,7 +565,7 @@ export function gdbHeadline(gdb: GdbStatus | undefined): string | undefined {
     case "attached":
       return "attached"
     case "none":
-      return undefined
+      return gdbEnded(gdb) ? (gdb.location ? `ended ${gdb.location}` : "ended") : undefined
   }
 }
 

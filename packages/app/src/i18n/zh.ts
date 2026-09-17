@@ -310,6 +310,7 @@ export const dict = {
   "session.bench.gdb.state.running": "运行中",
   "session.bench.gdb.state.exited": "目标已退出",
   "session.bench.gdb.state.lost": "连接已断",
+  "session.bench.gdb.state.ended": "已结束",
   "session.bench.gdb.history": "本次会话的停止",
   "session.bench.gdb.empty": "这次会话还没有调试器会话。",
   "session.bench.gdb.emptyHint": "让 agent 用 gdb 工具接上目标(OpenOCD / J-Link / QEMU)。",

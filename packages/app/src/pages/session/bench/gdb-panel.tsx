@@ -12,7 +12,7 @@
 import { For, Show } from "solid-js"
 import { useLanguage } from "@/context/language"
 import { useBenchStatus } from "./use-bench-status"
-import type { GdbState } from "./bench-status"
+import { gdbEnded, type GdbState } from "./bench-status"
 
 const STATE_KEY: Record<GdbState, string> = {
   none: "session.bench.gdb.state.none",
@@ -59,9 +59,11 @@ export function GdbPanel() {
           仪器名在外层窗口的名牌上,这里不重复。 */}
       <div data-component="bench-panel-head" data-state={ledState()}>
         <span data-slot="title">
-          {gdb()
-            ? language.t(STATE_KEY[gdb()!.state] as Parameters<typeof language.t>[0])
-            : language.t("session.bench.gdb.state.none")}
+          {gdbEnded(gdb())
+            ? language.t("session.bench.gdb.state.ended")
+            : gdb()
+              ? language.t(STATE_KEY[gdb()!.state] as Parameters<typeof language.t>[0])
+              : language.t("session.bench.gdb.state.none")}
         </span>
         <span data-slot="rule" />
         <span data-slot="meta" title={gdb()?.path}>
@@ -70,7 +72,7 @@ export function GdbPanel() {
       </div>
 
       <Show
-        when={gdb() && gdb()!.state !== "none"}
+        when={gdb() && (gdb()!.state !== "none" || gdbEnded(gdb()))}
         fallback={
           <div data-component="bench-empty">
             {language.t("session.bench.gdb.empty")}
