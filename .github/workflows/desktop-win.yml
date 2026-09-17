@@ -240,14 +240,6 @@ jobs:
         with:
           generate_release_notes: true
           fail_on_unmatched_files: true
-          body: |
-            > [!WARNING]
-            > Windows 安装包目前未做代码签名。请只从本 Release 下载、核对 `SHA256SUMS.txt`,
-            > 并预期首次安装时会看到 SmartScreen 的“未知发布者”提示。
-
-            STM32 器件数据库和 HAL/CMSIS 来自您本机安装的 CubeMX 与已下载的固件仓库。
-            Yoma 随包携带本地转换器，使用 STM32 功能时生成本地器件缓存；不上传或随包分发这些数据。
-            请先安装 CubeMX 并下载所用芯片族的固件包；真实板子调试与完整工程生成需另行验收。
           files: |
             release/yoma-win-x64.exe
             release/yoma-win-x64.exe.blockmap

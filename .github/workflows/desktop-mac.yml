@@ -4,7 +4,7 @@
 #   推送 tag `v*`               → 当场编引擎、构建 prod、装后验收、把产物挂到 Release。
 #
 # 与 desktop-win.yml 的分工:**Release 由 desktop-win.yml 创建**(说明、校验和、latest.yml 都在它那儿),
-# 这里只往同一个 Release 上追加 mac 的文件。两个工作流同时抢着建 Release 会撞 already_exists;
+# 这里只往同一个 Release 上追加 mac 的文件(Release 说明不动:只留自动生成的变更记录,安装提示在 README)。两个工作流同时抢着建 Release 会撞 already_exists;
 # 而 Windows 那条已经稳定发过多版,不为了 mac 去动它。代价:Windows 发版失败时这里等不到 Release,
 # 会在下面那一步超时变红 —— 那时本来也不该有一个只有 mac 的 Release。
 #
@@ -279,23 +279,3 @@ jobs:
             release/yoma-mac-arm64.zip.blockmap \
             release/latest-mac.yml \
             release/SHA256SUMS-mac.txt
-
-      # 说明追加在 Windows 那段后面;重跑不重复追加。
-      - name: 在 Release 说明里补上 macOS 的安装提示
-        run: |
-          body=$(gh release view "$TAG" --json body --jq .body)
-          if grep -q "yoma-mac-arm64.dmg" <<<"$body"; then
-            echo "说明里已经有 macOS 这一段"
-            exit 0
-          fi
-          note=$(cat <<'EOF'
-
-          > [!WARNING]
-          > macOS(Apple Silicon)安装包 `yoma-mac-arm64.dmg` 目前没有 Apple 开发者签名与公证。
-          > 把 Yoma 拖进「应用程序」后首次打开会被拦:到 **系统设置 → 隐私与安全性**,在底部点 **仍要打开**;
-          > 或者在终端执行 `xattr -dr com.apple.quarantine /Applications/Yoma.app`。
-          > 这种包不会自动安装更新:有新版本时应用里会提示,点一下打开下载页,下载后覆盖安装(要再放行一次)。
-          > 校验和见 `SHA256SUMS-mac.txt`。逻辑分析仪引擎暂未随 macOS 包提供。
-          EOF
-          )
-          gh release edit "$TAG" --notes "$body"$'\n'"$note"
