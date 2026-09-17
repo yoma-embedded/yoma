@@ -1,0 +1,301 @@
+# 在 macOS runner 上出 dmg + zip(Apple Silicon),并在版本 tag 上把它们挂到同名 Release。
+#
+#   手动触发(workflow_dispatch) → 构建并上传临时 artifact,用于验证;
+#   推送 tag `v*`               → 当场编引擎、构建 prod、装后验收、把产物挂到 Release。
+#
+# 与 desktop-win.yml 的分工:**Release 由 desktop-win.yml 创建**(说明、校验和、latest.yml 都在它那儿),
+# 这里只往同一个 Release 上追加 mac 的文件。两个工作流同时抢着建 Release 会撞 already_exists;
+# 而 Windows 那条已经稳定发过多版,不为了 mac 去动它。代价:Windows 发版失败时这里等不到 Release,
+# 会在下面那一步超时变红 —— 那时本来也不该有一个只有 mac 的 Release。
+#
+# 签名:仓库配了 Developer ID 证书与公证凭据(见下面的 secrets)就出**已签名 + 已公证**的包;
+# 没配就出 **ad-hoc 签名**的包 —— 能装能用,但首次打开要去「系统设置 → 隐私与安全性」点"仍要打开",
+# 并且**不能自己装更新**(Squirrel.Mac 要求新旧两版签名同源,ad-hoc 每版都不同)。这种包里更新器走
+# "只通知":照常读这里上传的 latest-mac.yml,有新版就提示、动作是打开发布页,不下载
+# (见 packages/desktop/src/main/updater-controller.ts 的 platformCanSelfUpdate)。
+# 所以 latest-mac.yml **必须**跟着每个 Release 上传 —— 缺了它,已装用户的检查更新就是 404。
+# 要消除这两条得加入 Apple Developer Program(99 美元 / 年),那是产品决定不是技术问题。
+#
+#   MAC_CSC_LINK                 Developer ID Application 证书(.p12)的 base64,单行
+#   MAC_CSC_KEY_PASSWORD         .p12 的密码
+#   APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID   公证用
+#
+# 逻辑分析仪引擎 yoma-la 不在 mac 包里:它的可分发打包(dylib 收集 + Python 标准库随包)还没做,
+# engines/build.ts 在非 Windows 的 --dist 里明确跳过并写进 manifest;la 工具的离线那一半照常可用。
+#
+# 只出 arm64。Intel 要另起一个 macos-*-intel 岗(引擎是原生二进制,PyInstaller 冻结跟着宿主架构走),
+# 而两个岗各出一份 latest-mac.yml 会互相覆盖 —— 加 Intel 时要先把两份合并成一份。
+
+name: desktop-mac
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: 渠道(决定 appId / 产品名 / 自动更新)
+        type: choice
+        default: prod
+        options: [prod, beta, dev]
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    # 不钉具体版本号:钉死的标签退役之后,任务不是失败而是**排队 24 小时再被取消**
+    # (engines.yml 的 macos-13 就是这么挂掉的)。macos-latest 是 Apple Silicon。
+    runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      # tag 没有 workflow_dispatch inputs,正式发布固定走 prod。
+      YOMA_CHANNEL: ${{ inputs.channel || 'prod' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # 与 desktop-win.yml 同一条:tag 和包版本不一致会发出一个无法自动更新的坏版本。
+      - name: 校验 tag 与应用版本一致
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version=$(node -p "require('./packages/desktop/package.json').version")
+          if [ "${{ github.ref_name }}" != "v$version" ]; then
+            echo "::error::tag ${{ github.ref_name }} 与 packages/desktop/package.json 的版本 $version 不一致"
+            exit 1
+          fi
+
+      - name: 确认 runner 是 Apple Silicon
+        run: |
+          arch=$(uname -m)
+          if [ "$arch" != "arm64" ]; then
+            echo "::error::这个工作流只出 arm64 包,而 runner 是 $arch"
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            engines/stm32-config-kernel
+      - uses: astral-sh/setup-uv@v5
+
+      # 当场冻结可分发引擎;转换器随包交付,构建不读取 CubeMX 数据。
+      - name: 构建可分发引擎
+        run: npm run engines:build -- --dist --out engines-dist
+
+      - name: 验证本地 CubeMX 定位器契约(隔离测试数据)
+        run: cargo test --release --manifest-path engines/stm32-config-kernel/Cargo.toml -p stm32ck-importer --test probe
+
+      - name: 构建 renderer / main / preload
+        run: npm run build:desktop
+
+      # secrets 没配时表达式求值为空串。不直接写进打包那一步的 env:空串的 CSC_LINK 不等于没设,
+      # 配了才导出,没配就让 electron-builder.config.ts 走显式 ad-hoc 那一支。
+      - name: 签名与公证凭据(配了才导出)
+        env:
+          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID_SECRET: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD_SECRET: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_SECRET: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$MAC_CSC_LINK" ]; then
+            {
+              echo "CSC_LINK=$MAC_CSC_LINK"
+              echo "CSC_KEY_PASSWORD=$MAC_CSC_KEY_PASSWORD"
+            } >> "$GITHUB_ENV"
+            echo "将用 Developer ID 证书签名"
+          else
+            echo "::notice::没有配置 MAC_CSC_LINK —— 本次出 ad-hoc 签名包(首次打开需手动放行;有新版只提示、不自动安装)"
+          fi
+          if [ -n "$MAC_CSC_LINK" ] && [ -n "$APPLE_ID_SECRET" ] && [ -n "$APPLE_PASSWORD_SECRET" ] && [ -n "$APPLE_TEAM_SECRET" ]; then
+            {
+              echo "APPLE_ID=$APPLE_ID_SECRET"
+              echo "APPLE_APP_SPECIFIC_PASSWORD=$APPLE_PASSWORD_SECRET"
+              echo "APPLE_TEAM_ID=$APPLE_TEAM_SECRET"
+            } >> "$GITHUB_ENV"
+            echo "将提交公证"
+          fi
+
+      - name: 出安装包
+        env:
+          YOMA_ENGINES_DIR: ${{ github.workspace }}/engines-dist
+        run: npm run package:mac -w packages/desktop
+
+      - name: 检查产物里的引擎确实是 arm64 Mach-O
+        run: |
+          stage=packages/desktop/.engines-stage/bin
+          test -d "$stage" || { echo "::error::没有 .engines-stage/bin"; exit 1; }
+          fail=0
+          for f in "$stage"/*; do
+            name=$(basename "$f")
+            # venv 脚本以 "#!" 开头(那种拷到别人电脑必坏)
+            if [ "$(head -c 2 "$f")" = "#!" ]; then
+              echo "::error::$name 还是 shebang 脚本,不能分发"; fail=1; continue
+            fi
+            desc=$(file -b "$f")
+            case "$desc" in
+              *Mach-O*arm64*) echo "  ✓ $name";;
+              *) echo "::error::$name 不是 arm64 Mach-O($desc)"; fail=1;;
+            esac
+          done
+          exit $fail
+
+      # electron-builder 找不到证书时不会自己回落到 ad-hoc,而是整个跳过签名:打包照样"成功",
+      # 但 .app 的封印对不上,用户下载后 macOS 报"已损坏,移到废纸篓",连"仍要打开"都没有。
+      # 这一步就是挡它的:不管 ad-hoc 还是 Developer ID,封印必须自洽。
+      - name: 验签(封印必须自洽)
+        run: |
+          app=$(ls -d packages/desktop/dist/mac-arm64/*.app | head -1)
+          test -n "$app" || { echo "::error::dist/mac-arm64 里没有 .app"; exit 1; }
+          codesign --verify --deep --strict --verbose=2 "$app"
+          # 先收进变量再 grep:pipefail 下 `codesign | grep -q` 可能因为 SIGPIPE 把"匹配到了"变成假。
+          info=$(codesign -dv "$app" 2>&1)
+          grep -E "Identifier=|Signature|TeamIdentifier|flags" <<<"$info"
+          if [ -n "${CSC_LINK:-}" ]; then
+            # 配了证书却签成了 ad-hoc,说明证书没被认出来 —— 这种包发出去会把已有用户的自动更新弄断。
+            if grep -q "Signature=adhoc" <<<"$info"; then
+              echo "::error::配置了 Developer ID 证书,产物却是 ad-hoc 签名"; exit 1
+            fi
+          fi
+          if [ -n "${APPLE_ID:-}" ]; then
+            xcrun stapler validate "$app"
+          fi
+
+      # runner 是每次全新的虚拟机。挂载 dmg、把 .app 拷出来(就是用户拖进「应用程序」的那个动作),
+      # 后面几步从装好的 app.asar 启动真 preload + 真 kernel。
+      - name: 在干净 macOS 上安装
+        run: |
+          dmg=packages/desktop/dist/yoma-mac-arm64.dmg
+          test -f "$dmg" || { echo "::error::没有 $dmg"; exit 1; }
+          mnt="$RUNNER_TEMP/yoma-dmg"
+          installDir="$RUNNER_TEMP/yoma-installed"
+          mkdir -p "$mnt" "$installDir"
+          hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mnt"
+          src=$(ls -d "$mnt"/*.app | head -1)
+          test -n "$src" || { echo "::error::dmg 里没有 .app"; exit 1; }
+          test -L "$mnt/Applications" || { echo "::error::dmg 里没有「应用程序」快捷方式"; exit 1; }
+          app="$installDir/$(basename "$src")"
+          ditto "$src" "$app"
+          hdiutil detach "$mnt"
+
+          exe="$app/Contents/MacOS/$(basename "$app" .app)"
+          appAsar="$app/Contents/Resources/app.asar"
+          enginesDir="$app/Contents/Resources/engines"
+          for required in "$exe" "$appAsar" "$enginesDir/bin"; do
+            test -e "$required" || { echo "::error::安装后缺少必需文件:$required"; exit 1; }
+          done
+
+          # 装出来的那个二进制在 hardened runtime 下真能起(库校验、entitlements 出问题就死在这儿)。
+          # 信箱守护就是这么起的:同一个可执行文件 + ELECTRON_RUN_AS_NODE。
+          ELECTRON_RUN_AS_NODE=1 "$exe" -e 'console.log("electron", process.versions.electron, process.arch)'
+
+          {
+            echo "YOMA_INSTALL_DIR=$installDir"
+            echo "YOMA_DESKTOP_DIR=$appAsar"
+            echo "YOMA_ENGINES_DIR=$enginesDir"
+          } >> "$GITHUB_ENV"
+
+      - name: 安装产物首次会话验收
+        run: npm run e2e:renderer -w packages/desktop
+
+      - name: 安装产物引擎与本地数据边界验收
+        run: npm run smoke -w packages/desktop
+
+      # 跑的是工作区里的 out/(未打包):remote-debugging-port 只在未打包时 appendSwitch。
+      - name: 首屏 + 点一遍
+        run: npm run e2e:paint -w packages/desktop
+
+      # 单独一份校验和,不与 Windows 的 SHA256SUMS.txt 抢同一个文件名。
+      - name: 生成 Release 校验和
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: packages/desktop/dist
+        run: |
+          for name in yoma-mac-arm64.dmg yoma-mac-arm64.dmg.blockmap yoma-mac-arm64.zip yoma-mac-arm64.zip.blockmap latest-mac.yml; do
+            test -f "$name" || { echo "::error::Release 缺少必需文件:$name"; exit 1; }
+          done
+          shasum -a 256 yoma-mac-arm64.dmg yoma-mac-arm64.dmg.blockmap yoma-mac-arm64.zip yoma-mac-arm64.zip.blockmap latest-mac.yml > SHA256SUMS-mac.txt
+          cat SHA256SUMS-mac.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yoma-mac-arm64-${{ inputs.channel || 'prod' }}
+          path: |
+            packages/desktop/dist/*.dmg
+            packages/desktop/dist/*.dmg.blockmap
+            packages/desktop/dist/*.zip
+            packages/desktop/dist/*.zip.blockmap
+            packages/desktop/dist/latest-mac.yml
+            packages/desktop/dist/SHA256SUMS-mac.txt
+          if-no-files-found: error
+
+  # 构建任务没有写仓库权限。只有 tag 触发的这个小任务能碰 Release,
+  # 并且它只能上传上一个任务已经通过装后验收的那组文件。
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: yoma-mac-arm64-prod
+          path: release
+
+      # Release 归 desktop-win.yml 建。两条流水线谁先跑完不一定,所以这里等它出现。
+      - name: 等 Windows 流水线把 Release 建出来
+        run: |
+          for i in $(seq 1 120); do
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              echo "Release $TAG 已存在"
+              exit 0
+            fi
+            echo "[$i/120] Release $TAG 还没出现,30 秒后再看"
+            sleep 30
+          done
+          echo "::error::等了 60 分钟仍没有 Release $TAG —— 多半是 desktop-win 这次失败了。修好它之后重跑本任务即可。"
+          exit 1
+
+      - name: 把 mac 产物挂到 Release
+        run: |
+          gh release upload "$TAG" --clobber \
+            release/yoma-mac-arm64.dmg \
+            release/yoma-mac-arm64.dmg.blockmap \
+            release/yoma-mac-arm64.zip \
+            release/yoma-mac-arm64.zip.blockmap \
+            release/latest-mac.yml \
+            release/SHA256SUMS-mac.txt
+
+      # 说明追加在 Windows 那段后面;重跑不重复追加。
+      - name: 在 Release 说明里补上 macOS 的安装提示
+        run: |
+          body=$(gh release view "$TAG" --json body --jq .body)
+          if grep -q "yoma-mac-arm64.dmg" <<<"$body"; then
+            echo "说明里已经有 macOS 这一段"
+            exit 0
+          fi
+          note=$(cat <<'EOF'
+
+          > [!WARNING]
+          > macOS(Apple Silicon)安装包 `yoma-mac-arm64.dmg` 目前没有 Apple 开发者签名与公证。
+          > 把 Yoma 拖进「应用程序」后首次打开会被拦:到 **系统设置 → 隐私与安全性**,在底部点 **仍要打开**;
+          > 或者在终端执行 `xattr -dr com.apple.quarantine /Applications/Yoma.app`。
+          > 这种包不会自动安装更新:有新版本时应用里会提示,点一下打开下载页,下载后覆盖安装(要再放行一次)。
+          > 校验和见 `SHA256SUMS-mac.txt`。逻辑分析仪引擎暂未随 macOS 包提供。
+          EOF
+          )
+          gh release edit "$TAG" --notes "$body"$'\n'"$note"

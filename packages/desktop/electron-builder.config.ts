@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process"
+import { execFile, execFileSync } from "node:child_process"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { existsSync } from "node:fs"
@@ -43,11 +43,30 @@ const channel = (() => {
 // 本机能跑,发给别人要右键打开或 `xattr -cr`。这样没有开发者账号的机器照样能出包,
 // 凭据以后配齐了(APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID,或
 // APPLE_KEYCHAIN_PROFILE)不改一行代码自动升级成完整签名+公证。
-// 签名本身不用管:钥匙串里有 Developer ID 证书 electron-builder 自动用,
-// 没有就落到 ad-hoc(arm64 上必须至少 ad-hoc,不能真的"无签名")。
 const hasAppleNotaryCreds = Boolean(
   (process.env.APPLE_ID && process.env.APPLE_APP_SPECIFIC_PASSWORD) || process.env.APPLE_KEYCHAIN_PROFILE,
 )
+
+// 签名:有 Developer ID(CI 走 CSC_LINK / CSC_NAME,本机走钥匙串)就交给 electron-builder 自动用;
+// 没有就**显式** ad-hoc(identity "-")。不能指望它自己回落 —— 26.x 找不到证书时是整个跳过签名
+// (2026-09-17 实测):Electron 自带的封印在改过 Info.plist、塞进 resources 之后已经对不上,
+// `codesign --verify` 报 "code has no resources but signature indicates they must be present",
+// 用户从网上下载后 macOS 说的是"已损坏,移到废纸篓",连"仍要打开"都没有。ad-hoc 之后才是
+// 那条能在「隐私与安全性」里放行的"无法验证开发者"。
+// "Apple Development" 证书不算:它只给开发机自己用,别人机器上 Gatekeeper 一样拦,
+// 而 codesign 用它时还会弹钥匙串授权框,无人值守的打包会挂在那儿。
+function hasDeveloperId(): boolean {
+  if (process.env.CSC_LINK || process.env.CSC_NAME) return true
+  if (process.platform !== "darwin") return false
+  try {
+    const out = execFileSync("security", ["find-identity", "-v", "-p", "codesigning"], { encoding: "utf8" })
+    return out.includes("Developer ID Application:")
+  } catch {
+    return false
+  }
+}
+const macDeveloperId = hasDeveloperId()
+const macIdentity = macDeveloperId ? undefined : "-"
 
 // Owner of the GitHub repos the packaged app checks for auto-updates
 // (yoma-embedded/yoma-desktop, and yoma-embedded/yoma-desktop-beta for the beta channel).
@@ -67,14 +86,24 @@ const APP_IDS = {
 // 同版本的 zip —— 每次打包都请求 GitHub,在这边的网络环境下会随机 TLS 断连。
 // 跨平台目标(--win/--linux)仍需下载对应平台的 dist,不能用本地这份。
 const wantsForeignPlatform = process.argv.some((arg) => ["--win", "-w", "--linux", "-l"].includes(arg))
-const localElectronDist = path.join(packageDir, "node_modules", "electron", "dist")
+// npm workspace 把 electron 提到仓库根的 node_modules;写死包内那一处的后果是 mac 一打包就
+// "The specified electronDist does not exist"(2026-09-17 实测)—— Windows 走的是上面那条
+// 下载分支,所以从没撞上。两处都找,都没有就不设,让 electron-builder 自己去下。
+// (同一对候选路径见 scripts/electron-bin.ts。)
+const localElectronDist = [
+  path.join(packageDir, "node_modules", "electron", "dist"),
+  path.join(rootDir, "node_modules", "electron", "dist"),
+].find((dir) => existsSync(dir))
 
-const getBase = (appId: string): Configuration => ({
+// 各渠道的发布仓库。publish 配置与"只通知"更新器要打开的发布页必须是同一个仓库,所以只写这一处。
+const RELEASE_REPOS = { beta: "yoma-beta", prod: "yoma" } as const
+
+const getBase = (appId: string, releaseRepo?: string): Configuration => ({
   // usb ships N-API binaries per platform; rebuilding it for Electron is neither needed nor supported.
   npmRebuild: false,
   nodeGypRebuild: false,
   artifactName: "yoma-${os}-${arch}.${ext}",
-  ...(wantsForeignPlatform ? {} : { electronDist: localElectronDist }),
+  ...(wantsForeignPlatform || !localElectronDist ? {} : { electronDist: localElectronDist }),
   directories: {
     output: "dist",
     buildResources: "resources",
@@ -86,6 +115,12 @@ const getBase = (appId: string): Configuration => ({
   // https://www.electron.build/docs/linux/
   extraMetadata: {
     desktopName: `${appId}.desktop`,
+    // main 的 UPDATER_SELF_UPDATE 在 mac 上看它:ad-hoc 包装不上自动更新(见 updater-controller 的
+    // platformCanSelfUpdate),为 false 时更新器只通知不下载 —— 否则每次检查都白下 170 MB 再报错。
+    // 只在 darwin 上有意义。
+    // releaseRepo:只通知模式下"打开发布页"去的仓库。跟着 publish 走(渠道、YOMA_GH_OWNER 都会改它),
+    // 不能拿 package.json 的 homepage 顶 —— beta 渠道的 Release 不在那个仓库里。dev 渠道没有发布仓库。
+    yoma: { macDeveloperId, ...(releaseRepo ? { releaseRepo } : {}) },
   },
   files: ["out/**/*", "resources/**/*"],
   // 信箱守护的两个 node 入口必须从 asar 里解出来:它们由 main 用
@@ -143,6 +178,7 @@ const getBase = (appId: string): Configuration => ({
     entitlements: "resources/entitlements.plist",
     entitlementsInherit: "resources/entitlements.plist",
     notarize: hasAppleNotaryCreds,
+    ...(macIdentity ? { identity: macIdentity } : {}),
     // engines/data 是逻辑分析仪固件、解码器及资源,不是 macOS 二进制。
     // STM32 数据由用户本机生成,不进入安装包。engines/bin 正常签。
     // schema 只收字符串(按正则源解释),不收 RegExp 对象。
@@ -187,7 +223,8 @@ const getBase = (appId: string): Configuration => ({
 
 function getConfig() {
   const appId = APP_IDS[channel]
-  const base = getBase(appId)
+  const repo = channel === "dev" ? undefined : RELEASE_REPOS[channel]
+  const base = getBase(appId, repo ? `https://github.com/${GH_OWNER}/${repo}` : undefined)
 
   switch (channel) {
     case "dev": {
@@ -203,7 +240,7 @@ function getConfig() {
         ...base,
         appId,
         productName: "Yoma Beta",
-        publish: { provider: "github", owner: GH_OWNER, repo: "yoma-beta", channel: "latest" },
+        publish: { provider: "github", owner: GH_OWNER, repo: RELEASE_REPOS.beta, channel: "latest" },
         rpm: { packageName: "yoma-beta" },
       }
     }
@@ -212,7 +249,7 @@ function getConfig() {
         ...base,
         appId,
         productName: "Yoma",
-        publish: { provider: "github", owner: GH_OWNER, repo: "yoma", channel: "latest" },
+        publish: { provider: "github", owner: GH_OWNER, repo: RELEASE_REPOS.prod, channel: "latest" },
         rpm: { packageName: "yoma" },
       }
     }

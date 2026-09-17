@@ -37,7 +37,8 @@ Code change -> project compiles -> firmware flashed and verified, with board-lev
 
 Installers are published on [GitHub Releases](https://github.com/yoma-embedded/yoma/releases).
 
-Download `yoma-win-x64.exe`. The installer may show "Windows protected your PC": choose **More info → Run anyway**.
+- **Windows**: download `yoma-win-x64.exe`. The installer may show "Windows protected your PC": choose **More info → Run anyway**.
+- **macOS (Apple Silicon)**: download `yoma-mac-arm64.dmg`, open it and drag Yoma into Applications. The package is not signed with an Apple Developer ID yet, so the first launch is blocked: open **System Settings → Privacy & Security** and click **Open Anyway** at the bottom, or run `xattr -dr com.apple.quarantine /Applications/Yoma.app` in a terminal. This build does not install updates by itself: when a new version is out the app tells you and opens the download page; install it over the old one (and allow it once more). There is no Intel Mac package yet, and the logic-analyzer engine is not bundled on macOS yet.
 
 ### 2. Configure an API key
 

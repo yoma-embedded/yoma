@@ -1,7 +1,9 @@
 import { describe, expect, test } from "vitest"
 import {
   createUpdaterController,
+  platformCanSelfUpdate,
   releaseNotesText,
+  releasePageUrl,
   type UpdaterBackend,
   type UpdaterDownloadProgress,
   type UpdaterReadyRecord,
@@ -376,5 +378,155 @@ describe("updater error recovery", () => {
 
     const recovered = await controller.check()
     expect(recovered).toEqual({ status: "up-to-date" })
+  })
+})
+
+describe("platformCanSelfUpdate", () => {
+  test("Windows / Linux 不看包内元数据", () => {
+    expect(platformCanSelfUpdate("win32", undefined)).toBe(true)
+    expect(platformCanSelfUpdate("linux", { yoma: { macDeveloperId: false } })).toBe(true)
+  })
+
+  test("mac 只有 Developer ID 签的包才开更新器", () => {
+    expect(platformCanSelfUpdate("darwin", { yoma: { macDeveloperId: true } })).toBe(true)
+    expect(platformCanSelfUpdate("darwin", { yoma: { macDeveloperId: false } })).toBe(false)
+  })
+
+  test("mac 上读不到元数据一律按 ad-hoc 算:错关少一个功能,错开是永远失败的下载循环", () => {
+    expect(platformCanSelfUpdate("darwin", undefined)).toBe(false)
+    expect(platformCanSelfUpdate("darwin", {})).toBe(false)
+    expect(platformCanSelfUpdate("darwin", { yoma: null })).toBe(false)
+    expect(platformCanSelfUpdate("darwin", { yoma: { macDeveloperId: "true" } })).toBe(false)
+  })
+})
+
+describe("只通知模式(这份安装不能自己升级)", () => {
+  function notifySetup(input?: { latest?: () => string; fail?: () => boolean; notes?: string }) {
+    const calls: string[] = []
+    const opened: string[] = []
+    let ready: UpdaterReadyRecord | undefined
+    const controller = createUpdaterController({
+      enabled: true,
+      selfUpdate: false,
+      openReleasePage: (version) => {
+        opened.push(version)
+      },
+      currentVersion: "1.0.0",
+      backend: {
+        async checkForUpdates() {
+          calls.push("check")
+          if (input?.fail?.()) throw new Error("net::ERR_INTERNET_DISCONNECTED")
+          const version = input?.latest?.() ?? "2.0.0"
+          return { isUpdateAvailable: version !== "1.0.0", updateInfo: { version, releaseNotes: input?.notes } }
+        },
+        async downloadUpdate() {
+          calls.push("download")
+        },
+        quitAndInstall() {
+          calls.push("install")
+        },
+      },
+      persistence: {
+        get: () => ready,
+        set: (value) => {
+          ready = value
+        },
+        clear: () => {
+          ready = undefined
+        },
+      },
+      stop: async () => {
+        calls.push("stop")
+      },
+    })
+    return { controller, calls, opened, getReady: () => ready }
+  }
+
+  test("查到新版停在 available:不下载、不落 ready 记录", async () => {
+    const { controller, calls, getReady } = notifySetup({ notes: "<p>fixed flash timeouts</p>" })
+
+    expect(await controller.check()).toEqual({ status: "available", version: "2.0.0", notes: "fixed flash timeouts" })
+    // ad-hoc 签名的 mac 包装不上 Squirrel 的更新;下了也是白下 170 MB 再报错。
+    expect(calls).toEqual(["check"])
+    expect(getReady()).toBeUndefined()
+  })
+
+  test("install() 打开这一版的发布页:不停内核、不 quitAndInstall、状态不动", async () => {
+    const { controller, calls, opened } = notifySetup()
+    await controller.check()
+
+    await controller.install()
+    await controller.install()
+
+    expect(opened).toEqual(["2.0.0", "2.0.0"])
+    expect(calls).toEqual(["check"])
+    expect(controller.getState()).toEqual({ status: "available", version: "2.0.0" })
+  })
+
+  test("没有新版时照常 up-to-date,install() 照常拒绝", async () => {
+    const { controller, opened } = notifySetup({ latest: () => "1.0.0" })
+
+    expect(await controller.check()).toEqual({ status: "up-to-date" })
+    await expect(controller.install()).rejects.toThrow("not ready")
+    expect(opened).toEqual([])
+  })
+
+  test("已在 available 上的再查是安静的:不闪 checking,能跟上更新的版本", async () => {
+    let latest = "2.0.0"
+    const { controller } = notifySetup({ latest: () => latest })
+    await controller.check()
+    const seen: UpdaterState["status"][] = []
+    controller.subscribe((state) => seen.push(state.status))
+
+    latest = "2.1.0"
+    expect(await controller.checkPeriodic()).toEqual({ status: "available", version: "2.1.0" })
+    // 订阅时先推一次现状(available),之后只有落到新版本的那一次;中间没有 checking。
+    expect(seen).toEqual(["available", "available"])
+  })
+
+  test("已在 available 上时再查失败(断网)不把它抹成 error", async () => {
+    let offline = false
+    const { controller } = notifySetup({ fail: () => offline })
+    await controller.check()
+
+    offline = true
+    expect(await controller.checkPeriodic()).toEqual({ status: "available", version: "2.0.0" })
+    expect(controller.getState().status).toBe("available")
+  })
+
+  test("第一次检查就失败仍然是 error(没有可保留的 available)", async () => {
+    const { controller } = notifySetup({ fail: () => true })
+    expect((await controller.check()).status).toBe("error")
+  })
+
+  test("缺省(selfUpdate 不传)仍是原来的下载 → ready", async () => {
+    const { controller, calls } = setup()
+    expect((await controller.check()).status).toBe("ready")
+    expect(calls).toEqual(["check", "download"])
+  })
+})
+
+describe("releasePageUrl", () => {
+  test("指到这一版的 tag 页", () => {
+    expect(releasePageUrl("https://github.com/yoma-embedded/yoma", "0.2.8")).toBe(
+      "https://github.com/yoma-embedded/yoma/releases/tag/v0.2.8",
+    )
+    expect(releasePageUrl("https://github.com/some-fork/yoma/", "1.0.0-rc.1")).toBe(
+      "https://github.com/some-fork/yoma/releases/tag/v1.0.0-rc.1",
+    )
+  })
+
+  test("发布仓库缺失、不是 GitHub 仓库地址、或根本不是字符串时落回上游仓库", () => {
+    const upstream = "https://github.com/yoma-embedded/yoma/releases/tag/v2.0.0"
+    expect(releasePageUrl(undefined, "2.0.0")).toBe(upstream)
+    expect(releasePageUrl(42, "2.0.0")).toBe(upstream)
+    expect(releasePageUrl("http://evil.example/x", "2.0.0")).toBe(upstream)
+    expect(releasePageUrl("https://github.com/only-owner", "2.0.0")).toBe(upstream)
+  })
+
+  test("版本号不能把 URL 带偏", () => {
+    expect(releasePageUrl(undefined, "2.0.0/../../evil")).toBe(
+      "https://github.com/yoma-embedded/yoma/releases/tag/v2.0.0%2F..%2F..%2Fevil",
+    )
   })
 })

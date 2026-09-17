@@ -27,20 +27,31 @@ export default function NewLayout(props: ParentProps) {
       return undefined
     }
   }
+  // `available` 是同一件事的另一种收场:这份安装不能自己升级(没有 Developer ID 的 mac 包),
+  // 新版不会被下载,动作是打开发布页。它更需要喊 —— 不喊的话用户永远不知道出了新版。
   createEffect(() => {
     const state = platform.updater?.state()
-    if (state?.status !== "ready" || announced() === state.version) return
+    if ((state?.status !== "ready" && state?.status !== "available") || announced() === state.version) return
     try {
       localStorage.setItem(ANNOUNCED_KEY, state.version)
     } catch {
       // 存不了就每次重载都喊一次 —— 比漏喊好。
     }
+    const selfUpdate = state.status === "ready"
     showToast({
       variant: "success",
       icon: "circle-check",
-      title: language.t("settings.updates.toast.ready.title"),
-      description: language.t("settings.updates.toast.ready.description", { version: state.version }),
-      actions: [{ label: language.t("toast.update.action.installRestart"), onClick: () => void platform.updater?.install() }],
+      title: language.t(selfUpdate ? "settings.updates.toast.ready.title" : "settings.updates.toast.available.title"),
+      description: language.t(
+        selfUpdate ? "settings.updates.toast.ready.description" : "settings.updates.toast.available.description",
+        { version: state.version },
+      ),
+      actions: [
+        {
+          label: language.t(selfUpdate ? "toast.update.action.installRestart" : "settings.updates.action.openDownload"),
+          onClick: () => void platform.updater?.install(),
+        },
+      ],
     })
   })
 
@@ -49,9 +60,13 @@ export default function NewLayout(props: ParentProps) {
   const update: TitlebarUpdate = {
     version: () => {
       const state = platform.updater?.state()
-      if (state?.status !== "ready") return
+      if (state?.status !== "ready" && state?.status !== "available") return
       return state.version
     },
+    actionLabel: () =>
+      platform.updater?.state().status === "available"
+        ? language.t("settings.updates.action.openDownload")
+        : language.t("toast.update.action.installRestart"),
     installing: () => platform.updater?.state().status === "installing",
     install: () => void platform.updater?.install(),
   }

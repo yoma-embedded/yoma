@@ -24,6 +24,14 @@ describe("updaterAction", () => {
     })
   })
 
+  test("an update this install cannot apply itself becomes an open-the-download-page action", () => {
+    // 没有 Developer ID 的 mac 包:main 不下载,同一个 install() 由它接到发布页。
+    expect(updaterAction({ status: "available", version: "2.0.0", notes: "fixed flash timeouts" })).toEqual({
+      label: "settings.updates.action.openDownload",
+      run: "install",
+    })
+  })
+
   test("labels a download that already knows its percentage", () => {
     // 百分比进设置页的状态描述行,动作按钮只保留"正在下载"这一档 —— 下载期间没有可点的动作。
     const action = updaterAction({ status: "downloading", version: "2.0.0", percent: 42, transferred: 42, total: 100 })

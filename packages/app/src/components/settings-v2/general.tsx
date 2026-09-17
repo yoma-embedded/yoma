@@ -438,6 +438,8 @@ export const SettingsGeneralV2: Component = () => {
       case "ready":
       case "installing":
         return language.t("settings.updates.state.ready", { version: state.version })
+      case "available":
+        return language.t("settings.updates.state.available", { version: state.version })
       case "up-to-date":
         return language.t("settings.updates.state.upToDate")
       case "error":
@@ -448,7 +450,7 @@ export const SettingsGeneralV2: Component = () => {
   })
   const updateNotes = createMemo(() => {
     const state = platform.updater?.state()
-    return state?.status === "ready" ? state.notes : undefined
+    return state?.status === "ready" || state?.status === "available" ? state.notes : undefined
   })
 
   const UpdatesSection = () => (

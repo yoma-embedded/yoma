@@ -981,13 +981,52 @@ NsisUpdater 的 blockmap 路径 —— 通道本来就通。这次修的是**用
   `autoInstallOnAppQuit = true`(下好了退出就装,不必点重启;before-quit 已先 stopSidecars)、订阅
   `download-progress`。状态机(`updater-controller.ts`)多了 `downloading.percent/transferred/total`、
   `ready.notes`(Release 说明剥成纯文本)、`prefs.autoCheck`(启动 / 定时检查看它;手动 `check()` 不看)、
-  `checkPeriodic()`。
+  `checkPeriodic()`。不能自己装更新的安装(今天是没有 Developer ID 的 mac 包)停在 `available`,见「macOS 出包」。
 - UI:标题栏药丸之外,`ready` 时 layout 弹一次 toast(带"重启安装");设置 → 更新有版本行、状态行、
   自动检查开关(`window.api.updater.getAutoCheck/setAutoCheck`,store `yoma.updater.autoCheck`)、更新说明。
 - `engines.yml` 的 Release 加了 `make_latest: false`:引擎 Release 和 app Release 同仓,engines-v* 一旦被
   标成 latest,所有用户的更新检查都去找 `engines-v*/latest.yml`,404 到下一个 app 版本为止。
 - `packages/desktop` 有了 `test` 脚本,进根 `npm test` 与 CI 的 Windows 岗 —— 更新器状态机的测试从前
   没有任何闸门跑它。`scripts/finalize-latest-{yml,json}.ts` 是 tauri 时代的死代码,删了。
+
+### macOS 出包(`.github/workflows/desktop-mac.yml`,2026-09-17)
+
+tag `v*` 上与 `desktop-win.yml` 并行跑:当场编引擎 → `package:mac` → 验签 → 挂载 dmg 拷出 .app → 对装好的
+app.asar 跑 `e2e:renderer` / `smoke`,再 `e2e:paint` → 把 dmg / zip / blockmap / `latest-mac.yml` / `SHA256SUMS-mac.txt`
+追加到**同名 Release**。**Release 只由 desktop-win.yml 建**,这里轮询等它出现(两边抢着建会撞 already_exists;
+Windows 失败时这里超时变红,本来也不该有只含 mac 的 Release)。第一次本机演练(把 YAML 里的 run 步骤原样抽出来按序跑)
+撞出来的四件事,都是"Windows 永远撞不上、mac 一打必炸":
+- **`electronDist` 不能写死 `packages/desktop/node_modules/electron/dist`**:npm workspace 把 electron 提到了仓库根。
+  Windows 打包走"跨平台 → 自己下载"那条分支,所以这条死路径活了很久。现在两处都找、都没有就不设。
+- **electron-builder 26 找不到证书时是跳过签名,不是回落到 ad-hoc**。打包照样"成功",但 Electron 自带的封印在改过
+  Info.plist、塞进 resources 之后对不上:`codesign --verify` 报 "code has no resources but signature indicates they
+  must be present",用户下载后 macOS 说的是**"已损坏,移到废纸篓"**,连"仍要打开"都没有。所以没有 Developer ID 时
+  配置显式给 `mac.identity: "-"`;钥匙串里的 "Apple Development" 证书不算数(别人机器上照样拦,codesign 用它还会弹
+  授权框把无人值守的打包挂住)。工作流的"验签"一步挡的就是这条回归。
+- **ad-hoc 包装不上自动更新,所以走"只通知"**:Squirrel.Mac 要求新包满足当前运行那一份的 designated requirement,
+  Developer ID 的 requirement 是 Team ID(跨版本成立),ad-hoc 的是 cdhash(每版不同)。而更新器状态机一查到新版
+  就自动下载 —— 不拦就是每次定时检查白下 170 MB 再报错。打包时把 `yoma.macDeveloperId` 写进包内 package.json
+  (`extraMetadata`),main 的 `UPDATER_SELF_UPDATE` 经 `platformCanSelfUpdate` 看它;读不到按"不是"算。config 测试
+  钉着 identity 与这个标志同真同假。为 false 时 controller 收 `selfUpdate: false`:检查照常(那一步只读
+  `latest-mac.yml`,electron-updater 到 `doDownloadUpdate` 才碰 Squirrel —— 读源码确认、再真机确认),查到新版停在
+  新状态 **`available`**,不下载、不落 ready 记录、`autoInstallOnAppQuit` 关掉。**界面上所有"装这个更新"的入口
+  (toast、标题栏药丸、设置页按钮、错误页、菜单对话框)走的都是同一个 `install()`**,所以只在 controller 里把
+  `available` 的 install 换成 `shell.openExternal(<homepage>/releases/tag/v<版本>)`,没有新的 IPC 通道。已在 `available`
+  上的定时再查是安静的(不过 `checking`、断网不落 `error`)—— 否则药丸每十分钟闪一下、断一次网就消失。
+  真机验收(2026-09-17):beta 渠道的包(appId 独立,不碰 prod 的 userData)+ 改指本地假更新源的 `app-update.yml`
+  + 重新 ad-hoc 签名;假源**只收到一次 `GET /latest-mac.yml`、零次 zip 请求**,日志 `idle → checking → available`,
+  CDP 读到药丸的无障碍名是 "Open download page",`install()` 后状态仍是 `available`。
+  (`--remote-debugging-port` 作为命令行参数对打包后的 app 也生效,装后验收可以用它;`electron-builder --dir` 不生成
+  `app-update.yml`。)由此而来的一条发版纪律:**每个 Release 都必须带 `latest-mac.yml`**,缺了它 mac 用户的检查更新
+  就是 404 —— desktop-mac 这次红了的话,修好重跑,别留一个只有 Windows 文件的 latest。
+- **非 Windows 的 `engines:build --dist` 明确跳过 yoma-la**:`installLa` 只会收 MinGW DLL 与裁过的标准库;mac 构建机
+  有 brew 的 glib 时照样编得出来、自检也过,但产物链着 `/opt/homebrew/…dylib`,到用户机器上是 dyld 报错,la 工具会
+  说成"引擎崩了"而不是那句干净的"这份安装里没有"。开发期(非 --dist)不受影响。
+另两件顺路查实的事(`gh run view` 逐个任务核过):`engines.yml` 两次 tag 运行(engines-v0.1.0 / v0.2.0)里
+`build (macos-13, darwin-x64)` 都是**整 24 小时后被取消** —— 那个 runner 标签拿不到机器时任务不失败、只排队;
+同两次运行里 macos-14 与 windows 两个岗是成功的。desktop-mac 因此用不会退役的 `macos-latest`,engines.yml 的矩阵还没改。
+以及:今天仓里**没有任何 engines-v\* 的 Release**(tag 在,Release 不在),`engines.lock.json` 钉的 `engines-v0.2.0`
+下载不到 —— "在 Mac 上打 Windows 包"那条预编译路径现在是断的;两条发版流水线都是当场编引擎,不受影响。
 
 ## 约定与规矩
 
@@ -1132,9 +1171,12 @@ NsisUpdater 的 blockmap 路径 —— 通道本来就通。这次修的是**用
 - **Python 开发期启动器不可直接分发**:出包必须走 `engines/build.ts --dist` 的 PyInstaller 冻结。
   2026-09-15 已在 Windows 上构建并从独立安装目录启动三件套,见 `docs/WINDOWS-ACCEPTANCE-2026-09-15.md`;
   干净机器上的独立运行仍须验收。
-- **mac 签名/公证没配**:electron-builder 配置在没有 Apple 凭据时自动降级为
-  未公证包(用户要右键打开);配齐 `APPLE_ID`+`APPLE_APP_SPECIFIC_PASSWORD`+
-  `APPLE_TEAM_ID`(或 `APPLE_KEYCHAIN_PROFILE`)即自动恢复,无需改代码。
+- **mac 没有 Developer ID**:`desktop-mac.yml` 现在出的是 ad-hoc 签名包(见「macOS 出包」)—— 首次打开要去
+  「隐私与安全性」点"仍要打开",而且**不能自动更新**。仓库 secrets 配齐 `MAC_CSC_LINK` + `MAC_CSC_KEY_PASSWORD`
+  (Developer ID Application 的 .p12)与 `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID` 即自动变成
+  已签名 + 已公证 + 能自动更新,无需改代码;这条路**还没真跑过**。只出 arm64;yoma-la 不在 mac 包里。
+  2026-09-17 决定先不买:ad-hoc 包的更新器走"只通知"(有新版 → 提示 → 打开发布页),每次覆盖安装后要再放行一次。
+  desktop-mac.yml 本身**还没在 GitHub 上真跑过**(本机把它的 run 步骤原样抽出来按序跑过)。
 - 每轮的 diff 汇总留空了。要做的话应该从 `edit`/`write` 工具的 `details.patch` 合成,
   而不是找回 opencode 的文件快照(内核没有快照)。
 - i18n 仍有 19 个 locale;非中英的那些和内核无关,可以另行瘦身。
