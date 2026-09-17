@@ -320,10 +320,18 @@ type CdpMessage = {
 }
 
 /**
- * dev 构建里 Electron 自己往控制台打的 CSP 提醒,是给开发者看的提示,不是页面出的错。
- * 它既可能走 console,也可能以 Log 条目到达,所以按文字滤,两条路都滤。
+ * Electron 自己往控制台打的、不是页面出的错。既可能走 console,也可能以 Log 条目到达,所以按文字滤,两条路都滤。
+ *
+ * 1. dev 构建里的 CSP 提醒 —— 给开发者看的提示。
+ * 2. `sandboxed_renderer.bundle.js script failed to run` + `binding.startupData … is null`:Electron 的沙箱渲染器
+ *    引导脚本在某个转瞬即逝的脚本上下文里(窗口刚建、还没导航到真页面的那一下)拿不到启动数据。偶发:
+ *    v0.2.8 发版时 macOS runner 上撞了一次,把 desktop-mac 挡红,于是 Release 上缺了 Mac 的文件;同一步在
+ *    一小时前的运行与本机多次演练里都是过的。**滤掉它不会放过真问题**:真页面的 preload 要是没注入,
+ *    `window.api` 就不存在,后面「window.api.kernel.request('session.create') 回了 id」「storeSet 写入」
+ *    那几项会直接挂 —— 有害的那种情形由它们兜着,而不是由这条文字匹配。
  */
-const IGNORED_ERROR = /Electron Security Warning|Insecure Content-Security-Policy/i
+const IGNORED_ERROR =
+  /Electron Security Warning|Insecure Content-Security-Policy|sandboxed_renderer\.bundle\.js script failed to run|Cannot destructure property 'preloadScripts' of 'binding\.startupData'/i
 
 const socket = new WebSocket(target.webSocketDebuggerUrl)
 const pending = new Map<number, Pending>()
