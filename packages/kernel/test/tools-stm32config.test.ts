@@ -23,6 +23,7 @@ import {
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { removeTempDir } from "./cleanup.ts"
 
 import type { AgentHarnessToolInvocation, AgentToolResult } from "@earendil-works/pi-agent-core"
 import { BACKGROUND_CONTEXT, type Context, withAbortSignal } from "@earendil-works/pi-agent-core/harness/context"
@@ -56,11 +57,11 @@ function createTempDir(): string {
   return dir
 }
 
-afterEach(() => {
+afterEach(async () => {
   vi.restoreAllMocks()
-  // 重试要给够:abort 走的是 detached 的 taskkill,被杀的假引擎在 Windows 上还会攥着 cwd 一小会儿。
-  // 5 × 100 ms(线性退避,合计 1.5 秒)在满载的 CI 上不够,实测报过 EPERM;重试只在失败时花时间。
-  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+  // 被 abort 的假引擎在 Windows 上还会活一小会儿(taskkill 是 detached 的),它的 .exe 就在临时目录里;
+  // rmSync 自带的重试并不真的等,见 ./cleanup.ts。
+  for (const dir of tempDirs.splice(0)) await removeTempDir(dir)
 })
 
 const invocation: AgentHarnessToolInvocation = {
