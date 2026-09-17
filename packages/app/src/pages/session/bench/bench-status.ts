@@ -569,11 +569,48 @@ export function gdbHeadline(gdb: GdbStatus | undefined): string | undefined {
   }
 }
 
-/** `cu.usbmodem1103 115200` / `localhost:19021` / 命令行头一段。 */
-export function logHeadline(log: LogStatus | undefined): string | undefined {
+/**
+ * `cu.usbmodem1103 115200` / `localhost:19021` / 命令行头一段。
+ *
+ * `full` 给那些**有一整行宽度**的容器(底部控制台的页签行):那里挤不下时由 CSS 打省略号,
+ * 而省略号后面的内容鼠标停一下还看得到 —— 在这儿先砍成 28 个字就永远找不回来了。
+ */
+export function logHeadline(log: LogStatus | undefined, options?: { full?: boolean }): string | undefined {
   if (!log) return undefined
   if (log.kind === "serial" && log.port) return `${basename(log.port)}${log.baud ? ` ${log.baud}` : ""}`
   if (log.kind === "tcp" && log.port) return log.port
-  if (log.source) return log.source.length > 28 ? `${log.source.slice(0, 27)}…` : log.source
+  if (log.source) return options?.full || log.source.length <= 28 ? log.source : `${log.source.slice(0, 27)}…`
   return undefined
+}
+
+/** gdb 六种状态各自的 i18n 键。面板、状态条、控制台页签行共用这一张表。 */
+const GDB_STATE_KEY: Record<GdbState, string> = {
+  none: "session.bench.gdb.state.none",
+  attached: "session.bench.gdb.state.attached",
+  halted: "session.bench.gdb.state.halted",
+  running: "session.bench.gdb.state.running",
+  exited: "session.bench.gdb.state.exited",
+  "connection-lost": "session.bench.gdb.state.lost",
+}
+
+/** 目标状态那一个词(`已停住` / `已结束`)。收 `t`,同 `benchChips`。 */
+export function gdbStateLabel(gdb: GdbStatus | undefined, t: (key: string) => string): string {
+  if (gdbEnded(gdb)) return t("session.bench.gdb.state.ended")
+  return t(gdb ? GDB_STATE_KEY[gdb.state] : GDB_STATE_KEY.none)
+}
+
+/**
+ * `采集中 cu.usbmodem1103 115200` —— 采集状态那一个词加上来源简写。
+ *
+ * 收 `t` 而不是自己去拿 i18n(同 `benchChips`):这个文件是纯函数层,面板与状态条、
+ * 底部控制台的页签行都要用同一句话,不该有第二份拼法。
+ */
+export function logCaptureLabel(
+  log: LogStatus | undefined,
+  t: (key: string) => string,
+  options?: { full?: boolean },
+): string | undefined {
+  if (!log) return undefined
+  const head = log.capturing ? t("session.bench.state.capturing") : t("session.bench.state.stopped")
+  return [head, logHeadline(log, options)].filter(Boolean).join(" ")
 }

@@ -326,6 +326,22 @@ export const dict = {
   "session.bench.gdb.noStop": "Attached, but the target has not stopped yet.",
   "session.bench.gdb.noStopHint": "The stop report shows up here after a breakpoint hit, a step, or a fault.",
 
+  // ---- v2-console:底部控制台(文本流仪器)+ 贯穿的状态栏 + 右栏的按需仪器页
+  "session.console.title": "Console",
+  "session.console.toggle": "Toggle console",
+  "session.console.show": "Console: {{name}}",
+  "session.console.maximize": "Maximize console",
+  "session.console.restore": "Restore console height",
+  "session.console.close": "Close console",
+  "session.console.resize": "Drag to resize the console",
+  "session.statusBar.label": "Target status bar",
+  "session.statusBar.unreadErrors": "{{count}} unread error",
+  "session.statusBar.unreadErrorsHint": "Error lines that have not been on screen in the console yet.",
+  "session.rail.label": "Waveform instruments",
+  "session.rail.empty": "No waveform instrument in play.",
+  "session.rail.emptyHint":
+    "The oscilloscope and the logic analyzer show up once the agent uses one, once this project has a capture on disk, or once you pin one here. Log and debugger live in the console at the bottom.",
+
   "session.new.title": "Build anything",
   "session.new.project.new": "New project",
   "session.new.project.add": "Add project",

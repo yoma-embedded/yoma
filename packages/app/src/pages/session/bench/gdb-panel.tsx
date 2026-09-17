@@ -12,16 +12,7 @@
 import { For, Show } from "solid-js"
 import { useLanguage } from "@/context/language"
 import { useBenchStatus } from "./use-bench-status"
-import { gdbEnded, type GdbState } from "./bench-status"
-
-const STATE_KEY: Record<GdbState, string> = {
-  none: "session.bench.gdb.state.none",
-  attached: "session.bench.gdb.state.attached",
-  halted: "session.bench.gdb.state.halted",
-  running: "session.bench.gdb.state.running",
-  exited: "session.bench.gdb.state.exited",
-  "connection-lost": "session.bench.gdb.state.lost",
-}
+import { gdbEnded, gdbStateLabel, type GdbStatus } from "./bench-status"
 
 /** `■ stopped#…` 是标题行,`故障(…)` 是要标红那行,其余照原样。 */
 const LOCATION_LINE = /^■/
@@ -39,38 +30,14 @@ export function splitStopReport(report: string): ReportLine[] {
 
 const hhmmss = (at: number) => (at ? new Date(at).toLocaleTimeString(undefined, { hour12: false }) : "")
 
-export function GdbPanel() {
+/** 停止报告 + 本次会话的停止历史。没有名牌 —— 容器自带(控制台的页签行)或由 `GdbPanel` 加。 */
+export function GdbBody() {
   const language = useLanguage()
   const status = useBenchStatus()
   const gdb = () => status().gdb
 
-  const ledState = () => {
-    const g = gdb()
-    if (!g || g.state === "none") return "offline"
-    if (g.fault) return "attention"
-    if (g.state === "running") return "active"
-    if (g.state === "exited" || g.state === "connection-lost") return "offline"
-    return "idle"
-  }
-
   return (
-    <div data-component="bench-gdb-panel">
-      {/* 细头:左边是目标状态(一个词),右边是停在哪与连的是谁。
-          仪器名在外层窗口的名牌上,这里不重复。 */}
-      <div data-component="bench-panel-head" data-state={ledState()}>
-        <span data-slot="title">
-          {gdbEnded(gdb())
-            ? language.t("session.bench.gdb.state.ended")
-            : gdb()
-              ? language.t(STATE_KEY[gdb()!.state] as Parameters<typeof language.t>[0])
-              : language.t("session.bench.gdb.state.none")}
-        </span>
-        <span data-slot="rule" />
-        <span data-slot="meta" title={gdb()?.path}>
-          {[gdb()?.location, gdb()?.connection].filter(Boolean).join(" · ")}
-        </span>
-      </div>
-
+    <div data-component="bench-gdb-panel" data-chrome="bare">
       <Show
         when={gdb() && (gdb()!.state !== "none" || gdbEnded(gdb()))}
         fallback={
@@ -123,4 +90,36 @@ export function GdbPanel() {
       </Show>
     </div>
   )
+}
+
+/** 注册表的缺省装配:名牌 + 正文。 */
+export function GdbPanel() {
+  const language = useLanguage()
+  const t = (key: string) => language.t(key as Parameters<typeof language.t>[0])
+  const status = useBenchStatus()
+  const gdb = () => status().gdb
+
+  return (
+    <div data-component="bench-gdb-panel">
+      {/* 细头:左边是目标状态(一个词),右边是停在哪与连的是谁。
+          仪器名在外层窗口的名牌上,这里不重复。 */}
+      <div data-component="bench-panel-head" data-state={gdbLedState(gdb())}>
+        <span data-slot="title">{gdbStateLabel(gdb(), t)}</span>
+        <span data-slot="rule" />
+        <span data-slot="meta" title={gdb()?.path}>
+          {[gdb()?.location, gdb()?.connection].filter(Boolean).join(" · ")}
+        </span>
+      </div>
+      <GdbBody />
+    </div>
+  )
+}
+
+/** 灯的四档。与 `instruments.ts` 里 gdb 那条 `status()` 同解 —— 面板自己也要用。 */
+function gdbLedState(gdb: GdbStatus | undefined) {
+  if (!gdb || gdb.state === "none") return "offline"
+  if (gdb.fault) return "attention"
+  if (gdb.state === "running") return "active"
+  if (gdb.state === "exited" || gdb.state === "connection-lost") return "offline"
+  return "idle"
 }

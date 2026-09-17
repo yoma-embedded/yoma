@@ -17,7 +17,7 @@
 import { createRoot, createSignal, lazy, type Component } from "solid-js"
 import type { IconProps } from "@yoma-desktop/ui/icon"
 import type { BenchStatus, InstrumentId } from "./bench-status"
-import { INSTRUMENT_IDS } from "./bench-status"
+import { gdbStateLabel, INSTRUMENT_IDS, logCaptureLabel } from "./bench-status"
 
 /**
  * 出现的频次档,决定它在"+ 仪器"里的排序与将来的默认折叠策略。
@@ -26,6 +26,18 @@ import { INSTRUMENT_IDS } from "./bench-status"
  * - `occasional`:同上,但在挑选器里排后面。
  */
 export type InstrumentTier = "core" | "frequent" | "occasional"
+
+/**
+ * **数据的形状** —— 决定这台仪器该往哪种容器里摆。
+ *
+ * - `text`:一行一行往下滚的文本流(日志、GDB,将来的上位机控制台)。它要的是**宽度**,
+ *   摆进一条窄的右栏就是每行都在折行。
+ * - `wave`:横轴是时间的图(逻辑分析仪、示波器,将来的功耗曲线)。它要的是**高度**,
+ *   压进一条 160px 高的底栏就什么都看不出来。
+ *
+ * 不按这一档分家的布局(比如 foundation 那份全堆一列的 `BenchPanel`)忽略它即可。
+ */
+export type InstrumentSurface = "text" | "wave"
 
 /** 灯的四档。与 bench.css 的 `[data-component="bench-led"][data-state=…]` 同一套词。 */
 export type InstrumentState = "idle" | "active" | "attention" | "offline"
@@ -54,8 +66,19 @@ export interface InstrumentDef {
   labelKey: string
   icon: IconProps["name"]
   tier: InstrumentTier
+  /** 数据的形状。见 `InstrumentSurface`。 */
+  surface: InstrumentSurface
   /** 懒加载:四台仪器里通常只有一两台在场,没必要让示波器的画布代码进首屏包。 */
   component: Component
+  /**
+   * 容器**自己带了名牌与工具条**(底部控制台的页签行就是)时渲染的正文。不给就退回 `component` ——
+   * 代价只是名牌出现两遍,不是坏掉。
+   */
+  compact?: Component
+  /** 紧凑装配时挂到容器页签行右侧的控件(日志的过滤框 / 跟随开关)。 */
+  controls?: Component
+  /** 紧凑装配时名牌右侧那一行读数(`已停止 sh tools/uart-sim.sh`)。 */
+  headline?(ctx: InstrumentContext, t: (key: string) => string): string | undefined
   /** 磁盘/会话里有没有它的东西 —— 决定"没人用过也该露出来"。 */
   hasData(ctx: InstrumentContext): boolean
   /** 灯。 */
@@ -63,7 +86,10 @@ export interface InstrumentDef {
 }
 
 const LogPanel = lazy(() => import("./log-panel").then((m) => ({ default: m.LogPanel })))
+const LogCompact = lazy(() => import("./log-panel").then((m) => ({ default: m.LogCompact })))
+const LogControls = lazy(() => import("./log-panel").then((m) => ({ default: m.LogControls })))
 const GdbPanel = lazy(() => import("./gdb-panel").then((m) => ({ default: m.GdbPanel })))
+const GdbBody = lazy(() => import("./gdb-panel").then((m) => ({ default: m.GdbBody })))
 // 这两台的面板早就在了(dock 的"调试"档一直在用),注册表只是把它们收编进同一套壳。
 const ScopeBody = lazy(() => import("../debug/scope-body").then((m) => ({ default: m.ScopeBody })))
 const LaBody = lazy(() => import("../debug/la-waveform").then((m) => ({ default: m.LaBody })))
@@ -78,7 +104,13 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     labelKey: "session.bench.instrument.log",
     icon: "terminal",
     tier: "core",
+    surface: "text",
     component: LogPanel,
+    compact: LogCompact,
+    controls: LogControls,
+    // 页签行有一整行宽度,所以来源给全文(挤不下时 CSS 打省略号,鼠标停一下还看得到)——
+    // 正因为这一行说全了,紧凑装配里的「来源」读数才被容器藏掉,不占第二行。
+    headline: (ctx, t) => logCaptureLabel(ctx.status.log, t, { full: true }),
     hasData: (ctx) => ctx.disk.logFiles > 0 || !!ctx.status.log,
     status: (ctx) => {
       const log = ctx.status.log
@@ -93,7 +125,13 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     labelKey: "session.bench.instrument.gdb",
     icon: "debug",
     tier: "frequent",
+    surface: "text",
     component: GdbPanel,
+    compact: GdbBody,
+    headline: (ctx, t) =>
+      [gdbStateLabel(ctx.status.gdb, t), ctx.status.gdb?.location, ctx.status.gdb?.connection]
+        .filter(Boolean)
+        .join(" · "),
     // gdb 没有落盘证据可探(.yoma/gdb 里是会话转录,不是可回放的现场),所以只看 transcript。
     hasData: (ctx) => !!ctx.status.gdb,
     status: (ctx) => {
@@ -110,6 +148,7 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     labelKey: "session.bench.instrument.scope",
     icon: "sliders",
     tier: "occasional",
+    surface: "wave",
     component: ScopeBody,
     hasData: (ctx) => ctx.disk.scopeCaptures > 0 || !!ctx.status.scope,
     status: (ctx) => {
@@ -122,6 +161,7 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     labelKey: "session.bench.instrument.la",
     icon: "dot-grid",
     tier: "occasional",
+    surface: "wave",
     component: LaBody,
     hasData: (ctx) => ctx.disk.laCaptures > 0 || !!ctx.status.la,
     status: (ctx) => {
@@ -143,6 +183,19 @@ export function visibleInstruments(ctx: InstrumentContext): InstrumentDef[] {
 /** 藏着的那些 —— "+ 仪器"里列的就是它们。 */
 export function hiddenInstruments(ctx: InstrumentContext): InstrumentDef[] {
   return INSTRUMENTS.filter((instrument) => !isVisible(instrument, ctx))
+}
+
+/**
+ * 该露出来的、且数据形状是 `surface` 的那些 —— 按数据形状分家的布局(v2-console:文本流在
+ * 底部控制台,波形在右栏)用它。顺序仍是登记顺序。
+ */
+export function visibleOnSurface(surface: InstrumentSurface, ctx: InstrumentContext): InstrumentDef[] {
+  return visibleInstruments(ctx).filter((instrument) => instrument.surface === surface)
+}
+
+/** 同上,藏着的那些("+ 仪器"按形状各列各的)。 */
+export function hiddenOnSurface(surface: InstrumentSurface, ctx: InstrumentContext): InstrumentDef[] {
+  return hiddenInstruments(ctx).filter((instrument) => instrument.surface === surface)
 }
 
 export function isVisible(instrument: InstrumentDef, ctx: InstrumentContext): boolean {

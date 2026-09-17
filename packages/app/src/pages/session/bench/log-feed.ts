@@ -47,11 +47,17 @@ export interface LogFeedState {
   error?: string
   /** 跟随尾部。面板把它翻成"新内容来了就滚到底"。 */
   follow: boolean
+  /**
+   * 过滤词。**跟着这份 feed 走,不是某个组件的局部状态** —— 底部控制台把过滤框提到了页签行上,
+   * 而行区在下面另一个组件里,两边必须读同一个值。同一份日志开两处却各过滤各的也不是特性。
+   */
+  filter: string
 }
 
 export interface LogFeed {
   state: Store<LogFeedState>
   setFollow(follow: boolean): void
+  setFilter(filter: string): void
   /** 手动重来一次(换文件 + 重读),不等下一拍。 */
   refresh(): void
 }
@@ -79,6 +85,7 @@ function createFeed(directory: string): FeedEntry {
       truncated: false,
       loading: false,
       follow: true,
+      filter: "",
     })
 
     const schedule = () => {
@@ -132,6 +139,7 @@ function createFeed(directory: string): FeedEntry {
     const feed: LogFeed = {
       state,
       setFollow: (follow) => setState("follow", follow),
+      setFilter: (filter) => setState("filter", filter),
       refresh: () => {
         tick = 0
         seq++
