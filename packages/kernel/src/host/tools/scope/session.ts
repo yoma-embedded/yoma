@@ -27,7 +27,8 @@ import {
   SCOPE_SCREENS_DIR,
   writeScopeConfig,
 } from "../../domain/scope/store.ts"
-import { SCOPE_CONTRACT, type ScopeDetails, type ScopeInput } from "./contract.ts"
+import type { Static } from "typebox"
+import { normalizeScopeArguments, SCOPE_CONTRACT, type ScopeDetails, type ScopeInput } from "./contract.ts"
 import { acquisitionBudget, saveEvidence, savedSamples, type ScopeDevice } from "./evidence.ts"
 
 export interface ScopeToolOptions {
@@ -505,7 +506,10 @@ export function createScopeTool(options: ScopeToolOptions = {}): ScopeTool {
     label: SCOPE_CONTRACT.label,
     description: SCOPE_CONTRACT.description,
     parameters: SCOPE_CONTRACT.parameters,
-    execute: async (_id, p, _update, toolContext, _invocation, context) => {
+    // 装配面(tools/index.ts)会把它包进带预校验的 prepareArguments;直接调 execute 的测试与脚本也在下面归一一次
+    prepareArguments: normalizeScopeArguments as (args: unknown) => Static<typeof SCOPE_CONTRACT.parameters>,
+    execute: async (_id, raw, _update, toolContext, _invocation, context) => {
+      const p = normalizeScopeArguments(raw) as ScopeInput
       const cwd = toolContext.env.cwd
       const external = context.abortSignal
       if (!offline.has(p.action)) clearIdle()

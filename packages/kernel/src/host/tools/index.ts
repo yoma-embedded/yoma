@@ -9,6 +9,7 @@
 
 import type { AgentHarnessTool, ExecutionToolContext } from "@earendil-works/pi-agent-core"
 
+import { withFriendlyArguments } from "./arguments.ts"
 import { createDatasheetTool, type DatasheetToolOptions } from "./datasheet/session.ts"
 import { createFindTool } from "./find/session.ts"
 import { createFlashTool } from "./flash/session.ts"
@@ -49,7 +50,8 @@ export type RegisteredTool = AgentHarnessTool<ExecutionToolContext> & { dispose?
 export function createRegisteredTools(options: RegisteredToolOptions = {}): RegisteredTool[] {
   const shared = { enginesDir: options.enginesDir || undefined }
   const stm32 = { ...shared, configDir: options.configDir }
-  return [
+  // 每个工具都挂 prepareArguments(arguments.ts):模型写错参数时拿到的是列了合法值的话,不是发动机的 "must be equal to constant"
+  const tools: RegisteredTool[] = [
     createGrepTool(shared),
     createFindTool(shared),
     createLsTool(shared),
@@ -64,4 +66,5 @@ export function createRegisteredTools(options: RegisteredToolOptions = {}): Regi
     createNetlistTool(stm32),
     createStm32ConfigTool(stm32),
   ]
+  return tools.map(withFriendlyArguments)
 }

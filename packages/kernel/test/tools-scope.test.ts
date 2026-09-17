@@ -226,10 +226,10 @@ describe("scope contract and evidence", () => {
     expect(() => acquisitionBudget({ action: "capture", stride: 2 })).toThrow(/exact/)
     expect(SCOPE_CONTRACT.guidelines.join(" ")).toContain("wait for their reply")
     expect(SCOPE_CONTRACT.guidelines.join(" ")).toContain("bandwidth is not a scaling factor")
-    expect(SCOPE_CONTRACT.parameters.properties.channels.items.properties.unit.anyOf.map((u) => u.const)).toEqual([
-      "V",
-      "A",
-    ])
+    // channels 的元素是"通道号或设置对象"的联合;设置对象是第二支
+    const channelSetting = SCOPE_CONTRACT.parameters.properties.channels.items.anyOf[1]
+    expect(channelSetting.properties.unit.anyOf.map((u) => u.const)).toEqual(["V", "A"])
+    expect(SCOPE_CONTRACT.parameters.properties.channels.items.anyOf[0].type).toBe("integer")
     expect(SCOPE_CONTRACT.summary({})).toBe("")
   })
   it("persists exact original samples, per-channel time and the frozen screenshot", async () => {
@@ -447,7 +447,14 @@ describe("scope lifecycle", () => {
     })
     tools.push(tool)
     await expect(
-      tool.execute("call", { action: "connect" }, () => {}, { env: new NodeExecutionEnv({ cwd }) }, invocation, BACKGROUND_CONTEXT),
+      tool.execute(
+        "call",
+        { action: "connect" },
+        () => {},
+        { env: new NodeExecutionEnv({ cwd }) },
+        invocation,
+        BACKGROUND_CONTEXT,
+      ),
     ).rejects.toThrow(/not a Siglent SDS/)
     expect(opens).toBe(1)
     await fixture().run({ action: "connect" })
@@ -459,7 +466,12 @@ describe("scope lifecycle", () => {
     const out = await f.run({ action: "connect" })
     expect(out.details!.driver).toBe("fake")
     expect(out.details!.warnings).toEqual(["FakeScope: not hardware"])
-    expect(out.details!.capabilities).toMatchObject({ driver: "fake", verified: true, enabledChannels: 2, memoryDepths: ["32"] })
+    expect(out.details!.capabilities).toMatchObject({
+      driver: "fake",
+      verified: true,
+      enabledChannels: 2,
+      memoryDepths: ["32"],
+    })
     expect(text(out)).toContain("Warning: FakeScope: not hardware")
     expect(text(out)).toContain("memory depths 32")
     expect((await readScopeConfig(cwd))?.address).toBe("fake@usb:SCOPE-1")
@@ -496,7 +508,14 @@ describe("scope lifecycle", () => {
   it("devices lists the driver catalog even when no USB instrument is present", async () => {
     const tool = createScopeTool({ listUsb: async () => [], idleCloseMs: 0 })
     tools.push(tool)
-    const out = await tool.execute("call", { action: "devices" }, () => {}, { env: new NodeExecutionEnv({ cwd }) }, invocation, BACKGROUND_CONTEXT)
+    const out = await tool.execute(
+      "call",
+      { action: "devices" },
+      () => {},
+      { env: new NodeExecutionEnv({ cwd }) },
+      invocation,
+      BACKGROUND_CONTEXT,
+    )
     expect(out.details!.drivers!.map((d) => d.name)).toContain("siglent")
     expect(out.details!.drivers!.map((d) => d.name)).not.toContain("demo")
     expect(text(out)).toContain("SDS824X HD")

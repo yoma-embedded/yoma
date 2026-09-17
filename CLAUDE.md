@@ -77,6 +77,10 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
   `kernel/src/types.ts` 的 `TOOL_NAMES`:desktop 的自检、`kernel-smoke.ts`、bench 的 `check` 三处走同一个
   `diffToolNames` 逐字同序比;系统提示词里 `selectedTools` 缺省时的四件套字面量只是兜底,不参与真源。
   boundary.test.ts 第 5 条按白名单扫契约文件,并要求每个工具目录都有 contract.ts。
+  **参数写错时模型看到的话**(2026-09-17):校验在发动机里(vendored,原话不列合法值,模型会照着重试),所以装配面给
+  每个工具挂 `withFriendlyArguments`(`host/tools/arguments.ts`)—— 走发动机留的 `prepareArguments` 口,先跑工具自己的
+  归一(scope 的 `normalizeScopeArguments`:2 / "C2" / {ch:2} 同义),再按契约用发动机同款规矩预校验,失败就抛出
+  指名字段、允许值、实收值的一句话。不要在契约文案里"补充说明合法值"来绕这件事,也不要碰 `packages/ai` 的校验。
 - **工具进度链路**(2026-09-14):execute 的第三个参数 `onUpdate(partial)` 是工具边跑边上卡片的口。发动机把它
   转成 `tool_update` 事件;`host/session-manager.ts` 的 subscribe 里过一道 `host/tool-progress.ts` 的
   `ToolProgressThrottle`(按调用节流:前沿立即、之后每 100ms 一次、尾沿补发,`tool_end` 时丢掉尾沿),

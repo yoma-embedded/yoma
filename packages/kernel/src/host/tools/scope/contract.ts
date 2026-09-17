@@ -19,6 +19,35 @@ export const SCOPE_ACTIONS = [
 export type ScopeAction = (typeof SCOPE_ACTIONS)[number]
 export const MAX_SCOPE_POINTS = 2_000_000
 
+/** 一路通道的设置(setup/arm);capture/collect 只用 ch。 */
+const channelSetting = Type.Object({
+  ch: Type.Integer({ minimum: 1, maximum: 4 }),
+  on: Type.Optional(Type.Boolean()),
+  vdiv: Type.Optional(
+    Type.Number({
+      exclusiveMinimum: 0,
+      description: "Displayed channel units/div (V/div or A/div), including the instrument's configured probe factor.",
+    }),
+  ),
+  offset: Type.Optional(Type.Number()),
+  unit: Type.Optional(
+    Type.Union([Type.Literal("V"), Type.Literal("A")], {
+      description:
+        "Displayed channel unit. Configure unit and probe factor only from confirmed physical probe sensitivity; e.g. a confirmed 1 V/A current probe uses unit=A and probe=1. Changing the unit alone does not calibrate an unknown probe.",
+    }),
+  ),
+  coupling: Type.Optional(Type.Union([Type.Literal("DC"), Type.Literal("AC"), Type.Literal("GND")])),
+  probe: Type.Optional(
+    Type.Number({
+      exclusiveMinimum: 0,
+      description:
+        "Instrument probe scaling factor. For voltage probes confirm the physical attenuation switch; for current probes confirm the model/range and sensitivity (V/A or mV/A). Bandwidth (e.g. 30 MHz) is not a multiplier. Initially preserve the instrument's actual setting until calibration is confirmed.",
+    }),
+  ),
+  bwlimit: Type.Optional(Type.Union([Type.Literal("FULL"), Type.Literal("20M")])),
+  label: Type.Optional(Type.String()),
+})
+
 const parameters = Type.Object({
   action: Type.Union([
     Type.Literal("devices"),
@@ -43,38 +72,15 @@ const parameters = Type.Object({
   ),
   channels: Type.Optional(
     Type.Array(
-      Type.Object({
-        ch: Type.Integer({ minimum: 1, maximum: 4 }),
-        on: Type.Optional(Type.Boolean()),
-        vdiv: Type.Optional(
-          Type.Number({
-            exclusiveMinimum: 0,
-            description:
-              "Displayed channel units/div (V/div or A/div), including the instrument's configured probe factor.",
-          }),
-        ),
-        offset: Type.Optional(Type.Number()),
-        unit: Type.Optional(
-          Type.Union([Type.Literal("V"), Type.Literal("A")], {
-            description:
-              "Displayed channel unit. Configure unit and probe factor only from confirmed physical probe sensitivity; e.g. a confirmed 1 V/A current probe uses unit=A and probe=1. Changing the unit alone does not calibrate an unknown probe.",
-          }),
-        ),
-        coupling: Type.Optional(Type.Union([Type.Literal("DC"), Type.Literal("AC"), Type.Literal("GND")])),
-        probe: Type.Optional(
-          Type.Number({
-            exclusiveMinimum: 0,
-            description:
-              "Instrument probe scaling factor. For voltage probes confirm the physical attenuation switch; for current probes confirm the model/range and sensitivity (V/A or mV/A). Bandwidth (e.g. 30 MHz) is not a multiplier. Initially preserve the instrument's actual setting until calibration is confirmed.",
-          }),
-        ),
-        bwlimit: Type.Optional(Type.Union([Type.Literal("FULL"), Type.Literal("20M")])),
-        label: Type.Optional(Type.String()),
-      }),
+      Type.Union([
+        Type.Integer({ minimum: 1, maximum: 4, description: "A channel number, same as {ch:n}." }),
+        channelSetting,
+      ]),
       {
         minItems: 1,
         maxItems: 4,
-        description: "setup/arm: channel settings. capture: channel numbers only; default enabled channels.",
+        description:
+          "capture/arm/collect: which channels, as numbers (e.g. [2]) or {ch} objects; default the enabled channels. setup/arm: objects with settings.",
       },
     ),
   ),
@@ -169,7 +175,38 @@ const parameters = Type.Object({
     Type.Number({ description: "samples edges: crossing value in the stored channel's unit (V or A)." }),
   ),
 })
-export type ScopeInput = Static<typeof parameters>
+export type ScopeChannelSetting = Static<typeof channelSetting>
+/** 归一之后的参数:channels 里只剩设置对象(裸通道号在 normalizeScopeArguments 里已变成 {ch})。 */
+export type ScopeInput = Omit<Static<typeof parameters>, "channels"> & { channels?: ScopeChannelSetting[] }
+
+function channelNumber(value: unknown): number | undefined {
+  if (typeof value === "number") return value
+  if (typeof value === "string") {
+    const m = /^\s*(?:c|ch|channel)?\s*(\d+)\s*$/i.exec(value)
+    if (m) return Number(m[1])
+  }
+  return undefined
+}
+
+/**
+ * 通道的写法归一:2、"2"、"C2"、"ch2" 都是"第 2 路",与触发源用的 "C2" 同一套叫法;设置对象原样。
+ * 范围留给 schema 去判。session 的 execute 与工具的 prepareArguments 都经过这里,只有一处真源。
+ */
+export function normalizeScopeArguments(args: unknown): unknown {
+  if (!args || typeof args !== "object" || Array.isArray(args)) return args
+  const input = args as Record<string, unknown>
+  const out: Record<string, unknown> = { ...input }
+  if (Array.isArray(input.channels))
+    out.channels = input.channels.map((c) => {
+      const n = channelNumber(c)
+      return n === undefined ? c : { ch: n }
+    })
+  if (typeof input.channel === "string") {
+    const n = channelNumber(input.channel)
+    if (n !== undefined) out.channel = n
+  }
+  return out
+}
 
 export interface ScopeChannelDetails {
   ch: number
@@ -299,7 +336,7 @@ export const SCOPE_CONTRACT = {
 devices lists USB instruments plus the driver catalog with example addresses; connect selects one (auto-detects the driver from *IDN?, or use driver@address) and remembers its address; status reads current settings. Both return capabilities: the legal couplings, probes, trigger sources, memory depths and sample rates for the current channel configuration, and warnings such as an unverified model.
 setup applies channels/timebase/trigger/mdepth and reports actual readback and mismatches. Use arm (optional settings), perform the flash/reset/physical action, then collect to capture a transient. collect timeout keeps waiting; stop discards the armed operation. disconnect releases the instrument for another session or application.
 capture defaults to exact (stride=1), max 2M points per channel; it refuses a larger record, so lower mdepth before capture. quality=overview intentionally decimates: useful for shape, unable to prove absence of a glitch. mode=current freezes the existing record; mode=single waits for a new trigger.
-All samples and acquisition settings are saved under .yoma/scope/<id>. list and samples read this evidence offline, with time relative to trigger. measure uses the instrument's own measurements; screenshot attaches a PNG. Raw samples never enter the conversation history; use a bounded samples window instead.
+All samples and acquisition settings are saved under .yoma/scope/<id>. list and samples read this evidence offline, with time relative to trigger; samples with edges:true returns the threshold crossings (edge times, direction, spacing), which is how edge timing is read. measure uses the instrument's own measurements; screenshot attaches a PNG. Raw samples never enter the conversation history; use a bounded samples window instead.
 Only one session owns an instrument at a time. An armed acquisition retains ownership until collect/stop/disconnect. USB cancellation or communication failure drops the connection; reconnect before retrying.`,
   guidelines: [
     "For analog evidence use scope capture/measure. First state the measurement point, channel, wiring or clamp position, and physical probe attenuation/sensitivity, ask the human to perform/confirm those physical actions, and wait for their reply. USB cannot verify the actual wiring, clamp orientation or probe range.",
