@@ -54,12 +54,21 @@
   background: var(--bench-surface-raised);
 }
 
+/**
+ * 页签区。右边那道**整高**的竖线是承重的:名牌右侧那行读数说的是**当前页签**那台仪器的现状,
+ * 而它排在整排页签之后 —— 日志在第一格时,它紧挨着的是「调试器」那一格,间距还比页签之间更小
+ * (实测 9px vs 12px),整行于是读成「调试器 已停止 sh tools/uart-sim.sh」,把日志的来源挂到了
+ * gdb 名下。一道竖线把页签区收口,后面那段才是读数自己的地盘。
+ */
 [data-component="session-console"] [data-slot="tablist"] {
   display: flex;
   align-items: center;
+  align-self: stretch;
   gap: 2px;
   flex: none;
   min-width: 0;
+  padding-right: 9px;
+  border-right: 1px solid var(--bench-line);
 }
 
 [data-component="session-console"] button[data-slot="tab"] {
@@ -116,7 +125,14 @@
   color: var(--bench-active);
 }
 
-/** 名牌右边那行读数:`已停止 sh tools/uart-sim.sh`。挤不下时它先让位。 */
+/**
+ * 名牌右边那行读数:`已停止 sh tools/uart-sim.sh`。挤不下时它先让位。
+ *
+ * **前面那道竖线是承重的。** 读数说的是**当前页签**那台仪器的现状,而它排在整排页签之后 ——
+ * 日志在第一格时,它紧挨着的是"调试器"那一格,而且间距比页签之间还小(实测 9px vs 12px),
+ * 于是整行读成「调试器 已停止 sh tools/uart-sim.sh」,把日志的来源挂到了 gdb 名下。
+ * 一道竖线 + 一段留白把页签区收口,读数这才是自己一段。
+ */
 [data-component="session-console"] [data-slot="headline"] {
   flex: 0 1 auto;
   min-width: 0;
@@ -158,6 +174,18 @@
 [data-component="session-console"] [data-slot="controls"] input[data-slot="filter"]:focus-visible {
   outline: none;
   border-color: var(--bench-active);
+}
+/** 过滤命中数(`9 / 18`)。只在真过滤时出现,定宽等宽,不跟着结果左右跳。 */
+[data-component="session-console"] [data-slot="controls"] [data-slot="match"] {
+  flex: none;
+  font-family: var(--bench-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  color: var(--bench-muted);
+  white-space: nowrap;
+}
+[data-component="session-console"] [data-slot="controls"] [data-slot="match"][data-empty="true"] {
+  color: var(--bench-warn);
 }
 [data-component="session-console"] [data-slot="controls"] button {
   flex: none;
@@ -313,6 +341,20 @@
 [data-component="session-status-bar"] [data-component="bench-chip"] [data-slot="value"] {
   color: var(--bench-muted);
 }
+/**
+ * **offline 的那 0.6 层透明度在这儿要摘掉。**
+ *
+ * 原语里它是对的:面板上一格灭掉的仪器该退到背景里。但状态栏坐在页面底色上,再乘 0.6
+ * 就把「GDB 已结束 故障 foc.c:45」压到 **1.9:1**(浅色)/ 2.1:1(深色)—— 实测量出来的,
+ * 而那一格里装着的正是这次会话唯一的结论。灯自己有一份 offline 的暗度(bench.css 里的
+ * 0.55),状态由它说;字不该跟着一起灭。
+ */
+[data-component="session-status-bar"] [data-component="bench-chip"][data-state="offline"] {
+  opacity: 1;
+}
+[data-component="session-status-bar"] [data-component="bench-chip"][data-state="offline"] [data-slot="label"] {
+  color: var(--bench-faint);
+}
 /** 格与格之间一道发丝线,而不是一圈药丸 —— 这是状态栏,不是按钮条。 */
 [data-component="session-status-bar"] [data-component="bench-chip"] + [data-component="bench-chip"] {
   border-left: 1px solid var(--bench-line);
@@ -402,10 +444,27 @@
 /* ================================================================ 右栏:按需仪器页 */
 
 [data-component="instrument-rail"] {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
   flex: 1 1 auto;
+}
+
+/**
+ * 最底下一层渐隐。
+ *
+ * 波形面板比右栏高的时候(1280×800 + 控制台开着就是:示波器要 ~560px,拿得到 ~430px)
+ * 图**是滚得动的**,但 macOS 的悬浮滚动条平时不画,于是那条正弦波看起来是被直接切断的 ——
+ * 像坏了,而不是像"下面还有"。渐隐把切口说清楚;内容没顶到底时它是底色渐隐到底色,看不见。
+ */
+[data-component="instrument-rail"]::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 18px;
+  background: linear-gradient(to top, var(--bench-surface), transparent);
+  pointer-events: none;
 }
 
 /** 一台仪器时不出页签行 —— 一个孤零零的页签只是噪声。 */

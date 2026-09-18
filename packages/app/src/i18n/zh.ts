@@ -298,6 +298,8 @@ export const dict = {
   "session.bench.log.filter": "过滤",
   "session.bench.log.follow": "跟随",
   "session.bench.log.refresh": "重读最新的日志文件",
+  "session.bench.log.match": "{{shown}} / {{total}}",
+  "session.bench.log.fromDisk": "磁盘上的上一次采集",
   "session.bench.log.noMatch": "没有匹配这个过滤条件的行",
   "session.bench.log.empty": "这个工程还没有硬件日志。",
   "session.bench.log.emptyHint": "让 agent 用 log 工具开始采集(串口、TCP 上的 RTT,或者一条命令的输出)。",

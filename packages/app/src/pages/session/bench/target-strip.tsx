@@ -22,6 +22,14 @@ export interface BenchChip {
   value?: string
   /** 灯的档位。`ok` / `fail` 是烧录专用的两档,其余与仪器的四档同名。 */
   state: InstrumentState | "ok" | "fail"
+  /**
+   * 读数本身的语气,与灯分开。
+   *
+   * 灯说的是"这台仪器**现在**什么状况"(gdb 会话收了 = offline,灯灭),读数说的是
+   * "它**留下了**什么"(`故障 foc.c:45`)。两件事写在同一格里,却不该同一个颜色:
+   * 会话收了之后灯该灭,而那一行出事的代码是这次调试**唯一的结论**,灭了就等于把答案藏起来。
+   */
+  tone?: "fail" | "warn"
   /** 鼠标停住时的全文(命令行、故障原句、日志来源)。 */
   title?: string
 }
@@ -50,6 +58,7 @@ export function benchChips(status: BenchStatus, t: (key: string) => string): Ben
       label: t("session.bench.chip.flash"),
       value: flash.ok ? `✓ ${hhmmss(flash.at)}` : `✗ ${failValue}`,
       state: flash.ok ? "ok" : "fail",
+      tone: flash.ok ? undefined : "fail",
       title: flash.error ?? flash.image ?? flash.command,
     })
   }
@@ -75,6 +84,8 @@ export function benchChips(status: BenchStatus, t: (key: string) => string): Ben
           : gdb.state === "exited" || gdb.state === "connection-lost" || gdb.state === "none"
             ? "offline"
             : "idle",
+      // 故障那一行不跟着灯灭:会话收了它仍然是这次调试的结论。
+      tone: gdb.fault ? "fail" : undefined,
       title: gdb.fault ?? gdb.connection,
     })
   }
@@ -89,6 +100,7 @@ export function benchChips(status: BenchStatus, t: (key: string) => string): Ben
         .filter(Boolean)
         .join(" "),
       state: log.capturing ? "active" : typeof log.exitCode === "number" && log.exitCode !== 0 ? "attention" : "idle",
+      tone: typeof log.exitCode === "number" && log.exitCode !== 0 ? "warn" : undefined,
       title: log.source ?? log.file,
     })
   }
@@ -176,7 +188,12 @@ function ChipView(props: { chip: BenchChip; onSelect?: (id: InstrumentId) => voi
     <Show
       when={selectable()}
       fallback={
-        <span data-component="bench-chip" data-state={props.chip.state} title={props.chip.title}>
+        <span
+          data-component="bench-chip"
+          data-state={props.chip.state}
+          data-tone={props.chip.tone}
+          title={props.chip.title}
+        >
           {body()}
         </span>
       }
@@ -185,6 +202,7 @@ function ChipView(props: { chip: BenchChip; onSelect?: (id: InstrumentId) => voi
         type="button"
         data-component="bench-chip"
         data-state={props.chip.state}
+        data-tone={props.chip.tone}
         data-instrument={props.chip.id}
         title={props.chip.title}
         onClick={() => {
