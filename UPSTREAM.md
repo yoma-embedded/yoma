@@ -128,4 +128,4 @@ e2e:renderer / smoke:mailbox / e2e:mailbox / e2e:paint)全绿。真实 provider 
 
 ## Windows 测试夹具适配
 
-`packages/agent/vitest.config.ts` 加载 `scripts/upstream-test-portability.ts`，仅在 Windows 对四个指定的上游测试模块转换夹具：JSONL 的 `/workspace` 及其编码目录换成带盘符的路径，Git Bash 的 `$PWD` 经 `cygpath` 输出原生路径。源码和测试的磁盘文件仍按上游哈希锁定，断言不删、不跳过，生产模块不转换。上游改变夹具写法后须复核该适配；`scripts/test/upstream-test-portability.test.ts` 检查当前夹具与适配一致。
+`packages/agent/vitest.config.ts` 加载 `scripts/upstream-test-portability.ts`，仅在 Windows 对指定的上游测试模块做转换：JSONL 的 `/workspace` 及其编码目录换成带盘符的路径，Git Bash 的 `$PWD` 经 `cygpath` 输出原生路径，`session-test-utils` 的 afterEach 在 EPERM / EBUSY / ENOTEMPTY 时让出事件循环再删（timeout/abort 留下的 bash/sleep 还攥着目录；Node 的 `rmSync` retryDelay 并不真的等，与 `packages/kernel/test/cleanup.ts` 同一条）。源码和测试的磁盘文件仍按上游哈希锁定，断言不删、不跳过，生产模块不转换。上游改变夹具写法后须复核该适配；`scripts/test/upstream-test-portability.test.ts` 检查当前夹具与适配一致。

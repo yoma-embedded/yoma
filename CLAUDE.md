@@ -545,7 +545,9 @@ typecheck 全绿、单测全绿、`e2e:ipc` 全绿,照样可以在这一跳把�
   设成 10 次 × 200 ms(名义上最多 11 秒)之后,整个用例文件仍然 7.2 秒就报了 EPERM —— 上一版"多重试几次"因此是空转,
   这条在 ci 上又挂了一次并挡住了 v0.2.9 的发版(发版脚本见 ci 红就不打 tag,是对的)。`removeTempDir` 每次失败让出
   事件循环、真睡 100 ms,只重试 EPERM / EBUSY / ENOTEMPTY,到期限把原错误抛出来。今天只有 `tools-stm32config` 接了它;
-  别的用例文件在 afterEach 里清"刚 abort 过子进程"的目录时照着接。与上面探针锁那条是同一个教训的第二次:
+  别的用例文件在 afterEach 里清"刚 abort 过子进程"的目录时照着接。agent 的上游用例不能改 `session-test-utils.ts`
+  (哈希锁定),Windows 上走 `scripts/upstream-test-portability.ts` 把 afterEach 改成真等再删 —— v0.3.1 的 ci 就是
+  timeout/abort 三条在 afterEach 里 EPERM 挂的。与上面探针锁那条是同一个教训的第二次:
   **"等不到"和"等得慢"要分开,先看那个东西到底有没有在等。**
 - **CI 上的等待是放大过的**(2026-09-17,`packages/kernel/test/patience.ts`)。那之前 develop 的 `ci` 时红时绿,
   每次挂的用例都不一样、全是超时,真回归会被淹在里面。用例自己的期限大多已给到 20–30 秒,先到期的是**里面**

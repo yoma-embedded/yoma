@@ -28,4 +28,14 @@ describe("upstream test portability", () => {
       expect(output.replaceAll('"$(cygpath -alw .)"', '"$PWD"')).toBe(input)
     }
   })
+  it("makes session temp-dir cleanup wait out Windows EPERM instead of calling rmSync once", () => {
+    const id = resolve(import.meta.dirname, "../..", "packages/agent/test/harness/session-test-utils.ts")
+    const input = readFileSync(id, "utf8")
+    const output = adaptUpstreamTest(input, id)!
+    expect(output).toContain("afterEach(async () => {")
+    expect(output).toContain('errCode !== "EPERM"')
+    expect(output).toContain("setTimeout(resolve, 100)")
+    expect(output).not.toContain("if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });")
+    expect(adaptUpstreamTest(input, "/repo/packages/agent/src/harness/session-test-utils.ts")).toBeUndefined()
+  })
 })
