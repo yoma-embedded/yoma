@@ -1,0 +1,120 @@
+/**
+ * 状态栏最左那一格(目标格)与它带出来的浮层。
+ *
+ * 单独一个文件而不是并进 `console.css`:这一格是借来的功能,合并回集成分支时应该是一次
+ * 新增文件加一行接线,而不是在一份三家都在改的样式表中间插一段。
+ */
+
+/* ---------------------------------------------------------------- 目标格 */
+
+[data-component="session-status-bar"] button[data-component="bench-target-slot"] {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  /* 与状态条那几格同一套内边距,于是五格之间的节奏是一致的。 */
+  padding: 0 9px;
+  /* 负的 margin 把第一格的内边距吃掉 —— 第一个字与上面那张聊天卡片的左边缘对齐
+     (状态条从前顶着这个位置,现在让给目标格)。 */
+  margin-left: -9px;
+  height: 18px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  line-height: 16px;
+  font-size: 11px;
+  cursor: pointer;
+}
+[data-component="session-status-bar"] button[data-component="bench-target-slot"]:hover,
+[data-component="session-status-bar"] button[data-component="bench-target-slot"][data-pinned="true"] {
+  background: var(--bench-surface-raised);
+}
+[data-component="session-status-bar"] button[data-component="bench-target-slot"]:focus-visible {
+  outline: 2px solid var(--bench-active);
+  outline-offset: -1px;
+}
+
+/** 工程名是这一格的主语:比旁边的状态词重一档,但不抢 LED 的眼。 */
+[data-component="bench-target-slot"] [data-slot="name"] {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--bench-ink);
+  font-weight: 550;
+  letter-spacing: 0.01em;
+}
+[data-component="bench-target-slot"] [data-slot="sep"] {
+  flex: none;
+  color: var(--bench-faint);
+}
+/** 芯片短名:铭牌字(等宽、小、灰)。**它是第一个让位的** —— 见下面那条窄屏规则。 */
+[data-component="bench-target-slot"] [data-slot="chip"] {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--bench-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  color: var(--bench-muted);
+}
+
+/** 目标格与状态条之间一道发丝线,和状态条内部格与格之间的那道同解。 */
+[data-component="session-status-bar"] [data-component="bench-target-slot"] + [data-component="bench-target-strip"] {
+  padding-left: 9px;
+  margin-left: 0;
+  border-left: 1px solid var(--bench-line);
+}
+
+/**
+ * **放不下时先收芯片名。**
+ *
+ * 1280 宽下状态栏要装:目标格 + 烧录 / GDB / 日志 / (示波器 / LA)+ 右边的日志读数
+ * + 控制台按钮。逐格量过,`f405-motor-ctrl · stm32f4x` 那个 ` · stm32f4x` 是最先该走的 ——
+ * 芯片名在卡上说得更全(还带内核与探针),而工程名是这一格的主语,收掉就不剩什么了。
+ */
+@media (max-width: 1360px) {
+  [data-component="session-status-bar"] [data-component="bench-target-slot"] [data-slot="sep"],
+  [data-component="session-status-bar"] [data-component="bench-target-slot"] [data-slot="chip"] {
+    display: none;
+  }
+}
+
+/* ---------------------------------------------------------------- 浮层 */
+
+/**
+ * 卡挂在 body 上(Portal),位置由格子的 rect 现算,所以这里只有定位与投影。
+ * z-index 40:压得住页面里的一切,但让开模态对话框(50)与 toast(1000)。
+ */
+[data-component="bench-target-popover"] {
+  position: fixed;
+  z-index: 40;
+  font-size: 13px;
+  color: var(--bench-ink);
+  filter: drop-shadow(0 6px 18px rgb(0 0 0 / 28%));
+  animation: bench-target-popover-in 110ms ease-out;
+}
+/** 钉住的那张不再是"刚弹出来的",少一点动效。 */
+[data-component="bench-target-popover"][data-pinned="true"] {
+  animation: none;
+}
+
+@keyframes bench-target-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-component="bench-target-popover"] {
+    animation: none;
+  }
+}
