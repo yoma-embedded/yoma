@@ -538,6 +538,21 @@ CC:模型在跑的时候,用户敲的消息进队列,在下一个工具轮次结
 
 结论写回本文;P2 时转成正式测试或删掉。**不要放进 `packages/agent/`**(锁定目录)。
 
+**P0 结果(2026-09-18,`packages/kernel/src/host/subagent-spike.test.ts`)**:11 个用例全过(c1 按"custom 通知 / 用户消息"各跑一次,另加 (g) 一条事实核对),连跑 5 次 5 次全绿,单次测试耗时约 0.6 s;变异验证 4/4 被抓(c2 不 steer、e1 上限改 3、e2 整批 terminate、d 不挂中止,各自对应的用例变红)。typecheck 11/11、oxlint 0 警告。本方案依赖的 v2 行为全部成立,设计不用改:
+
+| # | 结论 |
+|---|---|
+| (a) | `repo.create({ parentSessionId })` 写进文件头,`repo.list()` 不开会话就带出 `parentSessionId`;子会话独立 harness 跑完一轮,`findEntries({ order: "newestFirst", type: "message" })` 取得到最后一条 assistant 文本 |
+| (b) | 空闲时 `steer` 不起轮(`inspectExecution().current === null`);`accept({ prompt: [] })` 收走它,模型侧是 user 角色,transcript 是 `role: "custom"` 条目;收件箱空时错误为 `{ _tag: "InvalidMessage", reason: "empty" }` |
+| (c1) | 父卡在一批工具里时 steer(custom 或用户消息)→ 这批结束后的下一次请求就带上,顺序是 `toolResult → user`,不多起一轮 —— §6.9 的排队就是这条 |
+| (c2) | 模型正在生成最后一段回答时 steer → 这一轮接着跑、共 2 次请求、只有一个 `run_end`;在模型请求进行中调 `lane.steer` 不会死锁 |
+| (c3) | `run_end` 之后 steer → lane 空闲,`queue_update` 带出 `{ kind: "steer", type: "message" }`;`accept({ prompt: [] })` 收走后 `queue_update` 变空 |
+| (d) | 父 `requestAbort` → 父工具的 `context.abortSignal` 立刻触发 → 工具里 `requestAbort` 子 lane → 子的模型流收到中止,子、父两轮都以 `aborted` 落定,父没有第二次请求 |
+| (e1) | maxTurns 钩子成立:max = 2 时第 2 轮的两个工具跑完就停,`completed`,最后一条是 `toolResult` |
+| (e2) | 同一批只有部分调用带 `terminate` → 不停,照常请求下一轮(确认 v2 要求整批都带) |
+| (f) | 只 accept 没 drive 就 `harness.close()`,重开后 `open` 里有这条 `{ lane: "main", kind: "run" }`,新 accept 回 `LaneBusy`;`lane.abort()` 之后照常可用 |
+| (g) | 父卡在工具里时 steer 一条通知 + 一条用户消息,`requestAbort` 的返回值 `steer` 就是这两条(`["custom", "user"]`),之后收件箱为空 —— §14"停止键清空收件箱"的根,已钉成事实,本期不处理 |
+
 **P1 定义与工具**(用假的 `TaskHost`):`host/domain/agents/*`(类型、内建三份、加载与覆盖、frontmatter、`resolveAgentTools`)+ 四个工具的契约与 session + `TOOL_NAMES` +4。测试:agent 列表与工具描述的渲染;硬黑名单 / 硬件层 / 黑白名单;后台关闭时 schema 里没有 `run_in_background`;前台 / 后台 / 被停三种结果的**逐字**文本;`oneShot` 省尾巴;空结果占位句;`task_output` 的 block / timeout;`send_message` 的三个分支;前台时 `abortSignal` 的转发。`boundary.test.ts`、`tool-names.test.ts`、`npm run typecheck` 全绿。
 
 **P2 宿主**(**先写场景测试,再写实现** —— v0.2 §14 的四处缺口,全是"把设计场景放到现有代码上走一遍时序"才掉出来的,同类问题大概率还有):`host/tasks.ts` + §6.8 的 SessionManager 改动。`host.test.ts`(faux)场景:
