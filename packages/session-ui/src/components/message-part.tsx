@@ -28,6 +28,10 @@ import { useData } from "../context"
 import { useDialog } from "@yoma-desktop/ui/context/dialog"
 import { useI18n } from "@yoma-desktop/ui/context/i18n"
 import { GenericTool } from "./basic-tool"
+import { FlashTool } from "./flash-tool"
+import { GdbTool } from "./gdb-tool"
+import { LaTool } from "./la-tool"
+import { LogTool } from "./log-tool"
 import { ScopeTool } from "./scope-tool"
 import { FileIcon } from "@yoma-desktop/ui/file-icon"
 import { Icon } from "@yoma-desktop/ui/icon"
@@ -611,7 +615,18 @@ const state: Record<
     name: string
     render?: ToolComponent
   }
-> = { scope: { name: "scope", render: ScopeTool } }
+  /**
+   * 五个嵌入式工具各有一张专用卡(v5-cards):折叠态就把这一次硬件动作的结论说出来,
+   * 展开态是排好版的仪器读数。其余工具仍走 `GenericTool`。
+   * 每张卡自己防御式解析 details,拿不准就回落到通用卡 —— 见 `hw-tool.tsx` 的头。
+   */
+> = {
+  flash: { name: "flash", render: FlashTool },
+  log: { name: "log", render: LogTool },
+  gdb: { name: "gdb", render: GdbTool },
+  la: { name: "la", render: LaTool },
+  scope: { name: "scope", render: ScopeTool },
+}
 
 export function registerTool(input: { name: string; render?: ToolComponent }) {
   state[input.name] = input

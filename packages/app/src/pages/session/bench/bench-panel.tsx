@@ -22,7 +22,8 @@ import {
   type InstrumentDef,
 } from "./instruments"
 import { TargetStrip } from "./target-strip"
-import "./bench.css"
+// bench.css 住在 session-ui(时间线里的硬件工具卡片与这些面板共用同一套原语),
+// 经 `@yoma-desktop/session-ui/styles` 进样式表 —— app 的 index.css 已经 import 了那一份。
 
 export function BenchPanel() {
   const language = useLanguage()

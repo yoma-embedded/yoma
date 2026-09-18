@@ -1,6 +1,13 @@
 /**
  * 调试工作台的视觉原语 —— 仪器台的身份,给四种布局共用。
  *
+ * **住在 session-ui 而不是 app**(2026-09-18,v5-cards):时间线里的硬件工具卡片
+ * (`hw-tool.tsx` 与 flash / log / gdb / la / scope 五张卡)与右栏的仪器面板
+ * (app 的 `pages/session/debug` + `pages/session/bench`)必须是同一套 LED / 读数行 /
+ * 通道色,而分层是 ui → session-ui → app —— 两边都够得着的最低那一层就是这里。
+ * 它经 `session-ui/styles` 进样式表(app 的 index.css 已经 import 了那一份),
+ * 所以面板那边不需要再 `import "./bench.css"`。
+ *
  * 纪律:
  * - 颜色全部从 app 主题 token 派生(--background-* / --text-* / --border-*),没有写死的明暗两套;
  *   要两套值时用 CSS 的 `light-dark()`(theme.css 已经设了 color-scheme,ui 包里到处在用)。

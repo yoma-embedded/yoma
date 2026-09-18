@@ -122,10 +122,13 @@ describe("通道色只有一份", () => {
   test("bench.css 里的 --bench-chN 与这份逐字相同 —— canvas 读不到 CSS 变量,两边必须手工同解", () => {
     // happy-dom 下 `import.meta.url` 是个 http 地址,不能拿去 fileURLToPath;
     // 从 cwd 找(根目录跑 `--project app` 与包目录里跑 `vitest run` 两种都要成立)。
-    const rel = "src/pages/session/bench/bench.css"
-    const file = [resolve(process.cwd(), rel), resolve(process.cwd(), "packages/app", rel)].find((path) =>
-      existsSync(path),
-    )
+    // bench.css 2026-09-18 搬到了 session-ui(卡片与面板共用),所以这里往上一层找。
+    const rel = "packages/session-ui/src/components/bench.css"
+    const file = [
+      resolve(process.cwd(), rel),
+      resolve(process.cwd(), "..", "..", rel),
+      resolve(process.cwd(), "../session-ui/src/components/bench.css"),
+    ].find((path) => existsSync(path))
     expect(file, "找不到 bench.css").toBeTruthy()
     const css = readFileSync(file!, "utf8")
     for (const [index, variable] of BENCH_CHANNEL_VARS.entries()) {
