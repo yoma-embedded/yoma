@@ -2,12 +2,21 @@ import { execFile } from "node:child_process"
 import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
+import { pathToFileURL } from "node:url"
 import { promisify } from "node:util"
 import { afterEach, describe, expect, it } from "vitest"
 import { applySync, MIRROR_DIRECTORY, prepareSync } from "../sync-upstream.ts"
 import { checkProtectedFiles, parseUpstreamLock, sha256, type UpstreamLock } from "../upstream-common.ts"
 
 const execute = promisify(execFile)
+
+/**
+ * 夹具仓库的 file:/// 地址。不许手拼 `file://${path}`:Windows 上拼出来的是 `file://C:\…`(两个斜杠、
+ * 反斜杠),过不了 validateRepositoryUrl 的白名单 —— 这三条用例在 Windows 上因此一直是红的。
+ */
+function fileUrl(path: string): string {
+  return pathToFileURL(path).href
+}
 const roots: string[] = []
 const aiFile = "packages/ai/src/example.ts"
 const generatedFile = "packages/ai/src/providers/data/faux.json"
@@ -90,7 +99,7 @@ async function exists(path: string): Promise<boolean> {
 describe("自管上游镜像(不依赖某台机器上的检出)", () => {
   it("不给 --source 时按锁里的仓库地址自己克隆,并在第二次运行时 fetch 到新提交", async () => {
     const { source, projectRoot, commit } = await fixture()
-    await pointLockAtRepository(projectRoot, `file://${source}`)
+    await pointLockAtRepository(projectRoot, fileUrl(source))
     await put(source, aiFile, "upstream ai\n")
     const to = await commit()
 
@@ -110,7 +119,7 @@ describe("自管上游镜像(不依赖某台机器上的检出)", () => {
 
   it("--offline 用已有镜像不联网:上游走了也看不见", async () => {
     const { source, projectRoot, commit } = await fixture()
-    await pointLockAtRepository(projectRoot, `file://${source}`)
+    await pointLockAtRepository(projectRoot, fileUrl(source))
     await put(source, aiFile, "upstream ai\n")
     const first = await commit()
     expect((await prepareSync({ projectRoot })).to).toBe(first)
@@ -130,12 +139,12 @@ describe("自管上游镜像(不依赖某台机器上的检出)", () => {
 
   it("已有镜像指向别的上游时停下,不悄悄接着用", async () => {
     const { source, projectRoot, commit } = await fixture()
-    await pointLockAtRepository(projectRoot, `file://${source}`)
+    await pointLockAtRepository(projectRoot, fileUrl(source))
     await put(source, aiFile, "upstream ai\n")
     await commit()
     await prepareSync({ projectRoot })
     // 换一个地址:同名目录里那份历史不再是锁说的那一份了。
-    await pointLockAtRepository(projectRoot, `file://${source}-other`)
+    await pointLockAtRepository(projectRoot, fileUrl(`${source}-other`))
     await expect(prepareSync({ projectRoot })).rejects.toThrow(/与锁里的/)
   })
 

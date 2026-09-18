@@ -520,7 +520,17 @@ typecheck 全绿、单测全绿、`e2e:ipc` 全绿,照样可以在这一跳把�
 - `packages/kernel` 有**两个**项目:`kernel`(`src/**/*.test.ts` —— 投影器不变式、事件流、
   边界闸门、端到端 host)与 `kernel-domain`(并包搬来的 `test/**`,25 个文件 546 个用例,
   配置在 `vitest.domain.config.ts`,`fileParallelism: false` **串行**跑 —— 它们碰真实文件系统与子进程)。
-  根 `vitest.config.ts` 里显式列了第二份;CI 的 Windows 岗跑的就是 `--project kernel-domain`。
+  根 `vitest.config.ts` 里显式列了第二份。
+- **CI 的 Windows 岗跑 `npm run test:windows`**:agent / kernel / kernel-domain / desktop,2026-09-18 起加上 bench /
+  scripts / app / app-browser / ui / session-ui。那之前后六个从没在 Windows 上跑过,第一次在 Windows 开发机上跑全量
+  就是 6 条红 + 22 个文件加载不了,全是平台问题、烂了多久没人知道 —— 其中一条还是产品 bug(信箱改换行,见「信箱闭环」)。
+  新写用例时别在 Windows 上坏的四条规矩:
+  1. vitest 配置里 solid 插件一律 `solid({ hot: false })`:开着热更新,Windows 上凡是 import 到 `.tsx` 的用例文件
+     整个加载不了(`file:///@solid-refresh` 不是合法的 file URL)。
+  2. file URL 用 `pathToFileURL(p).href`,不手拼 `` `file://${p}` ``(Windows 上拼出来是 `file://C:\…`)。
+  3. 断言里的路径过 `path.resolve` 再比(`"/tmp/ws"` 在 Windows 上是 `D:\tmp\ws`)。
+  4. 真跑 git / 起子进程的用例别吃缺省 5 秒:Windows 上起进程贵一个数量级,bench 的期限在它的 `vitest.config.ts`
+     里按平台定(CI 60 秒 / Windows 本机 20 秒 / 其余 5 秒)。这与 `patience.ts` 不矛盾 —— 那条管的是"等",这条是活就有这么多。
 - **会真跑 flash / gdb 的用例文件必须隔离探针锁**(2026-09-17):`beforeAll` 里把 `YOMA_PROBE_LOCK` 指到
   `tmpdir()/yoma-probe-test-<pid>.lock`。探针租约除了进程内那份还落一把**跨进程**的锁(`~/.yoma/probe.lock`),
   而 vitest 把用例文件分给不同的 worker **进程**:不隔离的两个文件共用机器上同一把锁,flash 一重叠,后到的拿不到
@@ -1258,6 +1268,10 @@ Windows 失败时这里超时变红,本来也不该有只含 mac 的 Release)。
   结果是数据落真实位置、钥匙串却"找不到",Chromium 初始化 safeStorage 时弹系统级
   "找不到钥匙串"对话框,app 几秒后安静退出。两边语义相反,假 HOME 两头都不干净。
   验证打包产物就用真实 HOME;无 key 首跑路径由 `host/auth.test.ts` 的子进程 e2e 覆盖。
+- **`npm install` 之后 `package-lock.json` 少了一批 `"libc"` 行 = 这台机器的 npm 低于 11,别提交。** 根
+  `package.json` 钉的是 `npm@11.19.0`(`engines.npm >=11`),旧 npm 不认这个字段、顺手抹掉,而 Linux 上靠它挑
+  glibc / musl 的预编译包。`git checkout -- package-lock.json` 还原(`node_modules` 已经装好,不受影响),再
+  `npm i -g npm@11`。实测(2026-09-18):Windows 开发机上是 npm 10.9。
 - **内核没有 HMR。** 改了 yoma 之后必须重启 `npm run dev:desktop`。
 - **这是一个 fork**:2026-08 起运行时身份已统一为 Yoma(`app.setName("Yoma")`、
   运行时 appId = bundle id = `com.yoma.desktop`、深链 `yoma://`),旧的
