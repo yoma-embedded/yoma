@@ -296,8 +296,8 @@ export const dict = {
   "session.bench.loading": "正在载入仪器…",
   // 目标卡(从 v3-bench 借来,住在状态栏最左那一格上方的浮层里)
   "session.bench.target.label": "目标板",
-  "session.bench.target.pin": "钉住目标卡",
-  "session.bench.target.unpin": "取消钉住目标卡",
+  "session.bench.target.pin": "按住目标卡(点别处收起)",
+  "session.bench.target.unpin": "收起目标卡",
   "session.bench.target.specSource": "{{source}} 自己报的,不是推断出来的",
   "session.bench.target.logOnDisk": "工程里有 {{count}} 份旧日志",
   "session.bench.target.unknown": "烧录与 gdb 的输出里都没说目标是谁",
@@ -308,6 +308,7 @@ export const dict = {
   "session.bench.log.refresh": "重读最新的日志文件",
   "session.bench.log.match": "{{shown}} / {{total}}",
   "session.bench.log.fromDisk": "磁盘上的上一次采集",
+  "session.bench.log.fromDiskShort": "上一次的日志",
   "session.bench.log.noMatch": "没有匹配这个过滤条件的行",
   "session.bench.log.empty": "这个工程还没有硬件日志。",
   "session.bench.log.emptyHint": "让 agent 用 log 工具开始采集(串口、TCP 上的 RTT,或者一条命令的输出)。",

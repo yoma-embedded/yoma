@@ -209,7 +209,6 @@ export const dict: Record<string, string> = {
   // ---- 嵌入式工具卡片(v5-cards)。`hw.*` 是五张卡共用的段名,其余按工具分。
   "ui.tool.hw.readout": "Readout",
   "ui.tool.hw.output": "Tool output",
-  "ui.tool.hw.elapsed": "Elapsed",
   "ui.tool.hw.rawLines": "{{count}} lines",
 
   "ui.tool.flash.done": "flashed",
