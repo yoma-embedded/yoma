@@ -849,6 +849,15 @@ text part,不过滤的话提示词会原样出现在终报的"根因分析"里)�
   `serializeMailboxJob` 会主动摘掉 `repo.directory`。工位端根本不需要这个配置。
 - 附件落在工位端工作目录的**根**,`result.incoming` 里是纯文件名。
   **不清空**:某轮没带附件不代表旧固件失效,板上跑的还是它。
+- **信箱必须逐字节透明**(2026-09-18,`sync.ts` 的 `ensureByteTransparent`)。Git for Windows 的安装器缺省把
+  `core.autocrlf=true` 写进系统级配置,而工位机正是 Windows:下行的文本附件落地时 LF 变 CRLF(Git Bash 脚本跑不了、
+  文件哈希两边对不上),上行的串口日志(本来是 CRLF)提交时被规整成 LF —— **证据被悄悄改写**,两头都不报错。
+  两道防线:每个克隆的 `.git/info/attributes` 写 `* -text`(属性里优先级最高,不进提交,旧信箱下一次同步就生效;
+  克隆那一下另带 `-c core.autocrlf=false`,因为首次检出早于它),init 再往信箱根提交一份 `.gitattributes`(对面可能是
+  没有这个修复的旧版本)。用例自己把 autocrlf 钉成 true(`GIT_CONFIG_GLOBAL` 指到临时文件;**不能用
+  `GIT_CONFIG_COUNT`**,那是命令档,会连修复一起盖掉),否则在 macOS / Ubuntu 岗上永远是绿的;断言看**仓里的字节**
+  (`cat-file`),不看工作树 —— 提交时规整、检出时换回,往返一趟正好把改写藏住。已经检出过的旧文件不会被回头改写,
+  新一轮的附件是新文件,不受影响。
 - **工位端自述进提示词时头尾都留**(头 6000 + 尾 14000 字,`prompts.ts` 的 `clipEnds`):
   汇总行、RESULT、结论永远在末尾,只截头部正好砍掉最该看的那半(实测一次五轮任务里
   每一轮都超过当时 4000 字的上限,首轮丢掉 44%)。全文另存 `bench-report.md` 并落到

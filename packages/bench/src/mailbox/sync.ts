@@ -16,8 +16,28 @@
  * 新头上,路径不相交所以必然干净。三次都失败就是网络/权限级的问题,如实报错。
  *
  * 所有 git 调用 argv 直接 spawn 不过 shell(复用 git.ts),URL 和路径可以含任何字符。
+ *
+ * ## 信箱必须逐字节透明
+ *
+ * 信箱是两台机器之间唯一的通道:研发端的附件(固件、诊断脚本)与工位端的回传(串口日志、截图)
+ * 都靠它原样送达。而 Git for Windows 的安装器缺省把 `core.autocrlf=true` 写进**系统级**配置 ——
+ * 工位机正是 Windows:
+ * - 下行:文本附件落地时 LF 被换成 CRLF。Git Bash 脚本直接跑不了(行尾多出一个回车,报
+ *   "command not found"),靠文件哈希做自证的(构建指纹)两边对不上。
+ * - 上行:工位端回传的串口日志本来是 CRLF 结尾,提交时被规整成 LF —— **证据被悄悄改写**,而这套
+ *   系统的产品正是证据。
+ * 两头都不报错。2026-09-18 在 Windows 上第一次跑 bench 的全量单测才露出来(host.test 读回的附件
+ * 多了一个回车);CI 的 Windows 岗从前不跑 bench。
+ *
+ * 两道防线,各管一种对方够不着的情形:
+ * - **每个克隆的 `.git/info/attributes` 写 `* -text`**(ensureByteTransparent):属性里优先级最高的一档,
+ *   压过任何一级的 autocrlf 与用户级 attributes 文件;不进提交,所以已经在跑的旧信箱下一次同步就生效。
+ *   克隆那一下另带 `-c core.autocrlf=false`:首次检出发生在 clone 内部,那时 info/attributes 还不存在。
+ * - **信箱根上提交一份 `.gitattributes`**(init 写):对面那台机器跑的可能是没有这个修复的旧版本,
+ *   也可能有人手工 `git clone` 出来看 —— 跟着仓走的这一份对它们同样生效。
  */
 
+import { mkdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 
 import { fileExists } from "../fsx.ts"
@@ -63,8 +83,10 @@ export async function cloneMailbox(
   options?: { run?: GitRunner; branch?: string },
 ): Promise<void> {
   const run = options?.run ?? runGitReal
-  const clone = await run(["clone", "-q", url, dir], ".")
+  // -c core.autocrlf=false:首次检出发生在 clone 内部,那时 info/attributes 还不存在(见文件头)。
+  const clone = await run(["clone", "-q", "-c", "core.autocrlf=false", url, dir], ".")
   if (!clone.ok) throw new Error(`克隆信箱失败:${clone.stderr}`)
+  await ensureByteTransparent(dir)
   const branch = options?.branch ?? "main"
   const current = await run(["rev-parse", "--abbrev-ref", "HEAD"], dir)
   if (current.ok && current.stdout === branch) return
@@ -145,7 +167,40 @@ export function normalizeRemote(url: string): string {
  *
  * 所以拦在**最前面**:模型没调、板子没动之前就停。
  */
+/** 跟着信箱仓走的那一份(init 提交);与 info/attributes 是同一条规则。 */
+export const MAILBOX_ATTRIBUTES_FILE = ".gitattributes"
+const NO_EOL_CONVERSION = "* -text"
+export const MAILBOX_ATTRIBUTES_TEXT = [
+  "# yoma mailbox: byte-for-byte between the two machines. No line-ending conversion on either side,",
+  "# whatever core.autocrlf says (Git for Windows turns it on system-wide).",
+  NO_EOL_CONVERSION,
+  "",
+].join("\n")
+
+/**
+ * 给这个克隆的 `.git/info/attributes` 写上 `* -text`(理由见文件头)。幂等:已有这一行就不动,
+ * 文件里别的规则原样保留。走文件系统而不是 `git config`:守护每次轮询都经过这里,不值得多起一个
+ * 子进程;注入的假 runner 也看不见多出来的一次调用。
+ *
+ * 写不了(`.git` 不是目录的 worktree、只读盘)不抛 —— 那时还有仓里提交的那份 `.gitattributes` 兜着,
+ * 为一道防线的失败停掉整个守护不值得。
+ */
+export async function ensureByteTransparent(clone: string): Promise<void> {
+  const file = path.join(clone, ".git", "info", "attributes")
+  try {
+    const current = await readFile(file, "utf8").catch(() => "")
+    if (current.split(/\r?\n/).some((line) => line.trim() === NO_EOL_CONVERSION)) return
+    await mkdir(path.dirname(file), { recursive: true })
+    const head = current === "" || current.endsWith("\n") ? current : `${current}\n`
+    await writeFile(file, `${head}${NO_EOL_CONVERSION}\n`)
+  } catch {
+    // 见上:交给提交进仓的那一份。
+  }
+}
+
 async function assertOnBranch(context: MailboxSyncContext): Promise<void> {
+  // 每个同步入口都经过这道闸门,于是已经在跑的旧克隆(建的时候还没有这条规矩)下一次同步就补上。
+  await ensureByteTransparent(context.clone)
   const branch = branchOf(context)
   const current = await git(context, "branch", "--show-current")
   if (current.stdout === branch) return

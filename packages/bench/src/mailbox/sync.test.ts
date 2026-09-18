@@ -232,3 +232,100 @@ describe("ensureClone 的两道核对", () => {
     expect((await runGitReal(["branch", "--show-current"], clone)).stdout).toBe("run-9")
   })
 })
+
+/**
+ * 信箱必须逐字节透明(理由见 sync.ts 文件头)。
+ *
+ * **用例自己把 autocrlf 钉成 true**,不指望跑测试的机器:Git for Windows 缺省就是 true,macOS / Linux 缺省
+ * 是 false —— 不钉的话这组用例在 CI 的 macOS / Ubuntu 岗上永远是绿的,修复被人删掉也看不出来。
+ * 钉在**全局**档(GIT_CONFIG_GLOBAL 指到一个临时文件)而不是 GIT_CONFIG_COUNT:后者是命令档,优先级
+ * 压过克隆自己的 local 配置,会连修复一起盖掉。runGitReal 起 git 时继承 process.env。
+ */
+describe("信箱逐字节透明:哪一侧的 git 都不许改换行", () => {
+  const LF_SCRIPT = "#!/bin/sh\necho flashed\n"
+  const CRLF_LOG = "boot ok\r\nadc=1234\r\n"
+
+  async function withAutocrlf<T>(body: () => Promise<T>): Promise<T> {
+    const config = path.join(temp.dir("mailbox-gitconfig-"), "gitconfig")
+    writeFileSync(config, "[core]\n\tautocrlf = true\n")
+    const previous = process.env.GIT_CONFIG_GLOBAL
+    process.env.GIT_CONFIG_GLOBAL = config
+    try {
+      return await body()
+    } finally {
+      if (previous === undefined) delete process.env.GIT_CONFIG_GLOBAL
+      else process.env.GIT_CONFIG_GLOBAL = previous
+    }
+  }
+
+  test("夹具真的生效:不设防的普通克隆在 autocrlf=true 下确实会改换行(否则下面几条是空转)", async () => {
+    await withAutocrlf(async () => {
+      const root = temp.dir("mailbox-raw-")
+      const bare = path.join(root, "origin.git")
+      await initBareMailbox(bare)
+      const a = path.join(root, "a")
+      const b = path.join(root, "b")
+      for (const dir of [a, b]) await runGitReal(["clone", "-q", bare, dir], ".")
+      writeFileSync(path.join(a, "run.sh"), LF_SCRIPT)
+      await runGitReal(["add", "-A"], a)
+      await runGitReal(["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "x"], a)
+      await runGitReal(["push", "-q", "origin", "HEAD:main"], a)
+      await runGitReal(["pull", "-q", "origin", "main"], b)
+      expect(await readFile(path.join(b, "run.sh"), "utf8")).toBe(LF_SCRIPT.replaceAll("\n", "\r\n"))
+    })
+  })
+
+  test("下行:研发端的 LF 脚本到工位端还是 LF;上行:工位端的 CRLF 串口日志进仓还是 CRLF", async () => {
+    await withAutocrlf(async () => {
+      const { bare, runnerClone, motherClone } = await makeMailbox(temp)
+
+      await mkdir(path.join(motherClone, "rounds", "001", "artifacts"), { recursive: true })
+      writeFileSync(path.join(motherClone, "rounds", "001", "artifacts", "run.sh"), LF_SCRIPT)
+      expect((await commitPush(ctx(motherClone), "round 1")).pushed).toBe(true)
+      await pullReset(ctx(runnerClone))
+      expect(await readFile(path.join(runnerClone, "rounds", "001", "artifacts", "run.sh"), "utf8")).toBe(LF_SCRIPT)
+
+      await mkdir(path.join(runnerClone, "rounds", "001", "back"), { recursive: true })
+      writeFileSync(path.join(runnerClone, "rounds", "001", "back", "serial.log"), CRLF_LOG)
+      expect((await commitPush(ctx(runnerClone), "result 1")).pushed).toBe(true)
+
+      // 看**仓里的字节**,不看谁的工作树:autocrlf 提交时规整成 LF、检出时再换回 CRLF,往返一趟正好把改写藏住。
+      const blob = await runGitReal(["cat-file", "-p", "HEAD:rounds/001/back/serial.log"], runnerClone)
+      expect(blob.stdout).toContain("boot ok\r\nadc=1234")
+      const verify = await freshClone(temp, bare)
+      expect(await readFile(path.join(verify, "rounds", "001", "back", "serial.log"), "utf8")).toBe(CRLF_LOG)
+    })
+  })
+
+  test("已经在跑的旧克隆(建的时候没有这条规矩)下一次同步就补上,之后收到的附件不再被改", async () => {
+    await withAutocrlf(async () => {
+      const root = temp.dir("mailbox-old-")
+      const bare = path.join(root, "origin.git")
+      await initBareMailbox(bare)
+      const mother = path.join(root, "mother")
+      await cloneMailbox(bare, mother)
+      writeFileSync(path.join(mother, "job.json"), "{}\n")
+      await commitPush(ctx(mother), "init")
+
+      // 旧版本建的克隆:普通 git clone,没有 info/attributes,autocrlf 听全局的。
+      const old = path.join(root, "old-runner")
+      await runGitReal(["clone", "-q", bare, old], ".")
+      expect(await fileExists(path.join(old, ".git", "info", "attributes"))).toBe(false)
+
+      writeFileSync(path.join(mother, "run.sh"), LF_SCRIPT)
+      await commitPush(ctx(mother), "round 1")
+      await pullReset(ctx(old))
+      expect(await readFile(path.join(old, ".git", "info", "attributes"), "utf8")).toContain("* -text")
+      expect(await readFile(path.join(old, "run.sh"), "utf8")).toBe(LF_SCRIPT)
+    })
+  })
+
+  test("info/attributes 里已有的规则原样保留;重复同步不重复追加", async () => {
+    const { runnerClone } = await makeMailbox(temp)
+    const file = path.join(runnerClone, ".git", "info", "attributes")
+    await writeFile(file, "*.bin binary")
+    await pullReset(ctx(runnerClone))
+    await pullReset(ctx(runnerClone))
+    expect(await readFile(file, "utf8")).toBe("*.bin binary\n* -text\n")
+  })
+})
