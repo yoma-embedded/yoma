@@ -16,8 +16,10 @@ import { ResizeHandle } from "@yoma-desktop/ui/resize-handle"
 import { useCommand } from "@/context/command"
 import { useLanguage } from "@/context/language"
 import { useBench } from "../bench/bench-context"
+import { EvidenceDot } from "../bench/evidence-dot"
 import { benchPins, hiddenOnSurface, visibleOnSurface, type InstrumentDef } from "../bench/instruments"
 import { CONSOLE_MAX_FRACTION, CONSOLE_MIN_HEIGHT, consoleUI } from "./console-state"
+import { useMarkSeen, useUnseenSet } from "./evidence-view"
 import { handleTablistKeys } from "./tablist-keys"
 import "./console.css"
 
@@ -50,6 +52,10 @@ export function SessionConsole() {
       if (instrument && instrument.id !== consoleUI.tab()) consoleUI.setTab(instrument.id)
     }),
   )
+
+  // 提示点:开着的这一页看过了(收起来的那段时间里的新证据仍然积累),别的页签上还没看过的点一个点。
+  useMarkSeen(() => (consoleUI.opened() ? active()?.id : undefined))
+  const unseen = useUnseenSet()
 
   const toggleKey = () => command.keybind("console.toggle")
 
@@ -96,6 +102,7 @@ export function SessionConsole() {
                   <span data-component="bench-led" data-state={instrument.status(bench.ctx())} />
                   <Icon name={instrument.icon} size="small" />
                   {t(instrument.labelKey)}
+                  <EvidenceDot when={unseen().has(instrument.id)} />
                 </button>
               )}
             </For>
