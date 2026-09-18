@@ -69,7 +69,10 @@ function snap125(v: number, min: number, max: number): number {
   let best = min
   for (let decade = -13; decade <= 4; decade++) {
     for (const step of [1, 2, 5]) {
-      const candidate = step * 10 ** decade
+      // 档位从十进制字面量来,不用 `step * 10 ** decade`:运行期的幂运算给出的不是同一个 double ——
+      // 实测(Node 22 / Windows)18 个十年里有 7 档对不上,1e-4 算成 0.00009999999999999999。读回值要和
+      // 调用方写的 `1e-4` 严格相等(一致性套件钉着),而且这个数会原样写进给模型的话里。
+      const candidate = Number(`${step}e${decade}`)
       if (candidate < min * (1 - 1e-9) || candidate > max * (1 + 1e-9)) continue
       if (candidate <= clamped * (1 + 1e-9)) best = candidate
     }
