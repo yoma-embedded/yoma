@@ -529,8 +529,10 @@ typecheck 全绿、单测全绿、`e2e:ipc` 全绿,照样可以在这一跳把�
      整个加载不了(`file:///@solid-refresh` 不是合法的 file URL)。
   2. file URL 用 `pathToFileURL(p).href`,不手拼 `` `file://${p}` ``(Windows 上拼出来是 `file://C:\…`)。
   3. 断言里的路径过 `path.resolve` 再比(`"/tmp/ws"` 在 Windows 上是 `D:\tmp\ws`)。
-  4. 真跑 git / 起子进程的用例别吃缺省 5 秒:Windows 上起进程贵一个数量级,bench 的期限在它的 `vitest.config.ts`
-     里按平台定(CI 60 秒 / Windows 本机 20 秒 / 其余 5 秒)。这与 `patience.ts` 不矛盾 —— 那条管的是"等",这条是活就有这么多。
+  4. 真跑 git / 起子进程的用例别吃缺省 5 秒:Windows 上起进程贵一个数量级,bench 与 scripts 的期限在各自
+     `vitest.config.ts` 里按平台定(CI 60 秒 / Windows 本机 20 秒 / 其余 5 秒)。v0.3.1 的 ci 里 scripts 的
+     python 冷启动 13 秒、三条 git 用例卡在 5.0 秒,缺省期限把活活的用例判死。这与 `patience.ts` 不矛盾 ——
+     那条管的是"等",这条是活就有这么多。
 - **会真跑 flash / gdb 的用例文件必须隔离探针锁**(2026-09-17):`beforeAll` 里把 `YOMA_PROBE_LOCK` 指到
   `tmpdir()/yoma-probe-test-<pid>.lock`。探针租约除了进程内那份还落一把**跨进程**的锁(`~/.yoma/probe.lock`),
   而 vitest 把用例文件分给不同的 worker **进程**:不隔离的两个文件共用机器上同一把锁,flash 一重叠,后到的拿不到

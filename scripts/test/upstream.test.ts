@@ -77,8 +77,25 @@ async function fixture(generated = false) {
   return { source, projectRoot, git, commit, lock, from, original }
 }
 
+const RETRYABLE = new Set(["EPERM", "EBUSY", "ENOTEMPTY"])
+
+/** 超时/中止后 git 还攥着工作树时 Windows 给 EBUSY;rm 的 maxRetries 并不真的等,见 kernel/test/cleanup.ts。 */
+async function removeRoot(root: string): Promise<void> {
+  const deadline = Date.now() + (process.env.CI ? 24_000 : 6_000)
+  for (;;) {
+    try {
+      await rm(root, { recursive: true, force: true })
+      return
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (!code || !RETRYABLE.has(code) || Date.now() > deadline) throw error
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+  }
+}
+
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
+  await Promise.all(roots.splice(0).map(removeRoot))
 })
 
 /** 把夹具仓库的 file:// 地址写进锁 —— 生产里那一格是 pi 的 https 地址。 */
