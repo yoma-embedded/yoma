@@ -7,3 +7,5 @@
 @import "../components/session-turn.css" layer(components);
 @import "../components/tool-error-card.css" layer(components);
 @import "../components/scope-tool.css" layer(components);
+@import "../components/bench.css" layer(components);
+@import "../components/hw-tool.css" layer(components);

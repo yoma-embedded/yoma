@@ -24,7 +24,6 @@ import { useLogFeed } from "../bench/log-feed"
 import { TargetStrip } from "../bench/target-strip"
 import { debug as dock } from "../debug/debug-data"
 import { consoleUI } from "./console-state"
-import "../bench/bench.css"
 import "./console.css"
 
 export function SessionStatusBar() {
