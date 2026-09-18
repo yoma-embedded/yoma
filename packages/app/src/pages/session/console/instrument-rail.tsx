@@ -16,7 +16,6 @@ import { useLanguage } from "@/context/language"
 import { useBench } from "../bench/bench-context"
 import { benchPins, hiddenOnSurface, visibleOnSurface, type InstrumentDef } from "../bench/instruments"
 import { consoleUI } from "./console-state"
-import "../bench/bench.css"
 import "./console.css"
 
 export function InstrumentRail() {

@@ -19,7 +19,6 @@ import { useBench } from "../bench/bench-context"
 import { benchPins, hiddenOnSurface, visibleOnSurface, type InstrumentDef } from "../bench/instruments"
 import { CONSOLE_MAX_FRACTION, CONSOLE_MIN_HEIGHT, consoleUI } from "./console-state"
 import { handleTablistKeys } from "./tablist-keys"
-import "../bench/bench.css"
 import "./console.css"
 
 export function SessionConsole() {
