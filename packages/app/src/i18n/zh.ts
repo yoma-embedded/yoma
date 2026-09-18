@@ -292,6 +292,7 @@ export const dict = {
   "session.bench.state.fault": "故障",
   "session.bench.add": "+ 仪器",
   "session.bench.unpin": "收起这台仪器",
+  "session.bench.unseen": "有新证据没看过",
   "session.bench.loading": "正在载入仪器…",
   "session.bench.log.lines": "{{count}} 行",
   "session.bench.log.source": "来源",
