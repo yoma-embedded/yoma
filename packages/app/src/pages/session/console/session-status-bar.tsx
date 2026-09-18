@@ -24,6 +24,7 @@ import { useLogFeed } from "../bench/log-feed"
 import { TargetStrip } from "../bench/target-strip"
 import { debug as dock } from "../debug/debug-data"
 import { consoleUI } from "./console-state"
+import { TargetSlot } from "./target-slot"
 import "./console.css"
 
 export function SessionStatusBar() {
@@ -70,6 +71,9 @@ export function SessionStatusBar() {
 
   return (
     <footer class="ybench" data-component="session-status-bar" aria-label={t("session.statusBar.label")}>
+      {/* 最左是身份(这是哪块板子),右边才是状况(烧录 / GDB / 日志)。两件事不重复。 */}
+      <TargetSlot onSelect={reveal} />
+
       <TargetStrip
         status={bench.status()}
         onSelect={reveal}
