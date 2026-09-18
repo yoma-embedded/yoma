@@ -391,6 +391,11 @@
 [data-component="session-status-bar"] [data-slot="readout"] [aria-hidden="true"] {
   color: var(--bench-faint);
 }
+/** "上一次的日志":弱化、不缩;它是对右边那串数字的定语,没了它数字就在撒谎。 */
+[data-component="session-status-bar"] [data-slot="readout"] [data-slot="stale"] {
+  flex: none;
+  color: var(--bench-faint);
+}
 /** 只有文件名会让路;行数与未读 error 是定宽的,永远说得完。 */
 [data-component="session-status-bar"] [data-slot="readout"] [data-slot="file"] {
   min-width: 0;

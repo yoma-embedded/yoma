@@ -245,7 +245,6 @@ export const dict = {
   // ---- 嵌入式工具卡片(v5-cards)
   "ui.tool.hw.readout": "读数",
   "ui.tool.hw.output": "工具输出",
-  "ui.tool.hw.elapsed": "耗时",
   "ui.tool.hw.rawLines": "{{count}} 行",
 
   "ui.tool.flash.done": "已烧录",

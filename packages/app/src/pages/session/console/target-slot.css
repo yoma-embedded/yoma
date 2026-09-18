@@ -35,10 +35,14 @@
   outline-offset: -1px;
 }
 
-/** 工程名是这一格的主语:比旁边的状态词重一档,但不抢 LED 的眼。 */
+/**
+ * 工程名是这一格的主语:比旁边的状态词重一档,但不抢 LED 的眼。
+ * **挤不下时它先让**(复审 D4):左侧栏里还有一份工程名,芯片名在屏幕上却只有这一处;
+ * 两个一起打省略号(`f405-motor-c… · stm32f…`)比丢一个更难读。留 6ch 的底,别缩成一个点。
+ */
 [data-component="bench-target-slot"] [data-slot="name"] {
   flex: 0 1 auto;
-  min-width: 0;
+  min-width: 6ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -50,10 +54,10 @@
   flex: none;
   color: var(--bench-faint);
 }
-/** 芯片短名:铭牌字(等宽、小、灰)。**它是第一个让位的** —— 见下面那条窄屏规则。 */
+/** 芯片短名:铭牌字(等宽、小、灰)。不收缩 —— 让位的是工程名;但封顶 14ch,别让一个长型号顶掉整条状态栏。 */
 [data-component="bench-target-slot"] [data-slot="chip"] {
-  flex: 0 1 auto;
-  min-width: 0;
+  flex: none;
+  max-width: 14ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -68,20 +72,6 @@
   padding-left: 9px;
   margin-left: 0;
   border-left: 1px solid var(--bench-line);
-}
-
-/**
- * **放不下时先收芯片名。**
- *
- * 1280 宽下状态栏要装:目标格 + 烧录 / GDB / 日志 / (示波器 / LA)+ 右边的日志读数
- * + 控制台按钮。逐格量过,`f405-motor-ctrl · stm32f4x` 那个 ` · stm32f4x` 是最先该走的 ——
- * 芯片名在卡上说得更全(还带内核与探针),而工程名是这一格的主语,收掉就不剩什么了。
- */
-@media (max-width: 1360px) {
-  [data-component="session-status-bar"] [data-component="bench-target-slot"] [data-slot="sep"],
-  [data-component="session-status-bar"] [data-component="bench-target-slot"] [data-slot="chip"] {
-    display: none;
-  }
 }
 
 /* ---------------------------------------------------------------- 浮层 */

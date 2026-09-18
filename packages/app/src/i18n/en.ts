@@ -305,8 +305,8 @@ export const dict = {
   "session.bench.loading": "Loading instrument…",
   // Target card (borrowed from v3-bench; lives in a popover above the leftmost status-bar cell)
   "session.bench.target.label": "Target board",
-  "session.bench.target.pin": "Pin the target card",
-  "session.bench.target.unpin": "Unpin the target card",
+  "session.bench.target.pin": "Hold the target card open (click elsewhere to close)",
+  "session.bench.target.unpin": "Close the target card",
   "session.bench.target.specSource": "Reported by {{source}} — not inferred",
   "session.bench.target.logOnDisk": "{{count}} earlier log file(s) in this project",
   "session.bench.target.unknown": "Target not named by the flash or gdb output",
@@ -317,6 +317,7 @@ export const dict = {
   "session.bench.log.refresh": "Re-read the newest log file",
   "session.bench.log.match": "{{shown}} / {{total}}",
   "session.bench.log.fromDisk": "Previous capture on disk",
+  "session.bench.log.fromDiskShort": "previous log",
   "session.bench.log.noMatch": "No line matches the filter",
   "session.bench.log.empty": "No hardware log in this project yet.",
   "session.bench.log.emptyHint": "Ask the agent to start a capture with the log tool (serial port, RTT over TCP, or a command).",

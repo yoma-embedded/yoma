@@ -85,6 +85,11 @@ export function SessionStatusBar() {
         <span data-slot="readout" title={[feed.state.name, feed.state.path].filter(Boolean).join("\n")}>
           {/* 哪一份日志。名字里带时间戳,而"最新那一份"是面板自己挑的 —— 挑错了只有这里看得出来。
               挤不下时它先打省略号,后面的数字不让位。 */}
+          {/* 这次会话没碰过 log 工具、而工程里躺着上一次的日志时(状态条上因此没有「日志」那一格),
+              先说一句"上一次的" —— 否则左边说没采过、右边报着 18 行,同一条栏自相矛盾(复审 D2)。 */}
+          <Show when={!bench.status().log}>
+            <span data-slot="stale">{t("session.bench.log.fromDiskShort")}</span>
+          </Show>
           <span data-slot="file">{feed.state.name}</span>
           <span aria-hidden="true">·</span>
           <span>{language.t("session.bench.log.lines", { count: feed.state.lines.length })}</span>

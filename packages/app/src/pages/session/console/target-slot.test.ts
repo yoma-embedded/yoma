@@ -6,7 +6,7 @@
  */
 import { describe, expect, test } from "vitest"
 import { anchorPopover, TARGET_CARD_WIDTH } from "./target-slot"
-import { readTargetCardPinned } from "./target-card-state"
+import { targetCardPin } from "./target-card-state"
 
 const viewport = { width: 1440, height: 900 }
 
@@ -35,18 +35,14 @@ describe("anchorPopover", () => {
   })
 })
 
-describe("钉住这一位的落盘", () => {
-  test("没存过 / 存了垃圾一律当作没钉过", () => {
-    expect(readTargetCardPinned(null)).toBe(false)
-    expect(readTargetCardPinned("")).toBe(false)
-    expect(readTargetCardPinned("{oops")).toBe(false)
-    expect(readTargetCardPinned("[]")).toBe(false)
-    expect(readTargetCardPinned('"true"')).toBe(false)
-  })
-
-  test("只有 pinned 真的是 true 才算钉住(字符串 \"true\" 不算)", () => {
-    expect(readTargetCardPinned('{"pinned":true}')).toBe(true)
-    expect(readTargetCardPinned('{"pinned":"true"}')).toBe(false)
-    expect(readTargetCardPinned('{"pinned":false}')).toBe(false)
+describe("按住这一位", () => {
+  test("按住这一位只活在内存里:出厂是没按住,toggle / reset 都不碰 localStorage(复审 D1:落盘的卡会永久盖住输入框)", () => {
+    targetCardPin.reset()
+    expect(targetCardPin.pinned()).toBe(false)
+    targetCardPin.toggle()
+    expect(targetCardPin.pinned()).toBe(true)
+    expect(globalThis.localStorage?.getItem("yoma.bench.targetCard") ?? null).toBeNull()
+    targetCardPin.reset()
+    expect(targetCardPin.pinned()).toBe(false)
   })
 })

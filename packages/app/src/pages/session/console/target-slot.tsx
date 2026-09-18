@@ -7,7 +7,9 @@
  *
  * 卡是**借来的**(`bench/target-card.tsx`,来自 v3-bench 的右侧工作台):固定三行读数,
  * 哪一行没发生过就是一条暗着的 `—`。v3 把它常驻在右栏顶上;状态栏只有 24px 高,所以这一版
- * 是一张悬停卡 —— 停 200ms 弹出来,移开就没,点一下钉住。
+ * 是一张悬停卡 —— 停 200ms 弹出来,移开就没;点一下按住(点别处 / Esc / 再点一下收起)。
+ * 按住**不落盘**:卡往上长正好盖住输入框左下角,一张跨会话常驻的卡会永久挡住 app 唯一的输入口
+ * (复审 D1)。
  *
  * 两处踩过的坑:
  * 1. **必须走 Portal。** 状态栏是 24px 高的 flex 行、控制台上面还有一层 `overflow: hidden`,
@@ -71,6 +73,7 @@ export function TargetSlot(props: { onSelect?: (id: InstrumentId) => void }) {
   const open = () => hovering() || pinned()
 
   let slot: HTMLButtonElement | undefined
+  let card: HTMLDivElement | undefined
   let openTimer: ReturnType<typeof setTimeout> | undefined
   let closeTimer: ReturnType<typeof setTimeout> | undefined
   // 指针 / 焦点在不在:三处各自记一份,由 `sync()` 合成"现在该不该开"。
@@ -132,7 +135,8 @@ export function TargetSlot(props: { onSelect?: (id: InstrumentId) => void }) {
     onCleanup(() => window.removeEventListener("resize", place))
   })
 
-  // Esc 关掉;钉着的话 Esc 顺手取消钉住(否则按了没反应,看着像卡死)。
+  // Esc 关掉;按着的话 Esc 顺手松开(否则按了没反应,看着像卡死)。
+  // 按着时点卡片与格子之外的任何地方也松开 —— 卡盖着输入框左下角,用户点输入框就是在说"让开"。
   createEffect(() => {
     if (!open() || typeof window === "undefined") return
     const onKey = (event: KeyboardEvent) => {
@@ -141,8 +145,20 @@ export function TargetSlot(props: { onSelect?: (id: InstrumentId) => void }) {
       suppressed = true
       dismiss()
     }
+    const onPointerDown = (event: PointerEvent) => {
+      if (!pinned()) return
+      const target = event.target
+      if (!(target instanceof Node)) return
+      if (slot?.contains(target) || card?.contains(target)) return
+      targetCardPin.set(false)
+      dismiss()
+    }
     window.addEventListener("keydown", onKey)
-    onCleanup(() => window.removeEventListener("keydown", onKey))
+    window.addEventListener("pointerdown", onPointerDown)
+    onCleanup(() => {
+      window.removeEventListener("keydown", onKey)
+      window.removeEventListener("pointerdown", onPointerDown)
+    })
   })
 
   const label = () => {
@@ -212,6 +228,7 @@ export function TargetSlot(props: { onSelect?: (id: InstrumentId) => void }) {
       <Show when={open()}>
         <Portal>
           <div
+            ref={(element) => (card = element)}
             class="ybench"
             data-component="bench-target-popover"
             data-pinned={pinned() ? "true" : undefined}

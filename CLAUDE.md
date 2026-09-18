@@ -899,6 +899,44 @@ TS 侧的纪律:
   25 MHz,I²C SDA=D0/SCL=D1、UART D5、SPI D12–15)。I²C 解出 **300 条注解 / 6 个事务**,UART 47 字节
   "DSLogic series USB-based LA from DreamSourceLab",SPI 5 次传输 288 字。smoke 与 `build.ts` 自检都钉这个数。
 
+### 调试工作台(`packages/app/src/pages/session/{bench,console}`,2026-09-18)
+
+会话页的仪器布局。从前右栏"调试"档永远堆着示波器 + 逻辑分析仪,没有日志 / GDB 视图,任何地方看不到板子状态——
+看着就是一个通用的深色聊天应用。2026-09-18 夜里在同一份地基上并行做了四种布局(仪器轨 / 底部控制台 / 右侧工作台 /
+时间线优先)+ 一套工具卡片,截图与对比在仓外 `.claude/worktrees/_ui-lab/`;维护者选了**底部控制台**,另三种里各借了一样。
+
+- **按数据的形状分家,不按"是不是调试功能"分家。** 注册表 `bench/instruments.ts` 每台仪器一条记录,带
+  `tier`(core / frequent / occasional)与 `surface`(`"text"` | `"wave"`):文本流(日志、GDB,将来的上位机 / RTT 终端)
+  要宽度,住会话页底部的**控制台**(`console/session-console.tsx`,`Mod+J`,缺省收着,可拖高,再点当前页签 = 收起);
+  波形(示波器、LA,将来的功耗曲线)要高度,住右栏"调试"档,页内页签一次一台(`console/instrument-rail.tsx`)。
+  最底下 24px 的**状态栏**(`console/session-status-bar.tsx`)横跨聊天栏与右栏:最左是目标格(工程 · 芯片短名,悬停 /
+  点住弹目标卡:芯片 · 内核 · 探针**只转述**烧录输出与 gdb 回执,认不出就只剩工程名),然后是烧录 / GDB / 日志三格。
+  加一台仪器 = 注册表一条 + 两份 i18n;布局里没有一处写死"日志在下面"。
+- **可见性规则**:core 永远在;occasional 只在 agent 本会话用过 ∪ 磁盘上有采集 ∪ 用户钉住(`yoma.bench.pins`)时露面,
+  露面是多一格 + 提示点,**不自动顶开面板**。"有我还没看过的新证据"按纯函数指纹判(`bench/evidence.ts`,
+  `yoma.bench.seen`,键 `<会话>::<仪器>`,120 条上限):按会话记,否则切到没用过 LA 的会话时指纹缩水会被读成"有新东西";
+  日志格有未看过的 error 时优先黄灯 + 条数,不再叠点。**磁盘证据是工程级的**:跑过几轮的工程里开新会话,日志 / 波形格
+  会立刻有点 —— 与可见性规则同解,但不等于"这次对话刚产出的",这是明知的取舍。
+- **数据层全在渲染端,零内核改动**:`bench/bench-status.ts` 从 transcript 的 ToolPart(flash / log / gdb / la / scope 的
+  `metadata`)折出 `BenchStatus`;日志尾巴读 `.yoma/logs/hw-*.log`(`bench/log-feed.ts`,按工程目录引用计数、2 s 一拍、
+  最后一个消费者卸载即停;`file.read` 从头截断,>2 MB 的日志只看得到开头);磁盘有没有采集走 `la.captures` /
+  `scope.captures` / `file.list`(`bench/bench-disk.ts`,不轮询)。`bench/bench-context.tsx` 是 status / disk / 钉住的唯一
+  共享来源 —— 三处消费者各折一遍的代价不是多一个 memo,是每次触发 3× 只读 RPC。gdb 的 `stop` 之后 details 是
+  `{state:"no-session", epoch:0}`,照常比 epoch 会把故障现场连同停止历史一起清掉:no-session 不算换目标,面板说"已结束"
+  并保留最后一次现场;状态条的故障位置用报告里"出事 PC"那一行(`foc.c:45`),不是 HardFault 处理函数所在行。
+- **工具卡片**(`session-ui/src/components/{hw-tool,flash-tool,log-tool,gdb-tool,la-tool,scope-tool}.tsx` + `*-card.ts`,经
+  `ToolRegistry.register` 按名挂):折叠态一行 LED + 短名 + 动作 + 结论(`调试器 exec continue · BusFault PRECISERR ·
+  foc_zero_isense() foc.c:45`),展开态是排好版的读数;details 认不出就回落 `GenericTool`(旧会话的 details 可能是老形状)。
+  卡片右上角「在面板中打开」走 session-ui Data 上下文的可选回调 `onOpenInstrument`(缺席时一个像素都不渲染),
+  app 侧 `console/reveal-instrument.ts` 是"亮出一台仪器"的**唯一**实现(状态栏点格与卡片按钮共用):text → 控制台那一页,
+  wave → 右栏那一台,藏着的先钉住。**`bench.css` 与 `log-lines.ts` 住在 session-ui**(卡片与面板共用同一套 LED / 读数行 /
+  通道色原语与同一份"哪一行算 error"),app 侧只经样式表拿到,别再加相对 import。
+- 截图工装 `.claude/worktrees/_ui-lab/shots/`(仓外、gitignored):`seed.ts` 用 bench 的 faux 模型 + 真内核种一段真实调试会话
+  (真 gdb + QEMU 的 BusFault、日志、烧录、LA import、scope demo),`shots.ts` 对任意检出的构建产物按 steps.json 截图,
+  `paint-gate.sh` 带锁跑 `e2e:paint`(9222 端口全机只有一个)。改这块界面**看图是唯一的闸门**:`overflow-y: auto` 把 popover
+  裁没、按钮压住卡片结论、两个 tooltip 叠在一格 —— 这些 `querySelector` 照样找得到、report.json 全绿,只有看图看得见。
+  提示点"看过即熄",steps 里验它的那几步要排在打开面板的步骤之前。
+
 ### 示波器(`host/domain/scope` + `host/tools/scope`,2026-09-16 恢复,2026-09-17 分出驱动层)
 
 工具层只认 `domain/scope/driver.ts` 的 `ScopeDriver` 接口;厂商驱动在 `domain/scope/registry.ts` 登记(今天是 siglent,
@@ -1202,7 +1240,6 @@ Windows 失败时这里超时变红,本来也不该有只含 mac 的 Release)。
 - 每轮的 diff 汇总留空了。要做的话应该从 `edit`/`write` 工具的 `details.patch` 合成,
   而不是找回 opencode 的文件快照(内核没有快照)。
 - i18n 仍有 19 个 locale;非中英的那些和内核无关,可以另行瘦身。
-- **逻辑分析仪还缺的**:面板(dock"调试"档第一台仪器,`la-waveform.tsx`,走 `la.view` RPC)与卡片
-  缩略图都只在 storybook / 单测里验过,**没有在真窗口里肉眼看过**;高级/串行触发、DSO 通道、
-  Linux/macOS 的引擎构建未做;真信号(非悬空探头)的实机验证待接线后做;卡片上还没有"在面板中
-  打开"的按钮(session-ui 的 Data 上下文要加一个回调,app 侧接到 dock store)。
+- **逻辑分析仪还缺的**:高级/串行触发、DSO 通道、Linux/macOS 的引擎构建未做;真信号(非悬空探头)的实机验证
+  待接线后做。面板(右栏"调试"档的波形页签,`la-waveform.tsx`,走 `la.view` RPC)与卡片缩略图 2026-09-18 起经
+  截图工装在真窗口里看过(导入的 demo 采集);卡片右上角的「在面板中打开」同日做了(见「调试工作台」)。
