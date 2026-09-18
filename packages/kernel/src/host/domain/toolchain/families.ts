@@ -201,10 +201,15 @@ const IDF: ToolchainFamilyTool = {
 	id: "idf",
 	title: "ESP-IDF(框架根目录)",
 	pathKind: "dir",
-	// IDF_PATH 是最稳的信号(export 脚本之外 idf.py 通常不在 PATH 上);
-	// well-known 档指向官方安装器与手动 clone 的惯常位置(见 locations.ts)。
-	bin: ["idf.py"],
+	// 探测顺序:IDF_PATH(export 之后才有)> 安装器登记文件(installers.ts,装在哪个盘都对)>
+	// 已知位置(locations.ts,手动 clone 的惯常位置)。idf.py 通常不在 PATH 上。
+	// marker 而不是 bin:dir 型记的是**根目录**,tools/idf.py 只用来认根 / 把贴深了的路径归位
+	// (见 schema.ts 的 marker)。从前这里写 bin:["idf.py"],自动发现与 set 都记下 idf.py 这个文件,
+	// 而解析器只认目录 —— 2026-09-18 的会话里模型为此试了四轮。
+	marker: "tools/idf.py",
 	env: ["IDF_PATH"],
+	// 目录资源只导出变量、不进 PATH:工程的 CMakeLists 认的就是 $ENV{IDF_PATH}。
+	exports: { IDF_PATH: "{path}" },
 	install: {
 		win32: "用 Espressif 官方安装器(dl.espressif.com/dl/esp-idf)安装;装完把 esp-idf 根目录填进来",
 		darwin: "按 docs.espressif.com 的 Get Started:git clone esp-idf 后跑 install.sh,再把根目录填进来",
@@ -231,6 +236,8 @@ const ESPTOOL: ToolchainFamilyTool = {
 	pathKind: "exe",
 	optional: true,
 	bin: ["esptool", "esptool.py"],
+	// esptool 没有 --version 这个参数(打印 usage 后失败),版本是子命令。
+	versionArgs: ["version"],
 	install: {
 		win32: "pip install esptool(ESP-IDF 环境里已自带,独立使用才需要单装)",
 		darwin: "pip install esptool(ESP-IDF 环境里已自带,独立使用才需要单装)",
@@ -258,8 +265,10 @@ const ZEPHYR_SDK: ToolchainFamilyTool = {
 	title: "Zephyr SDK(安装目录)",
 	pathKind: "dir",
 	optional: true,
-	bin: ["arm-zephyr-eabi-gcc"],
+	// 根目录的 sdk_version 各版本都有;gcc 的位置不稳(0.17 在 arm-zephyr-eabi\bin,1.0 搬进了 gnu\)。
+	marker: "sdk_version",
 	env: ["ZEPHYR_SDK_INSTALL_DIR"],
+	exports: { ZEPHYR_SDK_INSTALL_DIR: "{path}" },
 	install: {
 		win32: "从 GitHub 的 zephyrproject-rtos/sdk-ng Releases 解压(通常解到用户目录的 zephyr-sdk-x.y.z)并跑 setup.cmd",
 		darwin: "从 GitHub 的 zephyrproject-rtos/sdk-ng Releases 解压并跑 setup.sh",
@@ -333,6 +342,86 @@ export function findFamilyTool(id: string): ToolchainFamilyTool | undefined {
 
 export function findToolchainFamily(id: string): ToolchainFamily | undefined {
 	return TOOLCHAIN_FAMILIES.find((family) => family.id === id);
+}
+
+// ─── 项目清单继承预设 ─────────────────────────────────────────────────────────
+
+/**
+ * 项目清单里的条目按 id 继承的字段 —— "这个工具**是什么**":叫什么名、是目录还是程序、认哪个
+ * 环境变量、怎么装、怎么问版本。**不继承**的是"这个项目**怎么要**它":optional(预设里的 optional
+ * 是设置页的语境,项目点了名就是要)、version、side、why。
+ */
+const INHERITED_FIELDS = ["bin", "binMode", "pathKind", "marker", "env", "exports", "versionArgs", "install", "from"] as const;
+
+function providerOf(id: string): ProviderSpec | undefined {
+	for (const family of TOOLCHAIN_FAMILIES) {
+		const provider = family.providers?.[id];
+		if (provider) return provider;
+	}
+	return undefined;
+}
+
+/**
+ * 清单条目缺的字段用同 id 的预设补上;条目自己写了的一律听条目的。
+ *
+ * 为什么必须有这一步(2026-09-18 会话):同一个 id 在账本、已知位置表、自动安装目录里都是共用的,
+ * 唯独"它是什么"不共用 —— 清单写 `{"id":"idf"}` 拿不到 dir / marker / IDF_PATH / 安装提示,
+ * 而没有 bin 的条目连已知位置档都不查,于是 IDF 装在默认位置也报 MISSING、连安装提示都没有。
+ * 从外面完全看不出"只生效了一半",模型只能去翻安装包源码反推该写哪些字段。
+ *
+ * 预设以外的 id 原样返回。对预设自己生成的清单(设置页)是幂等的。
+ */
+export function applyPresetDefaults(manifest: ToolchainManifest): ToolchainManifest {
+	let providers = manifest.providers;
+	const tools = manifest.tools.map((tool) => {
+		const preset = findFamilyTool(tool.id);
+		if (!preset) return tool;
+		const inherited: Partial<ToolSpec> = {};
+		for (const field of INHERITED_FIELDS) {
+			if (tool[field] === undefined && preset[field] !== undefined) Object.assign(inherited, { [field]: preset[field] });
+		}
+		// inherited 里只有条目自己没写的字段,所以后展开它不会盖掉条目写了的任何东西。
+		const merged: ToolSpec = { ...tool, ...inherited };
+		// from 是借安装提示用的键:继承了它,它指向的 provider 也得跟着进来,否则提示仍是空的。
+		if (merged.from !== undefined && providers?.[merged.from] === undefined) {
+			const provider = providerOf(merged.from);
+			if (provider) providers = { ...providers, [merged.from]: provider };
+		}
+		return merged;
+	});
+	return { ...manifest, tools, providers };
+}
+
+/** 单个 id 的完整定义(项目没有清单、或清单里没点这个 id 时,`toolchain set` 拿它认目录 / 认入口)。 */
+export function presetToolSpec(id: string): ToolSpec | undefined {
+	const preset = findFamilyTool(id);
+	if (!preset) return undefined;
+	const { title: _title, optional: _optional, ...spec } = preset;
+	return spec;
+}
+
+/** 预设里出现过的全部工具 id,去重保序 —— 清单里只写 id 就够的那些。 */
+export function presetToolIds(): string[] {
+	return [...new Set(TOOLCHAIN_FAMILIES.flatMap((family) => family.tools.map((tool) => tool.id)))];
+}
+
+/**
+ * 「这台机器上有什么」的虚拟清单:全部预设工具各一条,一律 optional(普查里没有"必须有"这回事)、
+ * side both。项目没有清单时 agent 的 `toolchain check` 拿它核一遍机器 —— 工具链是电脑的属性
+ * (见文件头),不该因为项目没写清单就一个字都答不上来。
+ */
+export function surveyManifestText(): string {
+	const providers: Record<string, ProviderSpec> = {};
+	const tools: ToolSpec[] = [];
+	for (const family of TOOLCHAIN_FAMILIES) {
+		Object.assign(providers, family.providers);
+		for (const { title: _title, ...spec } of family.tools) {
+			if (tools.some((tool) => tool.id === spec.id)) continue;
+			tools.push({ ...spec, optional: true, side: "both" });
+		}
+	}
+	const manifest: ToolchainManifest = { schema: "yoma/toolchain@1", providers, tools };
+	return JSON.stringify(manifest);
 }
 
 /** 预设 → 标准清单:剥掉 UI 专用字段,side 统一钉 "both"(见文件头)。 */

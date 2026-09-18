@@ -10,6 +10,7 @@ export * from "./actions.ts";
 export * from "./catalog.ts";
 export * from "./families.ts";
 export * from "./install.ts";
+export * from "./installers.ts";
 export * from "./ledger.ts";
 export * from "./locations.ts";
 export * from "./resolve.ts";

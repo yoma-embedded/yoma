@@ -9,6 +9,8 @@ import { existsSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
+import { directoryRoot } from "./entries.ts";
+import { applyPresetDefaults, presetToolSpec } from "./families.ts";
 import { readLedger, writeLedgerEntry } from "./ledger.ts";
 import { findOnPath, withPath } from "./locations.ts";
 import type { ToolchainResolution } from "./resolve.ts";
@@ -89,7 +91,13 @@ function resolveBinsInDir(dir: string, bins: string[], env: NodeJS.ProcessEnv): 
  *
  * probe:"exists"(目录型条目:STM32CubeMX 安装目录、ESP-IDF 根目录、Zephyr SDK)
  * 完全不 spawn —— 对 GUI 跑 `--version` 会真的把程序弹起来。谁走哪档不是调用方随口
- * 说的:设置页与 kernel host 按 families.ts 预设的 pathKind 决定。
+ * 说的:传了 spec 就按它的 pathKind 决定(三个入口 —— agent 的 set、设置页的项目 set、
+ * 设置页的平台 set —— 都传 spec,于是同一个输入落成同一条账)。
+ *
+ * **目录型记的是安装根,绝不按 bin 名解析成文件**(2026-09-18):解析器对 dir 型只认目录,
+ * 而从前 agent 的 set 把清单里的 bin 递了进来,`<IDF 根>\tools` 被解析成 `tools\idf.py` 记进账本,
+ * 之后怎么 check 都是 RECORDED。现在目录型过 directoryRoot:贴根、贴 `tools`、贴 `idf.py`
+ * 三种写法记下的都是根;目录里没有标志文件也照单全收,由核账那一步点名缺什么。
  */
 export async function recordToolchainPath(opts: {
 	id: string;
@@ -99,6 +107,8 @@ export async function recordToolchainPath(opts: {
 	probe?: "version" | "exists";
 	/** 该工具声明的可执行名(清单 tool.bin / 平台预设)。给了它,目录输入才解析得动。 */
 	bins?: string[];
+	/** 工具的完整定义(清单条目并上预设)。给了它,probe / bins 缺省从它来,目录型按 marker 归位到安装根。 */
+	spec?: ToolSpec;
 }): Promise<RecordedToolchainPath> {
 	const rawPath = opts.path.trim();
 	if (!path.isAbsolute(rawPath)) {
@@ -110,21 +120,32 @@ export async function recordToolchainPath(opts: {
 		throw new Error(`toolchain set: ${rawPath} does not exist`);
 	}
 
+	const env = opts.env ?? process.env;
+	const probe = opts.probe ?? (opts.spec?.pathKind === "dir" ? "exists" : "version");
+
+	if (probe === "exists") {
+		// 目录型:归位到安装根再记;归不了位(没有 marker、或标志文件不在附近)就原样记录。
+		const root = directoryRoot(opts.spec ?? { id: opts.id }, rawPath, env).root ?? rawPath;
+		await writeLedgerEntry({ id: opts.id, bin: { [execNameOf(root)]: root }, confirmedAt: Date.now(), by: "user" }, opts.configDir);
+		return { id: opts.id, binPath: root };
+	}
+
 	// 目录里解析得到就用解析结果;解析不到(或压根没有 bins 可解析)就原样记录 ——
 	// 见文件头「照单全收」那段的理由。
+	const bins = opts.bins ?? opts.spec?.bin;
 	let bin: Record<string, string> =
-		statSync(rawPath).isDirectory() && (opts.bins?.length ?? 0) > 0 ? resolveBinsInDir(rawPath, opts.bins!, opts.env ?? process.env) : {};
+		statSync(rawPath).isDirectory() && (bins?.length ?? 0) > 0 ? resolveBinsInDir(rawPath, bins!, env) : {};
 	if (Object.keys(bin).length === 0) {
 		bin = { [execNameOf(rawPath)]: rawPath };
 	}
 
 	// 代表路径按声明顺序取第一个解析到的名字(与 resolve.ts 的 primaryBinPath 同口径);
-	// 没有 bins(目录型条目 / 直接给了文件)时就是那条路径本身。
-	const primary = opts.bins?.map((name) => bin[name]).find((p) => p !== undefined) ?? Object.values(bin)[0]!;
+	// 没有 bins(直接给了文件)时就是那条路径本身。
+	const primary = bins?.map((name) => bin[name]).find((p) => p !== undefined) ?? Object.values(bin)[0]!;
 
 	let version: string | undefined;
-	if ((opts.probe ?? "version") === "version" && !statSync(primary).isDirectory()) {
-		version = await probeVersion(primary, opts.env);
+	if (!statSync(primary).isDirectory()) {
+		version = await probeVersion(primary, opts.env, opts.spec?.versionArgs);
 	}
 
 	await writeLedgerEntry({ id: opts.id, bin, version, confirmedAt: Date.now(), by: "user" }, opts.configDir);
@@ -133,10 +154,10 @@ export async function recordToolchainPath(opts: {
 }
 
 /**
- * 从项目清单(或注入的清单文本)里查一个工具声明的可执行名 —— set 的目录解析要用。
- * 尽力而为的查询而不是闸门:清单缺席 / 解析失败 / 工具没声明都返回 undefined,
- * 此时目录输入退化为"原样记录"(和目录型条目一个待遇),不额外报错 —— set 的
- * 报错面留给路径本身的问题。
+ * 从项目清单(或注入的清单文本)里查一个工具的定义 —— set 的目录解析要用。条目缺的字段由同 id
+ * 的预设补(applyPresetDefaults);**清单缺席 / 解析失败 / 清单里没点这个 id 时回落到预设本身**:
+ * 模型常常是先 set(用户刚报了路径)后写清单,那时也得认得出 idf 是个目录。预设里也没有才返回
+ * undefined,此时目录输入退化为"原样记录",不额外报错 —— set 的报错面留给路径本身的问题。
  */
 export async function declaredToolBins(opts: {
 	id: string;
@@ -152,15 +173,14 @@ export async function declaredToolSpec(opts: {
 	manifestText?: string;
 }): Promise<ToolSpec | undefined> {
 	let text = opts.manifestText;
-	if (text === undefined) {
-		if (opts.projectDir === undefined) return undefined;
+	if (text === undefined && opts.projectDir !== undefined) {
 		try {
 			text = await readFile(path.join(opts.projectDir, MANIFEST_RELATIVE), "utf8");
 		} catch {
-			return undefined;
+			text = undefined;
 		}
 	}
-	const parsed = parseManifest(text);
-	if (!parsed.ok) return undefined;
-	return parsed.manifest.tools.find((tool) => tool.id === opts.id);
+	const parsed = text === undefined ? undefined : parseManifest(text);
+	const declared = parsed?.ok ? applyPresetDefaults(parsed.manifest).tools.find((tool) => tool.id === opts.id) : undefined;
+	return declared ?? presetToolSpec(opts.id);
 }

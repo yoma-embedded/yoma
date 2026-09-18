@@ -306,12 +306,17 @@ export interface ToolchainResolvedTool {
   version?: string
   wanted?: string
   candidates?: string[]
-  /** "managed" = Yoma 自己装进 ~/.yoma/toolchains 的(domain/toolchain/install.ts)。 */
-  source?: "local" | "ledger" | "managed" | "env" | "path" | "well-known" | "registry"
+  /**
+   * "managed" = Yoma 自己装进 ~/.yoma/toolchains 的(domain/toolchain/install.ts);
+   * "installer" = 厂商安装器自己的登记文件(domain/toolchain/installers.ts)。
+   */
+  source?: "local" | "ledger" | "managed" | "env" | "installer" | "path" | "well-known" | "registry"
   hint?: string
   why?: string
   /** 非 ok 且目录(catalog.ts)对这台机器有包时给出 —— 设置页的"安装"按钮看它。 */
   installable?: ToolchainInstallableView
+  /** 安装器登记文件顺带说的事实("python: …")。 */
+  notes?: string[]
 }
 
 /** domain/toolchain `Installable` 的结构化复制:能自动装什么、多大。 */

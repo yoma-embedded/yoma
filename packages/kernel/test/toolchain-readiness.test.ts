@@ -161,7 +161,11 @@ console.log("1.2.3"); if (!valid) process.exitCode = 7;`,
 			status: "configured",
 			checks: { entry: "directory", execution: "not-applicable" },
 		});
-		expect(result.ok).toBe(false);
+		// configured 是目录资源的终态:没有任何动作能把它变成 ok,所以它不算"需要处理"(2026-09-18 之前
+		// 这里钉的是 false,结果 IDF 配好之后汇总里永远挂着 "needing attention: idf")。它仍然不进 PATH、
+		// 不被执行 —— 下面三条钉的正是这个。
+		expect(result.ok).toBe(true);
+		expect(result.needsAttention).toEqual([]);
 		expect(existsSync(marker)).toBe(false);
 		expect(shellEnvFor(result, {})).toEqual({ RESOURCE_ROOT: selected, LEGACY_ROOT: selected });
 		expect(machinePathDirs({ configDir, ledger: await readLedger(configDir) })).toEqual([]);

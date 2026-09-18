@@ -182,6 +182,52 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
   `undefined`**(solid 的 translator 对缺键返回 undefined,组件里那句 `text === key` 的兜底永远不成立):
   以后每加一个会问的工具,两份 i18n 都要跟着加一条。
 
+- **工具链寻找:一次真会话撞出来的结构问题**(2026-09-18;回归用例 `test/toolchain-dir-tools.test.ts`)。
+  会话是 `D:\toy\funny_pen\f_pen`(XIAO ESP32S3,ESP-IDF 装在 D 盘):模型开局照守则跑了 `toolchain check`,得到一句
+  "没有清单",只好 `command -v idf.py`,于是断言"这台机器上没有 ESP32 工具链"(用户当场发火);后来写清单,
+  没有任何地方说格式,它全盘 find 样例两分钟、再翻安装目录里打包后的 `mailbox-host.mjs` 反推字段,写出来又试错四轮。
+  模型没做错什么,每一步撞的都是这边的缺口:
+  1. **入口放错了层。** "这台电脑装了什么"是电脑的属性(`families.ts` 文件头自己写的),设置页按电脑查、查得到;
+     agent 的工具却必须先有项目清单才开口,而绝大多数项目没有清单,空工程刚开局尤其。现在没有清单时 check / resolve
+     拿全部预设工具普查这台机器(`surveyManifestText`):找到的逐条列、没找到的折成一行,并附清单格式与已知 id。
+     **普查只在工具调用里做,不进会话开启那条路** —— 注册表那一档是同步的 spawnSync。
+  2. **同一个 id 在账本 / 位置表 / 安装目录里都共用,唯独"它是什么"不共用。** 清单写 `{"id":"idf"}` 拿不到
+     dir / IDF_PATH / 安装提示,而没有 `bin` 的条目连位置表都不查 —— IDF 装在默认位置也 MISSING,从外面看不出只生效
+     了一半。`applyPresetDefaults`(families.ts)按 id 补缺的字段,条目写了的一律听条目的;`optional` / `version` /
+     `side` 不继承(那是"这个项目怎么要它",不是"它是什么");继承 `from` 时把 provider 一并带进来。
+     `declaredToolSpec` 在清单缺席或没点这个 id 时回落到预设 —— 模型常常先 `set` 后写清单。
+  3. **v0.2.5 加 dir 型时只改了解析器。** "记录值是目录才算 configured",而位置表指进 `tools\`、`set` 按 `bin` 名解析,
+     两处产出的都是 `tools\idf.py` 这个**文件**:自动发现对所有人都是 RECORDED(含设置页的 ESP32 面板),zephyr-sdk 同形。
+     现在 dir 型声明 `marker`(相对安装根的标志文件:idf 是 `tools/idf.py`,zephyr-sdk 是根上的 `sdk_version` —— 1.0 起
+     gcc 搬进了 `gnu\`,拿 gcc 当标志两代 SDK 对不上),**所有来源过同一个 `directoryRoot`**(entries.ts):贴根、贴
+     `<根>\tools`、贴 `idf.py` 落到同一个根,旧账本里已经记成文件的读出来照样归位;验不过时显式记录如实报 RECORDED
+     并点名缺哪个文件,自动候选不算命中(过期的 `IDF_PATH` 不该挡住真的那一份)。dir 型的 `bin` 不再参与解析;
+     位置表对 dir 型指向安装根。没有 marker 的目录(stm32cubemx)行为不变,也不参与自动发现。
+  4. **`configured` 是终态却永远挂在"需要处理"里**:目录资源不跑 `--version`,到不了 ok,而汇总只认 ok。
+     `isSettled`(ok | configured)现在管 `resolution.ok` / `needsAttention` / 档内择优三处;它仍然不进 PATH、
+     不宣称可执行(`hasExecutableEntries` 不认它)。代价一并写在这:configured 不再触发提示词那一段,而目录不在 PATH 上、
+     只有那一段会告诉模型它在哪 —— 所以 `promptSectionFor` 对 configured 单开了一条。
+  5. **找工具先问安装器,再猜路径**(`domain/toolchain/installers.ts`,新的一档 `installer`,排在 env 之后、path 之前)。
+     位置表写死 `C:\Espressif`,而安装器让用户自己选盘 —— J-Link 补过盘符、Keil 补过,IDF 是第三次,补不完。Espressif
+     两代安装器各留一份登记文件:旧的 `%IDF_TOOLS_PATH%\esp_idf.json`(`idfInstalled` 是**对象**,路径带尾斜杠),EIM 的
+     `<工具根>\tools\eim_idf.json`(是**数组**);同一台机器上可以并存(实机:5.4.3 + 6.0.2)。里面还写着**配套的 Python**
+     —— 同一次会话里 export.ps1 按 PATH 上的 3.12 去找 `idf5.4_py3.12_env`、实际只装了 3.11 那个坑,答案就在这。
+     这些事实挂在 `ResolvedTool.notes` 上,**与来源档位无关**(账本记住根之后来源是 ledger,那句话照样要说)。
+     esptool 也走这一档:它随 IDF 装在那个 Python 环境的 Scripts 里、不在 PATH 上,不接的话装了 IDF 的机器照样报
+     MISSING 并建议 `pip install esptool`,模型就真去装一份(那次会话的开头正是这样)。
+     它只从注入的 env 取根目录(IDF_TOOLS_PATH / SystemDrive / HOME),不读 `os.homedir()`、不写死盘符:这台开发机上
+     `C:\Espressif\tools\eim_idf.json` 真的存在,写死的话 idf 的用例全看开发机脸色。
+  6. **失败的输出不是版本。** `esptool --version` 打印 usage 后失败,而 usage 里有一段 "1.8"(flash 电压选项),
+     账本里于是记着 `version: "1.8"`(真实 4.10.0)—— 清单一写版本范围就是一条假的 VERSION MISMATCH。退出码非 0 时
+     不取版本;问法按工具来(`versionArgs`,esptool 是子命令 `version`)。
+  7. **`set` 的回复带记完之后的状态。** 从前恒为 "Recorded … finds it automatically",而核出来可能是 RECORDED ——
+     一句必然成功的话让模型多跑一次 check 才发现没成,然后原地重试。三个 set 入口(agent、设置页项目级、设置页平台级)
+     现在都把 `spec` 递给 `recordToolchainPath`,分档在那一处按 `pathKind` 定,不可能再分叉。
+  8. **清单格式写在模型看得见的地方**(`contract.ts` 的 `MANIFEST_FORMAT_HELP`,描述与"没有清单"的回复共用);已知 id
+     不抄进契约(契约不许 import families.ts,字面量迟早漂移),由 check 现算现列。
+  还没做的:两份 IDF 并存时工具只列出来、不替用户选(选中的那份在前,另一份在 `candidates`);`idf` 的版本范围
+  仍然不核(dir 型 version 恒为 not-required);真机只在这台 Windows 上对过,macOS / Linux 的 `~/.espressif` 布局是照文档写的。
+
 - **la 工具**(2026-09-14,第 6 步第 6 刀,从 attic/tools/la.ts 重写):`host/tools/la/{contract,stats,session}.ts`,
   13 个动作。语义(事务聚合、期望差分、时序统计)早在 `host/domain/la` 里 —— 界面的波形图一直在用它,
   这一刀只是把**同一份厨房**也开给 agent。
