@@ -302,6 +302,13 @@ export const dict = {
   "session.bench.add": "+ Instrument",
   "session.bench.unpin": "Hide this instrument",
   "session.bench.loading": "Loading instrument…",
+  // Target card (borrowed from v3-bench; lives in a popover above the leftmost status-bar cell)
+  "session.bench.target.label": "Target board",
+  "session.bench.target.pin": "Pin the target card",
+  "session.bench.target.unpin": "Unpin the target card",
+  "session.bench.target.specSource": "Reported by {{source}} — not inferred",
+  "session.bench.target.logOnDisk": "{{count}} earlier log file(s) in this project",
+  "session.bench.target.unknown": "Target not named by the flash or gdb output",
   "session.bench.log.lines": "{{count}} lines",
   "session.bench.log.source": "Source",
   "session.bench.log.filter": "Filter lines",

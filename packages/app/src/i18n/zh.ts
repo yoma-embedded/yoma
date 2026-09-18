@@ -293,6 +293,13 @@ export const dict = {
   "session.bench.add": "+ 仪器",
   "session.bench.unpin": "收起这台仪器",
   "session.bench.loading": "正在载入仪器…",
+  // 目标卡(从 v3-bench 借来,住在状态栏最左那一格上方的浮层里)
+  "session.bench.target.label": "目标板",
+  "session.bench.target.pin": "钉住目标卡",
+  "session.bench.target.unpin": "取消钉住目标卡",
+  "session.bench.target.specSource": "{{source}} 自己报的,不是推断出来的",
+  "session.bench.target.logOnDisk": "工程里有 {{count}} 份旧日志",
+  "session.bench.target.unknown": "烧录与 gdb 的输出里都没说目标是谁",
   "session.bench.log.lines": "{{count}} 行",
   "session.bench.log.source": "来源",
   "session.bench.log.filter": "过滤",
