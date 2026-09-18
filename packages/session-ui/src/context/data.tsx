@@ -1,4 +1,4 @@
-import type { Message, Session, Part, SessionStatus, ProviderInfo } from "@yoma-desktop/kernel"
+import type { Message, Session, Part, SessionStatus, ProviderInfo, ToolPart } from "@yoma-desktop/kernel"
 import { createSimpleContext } from "@yoma-desktop/ui/context"
 
 export type NormalizedProviderListResponse = {
@@ -33,6 +33,24 @@ export type SessionHrefFn = (sessionID: string) => string
 /** 跳转到本机文件的某一行(目前只有 gdb 停在有源码的位置时会用到)。 */
 export type OpenFileFn = (path: string, line?: number) => void
 
+/**
+ * 有仪器面板的那几个工具。名字就是仪器 id —— app 的 `bench/instruments.ts` 与这里用的是
+ * 同一套词,加一台仪器时两边各加一条字符串,没有第三处。
+ *
+ * **flash 不在里面**:它是一个动作不是一台仪器,没有面板可打开。
+ */
+export type InstrumentTool = "log" | "gdb" | "la" | "scope"
+
+/**
+ * 「把这张卡片的仪器在面板里打开」。宿主决定"打开"意味着什么 —— 底部控制台的一页签、
+ * 右栏的一台、一个抽屉都行。`part` 原样递过去:宿主可以从它的 `state.metadata` 里认出
+ * 这一次采集(la / scope 的 `captureId` / `dir`),而 session-ui 不必知道那些字段。
+ *
+ * **宿主不给这个回调时,卡片上那个按钮一个像素都不渲染。** session-ui 不知道也不该知道
+ * 现在跑的是哪一套布局:有的布局里"打开面板"这件事根本不存在。
+ */
+export type OpenInstrumentFn = (instrument: InstrumentTool, part: ToolPart) => void
+
 export const { use: useData, provider: DataProvider } = createSimpleContext({
   name: "Data",
   init: (props: {
@@ -41,6 +59,7 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
     onNavigateToSession?: NavigateToSessionFn
     onSessionHref?: SessionHrefFn
     onOpenFile?: OpenFileFn
+    onOpenInstrument?: OpenInstrumentFn
   }) => {
     return {
       get store() {
@@ -52,6 +71,10 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
       navigateToSession: props.onNavigateToSession,
       sessionHref: props.onSessionHref,
       openFile: props.onOpenFile,
+      // getter:宿主可以在挂载之后才把它接上,而卡片上的按钮要跟着出现/消失。
+      get openInstrument() {
+        return props.onOpenInstrument
+      },
     }
   },
 })

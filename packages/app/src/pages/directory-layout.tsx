@@ -11,6 +11,27 @@ import { decode64 } from "@/utils/base64"
 import { Schema } from "effect"
 import { sessionHref } from "@/utils/session-href"
 import { useServerSync } from "@/context/server-sync"
+import { INSTRUMENT_IDS, type InstrumentId } from "@/pages/session/bench/bench-status"
+import { revealInstrument, usedInstrumentContext } from "@/pages/session/console/reveal-instrument"
+
+/**
+ * 时间线里的硬件卡片按「在面板中打开」时走这里 —— v2-console 把它翻成"按数据形状去对应的
+ * 容器":日志 / 调试器打开底部控制台的那一页签,逻辑分析仪 / 示波器切右栏的那一台。
+ * 规则一份不二(`reveal-instrument.ts`),与最底下状态栏点一格走的是同一条。
+ *
+ * 认不出来的名字一律无视(而不是抛):session-ui 那边的工具清单与 app 的注册表各有一份,
+ * 两边漂移时该表现为"那个按钮没反应",不该是一个红屏。
+ *
+ * 第二个参数是那张卡片的 part。**这套布局用不上它**:右栏的 LA / 示波器面板各自管着自己的
+ * "当前采集"(内部 store,没有外部可控入口),硬造一个入口不是这一刀该干的事 ——
+ * 所以这里只切页签,选哪一次采集仍由面板自己的下拉决定。
+ */
+function openInstrument(id: string) {
+  const known: readonly string[] = INSTRUMENT_IDS
+  if (!known.includes(id)) return
+  const instrument = id as InstrumentId
+  revealInstrument(instrument, usedInstrumentContext(instrument))
+}
 
 export function DirectoryDataProvider(
   props: ParentProps<{
@@ -61,6 +82,7 @@ export function DirectoryDataProvider(
           directory={directory}
           onNavigateToSession={(sessionID: string) => navigate(href(sessionID))}
           onSessionHref={href}
+          onOpenInstrument={openInstrument}
         >
           <LocalProvider>{props.children}</LocalProvider>
         </DataProvider>

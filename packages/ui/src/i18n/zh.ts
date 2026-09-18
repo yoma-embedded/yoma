@@ -294,6 +294,8 @@ export const dict = {
   "ui.tool.scope.screenshot": "仪器截图",
   "ui.tool.scope.screenshotNote": "仪器截图。保存的波形可在右栏「调试」面板缩放、查看游标。",
 
+  // 时间线里硬件卡片右上角那个按钮(log / gdb / la / scope;flash 没有面板所以没有它)。
+  "ui.tool.openInPanel": "在面板中打开",
   "ui.basicTool.called": "调用了 `{{tool}}`",
   "ui.toolErrorCard.failed": "失败",
   "ui.toolErrorCard.copyError": "复制错误",
