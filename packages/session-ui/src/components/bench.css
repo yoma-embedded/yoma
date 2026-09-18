@@ -1,0 +1,620 @@
+/**
+ * 调试工作台的视觉原语 —— 仪器台的身份,给四种布局共用。
+ *
+ * **住在 session-ui 而不是 app**(2026-09-18,v5-cards):时间线里的硬件工具卡片
+ * (`hw-tool.tsx` 与 flash / log / gdb / la / scope 五张卡)与右栏的仪器面板
+ * (app 的 `pages/session/debug` + `pages/session/bench`)必须是同一套 LED / 读数行 /
+ * 通道色,而分层是 ui → session-ui → app —— 两边都够得着的最低那一层就是这里。
+ * 它经 `session-ui/styles` 进样式表(app 的 index.css 已经 import 了那一份),
+ * 所以面板那边不需要再 `import "./bench.css"`。
+ *
+ * 纪律:
+ * - 颜色全部从 app 主题 token 派生(--background-* / --text-* / --border-*),没有写死的明暗两套;
+ *   要两套值时用 CSS 的 `light-dark()`(theme.css 已经设了 color-scheme,ui 包里到处在用)。
+ * - 属性驱动:`data-component` 选组件,`data-state` / `data-tier` / `data-level` 选变体。
+ *   没有工具类 props,没有 CSS-in-JS。
+ * - 这里只放**原语**(LED、状态片、面板头、等宽数字、通道色、栅格底、键值行)。
+ *   具体面板的排版写在自己的段落里,布局(哪块放哪)一律不在这儿定 —— 那是四个布局变体各自的事。
+ *
+ * **作用域刻意是两层**:
+ * - token 块挂在 `.ybench` **以及几个能独立存在的根**上(`:where()`,优先级为 0,不跟任何人抢)。
+ *   于是 `<LogPanel/>` 被单独摆进底部控制台、状态条被塞进标题栏时,它们**自带**那套变量,
+ *   不需要祖先上有 `.ybench` —— 布局变体可以随便搬。只列这几个根而不是所有 `bench-*`:
+ *   每个元素都重声明一遍的话,布局在外层覆盖 `--bench-ch1` 这种做法会被内层原样盖回去。
+ * - 具体规则只按 `data-component` / `data-slot` 选,不带 `.ybench ` 前缀,同样是为了能搬。
+ * `.ybench` 剩下的作用是给整块定字号与文字色。
+ */
+
+:where(
+  .ybench,
+  [data-component="bench-panel"],
+  [data-component="bench-window"],
+  [data-component="bench-target-strip"],
+  [data-component="bench-log-panel"],
+  [data-component="bench-gdb-panel"]
+) {
+  /* ---- 语义色:一律有主题 token 兜底,缺了才落到内置值 ---- */
+  --bench-ink: var(--text-base);
+  --bench-muted: var(--text-weak);
+  --bench-faint: var(--text-weaker, var(--text-weak));
+  --bench-line: var(--border-weaker-base, var(--border-base));
+  --bench-line-strong: var(--border-weak-base, var(--border-base));
+  --bench-surface: var(--background-base);
+  --bench-surface-raised: var(--background-stronger);
+
+  --bench-ok: var(--text-success-base, #2f9e6e);
+  --bench-active: var(--text-interactive-base, #37a8b6);
+  --bench-warn: var(--text-warning-base, #c08a2e);
+  --bench-fail: var(--text-danger-base, #d5544a);
+  --bench-idle: var(--text-weaker, var(--text-weak));
+
+  --bench-mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+
+  /* ---- 仪器通道色 ----
+     示波器的教科书惯例是 1 黄 2 品红 3 青 4 绿;这里**沿用 app 里已经在用的那四支**
+     (黄 / 蓝 / 品红 / 绿)—— 改成教科书配色等于把所有历史波形悄悄换个颜色,而这四支
+     在浅色底上本来就调过。浅色值与 debug/scope-waveform-data.ts 的 SCOPE_COLORS 必须
+     逐字同解(那边是 canvas,读不到 CSS 变量),由 instruments.test.ts 钉住。
+     深色底下各提一档亮度:同一支黄在浅底上要压暗才看得见,在深底上要提亮才不糊。 */
+  --bench-ch1: light-dark(#b99a00, #e3c341);
+  --bench-ch2: light-dark(#347fe2, #6aa8f2);
+  --bench-ch3: light-dark(#cf4b86, #e87bab);
+  --bench-ch4: light-dark(#389562, #5cbd88);
+}
+
+/** 整块的字号与文字色。只给容器,不给每个原语 —— 状态片、读数行各有各的字号。 */
+.ybench,
+[data-component="bench-panel"],
+[data-component="bench-log-panel"],
+[data-component="bench-gdb-panel"] {
+  font-size: 13px;
+  color: var(--bench-ink);
+}
+
+/* ---------------------------------------------------------------- 等宽 / 数字 */
+
+/** 等宽 + 表格数字:读数跳动时列不会左右抖(仪器面板最基本的一条)。 */
+[data-component="bench-mono"],
+.bench-mono {
+  font-family: var(--bench-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* ---------------------------------------------------------------- LED */
+
+/**
+ * LED 指示灯。`data-state` 是唯一的开关:
+ * ok(绿,静)/ active(青,呼吸)/ warn(黄)/ fail(红)/ idle(灰,暗)/ offline(灰,更暗)
+ */
+[data-component="bench-led"] {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--bench-idle);
+  box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--bench-idle) 16%, transparent);
+}
+[data-component="bench-led"][data-state="ok"] {
+  background: var(--bench-ok);
+  box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--bench-ok) 18%, transparent);
+}
+[data-component="bench-led"][data-state="active"] {
+  background: var(--bench-active);
+  box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--bench-active) 20%, transparent);
+  animation: bench-led-pulse 1.8s ease-in-out infinite;
+}
+[data-component="bench-led"][data-state="warn"],
+[data-component="bench-led"][data-state="attention"] {
+  background: var(--bench-warn);
+  box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--bench-warn) 20%, transparent);
+}
+[data-component="bench-led"][data-state="fail"] {
+  background: var(--bench-fail);
+  box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--bench-fail) 20%, transparent);
+}
+[data-component="bench-led"][data-state="offline"] {
+  background: var(--bench-idle);
+  box-shadow: none;
+  opacity: 0.55;
+}
+
+@keyframes bench-led-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* 专业工具,不是科幻 HUD:关掉动效时灯就是常亮,不留任何跳动。 */
+@media (prefers-reduced-motion: reduce) {
+  [data-component="bench-led"][data-state="active"] {
+    animation: none;
+  }
+}
+
+/* ---------------------------------------------------------------- 提示点 */
+
+/**
+ * 「有我还没看过的新证据」。**与 LED 是两件事**,所以刻意长得不一样:
+ * LED 说的是"这台仪器现在什么状况"(采集中 = 呼吸的青灯,出了事 = 黄灯),
+ * 提示点说的是"有新东西你还没看" —— 不呼吸、不换色、不带光晕,一个实心小点。
+ * 两样同时成立的那一格(日志有新行、又有没看过的 error)由布局决定谁让谁。
+ *
+ * 没有光晕:LED 各档都带一圈 `box-shadow`,提示点刻意不带 —— 一行里同时出现两个圆点时,
+ * "有晕的是灯、没晕的是提示"是唯一不用解释的区分。
+ */
+[data-component="bench-unseen-dot"] {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--bench-active);
+}
+
+/* ---------------------------------------------------------------- 状态片 */
+
+/**
+ * 状态片 = LED + 短名 + 一段读数。可点(布局把它接到 onSelect)时才有 hover。
+ * 排版上它是 inline-flex,所以横着排、竖着排、挤在标题栏里都成立。
+ */
+[data-component="bench-chip"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 2px 7px;
+  border: 1px solid var(--bench-line);
+  border-radius: 999px;
+  background: var(--bench-surface);
+  color: var(--bench-ink);
+  font-size: 11px;
+  line-height: 18px;
+  text-align: left;
+  white-space: nowrap;
+}
+button[data-component="bench-chip"] {
+  cursor: pointer;
+}
+button[data-component="bench-chip"]:hover {
+  border-color: var(--bench-line-strong);
+  background: var(--bench-surface-raised);
+}
+button[data-component="bench-chip"]:focus-visible {
+  outline: 2px solid var(--bench-active);
+  outline-offset: 1px;
+}
+[data-component="bench-chip"][data-state="offline"] {
+  opacity: 0.6;
+}
+[data-component="bench-chip"] [data-slot="label"] {
+  flex: none;
+  color: var(--bench-muted);
+}
+[data-component="bench-chip"] [data-slot="value"] {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--bench-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  color: var(--bench-faint);
+}
+[data-component="bench-chip"][data-state="fail"] [data-slot="value"] {
+  color: var(--bench-fail);
+}
+[data-component="bench-chip"][data-state="attention"] [data-slot="value"] {
+  color: var(--bench-warn);
+}
+/**
+ * 读数的语气与灯分开,**排在灯的规则后面**所以它说了算。
+ * 用处只有一个:gdb 会话收了之后灯是灭的(offline),而 `故障 foc.c:45` 仍然是这次调试
+ * 唯一的结论 —— 灯灭、字不灭。
+ */
+[data-component="bench-chip"][data-tone="warn"] [data-slot="value"] {
+  color: var(--bench-warn);
+}
+[data-component="bench-chip"][data-tone="fail"] [data-slot="value"] {
+  color: var(--bench-fail);
+}
+
+/** 状态条本体:一行状态片。布局可以覆盖 flex-wrap / 方向,这里只给默认的横排。 */
+[data-component="bench-target-strip"] {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+
+/* ---------------------------------------------------------------- 面板头 */
+
+/**
+ * 面板头:小号大写字距的标签 + 一条发丝线 + 右侧读数。
+ * 仪器面板的"名牌",四种布局共用同一块头。
+ */
+[data-component="bench-panel-head"] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 2px;
+}
+[data-component="bench-panel-head"] [data-slot="title"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bench-muted);
+  white-space: nowrap;
+}
+/** 发丝线:把标题和右侧读数隔开,同时把这一行钉成"仪器面板的横梁"。 */
+/** 名牌上的仪器图标:跟着 10px 的标签走,别按图标组件的默认尺寸站着。 */
+[data-component="bench-panel-head"] [data-slot="title"] svg {
+  width: 12px;
+  height: 12px;
+  opacity: 0.75;
+}
+[data-component="bench-panel-head"] [data-slot="rule"] {
+  flex: 1 1 auto;
+  min-width: 8px;
+  height: 1px;
+  background: var(--bench-line);
+}
+[data-component="bench-panel-head"] [data-slot="meta"] {
+  flex: none;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--bench-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  color: var(--bench-faint);
+}
+[data-component="bench-panel-head"][data-state="active"] [data-slot="title"] {
+  color: var(--bench-active);
+}
+[data-component="bench-panel-head"][data-state="attention"] [data-slot="title"] {
+  color: var(--bench-warn);
+}
+[data-component="bench-panel-head"][data-state="offline"] [data-slot="title"] {
+  color: var(--bench-faint);
+}
+[data-component="bench-panel-head"] [data-slot="actions"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+/* ---------------------------------------------------------------- 键值读数行 */
+
+/** 键值读数:左边名字,右边等宽值。多行堆叠即成一块读数板。 */
+[data-component="bench-readout"] {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.7;
+}
+[data-component="bench-readout"] [data-slot="key"] {
+  flex: none;
+  color: var(--bench-muted);
+}
+[data-component="bench-readout"] [data-slot="dots"] {
+  flex: 1 1 auto;
+  min-width: 6px;
+  align-self: center;
+  height: 1px;
+  background: var(--bench-line);
+  opacity: 0.7;
+}
+[data-component="bench-readout"] [data-slot="val"] {
+  flex: none;
+  font-family: var(--bench-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--bench-ink);
+  overflow-wrap: anywhere;
+}
+
+/* ---------------------------------------------------------------- 栅格底 */
+
+/**
+ * 仪器表面的格线底纹。只是一层背景,不影响排版;放在波形、日志、任何"读数区"底下。
+ * 刻意很淡 —— 它要在的是余光里,不是视线中心。
+ */
+[data-component="bench-grid"],
+.bench-grid {
+  --bench-grid-size: 16px;
+  background-color: var(--bench-surface);
+  background-image:
+    linear-gradient(to right, color-mix(in srgb, var(--bench-line) 55%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in srgb, var(--bench-line) 55%, transparent) 1px, transparent 1px);
+  background-size: var(--bench-grid-size) var(--bench-grid-size);
+  background-position: center center;
+}
+
+/* ---------------------------------------------------------------- 空状态 */
+
+[data-component="bench-empty"] {
+  padding: 14px 12px;
+  border: 1px dashed var(--bench-line);
+  border-radius: 8px;
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--bench-muted);
+}
+[data-component="bench-empty"] [data-slot="hint"] {
+  display: block;
+  margin-top: 3px;
+  color: var(--bench-faint);
+}
+
+/* ================================================================ 日志面板 */
+
+[data-component="bench-log-panel"] {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  gap: 6px;
+}
+[data-component="bench-log-panel"] [data-slot="toolbar"] {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+[data-component="bench-log-panel"] input[data-slot="filter"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 2px 7px;
+  border: 1px solid var(--bench-line);
+  border-radius: 6px;
+  background: var(--bench-surface);
+  color: var(--bench-ink);
+  font-family: var(--bench-mono);
+  font-size: 11px;
+}
+[data-component="bench-log-panel"] input[data-slot="filter"]:focus-visible {
+  outline: none;
+  border-color: var(--bench-active);
+}
+/** 过滤命中数(`9 / 18`)。行号保留的是原始行号,不说一句的话看不出过滤掉了多少。 */
+[data-component="bench-log-panel"] [data-slot="toolbar"] [data-slot="match"] {
+  flex: none;
+  font-family: var(--bench-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  color: var(--bench-muted);
+  white-space: nowrap;
+}
+[data-component="bench-log-panel"] [data-slot="toolbar"] [data-slot="match"][data-empty="true"] {
+  color: var(--bench-warn);
+}
+[data-component="bench-log-panel"] button[data-slot="follow"],
+[data-component="bench-log-panel"] button[data-slot="refresh"] {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid var(--bench-line);
+  border-radius: 6px;
+  background: var(--bench-surface);
+  color: var(--bench-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+[data-component="bench-log-panel"] button[data-slot="follow"][aria-pressed="true"] {
+  border-color: var(--bench-active);
+  color: var(--bench-active);
+  background: color-mix(in srgb, var(--bench-active) 10%, transparent);
+}
+
+/** 行区:定高滚动 + content-visibility 把视口外的行踢出排版与绘制。 */
+[data-component="bench-log-panel"] [data-slot="lines"] {
+  flex: 1 1 auto;
+  min-height: 120px;
+  max-height: 360px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--bench-line);
+  border-radius: 8px;
+  padding: 5px 0;
+  background: var(--bench-surface);
+  font-family: var(--bench-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  line-height: 16px;
+}
+[data-component="bench-log-panel"] [data-slot="line"] {
+  display: flex;
+  gap: 8px;
+  padding: 0 9px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  /* 2000 行时这一条是承重的:视口外的行不排版、不绘制。
+     contain-intrinsic-size 给出占位高度,滚动条长度才不会跳。 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 16px;
+}
+[data-component="bench-log-panel"] [data-slot="line"] [data-slot="no"] {
+  flex: none;
+  width: 3.5em;
+  text-align: right;
+  color: var(--bench-faint);
+  user-select: none;
+}
+[data-component="bench-log-panel"] [data-slot="line"] [data-slot="text"] {
+  min-width: 0;
+  color: var(--bench-ink);
+}
+[data-component="bench-log-panel"] [data-slot="line"][data-level="error"] [data-slot="text"] {
+  color: var(--bench-fail);
+}
+[data-component="bench-log-panel"] [data-slot="line"][data-level="warn"] [data-slot="text"] {
+  color: var(--bench-warn);
+}
+[data-component="bench-log-panel"] [data-slot="line"][data-level="debug"] [data-slot="text"] {
+  color: var(--bench-faint);
+}
+[data-component="bench-log-panel"] [data-slot="notice"] {
+  padding: 4px 9px;
+  font-size: 10.5px;
+  color: var(--bench-warn);
+}
+
+/* ================================================================ GDB 面板 */
+
+[data-component="bench-gdb-panel"] {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 7px;
+}
+[data-component="bench-gdb-panel"] [data-slot="report"] {
+  margin: 0;
+  padding: 7px 9px;
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--bench-line);
+  border-radius: 8px;
+  background: var(--bench-surface);
+  font-family: var(--bench-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/** 停在哪一行是这份报告里唯一要一眼看见的东西。 */
+[data-component="bench-gdb-panel"] [data-slot="report"] [data-kind="location"] {
+  display: block;
+  color: var(--bench-ink);
+  font-weight: 600;
+}
+[data-component="bench-gdb-panel"] [data-slot="report"] [data-kind="fault"] {
+  display: block;
+  color: var(--bench-fail);
+}
+[data-component="bench-gdb-panel"] [data-slot="report"] [data-kind="plain"] {
+  display: block;
+  color: var(--bench-muted);
+}
+[data-component="bench-gdb-panel"] [data-slot="history"] {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+[data-component="bench-gdb-panel"] [data-slot="history"] li {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--bench-muted);
+}
+[data-component="bench-gdb-panel"] [data-slot="history"] li [data-slot="when"] {
+  flex: none;
+  font-family: var(--bench-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--bench-faint);
+}
+[data-component="bench-gdb-panel"] [data-slot="history"] li [data-slot="where"] {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--bench-mono);
+}
+[data-component="bench-gdb-panel"] [data-slot="history"] li[data-fault="true"] [data-slot="where"] {
+  color: var(--bench-fail);
+}
+
+/* ================================================================ 仪器窗口 */
+
+[data-component="bench-panel"] {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+[data-component="bench-panel"] [data-slot="windows"] {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+/** 一台仪器一个窗口。布局变体可以整块搬走(轨、抽屉、底栏),样式不跟着搬。 */
+[data-component="bench-window"] {
+  min-width: 0;
+  border: 1px solid var(--bench-line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bench-surface-raised);
+  scroll-margin-top: 8px;
+}
+[data-component="bench-window"] > [data-slot="body"] {
+  padding: 8px 11px 11px;
+  min-width: 0;
+}
+[data-component="bench-window"] [data-component="bench-panel-head"] {
+  padding: 7px 11px;
+  border-bottom: 1px solid var(--bench-line);
+}
+[data-component="bench-window"] button[data-slot="unpin"] {
+  border: none;
+  background: transparent;
+  color: var(--bench-faint);
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+[data-component="bench-window"] button[data-slot="unpin"]:hover {
+  color: var(--bench-ink);
+  background: var(--bench-surface);
+}
+[data-component="bench-window"] [data-slot="pending"] {
+  padding: 10px 11px;
+  font-size: 11px;
+  color: var(--bench-faint);
+}
+
+/* ================================================================ 仪器挑选 */
+
+[data-component="bench-instrument-picker"] {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-top: 2px;
+  font-size: 11px;
+  color: var(--bench-faint);
+}
+[data-component="bench-instrument-picker"] button {
+  padding: 1px 8px;
+  border: 1px dashed var(--bench-line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--bench-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+[data-component="bench-instrument-picker"] button:hover {
+  border-style: solid;
+  border-color: var(--bench-active);
+  color: var(--bench-active);
+}

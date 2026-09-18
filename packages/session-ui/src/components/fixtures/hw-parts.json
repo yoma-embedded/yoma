@@ -1,0 +1,1064 @@
+[
+ {
+  "tool": "flash",
+  "input": {
+   "command": [
+    "sh",
+    "tools/flash-openocd.sh",
+    "build/f405-motor-ctrl.elf"
+   ],
+   "elfPath": "build/f405-motor-ctrl.elf"
+  },
+  "metadata": {
+   "command": [
+    "sh",
+    "tools/flash-openocd.sh",
+    "build/f405-motor-ctrl.elf"
+   ],
+   "exitCode": 0,
+   "recordedElf": "/work/f405-motor-ctrl/build/f405-motor-ctrl.elf"
+  },
+  "output": "Open On-Chip Debugger 0.12.0 (2026-04-11-09:22)\nLicensed under GNU GPL v2\nInfo : auto-selecting first available session transport \"hla_swd\".\nInfo : The selected transport took over low-level target control.\nInfo : clock speed 1800 kHz\nInfo : STLINK V3J13M4 (API v3) VID:PID 0483:374F\nInfo : Target voltage: 3.243000\nInfo : [stm32f4x.cpu] Cortex-M4 r0p1 processor detected\nInfo : [stm32f4x.cpu] target has 6 breakpoints, 4 watchpoints\nInfo : starting gdb server for stm32f4x.cpu on 3333\nInfo : Listening on port 3333 for gdb connections\n[stm32f4x.cpu] halted due to debug-request, current mode: Thread\nxPSR: 0x01000000 pc: 0x08000198 msp: 0x20020000\n** Programming Started **\nInfo : device id = 0x10076413\nInfo : flash size = 1024 KiB\nWarn : Adding extra erase range, 0x08000c00 .. 0x08003fff\nwrote 16384 bytes from file build/f405-motor-ctrl.elf in 0.681733s (40780 bytes image, 23.472 KiB/s)\n** Programming Finished **\n** Verify Started **\nverified 2304 bytes in 0.049812s (45.169 KiB/s)\n** Verified OK **\n** Resetting Target **\nInfo : [stm32f4x.cpu] external reset detected\nshutdown command invoked\nrecorded /work/f405-motor-ctrl/build/f405-motor-ctrl.elf as the image on the target — gdb start will verify against it."
+ },
+ {
+  "tool": "log",
+  "input": {
+   "action": "start",
+   "command": "sh tools/uart-sim.sh"
+  },
+  "metadata": {
+   "action": "start",
+   "running": true,
+   "cursor": 0,
+   "totalLines": 0,
+   "dropped": 0,
+   "source": "sh tools/uart-sim.sh",
+   "file": "/work/f405-motor-ctrl/.yoma/logs/hw-20260918-011554425.log"
+  },
+  "output": "Capturing sh tools/uart-sim.sh (pid 85468).\nFull log: /work/f405-motor-ctrl/.yoma/logs/hw-20260918-011554425.log\nNext: `log wait` with a pattern (e.g. \"boot|fault|error\") — it blocks until something matches instead of dumping the log."
+ },
+ {
+  "tool": "log",
+  "input": {
+   "action": "wait",
+   "pattern": "HARDFAULT",
+   "timeoutMs": 25000
+  },
+  "metadata": {
+   "action": "wait",
+   "running": true,
+   "cursor": 9,
+   "totalLines": 9,
+   "dropped": 0,
+   "source": "sh tools/uart-sim.sh",
+   "file": "/work/f405-motor-ctrl/.yoma/logs/hw-20260918-011554425.log",
+   "matched": true
+  },
+  "output": "matched /HARDFAULT/ at seq 8 (+1.710s)\n5 earlier unread lines were skipped — `log read since=0` or grep the log file for them.\n\n[+0.971] [foc] iq_ref 1500 mA, kp=24 ki=310\n[+1.184] [foc] calibrating shunt offsets\n[+1.649] \n[+1.710] *** HARDFAULT (stage 6) ***   ← match\n\ncursor: 9 | source: running | full log: /work/f405-motor-ctrl/.yoma/logs/hw-20260918-011554425.log"
+ },
+ {
+  "tool": "log",
+  "input": {
+   "action": "wait",
+   "pattern": "halting, awaiting debugger",
+   "timeoutMs": 15000
+  },
+  "metadata": {
+   "action": "wait",
+   "running": true,
+   "cursor": 18,
+   "totalLines": 18,
+   "dropped": 0,
+   "source": "sh tools/uart-sim.sh",
+   "file": "/work/f405-motor-ctrl/.yoma/logs/hw-20260918-011554425.log",
+   "matched": true
+  },
+  "output": "matched /halting, awaiting debugger/ at seq 17 (+2.520s)\n5 earlier unread lines were skipped — `log read since=9` or grep the log file for them.\n\n[+2.079]   mmfar = 0x00000000\n[+2.145]   bfar  = 0xf0000000\n[+2.205]   exc   = 0xfffffffd\n[+2.520] [fault] halting, awaiting debugger   ← match\n\ncursor: 18 | source: running | full log: /work/f405-motor-ctrl/.yoma/logs/hw-20260918-011554425.log"
+ },
+ {
+  "tool": "log",
+  "input": {
+   "action": "read",
+   "maxLines": 40
+  },
+  "metadata": {
+   "action": "read",
+   "running": true,
+   "cursor": 18,
+   "totalLines": 18,
+   "dropped": 0,
+   "source": "sh tools/uart-sim.sh",
+   "file": "/work/f405-motor-ctrl/.yoma/logs/hw-20260918-011554425.log"
+  },
+  "output": "no new lines since seq 18\n\ncursor: 18 | source: running"
+ },
+ {
+  "tool": "log",
+  "input": {
+   "action": "stop"
+  },
+  "metadata": {
+   "action": "stop",
+   "running": false,
+   "cursor": 18,
+   "totalLines": 18,
+   "dropped": 0,
+   "source": "sh tools/uart-sim.sh",
+   "file": "/work/f405-motor-ctrl/.yoma/logs/hw-20260918-011554425.log",
+   "exitCode": null
+  },
+  "output": "stopped sh tools/uart-sim.sh after 2.5s and 18 lines.\nFull log: /work/f405-motor-ctrl/.yoma/logs/hw-20260918-011554425.log"
+ },
+ {
+  "tool": "gdb",
+  "input": {
+   "action": "start",
+   "server": "qemu",
+   "machine": "netduinoplus2",
+   "elfPath": "build/f405-motor-ctrl.elf"
+  },
+  "metadata": {
+   "action": "start",
+   "state": "halted",
+   "epoch": 1,
+   "stopId": 1,
+   "connection": "localhost:62169",
+   "file": "/work/f405-motor-ctrl/.yoma/gdb/session-20260918-011557687.log",
+   "path": "/work/f405-motor-ctrl/Core/Src/main.c",
+   "line": 177
+  },
+  "output": "[gdb #1 halted @ Core/Src/main.c:177 localhost:62169]\nattached to localhost:62169 via qemu, gdb /Applications/ArmGNUToolchain/15.2.rel1/arm-none-eabi/bin/arm-none-eabi-gdb\ncore: Cortex-M4 r0p0 (breakpoint budget unknown — the FPB did not report one; gdb's own reply decides)\nnote: qemu does not support watchpoints at all\nimage: verified against the last flash (0 min ago)\nsession log: /work/f405-motor-ctrl/.yoma/gdb/session-20260918-011557687.log\nserver log: /work/f405-motor-ctrl/.yoma/gdb/server-20260918-011557687.log\n■ stopped#1: halted (initial attach)\n  #0 Reset_Handler() at Core/Src/main.c:177\n  locals: src=<optimized out>, dst=<optimized out>\n  (2 个局部变量是 <optimized out> —— 不要把它当作\"没赋值\"或\"没执行到\")\n  (目标已暂停 —— 在 exec continue 之前它不会再产生任何日志输出)"
+ },
+ {
+  "tool": "gdb",
+  "input": {
+   "action": "break",
+   "at": "hardfault_report"
+  },
+  "metadata": {
+   "action": "break",
+   "state": "halted",
+   "epoch": 1,
+   "stopId": 1,
+   "connection": "localhost:62169",
+   "file": "/work/f405-motor-ctrl/.yoma/gdb/session-20260918-011557687.log"
+  },
+  "output": "[gdb #1 halted @ Core/Src/main.c:177 localhost:62169]\nbreakpoint 1 at 0x08000334 — Core/Src/main.c:136\nbreakpoints:\n  1 break hardfault_report @ 0x08000334"
+ },
+ {
+  "tool": "gdb",
+  "input": {
+   "action": "exec",
+   "op": "continue",
+   "waitMs": 25000,
+   "show": [
+    "g_boot_stage",
+    "g_adc_dma"
+   ]
+  },
+  "metadata": {
+   "action": "exec",
+   "state": "halted",
+   "epoch": 1,
+   "stopId": 2,
+   "connection": "localhost:62169",
+   "file": "/work/f405-motor-ctrl/.yoma/gdb/session-20260918-011557687.log",
+   "path": "/work/f405-motor-ctrl/Core/Src/main.c",
+   "line": 136
+  },
+  "output": "[gdb #1 halted @ Core/Src/main.c:136 localhost:62169]\n■ stopped#2: breakpoint-hit breakpoint 1 (+0.002s)\n  故障(BusFault):PRECISERR(精确数据总线错误 —— BFAR 就是出事地址);出事地址 BFAR=0xf0000000\n  异常帧在 PSP(EXC_RETURN=0xfffffffd,基本帧)\n  出事 PC 0x080004b6 = foc_zero_isense + 10 in section .text (Core/Src/foc.c:45)\n  入栈寄存器:r0=0xdeadbeef r1=0x00000000 r2=0xf0000000 r3=0x00000000 r12=0x00000061 lr=0x0800050d xpsr=0x41000000(线程模式)\n  #0 hardfault_report() at Core/Src/main.c:136\n  #1 <signal handler called>() at 0xfffffffd\n  #2 foc_zero_isense() at Core/Src/foc.c:45\n  #3 foc_start() at Core/Src/foc.c:64\n  #4 main() at Core/Src/main.c:114\n  locals: f=0x2001f7c0, exc_return=4294967293\n  g_boot_stage = 6\n  g_adc_dma = 0xf0000000\n  (目标已暂停 —— 在 exec continue 之前它不会再产生任何日志输出)"
+ },
+ {
+  "tool": "gdb",
+  "input": {
+   "action": "eval",
+   "command": "p/x g_adc_dma"
+  },
+  "metadata": {
+   "action": "eval",
+   "state": "halted",
+   "epoch": 1,
+   "stopId": 2,
+   "connection": "localhost:62169",
+   "file": "/work/f405-motor-ctrl/.yoma/gdb/session-20260918-011557687.log",
+   "path": "/work/f405-motor-ctrl/Core/Src/main.c",
+   "line": 136
+  },
+  "output": "[gdb #1 halted @ Core/Src/main.c:136 localhost:62169]\n$1 = 0xf0000000"
+ },
+ {
+  "tool": "gdb",
+  "input": {
+   "action": "stop"
+  },
+  "metadata": {
+   "action": "stop",
+   "state": "no-session",
+   "epoch": 0,
+   "stopId": 0
+  },
+  "output": "gdb session closed.\nSession log: /work/f405-motor-ctrl/.yoma/gdb/session-20260918-011557687.log"
+ },
+ {
+  "tool": "la",
+  "input": {
+   "action": "import",
+   "file": "captures/imu-i2c-20260917.dsl"
+  },
+  "metadata": {
+   "action": "import",
+   "captureId": "la-20260918-011558793-import",
+   "dir": "/work/f405-motor-ctrl/.yoma/la/la-20260918-011558793-import",
+   "file": "/work/f405-motor-ctrl/.yoma/la/la-20260918-011558793-import/capture.dsl",
+   "samplerate": 25000000,
+   "samples": 131072,
+   "durationMs": 5.24288,
+   "triggerPos": 0,
+   "channels": [
+    {
+     "index": 0,
+     "name": "SDA"
+    },
+    {
+     "index": 1,
+     "name": "SCL"
+    },
+    {
+     "index": 2,
+     "name": "2"
+    },
+    {
+     "index": 3,
+     "name": "3"
+    },
+    {
+     "index": 4,
+     "name": "4"
+    },
+    {
+     "index": 5,
+     "name": "UART"
+    },
+    {
+     "index": 6,
+     "name": "6"
+    },
+    {
+     "index": 7,
+     "name": "7"
+    },
+    {
+     "index": 8,
+     "name": "8"
+    },
+    {
+     "index": 9,
+     "name": "CAN-FD"
+    },
+    {
+     "index": 10,
+     "name": "10"
+    },
+    {
+     "index": 11,
+     "name": "11"
+    },
+    {
+     "index": 12,
+     "name": "CLK"
+    },
+    {
+     "index": 13,
+     "name": "CS#"
+    },
+    {
+     "index": 14,
+     "name": "MOSI"
+    },
+    {
+     "index": 15,
+     "name": "MISO"
+    }
+   ],
+   "preview": {
+    "columns": 1024,
+    "from": 0,
+    "to": 131072,
+    "rows": {
+     "0": "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVevVqt6qr6rqrXpfrertrd56VVX1VVVV1V6tequ6qqp66+3Vqt6+qlert3t71V5Ve1VVe7Wqt+qqquqtvlerevuqXq3e7u1V7VXtVVVV7dWq3qqvqqreel+t6u2terV6+75XtVfVV1VV7dWqt6qrqnq1/l6t6n2rqldVVX1VVVV7teqt6qqqXtW3V6t6+15VVVVVX1VVVVVVVVVVVVVVVVVVVVVVVVVVVQ==",
+     "1": "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVdX////////////9//////////97VVVVVf////////////f/////////////////XlVV/f//////////f/////////////////97VVVV1f////////////3/////////////////VVVV9f//////////f////////////19VVVX9///////////f////////////V1VVVVVVVVVVVVVVVVVVVVVVVVVVVQ==",
+     "2": "qqqqqqqqqqqqqqqqqqqqqqpeVVWrqqqqqqqqqqqqqqqqqqrqVVVVVVVVVVWtqqqqV1VVVVVVVVVVtaqqqqqqqqqqqqpeVVVVVVVVVVWrqqp6VVVVq6qqqqqqqqqqqqqqqqpXVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVWtqqqqqqqqqqqqqldVVVWrqqrqVVVVVVVVVVVVVVVVraqqqupVVVVVVVVVVVVVVVVVVbWqqqqqqqqqqqqqqqqqqqqqelVVVVVVVVVVVa2qqqqqqqqqql5VVVVVVVVVtaqqqqqqqqqqqqqqqqqqqqqqV1VVVVWrqupVraqq6lVVVVWrqg==",
+     "3": "qqqqqldVVVVVVVVVVVVV1aqqqqp6Va2qqqqqqqqqqqqqql61qqqqqqqqqqqqqqqqqldVVe1Vq6qqqqpXVVVVVVVVV1VVVVVVVa2q6rWqqqqqqqqqqqqqqqqqql6tqqqqqqqqqqqq16qqqqqqXq2qXlVVVVVVVVVVVVVVVa2qqqqqqqqqqqqqqupVVVVVVVVVVVVVVa2qqqqqqqqqqqqqqqqqqqqqqqqqqqrqVVVVfVVVVVVVVVVVVVVVVVVVVVVVVVVVq6qqqqqqqqqqqqqqqqp6VVVVVVVVraqqqqqqqqqqqqqqqqqqqqqqqqqqelVVVVWrqqqqqqqqqqpXVVWrqg==",
+     "4": "6lVVVVVVVbXqVVVVVVVVVVVVVVVVVVW1ql5VVVXVqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqpXVdWqqqqqXlVVVVVVVVVVVVWrqqqqqqqqqqqqqldVVVVVVVVVrV7VXlVVVVVVVVVVVVVVVVVVtXpVVVVVVdVeVVWtqqqqqqp6VVVVq6qqqqqqqqqqqqqqqqq3ql5VtaqqqqqqqqqqqqqqqqqqqqqqqqqqelVVVVVV1ap6VVVVVVVVVVVVVVVVVVVVVVW1qqp6taqqqqqqqqqqqqqqqqqqqqrqVVVVq15VVVXVqqqqqqrqVVVVVVWrqqqqqqpXVVVVVVVVVQ==",
+     "5": "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVdWqt+p7e6237616rb63V7XX3l61Xnv76nv17bXq1beqqrfeXutVffveevWtt3rVt6/eV9++t159e61e9a2q6q239+17316r732rr6r37X31rbf6qlf73qpe7XutXrXvfavXvuqtXvuqqvrqq3qtt++tqt6+qqq++uq1eu2tt16191W119631157q6r66q36qre33nrV3revXnvfqnrtfXvttffVevveV9Vee9/eV+2tt161t9eq196+t157q16r7+2r6rW33qrXXlVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQ==",
+     "6": "qqqqqqqqqqpXVVVVVVVVVVVVraqqV1VVVVVVVVXVqqqqqqqqqqqqqqqqqqqqqqqqqupVVVVVVVVVVbWqqqqqqqpXVVVVVVVVVVVVtV5VVVVVVVVVVVWtelVVVVVVVVWtqqqqqqqqqqqqqqqqqqqqqqqq6lVVraqqqldVVdWqqqqqqqqqqqqqqqp6VVWrqqqqqqqqqqqqqqqqqqqqqqpeVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVWtqqqqqqqqqqqqqqqqqqqqqqpeVVVVVVVVVVWrqqqqqqqqql5VVVVVVVWtqqqqqldVtXqrqqqqqqqqXlVVVVVVVQ==",
+     "7": "qqqqqqqqqqqqqqpXVVVVVa2qqqpeVa2qqqqqqqqqqqp6VVVVVVVVVVWrqqqqXlVVVVVVVVWrqqqqqqqqqqqqqnpVVVVVVVVVVVVVVVVVVVVVVVW1qqqqqqqqqqqqqqqqqupVVVVVVVVVraqqqqqqqqqqqqqqqqrqVauqqqqqqqqqqqqqqupVVdWqqqqqql5VVVVVVVVVVVVVVVVVq6qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqnrVqqqqqqqqqqqqqqqqqqqqqqpeVVVVVVVVVVVVVVVV1aqqqqqqqqqqqqqqqqpeVVVVVVVVVVVVVVVV1apXVVVVVVVVVVVVVVWtqg==",
+     "8": "qqqqqqqqqqqqqqqqqqpXVVVVVVVVVVVV1aqqqqqqqqqqqqqqqqqqqqqqqqqqV1VVVVVVVVVV1aqqql5VVVVVtaqqqqqqqqqqqqqqqqqqqqqqqqqqqqq3qqqqqqqqqqqqqqqqqqqqXlVVVVVVVVVVVVVVVVXVqqqqqqqqqqqqqqqqqupV1epVraqq6lVVq6pXVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVdWqqqqqqqqqqqp6VVVVVVVVVVVVVVVVVVVVVbWqqqqqqqqqelVVVVVVVVVVVVVVVVVVVVVVq6rqVVVVVVXVqqqqqqqqqqqqqqqqqqqqqqqqqqqqqg==",
+     "9": "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVdXv/v///////////////////19VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/+////////////////////39VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV7/v///////////////////9/VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQ==",
+     "10": "qqpXVVW1qqr6qqqqqqqqqqqqqqrqVauqqqqqqqqqqqqqqqqqqqqqqldVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVa2qqqqqqqpXVVVVVVVVVVVVVdWqqnpVVVWrqqqqqqqqqqqqqqqqqqqq6lVVVVVVVVVVVVVVVVVVVVWrqqqqqqqqqqqqqnqrqqqqqqqqqqqqqldVVVVV1XpVVVW1qqqqqqpXVVVVVVVVVVVVVVVVVVVVq6qqqqqqqqqqqnpVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVWtqqqqelVVVVVVVVVVVVWtqqpeVVW1qqpXVVWrqqpeVVVVVVVVVVVVVQ==",
+     "11": "qqqqqqpeVauqqupVVVVVVVVVVVVVVVVVVVVVVVVVVVWtqqqqqqqqqqqqqldVVVXVqqpXVVVVVa2qqqqqqqrqVVVVVVVVVVVVVauqqqqqqqqqqldVVVVVtaqqqqqqqqqqqqqqqupVVbWqqqqqqqqqqqqqqnrVqnpVVVVVVVWterWqqqqqqqqqqldVVVVVVVVVVVVVVVVV1aqqqqqqqnpVraqq6lVVVVVVVVVVVVVVVVVVVVVVVa2qqqqqqqqqqqqqqqqqqqqqqqqqqqp6VVVVVVVVtaqq6lVV1aqqqldVVVVVVVVVVVVVq6qqqqqqelWrqqqqelWrqqqqqldVVVVVVQ==",
+     "12": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq+v///////7+qqqqqqqqqqqqqqqqqqqr/////////q/r////////////////////////////////////////////////////////////7////////////////////////////////////////////////////////////////////////r6qqqqqqqqqqqqqqqqqqqvr///////+/qqqqqqqqqqqqqqqqqqqq6v+v//////+vqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqg==",
+     "13": "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVq6qqqqqqqqpXVVVVVVVVVVVVVVVVVbWqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq6lVVVVVVVVVVVVVVVVVVVauqqqqqqqqqV1VVVVVVVVVVVVVVVVVVraqqqqqqqqqqV1VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQ==",
+     "14": "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVta++q/7//39VVVVVVVVVVVVVVVVVVVX76ruq//93V1VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVbWvvqv+//9/VVVVVVVVVVVVVVVVVVVV1b6qu6r///9XVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQ==",
+     "15": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqu+q/+//7+qqqqqqqqqqqqqqqqqqqq66vt6//+7V7WquqquX/X//7+++v+q/v//f1X///7/////v///7//////////////////v/v/r//////////v/v///////////////////////////////+///v//////////v/7////7////vrqqqqqqqqqqqqqqqqqqqqqqrvqv/v/9/q6qqqqqqqqqqqqqqqqqqqq6qu3r///9fq6qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqg=="
+    }
+   }
+  },
+  "output": "imported la-20260918-011558793-import: 131,072 samples @ 25.000MHz = 5.2429ms, channels D0=SDA D1=SCL D2=2 D3=3 D4=4 D5=UART D6=6 D7=7 D8=8 D9=CAN-FD D10=10 D11=11 D12=CLK D13=CS# D14=MOSI D15=MISO\nnext: la summary, then la decode."
+ },
+ {
+  "tool": "la",
+  "input": {
+   "action": "summary"
+  },
+  "metadata": {
+   "action": "summary",
+   "captureId": "la-20260918-011558793-import",
+   "dir": "/work/f405-motor-ctrl/.yoma/la/la-20260918-011558793-import",
+   "file": "/work/f405-motor-ctrl/.yoma/la/la-20260918-011558793-import/capture.dsl",
+   "samplerate": 25000000,
+   "samples": 131072,
+   "durationMs": 5.24288,
+   "triggerPos": 0,
+   "channels": [
+    {
+     "index": 0,
+     "name": "SDA",
+     "edges": 154
+    },
+    {
+     "index": 1,
+     "name": "SCL",
+     "edges": 510
+    },
+    {
+     "index": 2,
+     "name": "2",
+     "edges": 28
+    },
+    {
+     "index": 3,
+     "name": "3",
+     "edges": 36
+    },
+    {
+     "index": 4,
+     "name": "4",
+     "edges": 39
+    },
+    {
+     "index": 5,
+     "name": "UART",
+     "edges": 304
+    },
+    {
+     "index": 6,
+     "name": "6",
+     "edges": 29
+    },
+    {
+     "index": 7,
+     "name": "7",
+     "edges": 26
+    },
+    {
+     "index": 8,
+     "name": "8",
+     "edges": 24
+    },
+    {
+     "index": 9,
+     "name": "CAN-FD",
+     "edges": 726
+    },
+    {
+     "index": 10,
+     "name": "10",
+     "edges": 31
+    },
+    {
+     "index": 11,
+     "name": "11",
+     "edges": 37
+    },
+    {
+     "index": 12,
+     "name": "CLK",
+     "edges": 4608
+    },
+    {
+     "index": 13,
+     "name": "CS#",
+     "edges": 8
+    },
+    {
+     "index": 14,
+     "name": "MOSI",
+     "edges": 176
+    },
+    {
+     "index": 15,
+     "name": "MISO",
+     "edges": 1056
+    }
+   ],
+   "preview": {
+    "columns": 1024,
+    "from": 0,
+    "to": 131072,
+    "rows": {
+     "0": "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVevVqt6qr6rqrXpfrertrd56VVX1VVVV1V6tequ6qqp66+3Vqt6+qlert3t71V5Ve1VVe7Wqt+qqquqtvlerevuqXq3e7u1V7VXtVVVV7dWq3qqvqqreel+t6u2terV6+75XtVfVV1VV7dWqt6qrqnq1/l6t6n2rqldVVX1VVVV7teqt6qqqXtW3V6t6+15VVVVVX1VVVVVVVVVVVVVVVVVVVVVVVVVVVQ==",
+     "1": "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVdX////////////9//////////97VVVVVf////////////f/////////////////XlVV/f//////////f/////////////////97VVVV1f////////////3/////////////////VVVV9f//////////f////////////19VVVX9///////////f////////////V1VVVVVVVVVVVVVVVVVVVVVVVVVVVQ==",
+     "2": "qqqqqqqqqqqqqqqqqqqqqqpeVVWrqqqqqqqqqqqqqqqqqqrqVVVVVVVVVVWtqqqqV1VVVVVVVVVVtaqqqqqqqqqqqqpeVVVVVVVVVVWrqqp6VVVVq6qqqqqqqqqqqqqqqqpXVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVWtqqqqqqqqqqqqqldVVVWrqqrqVVVVVVVVVVVVVVVVraqqqupVVVVVVVVVVVVVVVVVVbWqqqqqqqqqqqqqqqqqqqqqelVVVVVVVVVVVa2qqqqqqqqqql5VVVVVVVVVtaqqqqqqqqqqqqqqqqqqqqqqV1VVVVWrqupVraqq6lVVVVWrqg==",
+     "3": "qqqqqldVVVVVVVVVVVVV1aqqqqp6Va2qqqqqqqqqqqqqql61qqqqqqqqqqqqqqqqqldVVe1Vq6qqqqpXVVVVVVVVV1VVVVVVVa2q6rWqqqqqqqqqqqqqqqqqql6tqqqqqqqqqqqq16qqqqqqXq2qXlVVVVVVVVVVVVVVVa2qqqqqqqqqqqqqqupVVVVVVVVVVVVVVa2qqqqqqqqqqqqqqqqqqqqqqqqqqqrqVVVVfVVVVVVVVVVVVVVVVVVVVVVVVVVVq6qqqqqqqqqqqqqqqqp6VVVVVVVVraqqqqqqqqqqqqqqqqqqqqqqqqqqelVVVVWrqqqqqqqqqqpXVVWrqg==",
+     "4": "6lVVVVVVVbXqVVVVVVVVVVVVVVVVVVW1ql5VVVXVqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqpXVdWqqqqqXlVVVVVVVVVVVVWrqqqqqqqqqqqqqldVVVVVVVVVrV7VXlVVVVVVVVVVVVVVVVVVtXpVVVVVVdVeVVWtqqqqqqp6VVVVq6qqqqqqqqqqqqqqqqq3ql5VtaqqqqqqqqqqqqqqqqqqqqqqqqqqelVVVVVV1ap6VVVVVVVVVVVVVVVVVVVVVVW1qqp6taqqqqqqqqqqqqqqqqqqqqrqVVVVq15VVVXVqqqqqqrqVVVVVVWrqqqqqqpXVVVVVVVVVQ==",
+     "5": "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVdWqt+p7e6237616rb63V7XX3l61Xnv76nv17bXq1beqqrfeXutVffveevWtt3rVt6/eV9++t159e61e9a2q6q239+17316r732rr6r37X31rbf6qlf73qpe7XutXrXvfavXvuqtXvuqqvrqq3qtt++tqt6+qqq++uq1eu2tt16191W119631157q6r66q36qre33nrV3revXnvfqnrtfXvttffVevveV9Vee9/eV+2tt161t9eq196+t157q16r7+2r6rW33qrXXlVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQ==",
+     "6": "qqqqqqqqqqpXVVVVVVVVVVVVraqqV1VVVVVVVVXVqqqqqqqqqqqqqqqqqqqqqqqqqupVVVVVVVVVVbWqqqqqqqpXVVVVVVVVVVVVtV5VVVVVVVVVVVWtelVVVVVVVVWtqqqqqqqqqqqqqqqqqqqqqqqq6lVVraqqqldVVdWqqqqqqqqqqqqqqqp6VVWrqqqqqqqqqqqqqqqqqqqqqqpeVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVWtqqqqqqqqqqqqqqqqqqqqqqpeVVVVVVVVVVWrqqqqqqqqql5VVVVVVVWtqqqqqldVtXqrqqqqqqqqXlVVVVVVVQ==",
+     "7": "qqqqqqqqqqqqqqpXVVVVVa2qqqpeVa2qqqqqqqqqqqp6VVVVVVVVVVWrqqqqXlVVVVVVVVWrqqqqqqqqqqqqqnpVVVVVVVVVVVVVVVVVVVVVVVW1qqqqqqqqqqqqqqqqqupVVVVVVVVVraqqqqqqqqqqqqqqqqrqVauqqqqqqqqqqqqqqupVVdWqqqqqql5VVVVVVVVVVVVVVVVVq6qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqnrVqqqqqqqqqqqqqqqqqqqqqqpeVVVVVVVVVVVVVVVV1aqqqqqqqqqqqqqqqqpeVVVVVVVVVVVVVVVV1apXVVVVVVVVVVVVVVWtqg==",
+     "8": "qqqqqqqqqqqqqqqqqqpXVVVVVVVVVVVV1aqqqqqqqqqqqqqqqqqqqqqqqqqqV1VVVVVVVVVV1aqqql5VVVVVtaqqqqqqqqqqqqqqqqqqqqqqqqqqqqq3qqqqqqqqqqqqqqqqqqqqXlVVVVVVVVVVVVVVVVXVqqqqqqqqqqqqqqqqqupV1epVraqq6lVVq6pXVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVdWqqqqqqqqqqqp6VVVVVVVVVVVVVVVVVVVVVbWqqqqqqqqqelVVVVVVVVVVVVVVVVVVVVVVq6rqVVVVVVXVqqqqqqqqqqqqqqqqqqqqqqqqqqqqqg==",
+     "9": "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVdXv/v///////////////////19VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/+////////////////////39VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV7/v///////////////////9/VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQ==",
+     "10": "qqpXVVW1qqr6qqqqqqqqqqqqqqrqVauqqqqqqqqqqqqqqqqqqqqqqldVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVa2qqqqqqqpXVVVVVVVVVVVVVdWqqnpVVVWrqqqqqqqqqqqqqqqqqqqq6lVVVVVVVVVVVVVVVVVVVVWrqqqqqqqqqqqqqnqrqqqqqqqqqqqqqldVVVVV1XpVVVW1qqqqqqpXVVVVVVVVVVVVVVVVVVVVq6qqqqqqqqqqqnpVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVWtqqqqelVVVVVVVVVVVVWtqqpeVVW1qqpXVVWrqqpeVVVVVVVVVVVVVQ==",
+     "11": "qqqqqqpeVauqqupVVVVVVVVVVVVVVVVVVVVVVVVVVVWtqqqqqqqqqqqqqldVVVXVqqpXVVVVVa2qqqqqqqrqVVVVVVVVVVVVVauqqqqqqqqqqldVVVVVtaqqqqqqqqqqqqqqqupVVbWqqqqqqqqqqqqqqnrVqnpVVVVVVVWterWqqqqqqqqqqldVVVVVVVVVVVVVVVVV1aqqqqqqqnpVraqq6lVVVVVVVVVVVVVVVVVVVVVVVa2qqqqqqqqqqqqqqqqqqqqqqqqqqqp6VVVVVVVVtaqq6lVV1aqqqldVVVVVVVVVVVVVq6qqqqqqelWrqqqqelWrqqqqqldVVVVVVQ==",
+     "12": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq+v///////7+qqqqqqqqqqqqqqqqqqqr/////////q/r////////////////////////////////////////////////////////////7////////////////////////////////////////////////////////////////////////r6qqqqqqqqqqqqqqqqqqqvr///////+/qqqqqqqqqqqqqqqqqqqq6v+v//////+vqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqg==",
+     "13": "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVq6qqqqqqqqpXVVVVVVVVVVVVVVVVVbWqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq6lVVVVVVVVVVVVVVVVVVVauqqqqqqqqqV1VVVVVVVVVVVVVVVVVVraqqqqqqqqqqV1VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQ==",
+     "14": "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVta++q/7//39VVVVVVVVVVVVVVVVVVVX76ruq//93V1VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVbWvvqv+//9/VVVVVVVVVVVVVVVVVVVV1b6qu6r///9XVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQ==",
+     "15": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqu+q/+//7+qqqqqqqqqqqqqqqqqqqq66vt6//+7V7WquqquX/X//7+++v+q/v//f1X///7/////v///7//////////////////v/v/r//////////v/v///////////////////////////////+///v//////////v/7////7////vrqqqqqqqqqqqqqqqqqqqqqqrvqv/v/9/q6qqqqqqqqqqqqqqqqqqqq6qu3r///9fq6qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqg=="
+    }
+   }
+  },
+  "output": "la-20260918-011558793-import: 131,072 samples @ 25.000MHz = 5.2429ms, trigger at 0\n  D0 SDA            154 edges  active 1.8059ms..4.8009ms  min pulse 40.0ns  duty 70%  ~25.71kHz toggles\n  D1 SCL            510 edges  active 1.8192ms..4.7964ms  min pulse 4.920us  duty 75%  ~85.65kHz toggles\n  D2 2               28 edges  active 355.8us..5.2045ms  min pulse 30.7us  duty 47%  ~2.89kHz toggles\n  D3 3               36 edges  active 84.5us..5.2045ms  min pulse 2.560us  duty 39%  ~3.52kHz toggles\n  D4 4               39 edges  active 15.4us..5.0816ms  min pulse 7.680us  duty 49%  ~3.85kHz toggles\n  D5 UART           304 edges  active 467.7us..4.5550ms  min pulse 8.640us  duty 58%  ~37.19kHz toggles\n  D6 6               29 edges  active 166.4us..5.1072ms  min pulse 7.680us  duty 48%  ~2.93kHz toggles\n  D7 7               26 edges  active 225.3us..5.2096ms  min pulse 25.6us  duty 42%  ~2.61kHz toggles\n  D8 8               24 edges  active 289.3us..4.7872ms  min pulse 12.8us  duty 46%  ~2.67kHz toggles\n  D9 CAN-FD         726 edges  active 653.4us..4.2942ms  min pulse 480.0ns  duty 84%  ~99.71kHz toggles\n  D10 10              31 edges  active 41.0us..5.0227ms  min pulse 5.120us  duty 56%  ~3.11kHz toggles\n  D11 11              37 edges  active 110.1us..5.1226ms  min pulse 17.9us  duty 49%  ~3.69kHz toggles\n  D12 CLK           4608 edges  active 626.3us..4.2855ms  min pulse 360.0ns  duty 17%  ~629.65kHz toggles\n  D13 CS#              8 edges  active 617.7us..4.3024ms  min pulse 163.0us  duty 47%  ~1.09kHz toggles\n  D14 MOSI           176 edges  active 625.9us..4.2825ms  min pulse 720.0ns  duty 92%  ~24.07kHz toggles\n  D15 MISO          1056 edges  active 636.9us..4.3025ms  min pulse 720.0ns  duty 17%  ~144.04kHz toggles\nhints: clock-like: D12 (1.316MHz), D9 (333.33kHz), D1 (99.60kHz) — the data line of that bus is the one that toggles with it (I²C scl/sda, SPI clk/mosi/miso); idle-high with bursts (UART-like candidates): D0, D5, D14\nnext: la decode with decoders=[{key,id,channels}] — e.g. id \"1:i2c\" (scl,sda), \"1:spi\" (clk,[miso],[mosi],[cs]), \"1:uart\" (rxtx). la decoders for the catalog."
+ },
+ {
+  "tool": "la",
+  "input": {
+   "action": "timing"
+  },
+  "metadata": {
+   "action": "timing",
+   "captureId": "la-20260918-011558793-import",
+   "dir": "/work/f405-motor-ctrl/.yoma/la/la-20260918-011558793-import",
+   "file": "/work/f405-motor-ctrl/.yoma/la/la-20260918-011558793-import/capture.dsl",
+   "samplerate": 25000000,
+   "samples": 131072,
+   "durationMs": 5.24288,
+   "triggerPos": 0,
+   "channels": [
+    {
+     "index": 0,
+     "name": "SDA"
+    },
+    {
+     "index": 1,
+     "name": "SCL"
+    },
+    {
+     "index": 2,
+     "name": "2"
+    },
+    {
+     "index": 3,
+     "name": "3"
+    },
+    {
+     "index": 4,
+     "name": "4"
+    },
+    {
+     "index": 5,
+     "name": "UART"
+    },
+    {
+     "index": 6,
+     "name": "6"
+    },
+    {
+     "index": 7,
+     "name": "7"
+    },
+    {
+     "index": 8,
+     "name": "8"
+    },
+    {
+     "index": 9,
+     "name": "CAN-FD"
+    },
+    {
+     "index": 10,
+     "name": "10"
+    },
+    {
+     "index": 11,
+     "name": "11"
+    },
+    {
+     "index": 12,
+     "name": "CLK"
+    },
+    {
+     "index": 13,
+     "name": "CS#"
+    },
+    {
+     "index": 14,
+     "name": "MOSI"
+    },
+    {
+     "index": 15,
+     "name": "MISO"
+    }
+   ],
+   "window": {
+    "from": 0,
+    "to": 131072
+   }
+  },
+  "output": "# la timing la-20260918-011558793-import  window 0..5.2429ms  sr=25.000MHz (resolution 40.0ns)\nD0 SDA        154 edges  high 9.920us (min 2.160us max 96.7us)  low 15.9us (min 40.0ns max 60.2us)  period 30.8us = 32.51kHz (min 6.920us max 106.8us)  duty 48.5%  ⚠ 1 pulses ≤ 2 samples (glitch or under-sampled)\nD1 SCL        510 edges  high 4.960us (min 4.920us max 93.2us)  low 5.080us (min 5.040us max 8.800us)  period 10.0us = 99.60kHz (min 10.0us max 102.0us)  duty 56.0%\nD2 2          28 edges  high 174.1us (min 30.7us max 555.5us)  low 181.8us (min 58.9us max 355.8us)  period 361.0us = 2.77kHz (min 99.8us max 775.7us)  duty 49.0%\nD3 3          36 edges  high 74.2us (min 12.8us max 419.8us)  low 186.9us (min 2.560us max 460.8us)  period 279.0us = 3.58kHz (min 61.4us max 716.8us)  duty 38.4%\nD4 4          39 edges  high 94.7us (min 7.680us max 366.1us)  low 64.0us (min 7.680us max 596.5us)  period 217.6us = 4.60kHz (min 38.4us max 691.2us)  duty 47.6%\nD5 UART       304 edges  high 9.080us (min 8.640us max 34.7us)  low 8.680us (min 8.640us max 52.1us)  period 26.0us = 38.46kHz (min 17.3us max 60.8us)  duty 46.3%\nD6 6          29 edges  high 179.2us (min 7.680us max 675.8us)  low 151.0us (min 15.4us max 409.6us)  period 312.3us = 3.20kHz (min 74.2us max 1.0470ms)  duty 48.3%\nD7 7          26 edges  high 156.2us (min 25.6us max 391.7us)  low 261.1us (min 28.2us max 522.2us)  period 384.0us = 2.60kHz (min 174.1us max 801.3us)  duty 42.5%\nD8 8          24 edges  high 199.7us (min 12.8us max 609.3us)  low 166.4us (min 23.0us max 458.2us)  period 414.7us = 2.41kHz (min 64.0us max 809.0us)  duty 50.9%\nD9 CAN-FD     726 edges  high 480.0ns (min 480.0ns max 1.6104ms)  low 2.520us (min 480.0ns max 10.0us)  period 3.000us = 333.33kHz (min 1.000us max 1.6124ms)  duty 77.2%\nD10 10         31 edges  high 81.9us (min 5.120us max 558.1us)  low 110.1us (min 15.4us max 371.2us)  period 281.6us = 3.55kHz (min 117.8us max 696.3us)  duty 54.4%\nD11 11         37 edges  high 105.0us (min 17.9us max 437.8us)  low 130.6us (min 28.2us max 453.1us)  period 212.5us = 4.71kHz (min 64.0us max 832.0us)  duty 48.8%\nD12 CLK        4608 edges  high 360.0ns (min 360.0ns max 400.0ns)  low 360.0ns (min 360.0ns max 331.4us)  period 760.0ns = 1.316MHz (min 720.0ns max 331.8us)  duty 23.8%\nD13 CS#        8 edges  high 311.9us (min 299.2us max 312.7us)  low 178.4us (min 163.0us max 2.2565ms)  period 474.9us = 2.11kHz (min 462.3us max 2.5692ms)  duty 30.8%\nD14 MOSI       176 edges  high 760.0ns (min 720.0ns max 2.4270ms)  low 2.240us (min 720.0ns max 30.7us)  period 4.000us = 250.00kHz (min 1.480us max 2.4277ms)  duty 88.4%\nD15 MISO       1056 edges  high 760.0ns (min 720.0ns max 28.4us)  low 1.520us (min 720.0ns max 342.7us)  period 4.480us = 223.21kHz (min 1.480us max 343.4us)  duty 24.0%"
+ },
+ {
+  "tool": "scope",
+  "input": {
+   "action": "connect",
+   "address": "demo"
+  },
+  "metadata": {
+   "action": "connect",
+   "address": "demo",
+   "driver": "demo",
+   "warnings": [
+    "DEMO instrument: signals are synthesized in software. Nothing captured here is hardware evidence."
+   ],
+   "model": "DEMO",
+   "serial": "DEMO-0001",
+   "firmware": "0.1",
+   "channels": [
+    {
+     "ch": 1,
+     "on": true,
+     "vdiv": 1,
+     "offset": 0,
+     "coupling": "DC",
+     "probe": 1,
+     "bwlimit": "FULL",
+     "unit": "V"
+    },
+    {
+     "ch": 2,
+     "on": true,
+     "vdiv": 1,
+     "offset": 0,
+     "coupling": "DC",
+     "probe": 1,
+     "bwlimit": "FULL",
+     "unit": "V"
+    },
+    {
+     "ch": 3,
+     "on": false,
+     "vdiv": 1,
+     "offset": 0,
+     "coupling": "DC",
+     "probe": 1,
+     "bwlimit": "FULL",
+     "unit": "V"
+    },
+    {
+     "ch": 4,
+     "on": false,
+     "vdiv": 1,
+     "offset": 0,
+     "coupling": "DC",
+     "probe": 1,
+     "bwlimit": "FULL",
+     "unit": "V"
+    }
+   ],
+   "timebase": {
+    "scale": 0.0002,
+    "delay": 0
+   },
+   "trigger": {
+    "mode": "AUTO",
+    "type": "EDGE",
+    "source": "C2",
+    "level": 1.65,
+    "slope": "RISING",
+    "status": "Trig'd"
+   },
+   "sampleRate": 5000000,
+   "points": 10000,
+   "mdepth": "10k",
+   "armed": false,
+   "capabilities": {
+    "driver": "demo",
+    "model": "DEMO",
+    "verified": false,
+    "channels": 4,
+    "enabledChannels": 2,
+    "units": [
+     "V",
+     "A"
+    ],
+    "couplings": [
+     "DC",
+     "AC",
+     "GND"
+    ],
+    "bwlimits": [
+     "FULL",
+     "20M"
+    ],
+    "probes": [
+     0.1,
+     0.2,
+     0.5,
+     1,
+     2,
+     5,
+     10,
+     20,
+     50,
+     100,
+     200,
+     500,
+     1000
+    ],
+    "customProbe": false,
+    "timebase": {
+     "min": 1e-9,
+     "max": 10,
+     "steps": "1-2-5"
+    },
+    "triggerTypes": [
+     "edge"
+    ],
+    "triggerSources": [
+     "C1",
+     "C2",
+     "C3",
+     "C4",
+     "LINE"
+    ],
+    "triggerSlopes": [
+     "rising",
+     "falling",
+     "alternate"
+    ],
+    "triggerModes": [
+     "auto",
+     "normal",
+     "single"
+    ],
+    "memoryDepths": [
+     "1k",
+     "10k",
+     "100k",
+     "1M"
+    ],
+    "sampleRates": [
+     1000000,
+     10000000,
+     100000000,
+     1000000000,
+     2000000000
+    ],
+    "measureTypes": [
+     "frequency",
+     "period",
+     "pkpk",
+     "amplitude",
+     "max",
+     "min",
+     "top",
+     "base",
+     "mean",
+     "rms",
+     "acrms",
+     "duty",
+     "rise",
+     "fall",
+     "overshoot",
+     "undershoot"
+    ],
+    "vendorMeasureTypes": [],
+    "externalTrigger": false,
+    "screenshot": true,
+    "measurements": true
+   },
+   "directory": "/work/f405-motor-ctrl"
+  },
+  "output": "Warning: DEMO instrument: signals are synthesized in software. Nothing captured here is hardware evidence.\nDEMO SN DEMO-0001 via demo driver at demo; 200 µs/div; 10000 points @ 5 MSa/s\nC1 ON  1 V/div offset 0 V DC probe 1× BW FULL\nC2 ON  1 V/div offset 0 V DC probe 1× BW FULL\nC3 OFF  1 V/div offset 0 V DC probe 1× BW FULL\nC4 OFF  1 V/div offset 0 V DC probe 1× BW FULL\ntrigger EDGE C2 RISING @ 1.65 V, mode AUTO, status Trig'd\ncapabilities (2 channel(s) on; model not verified on hardware, tables are advisory): memory depths 1k 10k 100k 1M; sample rates up to 2 GSa/s; couplings DC/AC/GND; probes 0.1 0.2 0.5 1 2 5 10 20 50 100 200 500 1000; trigger edge from C1 C2 C3 C4 LINE; measurements frequency period pkpk amplitude max min top base mean rms acrms duty rise fall overshoot undershoot."
+ },
+ {
+  "tool": "scope",
+  "input": {
+   "action": "setup",
+   "channels": [
+    {
+     "ch": 1,
+     "on": true,
+     "label": "SDA",
+     "coupling": "DC",
+     "probe": 10,
+     "vdiv": 1
+    },
+    {
+     "ch": 2,
+     "on": true,
+     "label": "SCL",
+     "coupling": "DC",
+     "probe": 10,
+     "vdiv": 1
+    }
+   ],
+   "timebase": {
+    "scale": 0.0002
+   },
+   "trigger": {
+    "source": "C2",
+    "level": 1.65,
+    "slope": "rising",
+    "mode": "auto"
+   },
+   "mdepth": "100k"
+  },
+  "metadata": {
+   "action": "setup",
+   "address": "demo",
+   "driver": "demo",
+   "warnings": [
+    "DEMO instrument: signals are synthesized in software. Nothing captured here is hardware evidence."
+   ],
+   "model": "DEMO",
+   "serial": "DEMO-0001",
+   "firmware": "0.1",
+   "channels": [
+    {
+     "ch": 1,
+     "on": true,
+     "vdiv": 1,
+     "offset": 0,
+     "coupling": "DC",
+     "probe": 10,
+     "bwlimit": "FULL",
+     "unit": "V",
+     "label": "SDA"
+    },
+    {
+     "ch": 2,
+     "on": true,
+     "vdiv": 1,
+     "offset": 0,
+     "coupling": "DC",
+     "probe": 10,
+     "bwlimit": "FULL",
+     "unit": "V",
+     "label": "SCL"
+    },
+    {
+     "ch": 3,
+     "on": false,
+     "vdiv": 1,
+     "offset": 0,
+     "coupling": "DC",
+     "probe": 1,
+     "bwlimit": "FULL",
+     "unit": "V"
+    },
+    {
+     "ch": 4,
+     "on": false,
+     "vdiv": 1,
+     "offset": 0,
+     "coupling": "DC",
+     "probe": 1,
+     "bwlimit": "FULL",
+     "unit": "V"
+    }
+   ],
+   "timebase": {
+    "scale": 0.0002,
+    "delay": 0
+   },
+   "trigger": {
+    "mode": "AUTO",
+    "type": "EDGE",
+    "source": "C2",
+    "level": 1.65,
+    "slope": "RISING",
+    "status": "Trig'd"
+   },
+   "sampleRate": 50000000,
+   "points": 100000,
+   "mdepth": "100k",
+   "armed": false,
+   "directory": "/work/f405-motor-ctrl"
+  },
+  "output": "C1 configured.\nC2 configured.\nTimebase configured.\nMemory configured.\nTrigger configured.\nWarning: DEMO instrument: signals are synthesized in software. Nothing captured here is hardware evidence.\nDEMO SN DEMO-0001 via demo driver at demo; 200 µs/div; 100000 points @ 50 MSa/s\nC1 ON SDA 1 V/div offset 0 V DC probe 10× BW FULL\nC2 ON SCL 1 V/div offset 0 V DC probe 10× BW FULL\nC3 OFF  1 V/div offset 0 V DC probe 1× BW FULL\nC4 OFF  1 V/div offset 0 V DC probe 1× BW FULL\ntrigger EDGE C2 RISING @ 1.65 V, mode AUTO, status Trig'd"
+ },
+ {
+  "tool": "scope",
+  "input": {
+   "action": "capture",
+   "channels": [
+    1,
+    2
+   ],
+   "quality": "exact",
+   "mode": "current"
+  },
+  "metadata": {
+   "action": "capture",
+   "captureId": "scope-db1616d6-a262-4a1c-bf6e-19800e006294",
+   "dir": "/work/f405-motor-ctrl/.yoma/scope/scope-db1616d6-a262-4a1c-bf6e-19800e006294",
+   "address": "demo",
+   "driver": "demo",
+   "warnings": [
+    "DEMO instrument: signals are synthesized in software. Nothing captured here is hardware evidence."
+   ],
+   "model": "DEMO",
+   "serial": "DEMO-0001",
+   "sampleRate": 50000000,
+   "interval": 2e-8,
+   "points": 100000,
+   "stride": 1,
+   "quality": "exact",
+   "timebase": {
+    "scale": 0.0002,
+    "delay": 0
+   },
+   "trigger": {
+    "mode": "AUTO",
+    "type": "EDGE",
+    "source": "C2",
+    "level": 1.65,
+    "slope": "RISING",
+    "status": "Stop"
+   },
+   "channels": [
+    {
+     "ch": 1,
+     "on": true,
+     "vdiv": 1,
+     "offset": 0,
+     "coupling": "DC",
+     "probe": 10,
+     "bwlimit": "FULL",
+     "unit": "V",
+     "label": "SDA",
+     "points": 100000,
+     "interval": 2e-8,
+     "stats": {
+      "min": -0.5024739583333333,
+      "max": 1.5024739583333335,
+      "pp": 2.0049479166666666,
+      "mean": 0.500005671875,
+      "rms": 0.8660315041522161,
+      "acRms": 0.7071102419545199,
+      "edges": 3,
+      "base": -0.49420148941898845,
+      "top": 1.4942033728496427,
+      "overshoot": 0.008270585483690862,
+      "undershoot": 0.008272468914344855,
+      "rise": 0.00029166887875906413,
+      "fall": 0.00029190148260835444
+     },
+     "units": {
+      "min": "V",
+      "max": "V",
+      "pp": "V",
+      "mean": "V",
+      "rms": "V",
+      "acRms": "V",
+      "top": "V",
+      "base": "V",
+      "overshoot": "V",
+      "undershoot": "V",
+      "freq": "Hz",
+      "period": "s",
+      "duty": "ratio 0..1",
+      "rise": "s (10%-90% of base..top)",
+      "fall": "s (90%-10% of top..base)",
+      "edges": "count"
+     }
+    },
+    {
+     "ch": 2,
+     "on": true,
+     "vdiv": 1,
+     "offset": 0,
+     "coupling": "DC",
+     "probe": 10,
+     "bwlimit": "FULL",
+     "unit": "V",
+     "label": "SCL",
+     "points": 100000,
+     "interval": 2e-8,
+     "stats": {
+      "min": -0.15833333333333335,
+      "max": 3.4587239583333336,
+      "pp": 3.617057291666667,
+      "mean": 0.9900033450520834,
+      "rms": 1.8067865250458055,
+      "acRms": 1.5114135515711056,
+      "edges": 4,
+      "base": 0.000028140780087970604,
+      "top": 3.2999503785081243,
+      "overshoot": 0.15877357982520923,
+      "undershoot": 0.15836147411342133,
+      "rise": 5.945660014569179e-7,
+      "fall": 5.944610885893054e-7
+     },
+     "units": {
+      "min": "V",
+      "max": "V",
+      "pp": "V",
+      "mean": "V",
+      "rms": "V",
+      "acRms": "V",
+      "top": "V",
+      "base": "V",
+      "overshoot": "V",
+      "undershoot": "V",
+      "freq": "Hz",
+      "period": "s",
+      "duty": "ratio 0..1",
+      "rise": "s (10%-90% of base..top)",
+      "fall": "s (90%-10% of top..base)",
+      "edges": "count"
+     }
+    }
+   ],
+   "directory": "/work/f405-motor-ctrl"
+  },
+  "output": "capture scope-db1616d6-a262-4a1c-bf6e-19800e006294: exact; 2 channel(s), 100000 points on C1; interval 20 ns, stride 1.\nWarning: DEMO instrument: signals are synthesized in software. Nothing captured here is hardware evidence.\nC1 (SDA): min -502 mV, max 1.5 V, pp 2 V, mean 500 mV, rms 866 mV, ac rms 707 mV, top 1.49 V, base -494 mV; probe 10×, 20 ns/point.\nC2 (SCL): min -158 mV, max 3.46 V, pp 3.62 V, mean 990 mV, rms 1.81 V, ac rms 1.51 V, top 3.3 V, base 28.1 µV; probe 10×, 20 ns/point.\nSaved: /work/f405-motor-ctrl/.yoma/scope/scope-db1616d6-a262-4a1c-bf6e-19800e006294. scope samples reads bounded windows; the front end opens this same capture."
+ },
+ {
+  "tool": "scope",
+  "input": {
+   "action": "measure",
+   "items": [
+    {
+     "type": "rise",
+     "source": "C2"
+    },
+    {
+     "type": "fall",
+     "source": "C2"
+    },
+    {
+     "type": "frequency",
+     "source": "C2"
+    },
+    {
+     "type": "top",
+     "source": "C2"
+    },
+    {
+     "type": "base",
+     "source": "C2"
+    }
+   ]
+  },
+  "metadata": {
+   "action": "measure",
+   "address": "demo",
+   "driver": "demo",
+   "warnings": [
+    "DEMO instrument: signals are synthesized in software. Nothing captured here is hardware evidence."
+   ],
+   "measurements": [
+    {
+     "type": "rise",
+     "source": "C2",
+     "value": 5.945660014569179e-7,
+     "unit": "s",
+     "n": 1,
+     "min": 5.945660014569179e-7,
+     "max": 5.945660014569179e-7,
+     "mean": 5.945660014569179e-7
+    },
+    {
+     "type": "fall",
+     "source": "C2",
+     "value": 5.944610885893054e-7,
+     "unit": "s",
+     "n": 1,
+     "min": 5.944610885893054e-7,
+     "max": 5.944610885893054e-7,
+     "mean": 5.944610885893054e-7
+    },
+    {
+     "type": "frequency",
+     "source": "C2",
+     "value": null,
+     "unit": "Hz",
+     "n": 0
+    },
+    {
+     "type": "top",
+     "source": "C2",
+     "value": 3.2999503785081243,
+     "unit": "V",
+     "n": 1,
+     "min": 3.2999503785081243,
+     "max": 3.2999503785081243,
+     "mean": 3.2999503785081243
+    },
+    {
+     "type": "base",
+     "source": "C2",
+     "value": 0.000028140780087970604,
+     "unit": "V",
+     "n": 1,
+     "min": 0.000028140780087970604,
+     "max": 0.000028140780087970604,
+     "mean": 0.000028140780087970604
+    }
+   ],
+   "directory": "/work/f405-motor-ctrl"
+  },
+  "output": "Warning: DEMO instrument: signals are synthesized in software. Nothing captured here is hardware evidence.\nrise C2: 5.945660014569179e-7 s; valid 1/1, min 5.945660014569179e-7, max 5.945660014569179e-7, mean 5.945660014569179e-7 s\nfall C2: 5.944610885893054e-7 s; valid 1/1, min 5.944610885893054e-7, max 5.944610885893054e-7, mean 5.944610885893054e-7 s\nfrequency C2: unavailable Hz; valid 0/1\ntop C2: 3.2999503785081243 V; valid 1/1, min 3.2999503785081243, max 3.2999503785081243, mean 3.2999503785081243 V\nbase C2: 0.000028140780087970604 V; valid 1/1, min 0.000028140780087970604, max 0.000028140780087970604, mean 0.000028140780087970604 V"
+ },
+ {
+  "tool": "scope",
+  "input": {
+   "action": "samples",
+   "channel": 2,
+   "edges": true,
+   "threshold": 1.65,
+   "limit": 12
+  },
+  "metadata": {
+   "action": "samples",
+   "captureId": "scope-db1616d6-a262-4a1c-bf6e-19800e006294",
+   "dir": "/work/f405-motor-ctrl/.yoma/scope/scope-db1616d6-a262-4a1c-bf6e-19800e006294",
+   "driver": "demo",
+   "points": 100000,
+   "interval": 2e-8,
+   "truncated": false,
+   "quality": "exact",
+   "channels": [
+    {
+     "ch": 2,
+     "unit": "V",
+     "probe": 10
+    }
+   ],
+   "directory": "/work/f405-motor-ctrl"
+  },
+  "output": "scope-db1616d6-a262-4a1c-bf6e-19800e006294 C2: 100000 samples, 20 ns/point; exact.\nCrossings at 1.65 V (hysteresis); time, direction, time to next edge:\n-1 ms rising 300 µs\n-700 µs falling 700 µs\n208 ns rising 300 µs\n300 µs falling -"
+ },
+ {
+  "tool": "scope",
+  "input": {
+   "action": "disconnect"
+  },
+  "metadata": {
+   "action": "disconnect",
+   "armed": false,
+   "directory": "/work/f405-motor-ctrl"
+  },
+  "output": "Disconnected; instrument ownership released."
+ }
+]

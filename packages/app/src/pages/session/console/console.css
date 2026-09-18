@@ -1,0 +1,541 @@
+/**
+ * v2-console 的三块壳:底部控制台、贯穿的状态栏、右栏的按需仪器页。
+ *
+ * 纪律同 `bench/bench.css`:属性驱动、颜色全部从 app 主题 token 派生、没有写死的明暗两套。
+ * 这里只写**壳**(位置、分隔线、页签行);仪器自己的排版仍在 bench.css / debug-panel.css 里,
+ * 一个字都没搬 —— 这个文件被删掉的话,面板还是那几块面板,只是不再有底栏。
+ */
+
+/* ================================================================ 底部控制台 */
+
+[data-component="session-console"] {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* 拖高的上限:可用高度的六成。聊天栏永远留得下时间线尾巴 + 输入框。
+     拖拽那条手柄里有同样的钳制(那是给鼠标的),这一条是给窗口变矮时的。 */
+  max-height: 60%;
+  margin: 0 8px 8px;
+  border: 1px solid var(--bench-line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bench-surface);
+  box-shadow: var(--v2-elevation-raised);
+}
+
+/**
+ * 拖高的那根手柄:`ui` 的 `resize-handle.css` 只给了命中区与 `col/row-resize` 光标,
+ * `::after` 那条线没有底色(全仓都没人给)。底部控制台是**唯一一条横着的缝**,
+ * 不画出来的话没人知道它能拖 —— 悬停时给一条淡淡的线。
+ */
+[data-component="session-console"] > [data-component="resize-handle"]::after {
+  background: color-mix(in srgb, var(--bench-active) 55%, transparent);
+}
+
+/** 最大化:吃掉整块会话区(上面那一行由 session.tsx 隐藏),所以上限也解开。 */
+[data-component="session-console"][data-maximized="true"] {
+  flex: 1 1 auto;
+  max-height: none;
+}
+
+/* ---- 页签行 ---- */
+
+[data-component="session-console"] [data-slot="head"] {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 6px 0 8px;
+  border-bottom: 1px solid var(--bench-line);
+  background: var(--bench-surface-raised);
+}
+
+/**
+ * 页签区。右边那道**整高**的竖线是承重的:名牌右侧那行读数说的是**当前页签**那台仪器的现状,
+ * 而它排在整排页签之后 —— 日志在第一格时,它紧挨着的是「调试器」那一格,间距还比页签之间更小
+ * (实测 9px vs 12px),整行于是读成「调试器 已停止 sh tools/uart-sim.sh」,把日志的来源挂到了
+ * gdb 名下。一道竖线把页签区收口,后面那段才是读数自己的地盘。
+ */
+[data-component="session-console"] [data-slot="tablist"] {
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+  gap: 2px;
+  flex: none;
+  min-width: 0;
+  padding-right: 9px;
+  border-right: 1px solid var(--bench-line);
+}
+
+[data-component="session-console"] button[data-slot="tab"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--bench-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+}
+[data-component="session-console"] button[data-slot="tab"]:hover {
+  color: var(--bench-ink);
+  background: var(--bench-surface);
+}
+[data-component="session-console"] button[data-slot="tab"][aria-selected="true"] {
+  color: var(--bench-ink);
+  border-color: var(--bench-line);
+  background: var(--bench-surface);
+}
+[data-component="session-console"] button[data-slot="tab"]:focus-visible {
+  outline: 2px solid var(--bench-active);
+  outline-offset: 1px;
+}
+[data-component="session-console"] button[data-slot="tab"] svg {
+  width: 12px;
+  height: 12px;
+  opacity: 0.75;
+}
+
+/** 藏着的文本仪器:一个虚线的入口,不冒充已经在的页签。 */
+[data-component="session-console"] button[data-slot="add"] {
+  flex: none;
+  margin-left: 4px;
+  padding: 2px 8px;
+  border: 1px dashed var(--bench-line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--bench-faint);
+  font-size: 10.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+[data-component="session-console"] button[data-slot="add"]:hover {
+  border-style: solid;
+  border-color: var(--bench-active);
+  color: var(--bench-active);
+}
+
+/**
+ * 名牌右边那行读数:`已停止 sh tools/uart-sim.sh`。挤不下时它先让位。
+ *
+ * **前面那道竖线是承重的。** 读数说的是**当前页签**那台仪器的现状,而它排在整排页签之后 ——
+ * 日志在第一格时,它紧挨着的是"调试器"那一格,而且间距比页签之间还小(实测 9px vs 12px),
+ * 于是整行读成「调试器 已停止 sh tools/uart-sim.sh」,把日志的来源挂到了 gdb 名下。
+ * 一道竖线 + 一段留白把页签区收口,读数这才是自己一段。
+ */
+[data-component="session-console"] [data-slot="headline"] {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--bench-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  color: var(--bench-faint);
+}
+
+[data-component="session-console"] [data-slot="head"] [data-slot="rule"] {
+  flex: 1 1 auto;
+  min-width: 8px;
+  height: 1px;
+  background: var(--bench-line);
+}
+
+/** 仪器自己的控件(日志的过滤框 / 跟随 / 重读)。不另占一行,就挂在这儿。 */
+[data-component="session-console"] [data-slot="controls"] {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+[data-component="session-console"] [data-slot="controls"] input[data-slot="filter"] {
+  flex: 0 1 180px;
+  min-width: 90px;
+  padding: 1px 7px;
+  border: 1px solid var(--bench-line);
+  border-radius: 6px;
+  background: var(--bench-surface);
+  color: var(--bench-ink);
+  font-family: var(--bench-mono);
+  font-size: 11px;
+}
+[data-component="session-console"] [data-slot="controls"] input[data-slot="filter"]:focus-visible {
+  outline: none;
+  border-color: var(--bench-active);
+}
+/** 过滤命中数(`9 / 18`)。只在真过滤时出现,定宽等宽,不跟着结果左右跳。 */
+[data-component="session-console"] [data-slot="controls"] [data-slot="match"] {
+  flex: none;
+  font-family: var(--bench-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  color: var(--bench-muted);
+  white-space: nowrap;
+}
+[data-component="session-console"] [data-slot="controls"] [data-slot="match"][data-empty="true"] {
+  color: var(--bench-warn);
+}
+[data-component="session-console"] [data-slot="controls"] button {
+  flex: none;
+  padding: 1px 7px;
+  border: 1px solid var(--bench-line);
+  border-radius: 6px;
+  background: var(--bench-surface);
+  color: var(--bench-muted);
+  font-size: 11px;
+  line-height: 16px;
+  cursor: pointer;
+}
+[data-component="session-console"] [data-slot="controls"] button[aria-pressed="true"] {
+  border-color: var(--bench-active);
+  color: var(--bench-active);
+  background: color-mix(in srgb, var(--bench-active) 10%, transparent);
+}
+
+[data-component="session-console"] [data-slot="actions"] {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+[data-component="session-console"] [data-slot="actions"] button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--bench-muted);
+  cursor: pointer;
+}
+[data-component="session-console"] [data-slot="actions"] button:hover {
+  color: var(--bench-ink);
+  background: var(--bench-surface);
+}
+[data-component="session-console"] [data-slot="actions"] button svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* ---- 正文 ---- */
+
+[data-component="session-console"] [data-slot="body"] {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 6px 10px 8px;
+  overflow: hidden;
+}
+
+/** 日志:控制台这个框本身就是仪器的边框,行区不用再画一个。 */
+[data-component="session-console"] [data-component="bench-log-panel"] {
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 4px;
+}
+[data-component="session-console"] [data-component="bench-log-panel"] [data-slot="lines"] {
+  min-height: 0;
+  max-height: none;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+}
+[data-component="session-console"] [data-component="bench-log-panel"] [data-slot="line"] {
+  padding: 0 2px;
+}
+/**
+ * 「来源」那一行读数在这儿是重复的 —— 页签行的名牌已经给了同一句(而且给的是全文)。
+ * 一条 240px 高的控制台里,一行就是 6% 的可见日志。
+ */
+[data-component="session-console"] [data-component="bench-log-panel"] > [data-component="bench-readout"] {
+  display: none;
+}
+
+/**
+ * 调试器:停止报告 + 历史**一起**滚。
+ * 不给子项 `flex: none` 的话它们会在这个定高的列里被压扁,于是报告自己再长一根滚动条 ——
+ * 一屏两根滚动条,而上面那根还把"出事那一行"切成半行(实测)。
+ */
+[data-component="session-console"] [data-component="bench-gdb-panel"] {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+[data-component="session-console"] [data-component="bench-gdb-panel"] > * {
+  flex: none;
+}
+[data-component="session-console"] [data-component="bench-gdb-panel"] [data-slot="report"] {
+  max-height: none;
+  overflow: visible;
+  border: none;
+  border-radius: 0;
+  padding: 0 2px;
+  background: transparent;
+}
+
+[data-component="session-console"] [data-slot="pending"] {
+  padding: 10px 2px;
+  font-size: 11px;
+  color: var(--bench-faint);
+}
+
+/* ================================================================ 状态栏 */
+
+/**
+ * 最底下那一条,横跨聊天栏与右栏(左侧栏不在这棵树里)。
+ * 24px:一行 LED + 一行小字的高度,再高就开始跟输入框抢地方。
+ */
+[data-component="session-status-bar"] {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 24px;
+  padding: 0 10px;
+  min-width: 0;
+  border-top: 1px solid var(--bench-line);
+  color: var(--bench-muted);
+  font-size: 11px;
+}
+
+/**
+ * 状态条在这儿是**紧凑形态**:去掉药丸的边与底,只剩 LED + 短名 + 值。
+ * 负的 margin 把第一格的内边距吃掉,于是第一颗 LED 与上面那张聊天卡片的左边缘对齐。
+ */
+[data-component="session-status-bar"] [data-component="bench-target-strip"] {
+  flex: 0 1 auto;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  gap: 0;
+  margin-left: -9px;
+}
+[data-component="session-status-bar"] [data-component="bench-chip"] {
+  padding: 0 9px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  line-height: 16px;
+  gap: 5px;
+}
+/**
+ * 值在这儿提一档(faint → muted)。面板里的读数坐在一块 raised 的底上,状态栏坐在页面底色上,
+ * 同一个灰在浅色主题下掉到看不清 —— 而这一行说的正是"板子现在什么状态",不该要眯着眼看。
+ */
+[data-component="session-status-bar"] [data-component="bench-chip"] [data-slot="value"] {
+  color: var(--bench-muted);
+}
+/**
+ * **offline 的那 0.6 层透明度在这儿要摘掉。**
+ *
+ * 原语里它是对的:面板上一格灭掉的仪器该退到背景里。但状态栏坐在页面底色上,再乘 0.6
+ * 就把「GDB 已结束 故障 foc.c:45」压到 **1.9:1**(浅色)/ 2.1:1(深色)—— 实测量出来的,
+ * 而那一格里装着的正是这次会话唯一的结论。灯自己有一份 offline 的暗度(bench.css 里的
+ * 0.55),状态由它说;字不该跟着一起灭。
+ */
+[data-component="session-status-bar"] [data-component="bench-chip"][data-state="offline"] {
+  opacity: 1;
+}
+[data-component="session-status-bar"] [data-component="bench-chip"][data-state="offline"] [data-slot="label"] {
+  color: var(--bench-faint);
+}
+/** 格与格之间一道发丝线,而不是一圈药丸 —— 这是状态栏,不是按钮条。 */
+[data-component="session-status-bar"] [data-component="bench-chip"] + [data-component="bench-chip"] {
+  border-left: 1px solid var(--bench-line);
+}
+[data-component="session-status-bar"] button[data-component="bench-chip"]:hover {
+  background: var(--bench-surface-raised);
+  border-color: transparent;
+}
+[data-component="session-status-bar"] button[data-component="bench-chip"]:hover + [data-component="bench-chip"] {
+  border-left-color: transparent;
+}
+
+[data-component="session-status-bar"] [data-slot="rule"] {
+  flex: 1 1 auto;
+  min-width: 8px;
+  height: 1px;
+  background: var(--bench-line);
+  opacity: 0.55;
+}
+
+/** 右边的轻量读数:日志行数 / 未读的 error 数。全部来自已经在读的那份 feed,不额外发请求。 */
+[data-component="session-status-bar"] [data-slot="readout"] {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--bench-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  color: var(--bench-muted);
+  white-space: nowrap;
+}
+[data-component="session-status-bar"] [data-slot="readout"] [aria-hidden="true"] {
+  color: var(--bench-faint);
+}
+/** "上一次的日志":弱化、不缩;它是对右边那串数字的定语,没了它数字就在撒谎。 */
+[data-component="session-status-bar"] [data-slot="readout"] [data-slot="stale"] {
+  flex: none;
+  color: var(--bench-faint);
+}
+/** 只有文件名会让路;行数与未读 error 是定宽的,永远说得完。 */
+[data-component="session-status-bar"] [data-slot="readout"] [data-slot="file"] {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+[data-component="session-status-bar"] [data-slot="readout"] > :not([data-slot="file"]) {
+  flex: none;
+}
+[data-component="session-status-bar"] [data-slot="readout"] [data-level="error"] {
+  color: var(--bench-fail);
+}
+
+[data-component="session-status-bar"] button[data-slot="console-toggle"] {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 18px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--bench-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+[data-component="session-status-bar"] button[data-slot="console-toggle"]:hover {
+  color: var(--bench-ink);
+  background: var(--bench-surface-raised);
+}
+[data-component="session-status-bar"] button[data-slot="console-toggle"][aria-pressed="true"] {
+  color: var(--bench-ink);
+  border-color: var(--bench-line);
+  background: var(--bench-surface-raised);
+}
+[data-component="session-status-bar"] button[data-slot="console-toggle"]:focus-visible {
+  outline: 2px solid var(--bench-active);
+  outline-offset: 1px;
+}
+[data-component="session-status-bar"] button[data-slot="console-toggle"] svg {
+  width: 12px;
+  height: 12px;
+}
+[data-component="session-status-bar"] button[data-slot="console-toggle"] kbd {
+  font-family: var(--bench-mono);
+  font-size: 10px;
+  color: var(--bench-faint);
+}
+
+/* ================================================================ 右栏:按需仪器页 */
+
+[data-component="instrument-rail"] {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+/**
+ * 最底下一层渐隐。
+ *
+ * 波形面板比右栏高的时候(1280×800 + 控制台开着就是:示波器要 ~560px,拿得到 ~430px)
+ * 图**是滚得动的**,但 macOS 的悬浮滚动条平时不画,于是那条正弦波看起来是被直接切断的 ——
+ * 像坏了,而不是像"下面还有"。渐隐把切口说清楚;内容没顶到底时它是底色渐隐到底色,看不见。
+ */
+[data-component="instrument-rail"]::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 18px;
+  background: linear-gradient(to top, var(--bench-surface), transparent);
+  pointer-events: none;
+}
+
+/** 一台仪器时不出页签行 —— 一个孤零零的页签只是噪声。 */
+[data-component="instrument-rail"] [data-slot="tablist"] {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px 0;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+[data-component="instrument-rail"] button[data-slot="tab"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--bench-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+}
+[data-component="instrument-rail"] button[data-slot="tab"]:hover {
+  color: var(--bench-ink);
+  background: var(--bench-surface-raised);
+}
+[data-component="instrument-rail"] button[data-slot="tab"][aria-selected="true"] {
+  color: var(--bench-ink);
+  border-color: var(--bench-line);
+  background: var(--bench-surface-raised);
+}
+[data-component="instrument-rail"] button[data-slot="tab"]:focus-visible {
+  outline: 2px solid var(--bench-active);
+  outline-offset: 1px;
+}
+[data-component="instrument-rail"] button[data-slot="tab"] svg {
+  width: 12px;
+  height: 12px;
+  opacity: 0.75;
+}
+
+[data-component="instrument-rail"] [data-slot="body"] {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px 12px;
+}
+
+[data-component="instrument-rail"] [data-slot="footer"] {
+  flex: none;
+  padding: 0 12px 10px;
+}
+
+/** 一台都不该露面时的安静空态。 */
+[data-component="instrument-rail"] [data-slot="empty"] {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px;
+}

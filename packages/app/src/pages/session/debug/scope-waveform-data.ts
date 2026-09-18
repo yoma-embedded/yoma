@@ -1,7 +1,9 @@
 import type { ScopeViewResult } from "@yoma-desktop/kernel"
+import { BENCH_CHANNEL_COLORS } from "../bench/bench-theme"
 
 export type ScopeTrace = ScopeViewResult["channels"][number]
-export const SCOPE_COLORS = ["#b99a00", "#347fe2", "#cf4b86", "#389562"]
+/** 通道色的真源在 `bench/bench-theme.ts`(CSS 那份是 `--bench-ch1..ch4`,同解由测试钉住)。 */
+export const SCOPE_COLORS: readonly string[] = BENCH_CHANNEL_COLORS
 
 /** Times stay relative to the trigger, including negative pre-trigger windows. */
 export function scopeWindow(from: number, to: number, fullFrom: number, fullTo: number, minSpan: number) {
@@ -11,14 +13,11 @@ export function scopeWindow(from: number, to: number, fullFrom: number, fullTo: 
   return { from: start, to: start + span }
 }
 
-export function scopeValue(value: number, unit = "V"): string {
-  if (!Number.isFinite(value)) return "—"
-  if (value === 0) return `0 ${unit}`
-  const magnitude = Math.abs(value)
-  const scales = [[1e9, "G"], [1e6, "M"], [1e3, "k"], [1, ""], [1e-3, "m"], [1e-6, "µ"], [1e-9, "n"], [1e-12, "p"]] as const
-  const [scale, prefix] = scales.find(([s]) => magnitude >= s) ?? scales[scales.length - 1]
-  return `${Number((value / scale).toPrecision(4))} ${prefix}${unit}`
-}
+/**
+ * 实现搬到了 session-ui 的 `hw-format.ts` —— 时间线里的 scope 卡片要用同一份,而它够不到 app。
+ * 同一个电压在面板上和卡片上必须是同一串字。
+ */
+export { scopeValue } from "@yoma-desktop/session-ui/hw-format"
 
 /** Envelope columns are ranges, never a made-up midpoint voltage. */
 export function scopeCursor(trace: ScopeTrace, time: number | undefined, from: number, to: number) {

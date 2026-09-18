@@ -51,6 +51,11 @@ import { useSessionLayout } from "@/pages/session/session-layout"
 import { syncSessionModel } from "@/pages/session/session-model-helpers"
 import { SessionSidePanel } from "@/pages/session/session-side-panel"
 import { debug as debugDock } from "@/pages/session/debug/debug-data"
+import { BenchProvider } from "@/pages/session/bench/bench-context"
+import { SessionConsole } from "@/pages/session/console/session-console"
+import { SessionStatusBar } from "@/pages/session/console/session-status-bar"
+import { consoleUI } from "@/pages/session/console/console-state"
+import { useConsoleCommands } from "@/pages/session/console/use-console-commands"
 import { useComposerCommands } from "@/pages/session/use-composer-commands"
 import { useSessionCommands } from "@/pages/session/use-session-commands"
 import { useSessionHashScroll } from "@/pages/session/use-session-hash-scroll"
@@ -497,6 +502,7 @@ export default function Page() {
 
   useComposerCommands()
   useSettingsCommand()
+  useConsoleCommands()
   useSessionCommands({
     navigateMessageByOffset,
     setActiveMessage,
@@ -1036,104 +1042,141 @@ export default function Page() {
     )
   }
 
+  /**
+   * 底部控制台与状态栏只在真会话页上(草稿页没有目标板可说)、只在桌面宽度下。
+   * 移动宽度下右栏本来就不显示,再压一条 24px 的状态栏只会把输入框顶掉。
+   */
+  const consoleVisible = createMemo(() => isDesktop() && !!params.id)
+
+  /**
+   * 控制台开合 / 拖高 / 最大化都会改变时间线**视口**的高度,而内容没变 —— `createAutoScroll`
+   * 的观察器盯的是内容,这一下它看不见。不补这一句的话:开一次控制台,时间线就停在半空,
+   * 而看起来像是"最新那条消息不见了"。用户自己往上翻过(userScrolled)时不动它。
+   */
+  createEffect(
+    on(
+      () => [consoleVisible() && consoleUI.opened(), consoleUI.height(), consoleUI.maximized()] as const,
+      () => {
+        if (autoScroll.userScrolled()) return
+        requestAnimationFrame(() => {
+          scrollToEnd()
+          const el = scroller
+          if (el) scheduleScrollState(el)
+        })
+      },
+      { defer: true },
+    ),
+  )
+
   return (
     <div class="relative size-full overflow-hidden flex flex-col">
       {sessionSync() ?? ""}
       <SessionHeader />
-      <div
-        class="flex-1 min-h-0 flex flex-col md:flex-row gap-2 p-2"
-      >
-        <div
-          classList={{
-            "@container relative shrink-0 flex flex-col min-h-0 h-full flex-1 md:flex-none transition-[width]": true,
-            "duration-[240ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none":
-              !size.active() && !ui.dockSnap,
-          }}
-          style={{
-            width: sessionPanelWidth(),
-            // 右侧面板全屏时隐藏中间会话栏（inline style 优先级高于 flex 类）
-            display: debugDock.fullscreen() ? "none" : undefined,
-          }}
-        >
+      {/* 会话区 = 上面一行(聊天栏 | 右栏) + 底部控制台 + 状态栏。
+          左侧栏不在这棵树里,所以"横跨聊天栏与右栏"就是这一列的全宽。 */}
+      <BenchProvider>
+        <div class="flex-1 min-h-0 flex flex-col">
           <div
-            classList={{
-              "flex-1 min-h-0 flex flex-col bg-v2-background-bg-base rounded-[10px] overflow-hidden": true,
-              "shadow-[var(--v2-elevation-raised)]": !!params.id,
-            }}
+            class="flex-1 min-h-0 flex flex-col md:flex-row gap-2 p-2"
+            style={{ display: consoleUI.maximized() && consoleVisible() ? "none" : undefined }}
           >
-            <div class="flex-1 min-h-0 overflow-hidden">
-              <Switch>
-                <Match when={params.id}>
-                  <Show when={messagesReady() ? params.id : undefined} keyed>
-                    {(_id) => (
-                      <MessageTimeline
-                        scroll={ui.scroll}
-                        onResumeScroll={resumeScroll}
-                        setScrollRef={setScrollRef}
-                        onScheduleScrollState={scheduleScrollState}
-                        onAutoScrollHandleScroll={autoScroll.handleScroll}
-                        onMarkScrollGesture={markScrollGesture}
-                        hasScrollGesture={hasScrollGesture}
-                        onUserScroll={markUserScroll}
-                        onHistoryScroll={onHistoryScroll}
-                        onAutoScrollInteraction={autoScroll.handleInteraction}
-                        shouldAnchorBottom={() =>
-                          !location.hash && !store.messageId && !ui.pendingMessage && !autoScroll.userScrolled()
-                        }
-                        centered={centered()}
-                        setContentRef={(el) => {
-                          content = el
-                          autoScroll.contentRef(el)
+            <div
+              classList={{
+                "@container relative shrink-0 flex flex-col min-h-0 h-full flex-1 md:flex-none transition-[width]": true,
+                "duration-[240ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none":
+                  !size.active() && !ui.dockSnap,
+              }}
+              style={{
+                width: sessionPanelWidth(),
+                // 右侧面板全屏时隐藏中间会话栏（inline style 优先级高于 flex 类）
+                display: debugDock.fullscreen() ? "none" : undefined,
+              }}
+            >
+              <div
+                classList={{
+                  "flex-1 min-h-0 flex flex-col bg-v2-background-bg-base rounded-[10px] overflow-hidden": true,
+                  "shadow-[var(--v2-elevation-raised)]": !!params.id,
+                }}
+              >
+                <div class="flex-1 min-h-0 overflow-hidden">
+                  <Switch>
+                    <Match when={params.id}>
+                      <Show when={messagesReady() ? params.id : undefined} keyed>
+                        {(_id) => (
+                          <MessageTimeline
+                            scroll={ui.scroll}
+                            onResumeScroll={resumeScroll}
+                            setScrollRef={setScrollRef}
+                            onScheduleScrollState={scheduleScrollState}
+                            onAutoScrollHandleScroll={autoScroll.handleScroll}
+                            onMarkScrollGesture={markScrollGesture}
+                            hasScrollGesture={hasScrollGesture}
+                            onUserScroll={markUserScroll}
+                            onHistoryScroll={onHistoryScroll}
+                            onAutoScrollInteraction={autoScroll.handleInteraction}
+                            shouldAnchorBottom={() =>
+                              !location.hash && !store.messageId && !ui.pendingMessage && !autoScroll.userScrolled()
+                            }
+                            centered={centered()}
+                            setContentRef={(el) => {
+                              content = el
+                              autoScroll.contentRef(el)
 
-                          const root = scroller
-                          if (root) scheduleScrollState(root)
-                        }}
-                        userMessages={userMessages()}
-                        setHistoryAnchor={(handlers) => {
-                          captureHistoryAnchor = handlers.capture
-                          restoreHistoryAnchor = handlers.restore
-                        }}
-                        anchor={anchor}
-                        setRevealMessage={(fn) => {
-                          revealMessage = fn
-                        }}
-                        setScrollToEnd={(fn) => {
-                          scrollToEnd = fn
-                        }}
-                      />
-                    )}
-                  </Show>
-                </Match>
-                <Match when={true}>
-                  <NewSessionView />
-                </Match>
-              </Switch>
+                              const root = scroller
+                              if (root) scheduleScrollState(root)
+                            }}
+                            userMessages={userMessages()}
+                            setHistoryAnchor={(handlers) => {
+                              captureHistoryAnchor = handlers.capture
+                              restoreHistoryAnchor = handlers.restore
+                            }}
+                            anchor={anchor}
+                            setRevealMessage={(fn) => {
+                              revealMessage = fn
+                            }}
+                            setScrollToEnd={(fn) => {
+                              scrollToEnd = fn
+                            }}
+                          />
+                        )}
+                      </Show>
+                    </Match>
+                    <Match when={true}>
+                      <NewSessionView />
+                    </Match>
+                  </Switch>
+                </div>
+
+                <Show when={params.id}>{(_) => composerRegion()}</Show>
+              </div>
+
+              {/* 右栏（三子页）由面板自己左边缘那根手柄统一调宽，这根只服务旧布局，免得同一条缝上叠两根 */}
+              <Show when={!dockVisible() && desktopDockOpen()}>
+                <div onPointerDown={() => size.start()}>
+                  <ResizeHandle
+                    class="-right-1"
+                    direction="horizontal"
+                    size={layout.session.width()}
+                    min={450}
+                    max={typeof window === "undefined" ? 1000 : window.innerWidth * 0.45}
+                    onResize={(width) => {
+                      size.touch()
+                      layout.session.resize(width)
+                    }}
+                  />
+                </div>
+              </Show>
             </div>
 
-            <Show when={params.id}>{(_) => composerRegion()}</Show>
+            <SessionSidePanel diffs={vcsDiffs} snap={ui.dockSnap} size={size} />
           </div>
 
-          {/* 右栏（三子页）由面板自己左边缘那根手柄统一调宽，这根只服务旧布局，免得同一条缝上叠两根 */}
-          <Show when={!dockVisible() && desktopDockOpen()}>
-            <div onPointerDown={() => size.start()}>
-              <ResizeHandle
-                class="-right-1"
-                direction="horizontal"
-                size={layout.session.width()}
-                min={450}
-                max={typeof window === "undefined" ? 1000 : window.innerWidth * 0.45}
-                onResize={(width) => {
-                  size.touch()
-                  layout.session.resize(width)
-                }}
-              />
-            </div>
+          <Show when={consoleVisible()}>
+            <SessionConsole />
+            <SessionStatusBar />
           </Show>
         </div>
-
-        <SessionSidePanel diffs={vcsDiffs} snap={ui.dockSnap} size={size} />
-      </div>
-
+      </BenchProvider>
     </div>
   )
 }

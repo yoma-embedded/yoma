@@ -448,7 +448,8 @@ export function SessionSidePanel(props: {
 
             {/* -------- 调试：仪器大窗口堆叠（模拟数据） -------- */}
             <Match when={dock.mode() === "debug"}>
-              <div class="ydbg flex-1 min-h-0 overflow-y-auto px-3 py-3">
+              {/* 滚动交给 InstrumentRail 内部的正文区 —— 页签行要钉在顶上不跟着滚。 */}
+              <div class="ydbg flex-1 min-h-0 flex flex-col overflow-hidden">
                 <DebugContent />
               </div>
             </Match>

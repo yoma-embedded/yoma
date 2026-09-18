@@ -1,0 +1,151 @@
+/**
+ * 目标卡的排版。原语(LED、读数行、等宽数字、颜色 token)全部来自 session-ui 的 `bench.css`,
+ * 这里只定这张卡自己的度量 —— 它**不定位、不留外边距**,摆在哪是容器的事。
+ *
+ * 移植自 `ui/v3-bench` 的 `workbench.css`(那儿这张卡钉在右侧工作台最顶上,带 `margin: 8px 8px 0`)。
+ * 这一版住在浮层里,所以外边距摘掉了;另外**铭牌改成两行**,理由见下面 `head` 那一段。
+ */
+
+[data-component="bench-target-card"] {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 10px 8px;
+  border: 1px solid var(--bench-line);
+  border-radius: 10px;
+  background: var(--bench-surface-raised);
+}
+
+/**
+ * **铭牌是两行,不是一行。**
+ *
+ * v3 里这张卡住在右侧工作台(400+ px 宽),名字与铭牌并排一行放得下。这一版是状态栏上方的
+ * 320px 浮层,并排的结果实测是 `stm32f4x · Cortex-M4 r0p0 · S…` —— **被截掉的正好是探针型号**,
+ * 而认出探针恰恰是这张卡最难得的那一样(它只在烧录输出里出现过一次)。
+ * 名字一行、铭牌一行之后整段 42 个字符落在 300px 的内宽里,一个字都不用省。
+ */
+[data-component="bench-target-card"] [data-slot="head"] {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 0;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--bench-line);
+}
+/** 名字这一行:名字靠左,`via` 药丸靠右。 */
+[data-component="bench-target-card"] [data-slot="title"] {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+[data-component="bench-target-card"] [data-slot="name"] {
+  flex: 0 1 auto;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--bench-ink);
+}
+/** 芯片 / 内核 / 探针:仪器面板上的铭牌字 —— 等宽、小、在名字底下,说不出来就整段不画。 */
+[data-component="bench-target-card"] [data-slot="spec"] {
+  flex: none;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--bench-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  color: var(--bench-muted);
+}
+[data-component="bench-target-card"] [data-slot="via"] {
+  flex: none;
+  margin-left: auto;
+  padding: 0 5px;
+  border: 1px solid var(--bench-line);
+  border-radius: 999px;
+  font-size: 9.5px;
+  color: var(--bench-faint);
+}
+[data-component="bench-target-card"] [data-slot="hint"] {
+  flex: none;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  color: var(--bench-faint);
+}
+
+[data-component="bench-target-card"] [data-slot="rows"] {
+  display: flex;
+  flex-direction: column;
+}
+/** 三行读数。button / div 两种标签同一套排版(可点的那几行才是 button)。 */
+[data-component="bench-target-card"] [data-component="bench-readout"] {
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font-size: 11px;
+  line-height: 19px;
+}
+[data-component="bench-target-card"] button[data-component="bench-readout"] {
+  cursor: pointer;
+  border-radius: 4px;
+}
+[data-component="bench-target-card"] button[data-component="bench-readout"]:hover [data-slot="val"] {
+  color: var(--bench-active);
+}
+[data-component="bench-target-card"] button[data-component="bench-readout"]:focus-visible {
+  outline: 2px solid var(--bench-active);
+  outline-offset: 1px;
+}
+[data-component="bench-target-card"] [data-component="bench-readout"] [data-slot="key"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  min-width: 52px;
+  color: var(--bench-muted);
+}
+/**
+ * 引导点。**这条线是承重的**:标签在最左、读数在最右,中间三四百像素的空白会让
+ * 「日志」和它的值读起来像两件事。bench.css 的默认是一条极淡的实线,在读数板上几乎看不见 ——
+ * 这里换成点线并给足对比度,就是仪表面板 / 数据手册里那条引导线。
+ */
+[data-component="bench-target-card"] [data-component="bench-readout"] [data-slot="dots"] {
+  height: 0;
+  background: none;
+  border-bottom: 1px dotted var(--bench-line-strong);
+  opacity: 0.8;
+  margin: 0 3px;
+}
+/**
+ * `flex: 0 1 auto` 是承重的。原语里读数是 `flex: none`(面板上它可以换行),而这里定了
+ * `white-space: nowrap` —— 不让它收缩的话 `text-overflow: ellipsis` **永远不会生效**,
+ * 长读数(串口路径长一点的 `log.source`)会直接从卡片右边框里漏出去,而且不报错。
+ */
+[data-component="bench-target-card"] [data-component="bench-readout"] [data-slot="val"] {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+}
+[data-component="bench-target-card"] [data-component="bench-readout"] [data-slot="val"][data-empty="true"] {
+  color: var(--bench-faint);
+  opacity: 0.7;
+}
+[data-component="bench-target-card"] [data-component="bench-readout"][data-row="flash"] [data-slot="val"],
+[data-component="bench-target-card"] [data-component="bench-readout"][data-row="gdb"] [data-slot="val"] {
+  color: var(--bench-ink);
+}

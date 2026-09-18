@@ -28,6 +28,11 @@ import { useData } from "../context"
 import { useDialog } from "@yoma-desktop/ui/context/dialog"
 import { useI18n } from "@yoma-desktop/ui/context/i18n"
 import { GenericTool } from "./basic-tool"
+import { FlashTool } from "./flash-tool"
+import { GdbTool } from "./gdb-tool"
+import { LaTool } from "./la-tool"
+import { LogTool } from "./log-tool"
+import { OpenInstrumentButton } from "./open-instrument"
 import { ScopeTool } from "./scope-tool"
 import { FileIcon } from "@yoma-desktop/ui/file-icon"
 import { Icon } from "@yoma-desktop/ui/icon"
@@ -611,7 +616,18 @@ const state: Record<
     name: string
     render?: ToolComponent
   }
-> = { scope: { name: "scope", render: ScopeTool } }
+  /**
+   * 五个嵌入式工具各有一张专用卡(v5-cards):折叠态就把这一次硬件动作的结论说出来,
+   * 展开态是排好版的仪器读数。其余工具仍走 `GenericTool`。
+   * 每张卡自己防御式解析 details,拿不准就回落到通用卡 —— 见 `hw-tool.tsx` 的头。
+   */
+> = {
+  flash: { name: "flash", render: FlashTool },
+  log: { name: "log", render: LogTool },
+  gdb: { name: "gdb", render: GdbTool },
+  la: { name: "la", render: LaTool },
+  scope: { name: "scope", render: ScopeTool },
+}
 
 export function registerTool(input: { name: string; render?: ToolComponent }) {
   state[input.name] = input
@@ -644,6 +660,10 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
   return (
     <Show when={true}>
       <div data-component="tool-part-wrapper" data-timeline-part-id={part().id}>
+        {/* 「在面板中打开」。挂在卡片外壳上而不是某一张专用卡里:五张硬件卡在解析不出
+            details 时会回落到 `GenericTool`、出错时走 `ToolErrorCard`,而那两种形态同样
+            值得一个"去面板里看"的出口。回调缺席时它一个像素都不渲染。 */}
+        <OpenInstrumentButton part={part()} />
         <Switch>
           <Match when={part().state.status === "error" && (part().state as any).error}>
             {(error) => {
