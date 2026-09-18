@@ -83,7 +83,7 @@ function Thumbnail(props: { card: LaCard; onRendered?: () => void }) {
   onCleanup(observeColorScheme(() => draw()))
 
   return (
-    <div data-component="hw-la-preview" ref={host}>
+    <div data-component="hw-la-preview" ref={(el: HTMLDivElement) => (host = el)}>
       <div data-slot="names" style={{ width: `${LABEL_W}px` }}>
         <For each={lanes()}>
           {(channel: LaChannel) => (
@@ -94,7 +94,7 @@ function Thumbnail(props: { card: LaCard; onRendered?: () => void }) {
           )}
         </For>
       </div>
-      <canvas ref={canvas} data-slot="canvas" aria-label="logic analyzer preview" />
+      <canvas ref={(el: HTMLCanvasElement) => (canvas = el)} data-slot="canvas" aria-label="logic analyzer preview" />
     </div>
   )
 }

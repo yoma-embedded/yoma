@@ -39,7 +39,7 @@ export interface LogCard {
 }
 
 /** `[+1.710] *** HARDFAULT (stage 6) ***   ← match` —— 前导的相对时间戳。 */
-const LEAD_STAMP = /^(\[[+\-]?[\d.]+\]|\[\d{2}:\d{2}:\d{2}[.\d]*\])\s?/
+const LEAD_STAMP = /^(\[[+-]?[\d.]+\]|\[\d{2}:\d{2}:\d{2}[.\d]*\])\s?/
 /** 工具在命中行尾加的记号(log/excerpt.ts)。 */
 const MATCH_MARK = /\s*←\s*match\s*$/
 /** 汇总行:`cursor: 9 | source: running | full log: /…` */
@@ -127,7 +127,7 @@ export function describeLog(
 /** `matched /HARDFAULT/ at seq 8 (+1.710s)` 里的那个偏移 —— 卡片折叠态那一句要它。 */
 export function matchOffset(notes: readonly string[]): string | undefined {
   for (const note of notes) {
-    const hit = /\(([+\-][\d.]+s)\)\s*$/.exec(note)
+    const hit = /\(([+-][\d.]+s)\)\s*$/.exec(note)
     if (hit) return hit[1]
   }
   return undefined
