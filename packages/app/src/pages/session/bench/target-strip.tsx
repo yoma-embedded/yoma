@@ -12,6 +12,7 @@ import { createMemo, Index, Show } from "solid-js"
 import { useLanguage } from "@/context/language"
 import type { BenchStatus, InstrumentId } from "./bench-status"
 import { gdbEnded, gdbHeadline, logHeadline } from "./bench-status"
+import { EvidenceDot } from "./evidence-dot"
 import type { InstrumentState } from "./instruments"
 
 /** 状态条上的一格。`id` 有值时这一格可点(交给 `onSelect`)。 */
@@ -143,6 +144,13 @@ export function TargetStrip(props: {
    * `fail` 不被覆盖:红比黄要紧。
    */
   attention?: ReadonlySet<InstrumentId>
+  /**
+   * 这几格上加一个「有我还没看过的新证据」的提示点(`bench/evidence.ts`)。
+   *
+   * 与 `attention` 是两件事:黄灯说的是**出了事**,提示点说的是**有新东西你还没看**。
+   * 同一格两样都成立时谁让谁由布局决定 —— 状态栏让给黄灯,见 `console/session-status-bar.tsx`。
+   */
+  unseen?: ReadonlySet<InstrumentId>
 }) {
   const language = useLanguage()
   const t = (key: string) => language.t(key as Parameters<typeof language.t>[0])
@@ -160,7 +168,15 @@ export function TargetStrip(props: {
   return (
     <Show when={chips().length > 0 || props.emptyHint}>
       <div data-component="bench-target-strip" role="status" aria-label={t("session.bench.strip.label")}>
-        <Index each={chips()}>{(chip) => <ChipView chip={chip()} onSelect={props.onSelect} />}</Index>
+        <Index each={chips()}>
+          {(chip) => (
+            <ChipView
+              chip={chip()}
+              onSelect={props.onSelect}
+              unseen={!!chip().id && !!props.unseen?.has(chip().id!)}
+            />
+          )}
+        </Index>
         <Show when={chips().length === 0 && props.emptyHint}>
           <span data-component="bench-chip" data-state="offline">
             <span data-component="bench-led" data-state="offline" />
@@ -173,7 +189,7 @@ export function TargetStrip(props: {
 }
 
 /** 可点与不可点是两种标签(button / span),内容一样 —— 抽出来免得写两遍。 */
-function ChipView(props: { chip: BenchChip; onSelect?: (id: InstrumentId) => void }) {
+function ChipView(props: { chip: BenchChip; onSelect?: (id: InstrumentId) => void; unseen?: boolean }) {
   const selectable = () => !!props.chip.id && !!props.onSelect
   const body = () => (
     <>
@@ -182,6 +198,8 @@ function ChipView(props: { chip: BenchChip; onSelect?: (id: InstrumentId) => voi
       <Show when={props.chip.value}>
         <span data-slot="value">{props.chip.value}</span>
       </Show>
+      {/* 提示点排在读数后面:先说这格是什么、现在怎样,再说"还有新的没看"。 */}
+      <EvidenceDot when={props.unseen} />
     </>
   )
   return (

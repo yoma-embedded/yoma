@@ -24,6 +24,7 @@ import { useLogFeed } from "../bench/log-feed"
 import { TargetStrip } from "../bench/target-strip"
 import { debug as dock } from "../debug/debug-data"
 import { consoleUI } from "./console-state"
+import { dotsBesideAttention, useUnseenSet } from "./evidence-view"
 import "./console.css"
 
 export function SessionStatusBar() {
@@ -68,12 +69,20 @@ export function SessionStatusBar() {
   /** 日志那一格:控制台收着的这段时间里又来了 error —— 灯变黄,但**不自动把控制台弹开**。 */
   const attention = createMemo(() => (unseenErrors() > 0 ? new Set<InstrumentId>(["log"]) : undefined))
 
+  /**
+   * 「有我还没看过的新证据」的提示点(`bench/evidence.ts`)—— 对应面板收着的那些才点,
+   * 已经挂了黄灯的那一格让给黄灯(取舍在 `dotsBesideAttention`,那里有为什么)。
+   */
+  const unseen = useUnseenSet()
+  const dots = createMemo(() => dotsBesideAttention(unseen(), attention()))
+
   return (
     <footer class="ybench" data-component="session-status-bar" aria-label={t("session.statusBar.label")}>
       <TargetStrip
         status={bench.status()}
         onSelect={reveal}
         attention={attention()}
+        unseen={dots()}
         emptyHint={t("session.bench.strip.empty")}
       />
 

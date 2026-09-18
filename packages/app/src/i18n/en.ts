@@ -301,6 +301,7 @@ export const dict = {
   "session.bench.state.fault": "fault",
   "session.bench.add": "+ Instrument",
   "session.bench.unpin": "Hide this instrument",
+  "session.bench.unseen": "New evidence you haven't seen",
   "session.bench.loading": "Loading instrument…",
   "session.bench.log.lines": "{{count}} lines",
   "session.bench.log.source": "Source",

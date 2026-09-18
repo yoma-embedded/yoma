@@ -14,8 +14,10 @@ import { Dynamic } from "solid-js/web"
 import { Icon } from "@yoma-desktop/ui/icon"
 import { useLanguage } from "@/context/language"
 import { useBench } from "../bench/bench-context"
+import { EvidenceDot } from "../bench/evidence-dot"
 import { benchPins, hiddenOnSurface, visibleOnSurface, type InstrumentDef } from "../bench/instruments"
 import { consoleUI } from "./console-state"
+import { useMarkSeen, useUnseenSet } from "./evidence-view"
 import "./console.css"
 
 export function InstrumentRail() {
@@ -38,6 +40,11 @@ export function InstrumentRail() {
     }),
   )
 
+  // 提示点:这一页开着就算看过了(这个组件只在右栏展开且停在「调试」档时才挂上,
+  // 所以"右栏收着的时候证据继续积累"是白得的)。
+  useMarkSeen(() => active()?.id)
+  const unseen = useUnseenSet()
+
   return (
     <div class="ybench" data-component="instrument-rail">
       {/* 一台的时候不出页签行 —— 一个孤零零的页签只是噪声,名字在仪器自己的名牌上。 */}
@@ -56,6 +63,7 @@ export function InstrumentRail() {
                 <span data-component="bench-led" data-state={instrument.status(bench.ctx())} />
                 <Icon name={instrument.icon} size="small" />
                 {t(instrument.labelKey)}
+                <EvidenceDot when={unseen().has(instrument.id)} />
               </button>
             )}
           </For>
