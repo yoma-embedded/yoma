@@ -292,6 +292,7 @@ export const dict = {
   "session.bench.state.fault": "故障",
   "session.bench.add": "+ 仪器",
   "session.bench.unpin": "收起这台仪器",
+  "session.bench.unseen": "有新证据没看过",
   "session.bench.loading": "正在载入仪器…",
   // 目标卡(从 v3-bench 借来,住在状态栏最左那一格上方的浮层里)
   "session.bench.target.label": "目标板",

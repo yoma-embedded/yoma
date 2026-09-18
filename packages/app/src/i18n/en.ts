@@ -301,6 +301,7 @@ export const dict = {
   "session.bench.state.fault": "fault",
   "session.bench.add": "+ Instrument",
   "session.bench.unpin": "Hide this instrument",
+  "session.bench.unseen": "New evidence you haven't seen",
   "session.bench.loading": "Loading instrument…",
   // Target card (borrowed from v3-bench; lives in a popover above the leftmost status-bar cell)
   "session.bench.target.label": "Target board",
