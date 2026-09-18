@@ -1,0 +1,96 @@
+/**
+ * 卡片右上角的「在面板中打开」。
+ *
+ * 位置:绝对定位在整张工具卡片的右上角,与折叠行(32px 高)同一条水平线。为什么不排进折叠行
+ * 里面 —— 那一整行是一个 `<button>`(Kobalte 的 Collapsible.Trigger),按钮不能套按钮。
+ * 它**贴着卡片右边缘**(`right: 0`):折叠箭头虽然也在折叠行上,但那一行的内容盒是
+ * `flex: 0 1 auto`(basic-tool.css),箭头永远紧跟在文字后面,不在右端,两者撞不上。
+ *
+ * 出现规矩与折叠箭头**逐字相同**:平时不显示,悬停 / 聚焦 / 卡片展开时才现身。一屏五张日志
+ * 卡片上不该永远挂着五个按钮。藏起来的时候 `pointer-events: none` 是承重的:一个 opacity:0
+ * 的按钮照样接得住点击,那样每张仪器卡片右上角都会有一小块"点了会莫名其妙弹出面板"的死区。
+ *
+ * **按钮现身的同一刻,折叠行要让出这块地方**(`--bench-card-open-gutter`)。v5 卡片的折叠行
+ * 一直排到右边(`调试器 exec continue · BusFault PRECISERR · foc_zero_isense() foc.c:45`),
+ * 不让的话这个不透明的药丸就盖在**结论的尾巴**上 —— 而结论正是这张卡片存在的理由。让出来之后
+ * 动作 / 结论按自己本来的规矩打省略号(hw-tool.css:动作先被截),看得出来"还有",而不是被糊住。
+ * 短行一个像素都不动:内容盒是收缩到内容宽的,`max-width` 变小对它没有影响。
+ */
+
+[data-component="tool-part-wrapper"]:has([data-component="bench-card-open"]) {
+  position: relative;
+  /* 药丸的实测宽度(中英两种文案都在 110px 以内)加一点呼吸。 */
+  --bench-card-open-gutter: 128px;
+}
+
+/* 与下面那组"现身"的选择器**逐字同一套** —— 差一条就会出现"按钮来了地方没让"或反过来。
+   基线的 24px 是 basic-tool.css 给折叠箭头留的,这里只是在它之外再让出药丸那一段。 */
+[data-component="tool-part-wrapper"]:has([data-component="bench-card-open"]):hover
+  [data-slot="basic-tool-tool-trigger-content"],
+[data-component="tool-part-wrapper"]:has([data-component="bench-card-open"]):focus-within
+  [data-slot="basic-tool-tool-trigger-content"],
+[data-component="tool-part-wrapper"]:has([data-component="bench-card-open"]):has(
+    [data-slot="collapsible-trigger"][aria-expanded="true"]
+  )
+  [data-slot="basic-tool-tool-trigger-content"] {
+  max-width: calc(100% - 24px - var(--bench-card-open-gutter));
+}
+
+[data-component="bench-card-open"] {
+  position: absolute;
+  z-index: 2;
+  top: 4px;
+  right: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border-weaker-base, var(--border-base));
+  border-radius: 999px;
+  background: var(--background-base);
+  color: var(--text-weak);
+  font-family: var(--font-family-sans);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+[data-component="bench-card-open"] [data-component="icon"] {
+  display: inline-flex;
+}
+
+[data-component="bench-card-open"] svg {
+  width: 12px;
+  height: 12px;
+}
+
+[data-component="bench-card-open"]:hover {
+  border-color: var(--text-interactive-base, var(--border-base));
+  color: var(--text-interactive-base, var(--text-base));
+}
+
+[data-component="tool-part-wrapper"]:hover [data-component="bench-card-open"],
+[data-component="tool-part-wrapper"]:focus-within [data-component="bench-card-open"],
+[data-component="tool-part-wrapper"]:has([data-slot="collapsible-trigger"][aria-expanded="true"])
+  [data-component="bench-card-open"] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+[data-component="bench-card-open"]:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+  outline: 2px solid var(--text-interactive-base, currentColor);
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-component="bench-card-open"] {
+    transition: none;
+  }
+}
