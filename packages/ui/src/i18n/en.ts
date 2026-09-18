@@ -258,6 +258,8 @@ export const dict: Record<string, string> = {
   "ui.tool.scope.screenshot": "Instrument screenshot",
   "ui.tool.scope.screenshotNote": "Instrument screenshot. The saved waveform zooms and takes cursors in the debug panel.",
 
+  // 时间线里硬件卡片右上角那个按钮(log / gdb / la / scope;flash 没有面板所以没有它)。
+  "ui.tool.openInPanel": "Open in panel",
   "ui.basicTool.called": "Called `{{tool}}`",
   "ui.toolErrorCard.failed": "Failed",
   "ui.toolErrorCard.copyError": "Copy error",

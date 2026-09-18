@@ -19,12 +19,11 @@ import { useLanguage } from "@/context/language"
 import { useSDK } from "@/context/sdk"
 import { useBench } from "../bench/bench-context"
 import type { InstrumentId } from "../bench/bench-status"
-import { benchPins, instrumentById, isVisible } from "../bench/instruments"
 import { useLogFeed } from "../bench/log-feed"
 import { TargetStrip } from "../bench/target-strip"
-import { debug as dock } from "../debug/debug-data"
 import { consoleUI } from "./console-state"
 import { dotsBesideAttention, useUnseenSet } from "./evidence-view"
+import { revealInstrument } from "./reveal-instrument"
 import { TargetSlot } from "./target-slot"
 import "./console.css"
 
@@ -51,19 +50,9 @@ export function SessionStatusBar() {
     if (consoleUI.opened() && consoleUI.tab() === "log") consoleUI.markErrorsSeen(errors())
   })
 
-  const reveal = (id: InstrumentId) => {
-    const instrument = instrumentById(id)
-    if (!instrument) return
-    // 藏着的那台点一下就钉住 —— 不钉的话打开了也立刻消失。
-    if (!isVisible(instrument, bench.ctx())) benchPins.pin(id)
-    if (instrument.surface === "text") {
-      consoleUI.open(id)
-      return
-    }
-    dock.open()
-    dock.setMode("debug")
-    consoleUI.setRail(id)
-  }
+  // 点一格去哪、藏着的要不要先钉住 —— 规则在 `reveal-instrument.ts`,与卡片上的
+  // 「在面板中打开」共用同一份(别在这里再写一遍)。
+  const reveal = (id: InstrumentId) => void revealInstrument(id, bench.ctx())
 
   const toggleKey = () => command.keybind("console.toggle")
 
