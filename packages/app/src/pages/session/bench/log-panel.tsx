@@ -29,6 +29,13 @@ export function LogControls() {
   const sdk = useSDK()
   const feed = useLogFeed(() => sdk().directory)
 
+  /**
+   * 过滤之后的命中数。**过滤是有损的,而且没有别的地方说得出这件事**:行号保留的是原始行号
+   * (跳号勉强看得出在过滤),状态栏那一格说的是整份文件的总行数 —— 于是"18 行"与屏幕上的
+   * 9 行同屏出现,看起来像日志丢了一半。只在真过滤时出现,不占平时的位置。
+   */
+  const matched = createMemo(() => (feed.state.filter ? filterLogLines(feed.state.lines, feed.state.filter).length : 0))
+
   return (
     <>
       <input
@@ -39,6 +46,11 @@ export function LogControls() {
         aria-label={language.t("session.bench.log.filter")}
         onInput={(event) => feed.setFilter(event.currentTarget.value)}
       />
+      <Show when={feed.state.filter}>
+        <span data-slot="match" data-empty={matched() === 0 ? "true" : "false"}>
+          {language.t("session.bench.log.match", { shown: matched(), total: feed.state.lines.length })}
+        </span>
+      </Show>
       <button
         type="button"
         data-slot="follow"

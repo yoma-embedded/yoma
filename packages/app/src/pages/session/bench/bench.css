@@ -184,6 +184,17 @@ button[data-component="bench-chip"]:focus-visible {
 [data-component="bench-chip"][data-state="attention"] [data-slot="value"] {
   color: var(--bench-warn);
 }
+/**
+ * 读数的语气与灯分开,**排在灯的规则后面**所以它说了算。
+ * 用处只有一个:gdb 会话收了之后灯是灭的(offline),而 `故障 foc.c:45` 仍然是这次调试
+ * 唯一的结论 —— 灯灭、字不灭。
+ */
+[data-component="bench-chip"][data-tone="warn"] [data-slot="value"] {
+  color: var(--bench-warn);
+}
+[data-component="bench-chip"][data-tone="fail"] [data-slot="value"] {
+  color: var(--bench-fail);
+}
 
 /** 状态条本体:一行状态片。布局可以覆盖 flex-wrap / 方向,这里只给默认的横排。 */
 [data-component="bench-target-strip"] {
@@ -352,6 +363,18 @@ button[data-component="bench-chip"]:focus-visible {
 [data-component="bench-log-panel"] input[data-slot="filter"]:focus-visible {
   outline: none;
   border-color: var(--bench-active);
+}
+/** 过滤命中数(`9 / 18`)。行号保留的是原始行号,不说一句的话看不出过滤掉了多少。 */
+[data-component="bench-log-panel"] [data-slot="toolbar"] [data-slot="match"] {
+  flex: none;
+  font-family: var(--bench-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  color: var(--bench-muted);
+  white-space: nowrap;
+}
+[data-component="bench-log-panel"] [data-slot="toolbar"] [data-slot="match"][data-empty="true"] {
+  color: var(--bench-warn);
 }
 [data-component="bench-log-panel"] button[data-slot="follow"],
 [data-component="bench-log-panel"] button[data-slot="refresh"] {

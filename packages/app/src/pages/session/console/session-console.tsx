@@ -18,6 +18,7 @@ import { useLanguage } from "@/context/language"
 import { useBench } from "../bench/bench-context"
 import { benchPins, hiddenOnSurface, visibleOnSurface, type InstrumentDef } from "../bench/instruments"
 import { CONSOLE_MAX_FRACTION, CONSOLE_MIN_HEIGHT, consoleUI } from "./console-state"
+import { handleTablistKeys } from "./tablist-keys"
 import "../bench/bench.css"
 import "./console.css"
 
@@ -79,7 +80,7 @@ export function SessionConsole() {
         </Show>
 
         <div data-slot="head">
-          <div data-slot="tablist" role="tablist" aria-label={t("session.console.title")}>
+          <div data-slot="tablist" role="tablist" aria-label={t("session.console.title")} onKeyDown={handleTablistKeys}>
             <For each={tabs()}>
               {(instrument) => (
                 <button
@@ -88,6 +89,9 @@ export function SessionConsole() {
                   data-slot="tab"
                   data-instrument={instrument.id}
                   aria-selected={active()?.id === instrument.id ? "true" : "false"}
+                  // roving tabindex:Tab 键只停在选中的那一格,格与格之间用左右键 —— 页签行
+                  // 是一个控件,不是 N 个。
+                  tabIndex={active()?.id === instrument.id ? 0 : -1}
                   onClick={() => consoleUI.setTab(instrument.id)}
                 >
                   <span data-component="bench-led" data-state={instrument.status(bench.ctx())} />

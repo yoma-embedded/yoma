@@ -110,7 +110,13 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     controls: LogControls,
     // 页签行有一整行宽度,所以来源给全文(挤不下时 CSS 打省略号,鼠标停一下还看得到)——
     // 正因为这一行说全了,紧凑装配里的「来源」读数才被容器藏掉,不占第二行。
-    headline: (ctx, t) => logCaptureLabel(ctx.status.log, t, { full: true }),
+    //
+    // 兜底那一句管的是**这次会话没碰过 log 工具、而工程里躺着上一次的日志**那种情形:
+    // 面板照样放得出行(它读的是磁盘),状态条上却没有「日志」那一格(它只认 transcript),
+    // 两边同屏时看起来像是日志凭空冒出来的。说一句"这是磁盘上的上一次采集"就没这个问题了。
+    headline: (ctx, t) =>
+      logCaptureLabel(ctx.status.log, t, { full: true }) ??
+      (ctx.disk.logFiles > 0 ? t("session.bench.log.fromDisk") : undefined),
     hasData: (ctx) => ctx.disk.logFiles > 0 || !!ctx.status.log,
     status: (ctx) => {
       const log = ctx.status.log
