@@ -32,6 +32,7 @@ import { FlashTool } from "./flash-tool"
 import { GdbTool } from "./gdb-tool"
 import { LaTool } from "./la-tool"
 import { LogTool } from "./log-tool"
+import { OpenInstrumentButton } from "./open-instrument"
 import { ScopeTool } from "./scope-tool"
 import { FileIcon } from "@yoma-desktop/ui/file-icon"
 import { Icon } from "@yoma-desktop/ui/icon"
@@ -659,6 +660,10 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
   return (
     <Show when={true}>
       <div data-component="tool-part-wrapper" data-timeline-part-id={part().id}>
+        {/* 「在面板中打开」。挂在卡片外壳上而不是某一张专用卡里:五张硬件卡在解析不出
+            details 时会回落到 `GenericTool`、出错时走 `ToolErrorCard`,而那两种形态同样
+            值得一个"去面板里看"的出口。回调缺席时它一个像素都不渲染。 */}
+        <OpenInstrumentButton part={part()} />
         <Switch>
           <Match when={part().state.status === "error" && (part().state as any).error}>
             {(error) => {
