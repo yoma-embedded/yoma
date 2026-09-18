@@ -20,9 +20,14 @@
  *            connection?; file?; path?; line? }`
  * - la / scope `{ action; captureId?; dir?; … }`
  * 故障与停止现场**不在 details 里**,只在给模型的输出文本里(`■ stopped#N: …` / `故障(HardFault):…`),
- * 所以这一层也解析那几行 —— 见 `parseStopReport`。
+ * 所以这一层也解析那几行 —— 读法在 session-ui 的 `gdb-report.ts`(时间线里那张 gdb 卡片
+ * 用的是同一份正则;分叉的后果不会报错,只会让面板和卡片各说各的位置)。
  */
 import type { ToolPart } from "@yoma-desktop/kernel"
+import { basename, parseStopReport, type ParsedStopReport } from "@yoma-desktop/session-ui/gdb-report"
+
+export { basename, parseStopReport }
+export type { ParsedStopReport }
 
 /** 注册表里的仪器。将来加 power / host 时只改这一行和 instruments.ts 里那条记录。 */
 export type InstrumentId = "log" | "gdb" | "la" | "scope"
@@ -135,8 +140,6 @@ export const EMPTY_BENCH_STATUS: BenchStatus = {
 
 /** 停止历史留几条。多了没人看,而且每条都要在界面上占一行。 */
 export const MAX_STOPS = 8
-const MAX_REPORT_LINES = 40
-const MAX_REPORT_CHARS = 4000
 
 // ---------------------------------------------------------------- 防御式读取
 
@@ -175,93 +178,6 @@ function outputOf(part: ToolPart): string {
   if (state.status === "completed") return typeof state.output === "string" ? state.output : ""
   if (state.status === "running") return typeof state.output === "string" ? state.output : ""
   return ""
-}
-
-// ---------------------------------------------------------------- gdb 文本解析
-
-/** `■ stopped#7: breakpoint-hit breakpoint 2 (+0.153s)` —— target.ts 的 renderStopReport 第一行。 */
-const STOP_LINE = /^■\s*stopped#(\d+):\s*(.*)$/
-/** `[gdb #1 halted @ main.c:200 bp=1/6 localhost:3333]` 的位置那一段。 */
-const BANNER_LOCATION = /^\[gdb #\d+ [a-z-]+ @ (\S+)/
-/** `  故障(HardFault):栈上的 PC 指向 …` —— 冒号可能是全角(源码里就是全角)。 */
-const FAULT_LINE = /^\s*故障[(（]([^)）]*)[)）]\s*[:：]?\s*(.*)$/
-/** 没有中文那一行时的兜底:Cortex-M 的故障名出现在停止报告里。 */
-/** `  出事 PC 0x080004b6 = foc_zero_isense + 10 in section .text (Core/Src/foc.c:45)` —— 真正出事的那一行源码。 */
-const FAULT_PC_LINE = /^\s*出事\s*PC\b.*\(([^()\s]+:\d+)\)\s*$/
-const FAULT_WORD = /\b(?:HardFault|BusFault|UsageFault|MemManage|NMI|hard\s?fault)\b/
-
-export interface ParsedStopReport {
-  /** 从 `■` 那行起的正文,已按行数与字数截断。 */
-  report?: string
-  /** 这份输出里出现过的全部停止(源序)。 */
-  stops: { n: number; reason: string; fault?: string }[]
-  /** 最后一次停止的故障摘要。 */
-  fault?: string
-  /**
-   * 故障真正发生的源码位置(`foc.c:45`),来自报告里"出事 PC"那一行。停止位置(横幅 / details)
-   * 指的是**现在停在哪** —— 出了故障时那是 HardFault 处理函数,不是人要看的那一行。
-   */
-  faultLocation?: string
-  /** 横幅里的 `@ 位置`。 */
-  location?: string
-}
-
-/**
- * 从一次 gdb 调用的输出里抠出停止现场。
- *
- * 注意**不要**按 details 判有没有故障:`GdbDetails` 里一个故障字段都没有,
- * decodeFault 的结果只进了给模型的文本(contract 的纪律是 details 只放能 JSON 往返的小字段)。
- */
-export function parseStopReport(output: string): ParsedStopReport {
-  const out: ParsedStopReport = { stops: [] }
-  if (!output) return out
-
-  const lines = output.split("\n")
-  let reportFrom = -1
-  for (const [index, line] of lines.entries()) {
-    const stop = STOP_LINE.exec(line)
-    if (stop) {
-      out.stops.push({ n: Number(stop[1]), reason: stop[2].trim() || "halted" })
-      reportFrom = index
-      continue
-    }
-    const banner = BANNER_LOCATION.exec(line)
-    if (banner) out.location = banner[1]
-  }
-
-  if (reportFrom >= 0) {
-    const body = lines.slice(reportFrom, reportFrom + MAX_REPORT_LINES).join("\n")
-    out.report = body.length > MAX_REPORT_CHARS ? `${body.slice(0, MAX_REPORT_CHARS)}\n…` : body
-  }
-
-  // 故障只从**停止报告**里认,而且只认最后一次停止之后的那一段:
-  // 一次调用里出现两次停止时前一次的故障不该冒充现状;没有 ■ 那行时(比如 `break` 的回执
-  // 里恰好提到"故障")更不该凭空冒出一条没有现场的故障。
-  if (reportFrom >= 0) {
-    const tail = lines.slice(reportFrom)
-    for (const line of tail) {
-      if (FAULT_LINE.test(line)) {
-        out.fault = line.trim()
-        break
-      }
-    }
-    if (!out.fault) {
-      const hit = tail.find((line) => FAULT_WORD.test(line))
-      if (hit) out.fault = hit.trim()
-    }
-    if (out.fault) {
-      for (const line of tail) {
-        const pc = FAULT_PC_LINE.exec(line)
-        if (!pc) continue
-        const [file, lineNo] = [pc[1].slice(0, pc[1].lastIndexOf(":")), pc[1].slice(pc[1].lastIndexOf(":") + 1)]
-        out.faultLocation = `${basename(file)}:${lineNo}`
-        break
-      }
-    }
-  }
-  if (out.fault && out.stops.length > 0) out.stops[out.stops.length - 1].fault = out.fault
-
-  return out
 }
 
 /** `serial /dev/cu.usbmodem1103 @ 115200 8N1` / `tcp localhost:19021` / 其它 = 命令行。 */
@@ -534,11 +450,6 @@ export function formatCommand(argv: readonly string[]): string {
   return argv.map((arg) => (/\s/.test(arg) ? `"${arg}"` : arg)).join(" ")
 }
 
-/** 只要文件名 —— 路径在 `main.c:200` 这种一行读数里没有位置。正反斜杠都认。 */
-export function basename(filePath: string): string {
-  const parts = filePath.split(/[\\/]/)
-  return parts[parts.length - 1] || filePath
-}
 
 // ---------------------------------------------------------------- 一行读数
 

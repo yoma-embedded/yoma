@@ -1,0 +1,530 @@
+/**
+ * 时间线里五张硬件工具卡片的排版(flash / log / gdb / la / scope)。
+ *
+ * 颜色与原语一律来自 `bench.css`(`--bench-*`)—— 卡片和右栏的仪器面板必须是同一套
+ * LED / 读数行 / 等宽数字。这里只放"卡片形态"的东西:折叠态那一行怎么排、展开态怎么分块。
+ *
+ * 纪律:
+ * - 属性驱动(`data-component` / `data-slot` / `data-tone`),没有工具类 props。
+ * - **折叠态一行**。高度与通用卡同一量级,时间线不许变成一墙大卡片。
+ * - **展开态每一块都有上限**:等宽原文内部滚动,行区内部滚动。一张卡不许撑出几千像素。
+ */
+
+/* bench.css 的 token 块挂在 `.ybench` 与几个 `bench-*` 根上;卡片不是那些根,所以自带一份。
+   `:where()` 优先级为 0 —— 外层想覆盖通道色照样覆盖得了。 */
+:where([data-component="hw-trigger"], [data-component="hw-body"]) {
+  --bench-ink: var(--text-base);
+  --bench-muted: var(--text-weak);
+  --bench-faint: var(--text-weaker, var(--text-weak));
+  --bench-line: var(--border-weaker-base, var(--border-base));
+  --bench-line-strong: var(--border-weak-base, var(--border-base));
+  --bench-surface: var(--background-base);
+  --bench-surface-raised: var(--background-stronger);
+
+  --bench-ok: var(--text-success-base, #2f9e6e);
+  --bench-active: var(--text-interactive-base, #37a8b6);
+  --bench-warn: var(--text-warning-base, #c08a2e);
+  --bench-fail: var(--text-danger-base, #d5544a);
+  --bench-idle: var(--text-weaker, var(--text-weak));
+
+  --bench-mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+}
+
+/* ---------------------------------------------------------------- 折叠态那一行 */
+
+[data-component="hw-trigger"] {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  /* 通用卡的标题行是 14px/large;这一行要与它同一量级,别在时间线里跳出来。 */
+  font-size: 14px;
+  line-height: var(--line-height-large, 1.5);
+}
+
+[data-component="hw-trigger"] [data-component="bench-led"] {
+  /* baseline 对齐时圆点会坐在文字底线上,抬一点点才在视觉中线上。 */
+  align-self: center;
+  margin-top: 1px;
+}
+
+[data-component="hw-trigger"] [data-slot="label"] {
+  flex: none;
+  font-family: var(--font-family-sans);
+  font-weight: var(--font-weight-medium);
+  color: var(--v2-text-text-base, var(--text-strong));
+  white-space: nowrap;
+}
+
+/* 动作先被截:结论才是这张卡片存在的理由。 */
+[data-component="hw-trigger"] [data-slot="action"] {
+  flex: 0 1 auto;
+  flex-shrink: 999;
+  min-width: 2.5em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  color: var(--bench-muted);
+}
+
+[data-component="hw-trigger"] [data-slot="sep"] {
+  flex: none;
+  color: var(--bench-faint);
+}
+
+[data-component="hw-trigger"] [data-slot="conclusion"] {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  color: var(--bench-ink);
+}
+
+[data-component="hw-trigger"][data-state="fail"] [data-slot="conclusion"] {
+  color: var(--bench-fail);
+}
+[data-component="hw-trigger"][data-state="attention"] [data-slot="conclusion"],
+[data-component="hw-trigger"][data-state="warn"] [data-slot="conclusion"] {
+  color: var(--bench-warn);
+}
+[data-component="hw-trigger"][data-state="ok"] [data-slot="conclusion"] {
+  color: var(--bench-ok);
+}
+[data-component="hw-trigger"][data-state="offline"] [data-slot="conclusion"] {
+  color: var(--bench-faint);
+}
+
+/* ---------------------------------------------------------------- 展开态 */
+
+[data-component="hw-body"] {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  margin: 6px 0 20px;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--bench-line-strong);
+  border-radius: 10px;
+  background: var(--bench-surface);
+  font-size: 13px;
+  color: var(--bench-ink);
+  -webkit-user-select: text;
+  user-select: text;
+  /* 读数区按**卡片自己的**宽度决定一列还是两列 —— 窗口宽度说明不了问题(右栏开着时
+     中间那一栏可以只有 450px),媒体查询在这里是错的工具。 */
+  container-type: inline-size;
+}
+
+[data-component="hw-section"] {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+/* 面板头在卡片里比在面板里紧:一张卡可以有四块。 */
+[data-component="hw-body"] [data-component="bench-panel-head"] {
+  padding: 0 0 2px;
+}
+
+[data-component="hw-readouts"] {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0 18px;
+  min-width: 0;
+}
+/* 宽一点就两列 —— 读数短,一列摆会留一条长长的点线。 */
+@container (min-width: 520px) {
+  [data-component="hw-readouts"] {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+[data-component="bench-readout"][data-tone="fail"] [data-slot="val"] {
+  color: var(--bench-fail);
+}
+[data-component="bench-readout"][data-tone="warn"] [data-slot="val"],
+[data-component="bench-readout"][data-tone="attention"] [data-slot="val"] {
+  color: var(--bench-warn);
+}
+[data-component="bench-readout"][data-tone="ok"] [data-slot="val"] {
+  color: var(--bench-ok);
+}
+[data-component="bench-readout"][data-tone="active"] [data-slot="val"] {
+  color: var(--bench-active);
+}
+[data-component="bench-readout"][data-tone="offline"] [data-slot="val"] {
+  color: var(--bench-faint);
+}
+/* 值可以很长(一条来源命令、一段触发描述):允许折行,别把点线挤没。 */
+[data-component="hw-readouts"] [data-component="bench-readout"] [data-slot="val"] {
+  max-width: 70%;
+  text-align: right;
+}
+/* 长值占满整行:两列里那个窄格子会把 `PSP(EXC_RETURN=0xfffffffd,基本帧)` 从中间劈开。 */
+[data-component="hw-readouts"] [data-component="bench-readout"][data-wide] {
+  grid-column: 1 / -1;
+}
+
+/* ---------------------------------------------------------------- 原文(默认收起) */
+
+[data-component="hw-raw"] {
+  min-width: 0;
+}
+[data-component="hw-raw"] > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  list-style: none;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bench-muted);
+  user-select: none;
+}
+[data-component="hw-raw"] > summary::-webkit-details-marker {
+  display: none;
+}
+/* 自画的折叠三角:跟着 10px 的名牌走,别按浏览器默认的尺寸站着。 */
+[data-component="hw-raw"] > summary::before {
+  content: "";
+  flex: none;
+  width: 0;
+  height: 0;
+  border-left: 4px solid currentcolor;
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+  transition: transform 0.12s ease;
+}
+[data-component="hw-raw"][open] > summary::before {
+  transform: rotate(90deg);
+}
+[data-component="hw-raw"] > summary:hover {
+  color: var(--bench-ink);
+}
+[data-component="hw-raw"] > summary:focus-visible {
+  outline: 2px solid var(--bench-active);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+[data-component="hw-raw"] > summary [data-slot="count"] {
+  font-family: var(--bench-mono);
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--bench-faint);
+}
+[data-component="hw-raw"] [data-component="hw-mono"] {
+  margin-top: 4px;
+}
+
+/* ---------------------------------------------------------------- 等宽原文 */
+
+[data-component="hw-mono"] {
+  margin: 0;
+  padding: 7px 9px;
+  max-height: 180px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--bench-line);
+  border-radius: 7px;
+  background: var(--bench-surface-raised);
+  font-family: var(--bench-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  line-height: 1.6;
+  white-space: pre;
+  color: var(--bench-ink);
+}
+[data-component="hw-mono"][data-wrap] {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+[data-component="hw-mono"][data-tall] {
+  max-height: 260px;
+}
+
+/* ---------------------------------------------------------------- 注解 */
+
+[data-component="hw-notes"] {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+[data-component="hw-note"] {
+  margin: 0;
+  min-width: 0;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--bench-faint);
+  overflow-wrap: anywhere;
+}
+[data-component="hw-note"][data-tone="warn"] {
+  color: var(--bench-warn);
+}
+/* 出事 PC 那一行是报告里信息密度最高的一句:等宽,而且比一般注解亮一档。 */
+[data-component="hw-note"][data-tone="code"] {
+  font-family: var(--bench-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--bench-muted);
+}
+
+/* ---------------------------------------------------------------- 小标记 */
+
+[data-component="hw-tags"] {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+[data-component="hw-tags"] [data-slot="tag"] {
+  padding: 0 6px;
+  border: 1px solid var(--bench-line-strong);
+  border-radius: 4px;
+  background: var(--bench-surface-raised);
+  font-family: var(--bench-mono);
+  font-size: 10.5px;
+  line-height: 17px;
+  color: var(--hw-tag-color, var(--bench-ink));
+}
+[data-component="hw-tags"] [data-slot="tag"][data-tone="fail"] {
+  color: var(--bench-fail);
+}
+
+/* ---------------------------------------------------------------- flash 的证据行 */
+
+[data-component="hw-evidence"] {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+}
+[data-component="hw-evidence"] li {
+  font-family: var(--bench-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  line-height: 1.65;
+  color: var(--bench-muted);
+  overflow-wrap: anywhere;
+}
+[data-component="hw-evidence"] li[data-tone="ok"] {
+  color: var(--bench-ok);
+}
+[data-component="hw-evidence"] li[data-tone="fail"] {
+  color: var(--bench-fail);
+}
+[data-component="hw-evidence"] li[data-tone="warn"] {
+  color: var(--bench-warn);
+}
+
+/* ---------------------------------------------------------------- 日志行 */
+
+[data-component="hw-lines"] [data-slot="lines"] {
+  max-height: 220px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--bench-line);
+  border-radius: 7px;
+  padding: 4px 0;
+  background: var(--bench-surface-raised);
+  font-family: var(--bench-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  line-height: 17px;
+}
+[data-component="hw-lines"] [data-slot="line"] {
+  display: flex;
+  gap: 8px;
+  padding: 0 9px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 17px;
+}
+[data-component="hw-lines"] [data-slot="lead"] {
+  flex: none;
+  color: var(--bench-faint);
+  user-select: none;
+}
+[data-component="hw-lines"] [data-slot="text"] {
+  min-width: 0;
+  color: var(--bench-ink);
+}
+[data-component="hw-lines"] [data-slot="line"][data-level="error"] [data-slot="text"] {
+  color: var(--bench-fail);
+}
+[data-component="hw-lines"] [data-slot="line"][data-level="warn"] [data-slot="text"] {
+  color: var(--bench-warn);
+}
+[data-component="hw-lines"] [data-slot="line"][data-level="debug"] [data-slot="text"] {
+  color: var(--bench-faint);
+}
+/* 命中那一行:左边一条竖杠 + 一点点底色。工具已经在文本里标过 `← match`,这里是视觉上的同一件事。 */
+[data-component="hw-lines"] [data-slot="line"][data-hit] {
+  background: color-mix(in srgb, var(--bench-warn) 12%, transparent);
+  box-shadow: inset 2px 0 0 var(--bench-warn);
+}
+[data-component="hw-lines"] [data-slot="footer"] {
+  padding: 4px 2px 0;
+  font-family: var(--bench-mono);
+  font-size: 10.5px;
+  color: var(--bench-faint);
+}
+
+/* ---------------------------------------------------------------- gdb 调用栈 */
+
+[data-component="hw-frames"] {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+  font-family: var(--bench-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  line-height: 1.7;
+}
+[data-component="hw-frames"] li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+[data-component="hw-frames"] [data-slot="n"] {
+  flex: none;
+  width: 2.2em;
+  color: var(--bench-faint);
+  user-select: none;
+}
+[data-component="hw-frames"] [data-slot="func"] {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--bench-ink);
+}
+[data-component="hw-frames"] [data-slot="where"] {
+  flex: none;
+  margin-left: auto;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--bench-muted);
+  font: inherit;
+}
+[data-component="hw-frames"] button[data-slot="where"][data-clickable] {
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--bench-line-strong);
+}
+[data-component="hw-frames"] button[data-slot="where"][data-clickable]:hover {
+  color: var(--bench-active);
+}
+/* 真正出事的那一帧 —— 报告里其余的帧都是它的上下文。 */
+[data-component="hw-frames"] li[data-fault] [data-slot="func"],
+[data-component="hw-frames"] li[data-fault] [data-slot="where"] {
+  color: var(--bench-fail);
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- gdb 入栈寄存器 */
+
+[data-component="hw-regs"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  min-width: 0;
+  font-family: var(--bench-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  line-height: 1.7;
+}
+[data-component="hw-regs"] [data-slot="reg"] {
+  display: inline-flex;
+  gap: 5px;
+}
+[data-component="hw-regs"] [data-slot="name"] {
+  color: var(--bench-faint);
+}
+[data-component="hw-regs"] [data-slot="value"] {
+  color: var(--bench-ink);
+}
+
+/* ---------------------------------------------------------------- la 缩略波形 */
+
+[data-component="hw-la-preview"] {
+  display: flex;
+  align-items: flex-start;
+  min-width: 0;
+  padding: 5px 7px;
+  border: 1px solid var(--bench-line);
+  border-radius: 7px;
+  background: var(--bench-surface-raised);
+  overflow: hidden;
+}
+[data-component="hw-la-preview"] [data-slot="names"] {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  font-family: var(--bench-mono);
+  font-size: 9.5px;
+  color: var(--bench-muted);
+}
+[data-component="hw-la-preview"] [data-slot="name"] {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+[data-component="hw-la-preview"] [data-slot="d"] {
+  color: var(--bench-faint);
+}
+[data-component="hw-la-preview"] [data-slot="canvas"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: block;
+}
+
+/* ---------------------------------------------------------------- scope 截图 */
+
+[data-component="hw-figure"] {
+  margin: 0;
+  min-width: 0;
+}
+[data-component="hw-figure"] button {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: 1px solid var(--bench-line);
+  border-radius: 7px;
+  background: var(--bench-surface-raised);
+  overflow: hidden;
+  cursor: zoom-in;
+}
+[data-component="hw-figure"] img {
+  display: block;
+  max-width: 100%;
+  max-height: 320px;
+  object-fit: contain;
+}
+[data-component="hw-figure"] figcaption {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--bench-faint);
+}
