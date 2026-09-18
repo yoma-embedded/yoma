@@ -62,3 +62,23 @@ export function shortPath(filePath: string, segments = 3): string {
 export function actionWord(value: unknown): string | undefined {
   return typeof value === "string" && /^[a-z_]+$/.test(value) ? value : undefined
 }
+
+/**
+ * 这条读数要不要占满整行(`HwReadout` 的 `data-wide`)。
+ *
+ * 读数板在 `@container (min-width: 520px)` 之后是两列,一格约 250px,而值只拿得到 70% 的宽 ——
+ * 二十几个等宽字符就开始折行。多数读数是格式化过的短串(`1,024 B`、`halted`、`20 ns/点`),
+ * 摆两列正合适;但有几处的值**长度不受我们控制**:gdb 报告里 `p/x` 的结构体、`session log:`
+ * 后面那条绝对路径、断点的 `at + where`。它们在半格里折四五行,而旁边那条短读数的点线
+ * 孤零零吊在中间 —— 实拍见 `35-light-card-gdb-hover`(`目标 ⋯ no-session` 旁边是一条
+ * 折了五行的 `/Users/…/.yoma/gdb/session-….log`)。
+ *
+ * 所以长值自动整行,而不是等每个调用点想起来写 `wide`:下一个把工具原文喂进读数的卡片
+ * 不会再踩一遍。一列布局下 `grid-column: 1 / -1` 与不写等价,窄窗口一个像素都不变。
+ */
+export const READOUT_WIDE_CHARS = 24
+
+export function readoutIsWide(value: unknown, wide?: boolean): boolean {
+  if (wide) return true
+  return typeof value === "string" && value.length > READOUT_WIDE_CHARS
+}

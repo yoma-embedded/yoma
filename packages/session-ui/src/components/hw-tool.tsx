@@ -18,6 +18,7 @@
 import { For, Show, type JSX, type ParentProps } from "solid-js"
 import { useI18n } from "@yoma-desktop/ui/context/i18n"
 import { BasicTool } from "./basic-tool"
+import { readoutIsWide } from "./hw-format"
 import type { ToolProps } from "./message-part"
 
 /** 与 `bench.css` 的 `[data-component="bench-led"][data-state=…]` 同一套词。 */
@@ -95,10 +96,15 @@ export function HwSection(props: ParentProps<{ title: string; meta?: string; ton
  * 键值读数行。`tone` 给值上色(fail = 红,warn = 黄,ok = 绿)。
  * `wide` = 这一条的值长(一段命令、一句触发描述、异常帧那一串),占满整行 ——
  * 两列布局下窄格子会把 `PSP(EXC_RETURN=0xfffffffd,基本帧)` 从中间劈开。
+ * 不写 `wide` 时长字符串也会自动整行(`readoutIsWide`,那里有为什么)。
  */
 export function HwReadout(props: { k: string; v: JSX.Element; tone?: HwState; title?: string; wide?: boolean }) {
   return (
-    <div data-component="bench-readout" data-tone={props.tone} data-wide={props.wide ? "" : undefined}>
+    <div
+      data-component="bench-readout"
+      data-tone={props.tone}
+      data-wide={readoutIsWide(props.v, props.wide) ? "" : undefined}
+    >
       <span data-slot="key">{props.k}</span>
       <span data-slot="dots" />
       <span data-slot="val" title={props.title}>
