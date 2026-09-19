@@ -538,7 +538,7 @@ CC:模型在跑的时候,用户敲的消息进队列,在下一个工具轮次结
 
 结论写回本文;P2 时转成正式测试或删掉。**不要放进 `packages/agent/`**(锁定目录)。
 
-**P0 结果(2026-09-18,`packages/kernel/src/host/subagent-spike.test.ts`)**:11 个用例全过(c1 按"custom 通知 / 用户消息"各跑一次,另加 (g) 一条事实核对),连跑 5 次 5 次全绿,单次测试耗时约 0.6 s;变异验证 4/4 被抓(c2 不 steer、e1 上限改 3、e2 整批 terminate、d 不挂中止,各自对应的用例变红)。typecheck 11/11、oxlint 0 警告。本方案依赖的 v2 行为全部成立,设计不用改:
+**P0 结果(2026-09-18,`packages/kernel/src/host/subagent-spike.test.ts`;P2 起改名 `subagent-v2.test.ts`,留作上游哨兵)**:11 个用例全过(c1 按"custom 通知 / 用户消息"各跑一次,另加 (g) 一条事实核对),连跑 5 次 5 次全绿,单次测试耗时约 0.6 s;变异验证 4/4 被抓(c2 不 steer、e1 上限改 3、e2 整批 terminate、d 不挂中止,各自对应的用例变红)。typecheck 11/11、oxlint 0 警告。本方案依赖的 v2 行为全部成立,设计不用改:
 
 | # | 结论 |
 |---|---|
@@ -582,6 +582,20 @@ CC:模型在跑的时候,用户敲的消息进队列,在下一个工具轮次结
 - (p) 排队项恰好落在一轮的最后一个边界之后 → `run_end` 后收件箱非空 → wake 起新一轮;落在之前 → 这一轮不结束、接着跑(与 (c) 同一条规矩,换成用户消息再测一遍);
 - (q) `session.cancelQueued` 撤回一条还没被取走的排队消息 → 原文交回、它不再进 transcript;已被取走的 → `already_consumed`。
 
+**P2 结果(2026-09-19)**:
+
+- 新文件:`host/tasks.ts`(TaskManager:任务状态机、并发闸、前台 race 完成 / 转后台、自动转后台、通知的原子去重与逐父串行投递、`output_file`、`task_stop` / `send_message` / `task_output` 的宿主一侧、重启后从 `yoma/subagent` 重建任务、删父级联、退出收尾;文件头是每任务副作用登记表)、`host/subagents.test.ts`(场景 21 例)。P0 的 `subagent-spike.test.ts` 改名 `subagent-v2.test.ts` 留作**上游哨兵**:上游升级后它先红,能直接指出是哪条 v2 前提变了。
+- 改动:`host/session-manager.ts`(子会话分支:profile 快照与重启后补齐、按 profile 裁工具、模型与思考种子、子 agent 系统提示词、maxTurns 钩子;`runOperation` / `wake` / `admit`;忙时排队、`cancelQueued`、收件箱跟踪与 `session.queue`;确认冒泡;LRU 钉住;级联删;子会话拒收 prompt;仓库目录操作串行;`disposeAll` 先主后子)、`host/confirm.ts`(显示在哪个会话 / 属于哪个会话拆开)、`host/index.ts`(`subagents` 选项透传)、`types.ts`(`Session.parentID / agent`、`TaskView`、`QueuedItemView`、`ToolConfirmView.agent / taskID`、`SubagentSessionError`)、`protocol.ts`(`session.prompt` 结果带 `queued?`;事件 `task.updated`、`session.queue`)。RPC(`task.*`、`agent.list`、`session.cancelQueued`)的协议接线留 P3,宿主方法已在(`tasks` / `stopTask` / `backgroundTask` / `cancelQueued`)。
+- 场景 (i) 用"整个宿主 `disposeAll` 后换一个 SessionManager 重开"模拟重启;(j) 用裸 harness 往父会话 steer 一条通知再关掉,模拟"投进收件箱就崩了"。另补四条:(r) 一轮**失败**收场时收件箱里还排着消息、(s) 手动与 (s2) 自动转后台、(t) 宿主不许后台、(u) `task_output` 等到超时 / 完成。
+- 实测撞出来、设计稿没写到的:
+  1. **上游 `JsonlSessionRepo` 的 create / list / delete 在同一进程里并发不安全**:create 先列目录查 id 有没有被占(`assertSessionIdAvailable`),新会话文件先写 `.jsonl.tmp` 再改名;另一个 create / list 恰好列到那个 tmp、再去 lstat 时它已被改名 → ENOENT,整个调用失败。一条消息并行派 3 个子 agent 时不时少建一个,派 12 个几乎必现。上游锁定,宿主把这三个操作排成一条队(`repoLocked`),界面的 `session.list` 与派生撞在一起也在这条队里。旧格式会话首次打开时的升级也会写 tmp,那条路太少见,没排进来。
+  2. **失败收场的一轮不取收件箱**(`drive/response.ts` 的失败提交只动 tip):排着的消息原样留下,而且不会再有 `queue_update`。所以 `run_end` 时"收件箱非空就叫醒"不是冗余 —— 失败之后排着的那句只能靠它((r) 钉着)。叫醒一共三处(投递时、收件箱变非空时、`run_end` / 压缩结束时),前两处互为兜底:单删一处测不出是预期的,两处一起删才红。
+  3. `disposeAll` **先关主会话再关子会话**:反过来的话子 agent 先被停,主会话拿着"子 agent 被停"的工具结果会再请求一次模型 —— 退出途中多跑一轮,而那一轮可能是一条烧录。
+  4. accept 会把收件箱里排着的消息收在本次 prompt **之前**,所以"乐观插入的 id 复用给下一条 user 消息"会被排队的那条抢走;`pendingUser` 改成按原文认领。
+  5. 前端现在"跟进"的缺省是 steer:忙时照常乐观插入再发。宿主改成排队后,乐观插入的那条与真正落盘的那条会各显示一次 —— **P2 与 P3 之间的已知中间状态**,P3 按 §7 改界面(`queued` 时不插)时消失;分支在 P3 之前不合并。
+- 与设计的微调:排队中的任务在派生时就建会话、打开并钉住(§6.2 原文如此,`session.created` 立刻发出);`session.queue` 的条目带 `kind`(用户消息 / 通知),界面只画用户消息;完成与被停取结果是同一个算法,只看这一轮(`run_end.fromTipId` 之后);子 agent 系统提示词里的工具链段照给(机器事实,不算项目上下文),`omitContextFiles` 只去掉项目上下文文件;"STM32 不可用"那句只给手上有 netlist / stm32config 的子 agent;模型种子 `YOMA_SUBAGENT_MODEL` > 入参 > profile > 继承,点名的模型不在注册表里时回落继承并报一条 `kernel.error`。
+- 验证:场景 21 例连跑多次全绿;`kernel` 项目 21 个文件 249 例全过;`kernel-domain` 1397 例 1279 过 / 114 跳过 / 1 挂 —— 挂的是 `tools-la.test.ts` 那条本机 Windows 杀进程偶发(P1 基线同样挂,与本次无关);`bench` 151 例全过;typecheck 11/11 + 根;oxlint 本次改动的文件 0 警告。全量跑 `kernel` 项目时见过一次 `boundary.test.ts` 在负载下超过本机 5 秒缺省期限(单跑 0.4 s,之后三次全量都过),CI 的期限是 20 秒,先记下不处理。变异验证两批:第一批 19 条抓到 15 条,漏的是 LRU 钉住(当时的 (k) 让子 agent 秒完成,淘汰总先挑已完成的,排队中的轮不到 —— 已改成子 agent 卡在闸门上)与三处互为兜底的叫醒;第二批 8 条全部抓到(改写后的 (k)、两处叫醒一起删、`run_end` 叫醒配 (r)、手动与自动转后台、不许后台时的续跑与 schema、`task_output` 超时)。另:场景里所有"等测试放行"的闸门同时响应中止(`hold()`),用例失败时收尾不再挂到 hook 超时。
+
 **P3 协议 + 投影器 + UI**:按 §7 做;i18n 中英;desktop 冒烟与 e2e 工具数 +4;`e2e:paint` 覆盖卡片与子会话页;实测十几个子会话同时流式时 renderer 的内存(§8)。
 
 **P4 无人值守宿主与文档**:bench / 信箱传 `background: false`;`CLAUDE.md` 加"子 agent"一节、更新工具清单;把结论回填本文。
@@ -602,7 +616,7 @@ CC:模型在跑的时候,用户敲的消息进队列,在下一个工具轮次结
 | kernel | `host/projector.ts` | `task-notification` → synthetic user + task part,设 `turnParentID` |
 | kernel | `host/index.ts`、`protocol.ts`、`types.ts` | RPC、事件、视图字段、`TOOL_NAMES` +4 |
 | kernel | `package.json` | 加 `yaml: 2.9.0` |
-| kernel | `host/subagent-spike.test.ts`(P0)、`host/host.test.ts`、`host/tool-names.test.ts`、`host/projector.test.ts`、`test/agents-*.test.ts` | |
+| kernel | `host/subagent-v2.test.ts`(P0 原型转来的上游哨兵)、`host/subagents.test.ts`(P2 场景)、`host/host.test.ts`、`host/tool-names.test.ts`、`host/projector.test.ts`、`test/agents-*.test.ts` | |
 | session-ui | `components/agent-tool.tsx`(新)、task part、`message-part.tsx` 登记 | |
 | app | `pages/layout/helpers.ts`、子会话页、状态栏任务格、确认条、i18n 两份 | |
 | app | `components/prompt-input.tsx`、`components/prompt-input/submit.ts`、输入框上方的"排队中"一栏 | 忙时发送改排队、不做乐观插入、撤回与停止后退回输入框(§6.9) |

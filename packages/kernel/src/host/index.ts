@@ -69,6 +69,11 @@ export interface KernelHostOptions {
    * (无人值守,挂起只会等到十分钟超时)。详见 SessionManagerOptions。
    */
   confirmTools?: SessionManagerOptions["confirmTools"]
+  /**
+   * 子 agent 的宿主选项。**bench 与信箱工位端传 `{ background: false }`**(无人值守,按 idle 判一轮结束,
+   * 后台子 agent 会让 idle 说谎)。详见 SessionManagerOptions。
+   */
+  subagents?: SessionManagerOptions["subagents"]
   /** 成批推事件出去。host 已经做过合并,这里拿到的就是最终批次。 */
   onEvents(events: KernelEvent[]): void
 }
@@ -96,6 +101,7 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     toolchainSide: options.toolchainSide,
     toolchainManifestText: options.toolchainManifestText,
     confirmTools: options.confirmTools,
+    subagents: options.subagents,
     installRegistry: installs,
     emit: (events) => sink.push(events),
   })

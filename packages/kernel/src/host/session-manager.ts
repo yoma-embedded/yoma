@@ -18,6 +18,7 @@
  */
 
 import { existsSync } from "node:fs"
+import { tmpdir } from "node:os"
 import path from "node:path"
 
 import {
@@ -28,17 +29,29 @@ import {
   createEditTool,
   createReadTool,
   createWriteTool,
+  formatSkillInvocation,
+  value,
   type AgentLane,
+  type AgentMessage,
   type Branch,
   type Context,
   type ExecutionToolContext,
   type JsonlSessionMetadata,
+  type LaneQueuedItem,
+  type OperationAdmissionResult,
   type OperationRequest,
   type Session as PiSession,
+  type Skill,
   type ThinkingLevel,
 } from "@earendil-works/pi-agent-core"
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node"
-import { SUBAGENT_TOOL_NAMES } from "./domain/agents/select.ts"
+import { BUILTIN_AGENTS, DEFAULT_AGENT_TYPE } from "./domain/agents/builtin.ts"
+import { loadAgentProfiles } from "./domain/agents/load.ts"
+import { TASK_NOTIFICATION_TYPE } from "./domain/agents/notification.ts"
+import type { AgentProfile } from "./domain/agents/profile.ts"
+import { resolveAgentTools, SUBAGENT_TOOL_NAMES } from "./domain/agents/select.ts"
+import type { StopOutcome } from "./domain/agents/task-host.ts"
+import { TaskManager, type ChildSpec, type SubagentMeta, type TaskPort } from "./tasks.ts"
 import { bindExecutionEnv } from "./domain/execution-env.ts"
 import { inspectStm32Availability, type Stm32Availability } from "./domain/stm32/availability.ts"
 import {
@@ -71,15 +84,47 @@ import {
 } from "@earendil-works/pi-ai"
 
 import type { KernelEvent, PromptInput } from "../protocol.ts"
-import type { ProviderInfo, Session as ViewSession, SessionStatus, ToolConfirmView } from "../types.ts"
+import type {
+  ProviderInfo,
+  QueuedItemView,
+  Session as ViewSession,
+  SessionStatus,
+  TaskView,
+  ToolConfirmView,
+} from "../types.ts"
 import { Identifier } from "../ids.ts"
 import { pickThinkingLevel } from "../thinking.ts"
-import { sessionNotFound } from "../types.ts"
+import { sessionNotFound, subagentSession } from "../types.ts"
 import { MANUAL_COMPACTION_ENTRY, removalEvents, SessionProjection } from "./projector.ts"
 import { migrateLegacyPiAuth, yomaConfigDir, removeAuthKey, writeAuthKey } from "./auth.ts"
 
-/** 同时活着的 harness 上限。淘汰只是丢弃内存态,重开就是 repo.open + 重放,很便宜。 */
+/** 同时活着的 harness 上限。淘汰只是丢弃内存态,重开就是 repo.open + 重放,很便宜。钉住的(子 agent 任务在用)不算。 */
 const MAX_LIVE_SESSIONS = 8
+
+/** 子会话的会话级值(docs/子agent-设计方案-v0.4-20260918.md §4.6):续跑与重启后重建任务都靠它。 */
+const SUBAGENT_META = value<SubagentMeta>("yoma", "subagent")
+
+/** 同时在跑的子 agent 缺省上限(CC 的 CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY 缺省也是 10)。 */
+const DEFAULT_MAX_CONCURRENT_AGENTS = 10
+
+/** 正整数环境变量;没设、不是数就是 undefined(0 算数:自动转后台用 0 表示关)。 */
+function envNumber(name: string): number | undefined {
+  const raw = process.env[name]?.trim()
+  if (!raw) return undefined
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : undefined
+}
+
+/** 本地日期 YYYY-MM-DD(子 agent 的 env 块;CC getLocalISODate 同款,不是 UTC)。 */
+function localDate(): string {
+  const now = new Date()
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+}
+
+function userMessage(text: string): AgentMessage {
+  return { role: "user", content: [{ type: "text", text }], timestamp: Date.now() }
+}
 
 /**
  * 内核 Result 错误的 _tag → 一句中文。
@@ -171,15 +216,15 @@ export function createAgentTools(
 }
 
 /**
- * 这一轮真正交给模型的工具名。两道筛:本机没有 STM32 资源时 stm32config 不激活;子 agent 四件在宿主注入
- * TaskHost 之前不激活(它们照常登记,TOOL_NAMES 平台无关;模型看得见却用不了的工具只会让它空转一次)。
+ * 这一轮真正交给模型的工具名。两道筛:本机没有 STM32 资源时 stm32config 不激活;子 agent 四件只在宿主注入了
+ * TaskHost 的会话里激活(它们照常登记,TOOL_NAMES 平台无关;模型看得见却用不了的工具只会让它空转一次)。
  * 开会话与"下一轮前重核本机资源"两处必须同解。
  */
-export function activeToolNames(tools: readonly RegisteredTool[], stm32Available: boolean): string[] {
+export function activeToolNames(tools: readonly RegisteredTool[], stm32Available: boolean, subagents = false): string[] {
   return tools
     .map((tool) => tool.name)
     .filter((name) => stm32Available || name !== "stm32config")
-    .filter((name) => !SUBAGENT_TOOL_NAMES.includes(name))
+    .filter((name) => subagents || !SUBAGENT_TOOL_NAMES.includes(name))
 }
 
 /**
@@ -253,8 +298,33 @@ interface Entry {
   /** run 是否在飞。压缩结束后回 busy 还是 idle 看它(轮内压缩是 run 的一段)。 */
   running?: boolean
   model?: { providerID: string; modelID: string; thinking?: string }
-  /** renderer 乐观插入用户消息时铸的 id,等用户消息落盘时复用。 */
-  pendingUserID?: string
+  /**
+   * renderer 乐观插入用户消息时铸的 id,等**这条**用户消息落盘时复用。带着原文是因为 accept 会把收件箱里
+   * 排着的消息收在本次 prompt **之前**:只认"下一条 user 消息"的话,排队的那条会抢走这个 id。
+   */
+  pendingUser?: { id: string; text: string }
+  /** 子 agent 的会话:派它的主会话(repo 的 parentSessionId)。有它的会话不接用户的 prompt。 */
+  parentID?: string
+  /** 子会话怎么装配:agent 类型、profile、模型入参。进程重启后由 openEntry 从 yoma/subagent 值补齐。 */
+  child?: { agent: string; profile?: AgentProfile; model?: string }
+  /** 主会话打开时读到的 agent 定义快照:agent 工具的描述由它拼,会话内不变。 */
+  profiles?: AgentProfile[]
+  /** 子 agent 任务排队中 / 运行中:LRU 不许淘汰它(docs/子agent-设计方案-v0.4-20260918.md §6.7)。 */
+  pinned?: boolean
+  /** 收件箱现状(queue_update):忙时发的消息、子 agent 的通知。 */
+  queued?: LaneQueuedItem[]
+  /**
+   * "决定起一轮还是排队"的串行链:prompt() 与 wake() 都在它上面排队。准备期(压缩图片)里又来一条,
+   * 后来的那条等前一条 accept 完再判断忙闲 —— 否则两条都以为自己该起一轮,后一条撞 LaneBusy。
+   */
+  admission?: Promise<void>
+  /** 本会话发现的技能:子 agent 首轮按 profile.skills 预加载要用。 */
+  skills?: Skill[]
+  /** 子会话的 maxTurns:runId → 已开始的 assistant 轮数;命中上限的 runId(§6.6)。 */
+  turnCounts?: Map<string, number>
+  maxTurnsHit?: Set<string>
+  /** yoma/subagent 值的读—改—写串行链:通知与落定几乎同时写它。 */
+  metaWrites?: Promise<void>
 }
 
 export interface SessionManagerOptions {
@@ -317,6 +387,23 @@ export interface SessionManagerOptions {
    * 是两条调用路径,同一个包同时跑两路会往同一棵目录树里解压。**不传 = 两边各装各的**,所以桌面端必须传。
    */
   installRegistry?: InstallRegistry
+  /** 子 agent(docs/子agent-设计方案-v0.4-20260918.md)。不传就是缺省:能后台、并发 10、不自动转后台。 */
+  subagents?: {
+    /**
+     * false = 一律前台,`run_in_background` 从 schema 里摘掉(CC 的 CLAUDE_CODE_DISABLE_BACKGROUND_TASKS)。
+     * **bench 与信箱工位端必须传 false**:它们按"idle 静默"判一轮结束,后台子 agent 在跑时主会话是 idle 的,
+     * 这个判据就说谎了;而且它们一轮一个子进程,后台任务本来也活不过这一轮。
+     */
+    background?: boolean
+    /** 同时在跑的子 agent 上限,超出的排 pending。缺省 `YOMA_MAX_CONCURRENT_AGENTS` 或 10。 */
+    maxConcurrent?: number
+    /** 前台子 agent 跑满这么久自动转后台;0 = 关。缺省 `YOMA_AUTO_BACKGROUND_MS` 或 0(CC 缺省关)。 */
+    autoBackgroundMs?: number
+    /** output_file 的根,缺省 `<系统临时目录>/yoma`。测试注入。 */
+    outputRoot?: string
+    /** 项目 agent 定义沿祖先链找到哪为止(不含),缺省 home。测试必须注入,理由同 loadAgentProfiles。 */
+    homeDir?: string
+  }
 }
 
 export class SessionManager {
@@ -346,12 +433,43 @@ export class SessionManager {
    */
   private readonly desk: ConfirmDesk
 
+  /** 子 agent 的任务注册表与调度(host/tasks.ts)。它经 taskPort() 这个窄接口用我们,不碰 harness。 */
+  private readonly taskManager: TaskManager
+
+  /**
+   * 仓库目录操作(create / list / delete)的串行链。上游 JsonlSessionRepo 在同一进程里并发不安全:create 先列目录查
+   * id 有没有被占(assertSessionIdAvailable),新会话文件则先写 `.jsonl.tmp` 再改名 —— 另一个 create / list 正好
+   * 列到那个 tmp、再去 lstat 时它已被改名,整个调用以 ENOENT 失败(2026-09-19 实测:一条消息并行派 3 个子 agent,
+   * 时不时少建一个)。上游锁定不能改,在这里排队。
+   */
+  private repoQueue: Promise<void> = Promise.resolve()
+
+  private repoLocked<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.repoQueue.then(task)
+    this.repoQueue = run.then(
+      () => undefined,
+      () => undefined,
+    )
+    return run
+  }
+
   constructor(options: SessionManagerOptions) {
     this.options = options
     this.desk = new ConfirmDesk({ emit: (confirm) => options.emit([{ type: "tool.confirm", confirm }]) })
     this.configDir = options.configDir ?? yomaConfigDir()
     this.env = new NodeExecutionEnv({ cwd: process.cwd() })
     this.repo = new JsonlSessionRepo({ fileSystem: this.env, sessionsRoot: options.sessionsRoot })
+    const subagents = options.subagents ?? {}
+    this.taskManager = new TaskManager({
+      port: this.taskPort(),
+      background: subagents.background ?? true,
+      maxConcurrent: Math.max(
+        1,
+        subagents.maxConcurrent ?? envNumber("YOMA_MAX_CONCURRENT_AGENTS") ?? DEFAULT_MAX_CONCURRENT_AGENTS,
+      ),
+      autoBackgroundMs: subagents.autoBackgroundMs ?? envNumber("YOMA_AUTO_BACKGROUND_MS") ?? 0,
+      outputRoot: subagents.outputRoot ?? path.join(tmpdir(), "yoma"),
+    })
   }
 
   // -------------------------------------------------------------------------
@@ -588,7 +706,7 @@ export class SessionManager {
   // -------------------------------------------------------------------------
 
   async list(directory?: string): Promise<ViewSession[]> {
-    const metas = await this.repo.list(directory ? { cwd: directory } : {}, this.context)
+    const metas = await this.repoLocked(() => this.repo.list(directory ? { cwd: directory } : {}, this.context))
     const out: ViewSession[] = []
     for (const meta of metas) {
       const existing = this.entries.get(meta.id)
@@ -607,6 +725,8 @@ export class SessionManager {
         meta,
         status: { type: "idle" },
         touched: 0,
+        // 父子关系在会话文件头里(repo.create 的 parentSessionId),不开会话就知道。
+        ...(meta.parentSessionId ? { parentID: meta.parentSessionId } : {}),
       }
       this.entries.set(meta.id, entry)
       out.push(toView(entry))
@@ -615,7 +735,7 @@ export class SessionManager {
   }
 
   async create(directory: string, title?: string): Promise<ViewSession> {
-    const session = await this.repo.create({ cwd: directory }, this.context)
+    const session = await this.repoLocked(() => this.repo.create({ cwd: directory }, this.context))
     const meta = session.metadata
     const entry: Entry = {
       id: meta.id,
@@ -635,13 +755,29 @@ export class SessionManager {
     return view
   }
 
+  /**
+   * 删会话。主会话连它的子会话一起删(先停掉它的任务,再逐个删子会话、发 session.deleted);
+   * 子会话被单独删时,它的任务一并停掉、从注册表拿掉。
+   */
   async delete(sessionID: string): Promise<void> {
     const entry = this.entries.get(sessionID)
     if (!entry) return
+    if (entry.parentID) await this.taskManager.forgetTask(sessionID)
+    else {
+      await this.taskManager.forgetParent(sessionID)
+      // 子会话与父同一个 cwd;list 把还没进内存的也补进 entries。
+      await this.list(entry.cwd)
+      const children = [...this.entries.values()].filter((item) => item.parentID === sessionID)
+      for (const child of children) await this.deleteEntry(child)
+    }
+    await this.deleteEntry(entry)
+  }
+
+  private async deleteEntry(entry: Entry): Promise<void> {
     await this.dispose(entry)
-    await this.repo.delete(entry.meta, this.context)
-    this.entries.delete(sessionID)
-    this.options.emit([{ type: "session.deleted", sessionID }])
+    await this.repoLocked(() => this.repo.delete(entry.meta, this.context))
+    this.entries.delete(entry.id)
+    this.options.emit([{ type: "session.deleted", sessionID: entry.id }])
   }
 
   /** 标题写回 JSONL(会话名是内核的绑定值),不是只存在内存里。 */
@@ -765,13 +901,31 @@ export class SessionManager {
         ])
       }
 
+      // 子 agent 的会话按自己的 profile 装配(docs/子agent-设计方案-v0.4-20260918.md §4、§5.3、§6.8);
+      // 主会话读 agent 定义的快照(会话内不变,agent 工具的描述因此字节稳定)、拿 TaskHost 门面。
+      const profile = entry.parentID ? await this.childProfile(entry, session) : undefined
+      if (!profile) {
+        const loaded = await loadAgentProfiles({
+          cwd: entry.cwd,
+          configDir: this.configDir,
+          homeDir: this.options.subagents?.homeDir,
+        })
+        for (const diagnostic of loaded.diagnostics) {
+          this.options.emit([
+            { type: "kernel.error", sessionID: entry.id, message: `agent 定义 ${diagnostic.path}:${diagnostic.message}` },
+          ])
+        }
+        entry.profiles = loaded.profiles
+      }
+      entry.skills = discovered.skills
+
       // 工具链状态并进系统提示词:追加一条 contextFiles,不新增专门字段 ——
       // 不给 BuildSystemPromptOptions 加专门字段:系统提示词的形状是产品决定,追加上下文文件是既有通道。
       // path 给一个不会真实存在的假名,模型才看得出这不是一份项目文件。promptSectionFor
       // 对"没有清单"和"清单存在但全部 ok"都返回 undefined,所以绝大多数项目不追加任何
       // 东西,系统提示词字节不变。
 
-      const tools = createAgentTools({
+      const allTools = createAgentTools({
         enginesDir: this.options.enginesDir,
         configDir: this.configDir,
         invocationEnv: () => this.toolEnv(entry),
@@ -786,25 +940,36 @@ export class SessionManager {
         },
         // 手册服务器地址从同一个 configDir 的 .env 解析:设置页、手册库页、agent 说同一个地址。
         datasheet: { configDir: this.configDir },
+        // 子 agent 四件的宿主门面,绑定本会话 id。子会话不给:四件在子会话里由硬黑名单裁掉(§5.3)。
+        ...(profile
+          ? {}
+          : { agents: { host: this.taskManager.hostFor(entry.id, () => entry.profiles ?? []), canReadOutputFile: true } }),
       })
       entry.stm32Availability = await this.inspectStm32(entry, preparationSignal)
       preparationSignal?.throwIfAborted()
-      entry.activeToolNames = activeToolNames(tools, entry.stm32Availability!.available)
+      const tools = profile ? this.childTools(entry, profile, allTools) : allTools
+      entry.activeToolNames = profile
+        ? tools.map((tool) => tool.name)
+        : activeToolNames(tools, entry.stm32Availability!.available, true)
+      // 新 lane 的种子。子 agent:模型按 env > 入参 > profile > 继承主会话,思考缺省 off(CC 同款,§4.5);
+      // 主会话:宿主不表态就交给内核(off)。重开旧会话时用的是 lane 自己存下来的那一组。
+      const seed = profile
+        ? this.childSeed(entry, profile, models, model)
+        : {
+            model,
+            thinkingLevel: this.options.defaultThinkingLevel
+              ? (pickThinkingLevel(
+                  getSupportedThinkingLevels(model) as string[],
+                  this.options.defaultThinkingLevel,
+                ) as ThinkingLevel)
+              : undefined,
+          }
       const created = await AgentHarness.create<ExecutionToolContext>(
         {
           session,
           models,
-          model,
-          // 不传则内核落到 "off"。setModel 的显式选择压过这里。注意这只是**新 lane 的种子**:
-          // 重开一个旧会话时用的是它自己存下来的那一档。
-          ...(this.options.defaultThinkingLevel
-            ? {
-                thinkingLevel: pickThinkingLevel(
-                  getSupportedThinkingLevels(model) as string[],
-                  this.options.defaultThinkingLevel,
-                ) as ThinkingLevel,
-              }
-            : {}),
+          model: seed.model,
+          ...(seed.thinkingLevel ? { thinkingLevel: seed.thinkingLevel } : {}),
           tools,
           activeToolNames: entry.activeToolNames,
           // 函数形态:每轮重新解析一次,于是 refreshMachineEnv 换掉 shellEnv 之后
@@ -812,6 +977,32 @@ export class SessionManager {
           toolContext: () => ({ env: this.toolEnv(entry) }),
           systemPrompt: () => {
             const toolchainSection = promptSectionFor(entry.toolchain ?? toolchain)
+            const stm32Note = entry.stm32Availability?.available
+              ? undefined
+              : `STM32 configuration is unavailable on this machine: ${entry.stm32Availability?.reason ?? "local CubeMX resources are unavailable"}. Do not call stm32config or use netlist with part, and do not bypass this unavailable capability by invoking its engine or pretending handwritten initialization came from stm32config. Ordinary firmware coding remains allowed. Explain the missing local resource only when relevant; do not install or configure CubeMX just to enable this tool. Existing source settings can enable it on the next user turn. Netlist without part and other tools remain available.`
+            if (profile) {
+              // 子 agent(§4.2):agent 正文 + CC 的四条 Notes + 工具清单与守则 + env 块;omitContextFiles 的
+              // 不给项目上下文(CC omitClaudeMd)。工具链那一段是这台机器的事实,不算项目上下文,照给。
+              return buildSystemPrompt({
+                cwd: entry.cwd,
+                agentPrompt: profile.prompt,
+                selectedTools: entry.activeToolNames,
+                contextFiles: [
+                  ...(profile.omitContextFiles ? [] : contextFiles),
+                  ...(toolchainSection ? [{ path: "<toolchain>", content: toolchainSection }] : []),
+                ],
+                skills: discovered.skills,
+                // 那句 STM32 的话只对手上有 netlist / stm32config 的 agent 有意义。
+                appendSystemPrompt: entry.activeToolNames?.some((name) => name === "netlist" || name === "stm32config")
+                  ? stm32Note
+                  : undefined,
+                environment: {
+                  platform: process.platform,
+                  date: localDate(),
+                  ...(entry.model ? { model: `${entry.model.providerID}/${entry.model.modelID}` } : {}),
+                },
+              })
+            }
             return buildSystemPrompt({
               cwd: entry.cwd,
               selectedTools: entry.activeToolNames,
@@ -819,9 +1010,7 @@ export class SessionManager {
                 ? [...contextFiles, { path: "<toolchain>", content: toolchainSection }]
                 : contextFiles,
               skills: discovered.skills,
-              appendSystemPrompt: entry.stm32Availability?.available
-                ? undefined
-                : `STM32 configuration is unavailable on this machine: ${entry.stm32Availability?.reason ?? "local CubeMX resources are unavailable"}. Do not call stm32config or use netlist with part, and do not bypass this unavailable capability by invoking its engine or pretending handwritten initialization came from stm32config. Ordinary firmware coding remains allowed. Explain the missing local resource only when relevant; do not install or configure CubeMX just to enable this tool. Existing source settings can enable it on the next user turn. Netlist without part and other tools remain available.`,
+              appendSystemPrompt: stm32Note,
             })
           },
           // lane.skill() 从这里查技能。
@@ -876,11 +1065,18 @@ export class SessionManager {
       entry.harness = harness
       entry.projection = projection
       entry.tools = tools
-      entry.unsubscribes = this.subscribe(entry, harness)
+      entry.unsubscribes = [
+        ...this.subscribe(entry, harness),
+        ...(profile?.maxTurns ? this.maxTurnsHooks(entry, harness, profile.maxTurns) : []),
+      ]
       // 确认钩子**不**并进 unsubscribes:closeEntry 先摘订阅再 stop,而 desk.cancel 结算掉第一条之后,
       // 同一批里的第二条工具会立刻轮到 before_tool —— 钩子已摘,它就无人确认地起跑了。所以钩子
-      // 要活到 stop() 之后,由 closeEntry 单独摘。
-      if (this.options.confirmTools) {
+      // 要活到 stop() 之后,由 closeEntry 单独摘。子会话的 before_tool 还兼管 maxTurns 的兜底拦截,所以总是挂。
+      if (profile) {
+        entry.unhook = harness.hooks.on("before_tool", (event, context) =>
+          this.childBeforeTool(entry, profile, event, context),
+        )
+      } else if (this.options.confirmTools) {
         entry.unhook = harness.hooks.on("before_tool", (event, context) => this.beforeTool(entry, event, context))
       }
       entry.lane = lane
@@ -903,7 +1099,142 @@ export class SessionManager {
     }
 
     this.evictIdle()
+    // 收件箱里可能躺着上个进程没来得及取走的东西(通知 steer 进来就崩了,§12 (j)):主会话一打开就叫醒一次。
+    // 收件箱是空的时候这一下是 InvalidMessage(empty),没有副作用。子会话不叫:它们的续跑由 TaskManager 起,
+    // 没有任务认领的一轮只会让结果无处可去。
+    if (!entry.parentID) this.wake(entry)
     return entry
+  }
+
+  // -------------------------------------------------------------------------
+  // 子会话的装配(docs/子agent-设计方案-v0.4-20260918.md §4、§5.3、§6.6)
+  // -------------------------------------------------------------------------
+
+  /**
+   * 这个子会话按哪个 profile 装配。本进程派出的子会话在 entry.child 上带着;进程重启过的从会话值 `yoma/subagent`
+   * 读出 agent 类型,在父会话的快照(或重新加载的定义)里找。定义已经被删了就落回 general-purpose 并说一声 ——
+   * 续跑一个找不到定义的子会话,好过让它永远打不开。
+   */
+  private async childProfile(entry: Entry, session: PiSession<JsonlSessionMetadata>): Promise<AgentProfile> {
+    if (entry.child?.profile) return entry.child.profile
+    const meta = (await session.getValue(SUBAGENT_META, this.context))?.value
+    const agent = entry.child?.agent ?? meta?.agent ?? DEFAULT_AGENT_TYPE
+    const parent = entry.parentID ? this.entries.get(entry.parentID) : undefined
+    let profile = parent?.profiles?.find((item) => item.name === agent)
+    if (!profile) {
+      const loaded = await loadAgentProfiles({
+        cwd: entry.cwd,
+        configDir: this.configDir,
+        homeDir: this.options.subagents?.homeDir,
+      })
+      profile = loaded.profiles.find((item) => item.name === agent)
+    }
+    if (!profile) {
+      this.options.emit([
+        {
+          type: "kernel.error",
+          sessionID: entry.id,
+          message: `子 agent 的类型 ${agent} 已经没有定义了,改按 ${DEFAULT_AGENT_TYPE} 装配`,
+        },
+      ])
+      profile = BUILTIN_AGENTS.find((item) => item.name === DEFAULT_AGENT_TYPE)!
+    }
+    entry.child = { ...entry.child, agent, profile }
+    return profile
+  }
+
+  /**
+   * 子 agent 的工具(§5.3):从这个会话自己装出的一整份里按 profile 重新筛 —— 硬黑名单(子 agent 四件)、硬件五件、
+   * profile 的黑白名单,再加宿主的可用性裁剪(stm32config 看本机资源)。筛掉的**根本不注册**,不只是不激活;
+   * 它们是新造的实例、没人用过,就地收掉。
+   */
+  private childTools(entry: Entry, profile: AgentProfile, all: RegisteredTool[]): RegisteredTool[] {
+    const names = all.map((tool) => tool.name)
+    const available = activeToolNames(all, entry.stm32Availability?.available ?? false)
+    const kept = new Set(resolveAgentTools(available, profile).tools)
+    const unknown = resolveAgentTools(names, profile).unknown
+    if (unknown.length > 0) {
+      this.options.emit([
+        {
+          type: "kernel.error",
+          sessionID: entry.id,
+          message: `agent ${profile.name} 的 tools 里点了这个宿主没有的工具:${unknown.join(", ")}`,
+        },
+      ])
+    }
+    for (const tool of all) if (!kept.has(tool.name)) void tool.dispose?.().catch(() => {})
+    return all.filter((tool) => kept.has(tool.name))
+  }
+
+  /**
+   * 子 agent 新 lane 的模型与思考种子(§4.5)。模型:`YOMA_SUBAGENT_MODEL` > agent 入参 > profile > 继承主会话当前的
+   * 模型;点了名却不在注册表里(provider 没配 key)→ 回落继承并说一声,派生照常。思考:profile 写了就用,
+   * 不写 = off(CC:普通子 agent 一律关思考以控制输出 token),再按模型实际支持的档位钳一下。
+   */
+  private childSeed(
+    entry: Entry,
+    profile: AgentProfile,
+    models: Models,
+    fallback: Model<string>,
+  ): { model: Model<string>; thinkingLevel: ThinkingLevel } {
+    const parent = entry.parentID ? this.entries.get(entry.parentID) : undefined
+    const inherited = parent?.model ? (models.getModel(parent.model.providerID, parent.model.modelID) as Model<string> | undefined) : undefined
+    const requested = [process.env.YOMA_SUBAGENT_MODEL, entry.child?.model, profile.model]
+      .map((spec) => spec?.trim())
+      .find((spec): spec is string => Boolean(spec) && spec !== "inherit")
+    let model = inherited ?? fallback
+    if (requested) {
+      const slash = requested.indexOf("/")
+      const found =
+        slash > 0 ? (models.getModel(requested.slice(0, slash), requested.slice(slash + 1)) as Model<string> | undefined) : undefined
+      if (found) model = found
+      else {
+        this.options.emit([
+          {
+            type: "kernel.error",
+            sessionID: entry.id,
+            message: `子 agent 要的模型 ${requested} 不可用(没配 key 或名字不对),改用主会话的模型`,
+          },
+        ])
+      }
+    }
+    return { model, thinkingLevel: clampThinkingLevel(model, profile.thinkingLevel ?? "off") }
+  }
+
+  /**
+   * maxTurns(§6.6,宿主 hook,不改内核):before_request 按 runId 数 assistant 轮(只数首次请求,重试不算);
+   * 第 N 轮的工具跑完 after_tool 回 terminate —— v2 要求同一批**每个**调用都带 terminate 才停(P0 实测),
+   * 所以对这一批每一个都回;兜底的 before_tool 拦截在 childBeforeTool 里。
+   */
+  private maxTurnsHooks(entry: Entry, harness: AgentHarness<ExecutionToolContext>, max: number): Array<() => void> {
+    const counts = (entry.turnCounts = new Map())
+    const hit = (entry.maxTurnsHit = new Set())
+    return [
+      harness.hooks.on("before_request", (event) => {
+        if (event.step === "assistant" && event.attempt === 1) counts.set(event.runId, (counts.get(event.runId) ?? 0) + 1)
+        return undefined
+      }),
+      harness.hooks.on("after_tool", (event) => {
+        if ((counts.get(event.runId) ?? 0) < max) return undefined
+        hit.add(event.runId)
+        return { terminate: true }
+      }),
+    ]
+  }
+
+  /** 子会话的 before_tool:先是 maxTurns 的兜底(超额的调用拦下并收工),再是确认门(只在有人看屏幕的宿主)。 */
+  private async childBeforeTool(
+    entry: Entry,
+    profile: AgentProfile,
+    event: { toolCallId: string; toolName: string; args: Record<string, unknown>; runId: string },
+    context: Context,
+  ): Promise<{ block: { reason: string; terminate?: boolean } } | undefined> {
+    if (profile.maxTurns && (entry.turnCounts?.get(event.runId) ?? 0) > profile.maxTurns) {
+      entry.maxTurnsHit?.add(event.runId)
+      return { block: { reason: "max turns reached", terminate: true } }
+    }
+    if (!this.options.confirmTools) return undefined
+    return this.beforeTool(entry, event, context)
   }
 
   /**
@@ -977,9 +1308,11 @@ export class SessionManager {
   }
 
   private async refreshAvailability(entry: Entry, signal: AbortSignal): Promise<void> {
+    // 子会话的工具集是派生时按 profile 定的(而且它不接用户的 prompt,走不到这里)。
+    if (entry.parentID) return
     const availability = await this.inspectStm32(entry, signal)
     signal.throwIfAborted()
-    const names = activeToolNames(entry.tools!, availability.available)
+    const names = activeToolNames(entry.tools!, availability.available, true)
     await entry.lane!.setActiveTools(names, this.context)
     entry.stm32Availability = availability
     entry.activeToolNames = names
@@ -1072,8 +1405,9 @@ export class SessionManager {
         entry.running = true
         entry.operationId = event.runId
         emit(this.setStatus(entry, { type: "busy" }))
+        if (entry.parentID) this.taskManager.onRunStart(entry.id)
       }),
-      harness.events.on("run_end", () => {
+      harness.events.on("run_end", (event) => {
         this.desk.cancel(entry.id)
         entry.running = false
         entry.operationId = undefined
@@ -1081,6 +1415,28 @@ export class SessionManager {
         emit([...this.setStatus(entry, { type: "idle" }), { type: "session.updated", session: toView(entry) }])
         // 这一轮结束了,refreshMachineEnv 退役掉的旧环境现在可以安全收子进程了。
         void this.cleanupRetiredEnvs(entry)
+        if (entry.parentID) {
+          const maxTurnsReached = entry.maxTurnsHit?.has(event.runId) === true
+          entry.turnCounts?.delete(event.runId)
+          entry.maxTurnsHit?.delete(event.runId)
+          this.taskManager.onRunEnd(entry.id, {
+            status: event.status,
+            ...(event.status === "failed" ? { error: event.error.message } : {}),
+            fromTipId: event.fromTipId,
+            maxTurnsReached,
+          })
+        }
+        // 收件箱里还有东西(steer 落在这一轮的结束提交之后,§6.4 第 5 步):起下一轮把它取走。
+        if (entry.queued?.length) this.wake(entry)
+      }),
+      harness.events.on("turn_start", () => {
+        if (entry.parentID) this.taskManager.onTurn(entry.id)
+      }),
+      harness.events.on("queue_update", (event) => {
+        entry.queued = event.queues
+        emit([{ type: "session.queue", sessionID: entry.id, items: queueView(event.queues) }])
+        // 空闲时收件箱变成非空:排队消息的 steer 恰好落在一轮收尾之后(§6.9 竞态)。叫醒一次,多叫无害。
+        if (event.queues.length > 0 && !this.isRunning(entry)) this.wake(entry)
       }),
       harness.events.on("retry_scheduled", (event) => {
         // Summary retries have their own compacting state; this is model generation only.
@@ -1115,9 +1471,13 @@ export class SessionManager {
       // 而用户/工具结果消息的 start 与 end 是同一批发出来的,不会晚。
       harness.events.on("message_end", (event) => {
         const message = event.message
-        // renderer 乐观插入过一条,id 要复用。pendingUserID 由 prompt() 放进来。
-        const given = message.role === "user" ? entry.pendingUserID : undefined
-        if (given) entry.pendingUserID = undefined
+        // renderer 乐观插入过一条,id 要复用。pendingUser 由 prompt() 放进来,按原文认领 ——
+        // 收件箱里排着的消息会在它前面落盘,不能让排队的那条抢走这个 id。
+        const pending = entry.pendingUser
+        const given =
+          message.role === "user" && pending && textOf(message.content) === pending.text ? pending.id : undefined
+        if (given) entry.pendingUser = undefined
+        if (entry.parentID && message.role === "assistant") this.taskManager.onAssistant(entry.id, message)
         apply((projection) =>
           projection.applyMessage(message, {
             ...(event.entryId ? { entryId: event.entryId } : {}),
@@ -1125,7 +1485,10 @@ export class SessionManager {
           }),
         )
       }),
-      harness.events.on("tool_start", (event) => apply((projection) => projection.markToolRunning(event.toolCallId))),
+      harness.events.on("tool_start", (event) => {
+        if (entry.parentID) this.taskManager.onTool(entry.id, event.toolName, event.args)
+        apply((projection) => projection.markToolRunning(event.toolCallId))
+      }),
       harness.events.on("tool_update", (event) => {
         // 空快照(内核 bash 开跑先发一条 {content:[]})不进节流器:它会白白花掉前沿,真正的第一块输出
         // 就得等尾沿,每条 bash 的第一个字都晚一个间隔。
@@ -1152,6 +1515,8 @@ export class SessionManager {
       }),
       harness.events.on("compaction_end", () => {
         emit(this.setStatus(entry, entry.running ? { type: "busy" } : { type: "idle" }))
+        // 手动压缩期间排进来的:压缩不是一轮,不会有 run_end 替它们叫醒。
+        if (!entry.running && entry.queued?.length) this.wake(entry)
       }),
       harness.events.on("config_update", (event) => {
         if (event.property === "model") {
@@ -1204,29 +1569,41 @@ export class SessionManager {
     const contract = confirmNeeded(event.toolName, event.args)
     if (!contract) return undefined
     const summary = contract.summary(event.args)
+    // 这段话原样进模型的工具结果,几种结局要说清是哪一种:拒绝必须带上"别在问过用户之前重试",
+    // 否则模型会立刻同样再调一次,用户得连点好几次;超时若也说成"用户拒绝",模型会换招绕开,
+    // 而用户只是没看屏幕。
+    // 每一段都要堵死绕行:只禁 flash 的话,模型会改用 bash 起同一条 openocd —— bash 不过这道门。
+    // 措辞必须**对所有会问的工具都成立**:被拒的可能是烧录(改用 bash 起 openocd),也可能是
+    // toolchain install(改用 bash curl | tar 把同一个包拉下来)。写死"探针命令"就只堵住了前一种。
+    const what = `${event.toolName}: ${summary}`
+    const noBypass =
+      "Do not work around this with bash or any other tool — that includes running an equivalent command yourself."
+    // 子 agent(§6.5):后台的问不了用户(CC 的 shouldAvoidPermissionPrompts),直接拒,让它报回去由主 agent 去问;
+    // 前台的照常问,但询问**显示在主会话**(用户看着的是那里),带上是哪个子 agent 在问。
+    const task = entry.parentID ? this.taskManager.task(entry.id) : undefined
+    const backgroundReason = `Background sub-agents cannot ask the user for confirmation, so ${what} did not run. Report back that it needs to run and let the main agent ask. ${noBypass}`
+    if (task?.background) return { block: { reason: backgroundReason } }
+    const agent = task?.agent ?? entry.child?.agent
     const settled = await this.desk.ask(
       {
         id: Identifier.ascending("confirm"),
-        sessionID: entry.id,
+        sessionID: entry.parentID ?? entry.id,
         toolCallId: event.toolCallId,
         tool: event.toolName,
         label: contract.label,
         summary,
         input: event.args,
         askedAt: Date.now(),
+        ...(entry.parentID ? { ...(agent ? { agent } : {}), taskID: entry.id } : {}),
       },
       context.abortSignal,
+      entry.id,
     )
     if (settled === "allowed") return undefined
-    // 这段话原样进模型的工具结果,三种结局要说清是哪一种:拒绝必须带上"别在问过用户之前重试",
-    // 否则模型会立刻同样再调一次,用户得连点好几次;超时若也说成"用户拒绝",模型会换招绕开,
-    // 而用户只是没看屏幕。
-    // 三段都要堵死绕行:只禁 flash 的话,模型会改用 bash 起同一条 openocd —— bash 不过这道门。
-    // 措辞必须**对所有会问的工具都成立**:被拒的可能是烧录(改用 bash 起 openocd),也可能是
-    // toolchain install(改用 bash curl | tar 把同一个包拉下来)。写死"探针命令"就只堵住了前一种。
-    const what = `${event.toolName}: ${summary}`
-    const noBypass =
-      "Do not work around this with bash or any other tool — that includes running an equivalent command yourself."
+    // 挂着的时候被转了后台:询问已撤,理由照后台说。
+    if (settled === "cancelled" && entry.parentID && this.taskManager.task(entry.id)?.background) {
+      return { block: { reason: `${what} was not approved before the sub-agent moved to the background; ${backgroundReason}` } }
+    }
     const reason =
       settled === "denied"
         ? `The user declined to run ${what}. Do not retry without asking the user first. ${noBypass}`
@@ -1272,21 +1649,35 @@ export class SessionManager {
       { type: "kernel.error", sessionID: entry.id, message },
       ...this.setStatus(entry, { type: "idle" }),
     ])
+    // 子会话的这一轮没有 run_end 可等了:任务按失败落定(已经落定过的,TaskManager 自己认得)。
+    if (entry.parentID) this.taskManager.onRunEnd(entry.id, { status: "failed", error: message })
   }
 
   // -------------------------------------------------------------------------
   // 一轮对话
   // -------------------------------------------------------------------------
 
-  async prompt(sessionID: string, input: PromptInput): Promise<{ messageID: string }> {
+  /**
+   * 用户发一句话。空闲时起一轮;**正忙时排队**(docs/子agent-设计方案-v0.4-20260918.md §6.9,照 CC):steer 进收件箱,
+   * 在下一个工具轮次结束、下一次请求之前插进去,返回 `queued: true`。想打断当前轮要按停止(abort)。
+   * 子 agent 的会话不接用户的话(CC:子 agent 永远看不到用户的输入流),续跑走主 agent 的 send_message。
+   */
+  async prompt(sessionID: string, input: PromptInput): Promise<{ messageID: string; queued?: boolean }> {
     // 先只打开历史,把耗时的初始资源探测也纳入可取消的准备期。
     const entry = await this.ensureOpen(sessionID, true)
+    if (entry.parentID) throw subagentSession(sessionID)
+    return this.admit(entry, () => this.admitPrompt(entry, sessionID, input))
+  }
 
-    // 一条 lane 同时只有一个操作:忙的时候 accept 回 LaneBusy。先中断,再等真的回到 idle。
-    if (entry.status.type !== "idle" || entry.preparing) await this.stop(entry)
+  private async admitPrompt(
+    entry: Entry,
+    sessionID: string,
+    input: PromptInput,
+  ): Promise<{ messageID: string; queued?: boolean }> {
+    // 手动压缩这类结构性操作还在飞(它不是一轮对话,不会在工具边界取收件箱):照旧先停再发。
+    if (!this.isRunning(entry) && entry.status.type !== "idle") await this.stop(entry)
 
     const messageID = input.messageID ?? Identifier.ascending("message")
-    entry.pendingUserID = messageID
 
     // 贴进来的图同样要过压缩:截图与手机照片动辄十几 MB,原样发出去整轮会被供应商拒掉。
     // file:// 的提及件在这里跳过 —— 它的路径已经在正文里,agent 自己会用 read 去读(那条路也过同一道压缩)。
@@ -1299,7 +1690,10 @@ export class SessionManager {
     try {
       const alreadyOpen = isOpen(entry)
       await this.ensureOpen(sessionID)
-      if (!preparing.cancelled && alreadyOpen) await this.refreshAvailability(entry, preparing.controller.signal)
+      // 正在跑的那一轮用的是它开跑时的工具集;排队的消息不去动它。
+      if (!preparing.cancelled && alreadyOpen && !this.isRunning(entry)) {
+        await this.refreshAvailability(entry, preparing.controller.signal)
+      }
       for (const file of input.files ?? []) {
         if (preparing.cancelled) break
         if (!file.mime.startsWith("image/")) continue
@@ -1318,18 +1712,12 @@ export class SessionManager {
         images.push({ type: "image", data: processed.data, mimeType: processed.mimeType })
       }
     } catch (error) {
-      if (!preparing.cancelled) {
-        entry.pendingUserID = undefined
-        throw error
-      }
+      if (!preparing.cancelled) throw error
     } finally {
       if (entry.preparing === preparing) entry.preparing = undefined
     }
     // 准备期里用户按了停止:这一轮就此作罢,别让它在"已经点过停止"之后才开跑。
-    if (preparing.cancelled) {
-      entry.pendingUserID = undefined
-      return { messageID }
-    }
+    if (preparing.cancelled) return { messageID }
     if (omitted.length > 0) {
       this.options.emit([{ type: "kernel.error", sessionID, message: `图片没能送达模型 —— ${omitted.join(";")}` }])
     }
@@ -1352,23 +1740,47 @@ export class SessionManager {
       ])
     }
 
+    // 忙着(准备期结束时再判断一次 —— 那几秒里这一轮可能已经收工):排进收件箱,不打断。
+    // 不做乐观插入:它被取走时才随 message_end 落在 transcript 里的真实位置(当前工具轮次的结果之后)。
+    if (this.isRunning(entry)) {
+      const queued = await entry.lane!.steer(text, images.length ? images : undefined, this.context)
+      if (!queued.ok) throw laneError(queued.error)
+      // steer 恰好落在这一轮的结束提交之后:收件箱里躺着一条而没人驱动。queue_update 那条会叫醒,这里再兜一次。
+      if (!this.isRunning(entry)) this.wake(entry)
+      return { messageID, queued: true }
+    }
+
     const request: OperationRequest = images.length
       ? { kind: "prompt", prompt: text, images }
       : { kind: "prompt", prompt: text }
+    entry.pendingUser = { id: messageID, text }
+    const accepted = await this.runOperation(entry, request)
+    // accept 的事件(含这条用户消息的 message_end)在它 resolve 之前就送达了;没认领上的也别留到下一轮。
+    entry.pendingUser = undefined
+    if (!accepted.ok) throw laneError(accepted.error)
+    return { messageID }
+  }
+
+  /** 这个会话有一轮在飞(accept 过、run_end 还没来)。手动压缩不算:它不是一轮,不在工具边界取收件箱。 */
+  private isRunning(entry: Entry): boolean {
+    return entry.running === true || entry.operationId !== undefined
+  }
+
+  /**
+   * 起一轮:accept 只落盘,drive 才执行。prompt()、wake()、子 agent 的每一轮(首轮、续跑)共用这一条。
+   *
+   * 不 await drive:一轮可能跑几分钟,调用方必须立刻返回,结果全部走事件流。
+   * waitForRetry 把内核的退避留在这一次 drive 里,于是整段重试是一个连续的 busy ——
+   * 退避窗口里漏出 idle,bench 会当真去回填结果,而 agent 正要重试。
+   * pollDeferred 同理管 provider 侧的异步生成:漏了它 drive 会带着
+   * kind:"waiting" 提前回来,而 run_end 永远不来,状态就永久钉在 busy。
+   */
+  private async runOperation(entry: Entry, request: OperationRequest): Promise<OperationAdmissionResult> {
     const lane = entry.lane!
     const accepted = await lane.accept(request, this.context)
-    if (!accepted.ok) {
-      entry.pendingUserID = undefined
-      throw laneError(accepted.error)
-    }
+    if (!accepted.ok) return accepted
     const operationId = accepted.value.operationId
     entry.operationId = operationId
-
-    // 不 await:一轮可能跑几分钟,请求必须立刻返回,结果全部走事件流。
-    // waitForRetry 把内核的退避留在这一次 drive 里,于是整段重试是一个连续的 busy ——
-    // 退避窗口里漏出 idle,bench 会当真去回填结果,而 agent 正要重试。
-    // pollDeferred 同理管 provider 侧的异步生成:漏了它 drive 会带着
-    // kind:"waiting" 提前回来,而 run_end 永远不来,状态就永久钉在 busy。
     void lane.drive({ operationId, waitForRetry: true, pollDeferred: true }, this.context).then(
       (driven) => {
         if (!driven.ok) this.fail(entry, laneErrorMessage(driven.error))
@@ -1378,8 +1790,272 @@ export class SessionManager {
       },
       (error: unknown) => this.fail(entry, laneErrorMessage(error as Error)),
     )
+    return accepted
+  }
 
-    return { messageID }
+  /**
+   * "决定起一轮还是排队"按会话串行(Entry.admission)。只串到 accept 为止,不等这一轮跑完。
+   */
+  private admit<T>(entry: Entry, task: () => Promise<T>): Promise<T> {
+    const run = (entry.admission ?? Promise.resolve()).then(task)
+    entry.admission = run.then(
+      () => undefined,
+      () => undefined,
+    )
+    return run
+  }
+
+  /**
+   * 会话空闲而收件箱非空时起一轮,把排着的东西取走(子 agent 的通知、收尾之后才到的排队消息)——
+   * 与用户发消息同一条路,只是少一条用户消息(accept 空 prompt)。回 LaneBusy = 已经有一轮在跑,它会在
+   * 边界上取走;回 InvalidMessage(empty) = 早被取走了。两者都不是错误,多叫一次无害(§6.4)。
+   */
+  private wake(entry: Entry): void {
+    void this.admit(entry, async () => {
+      if (!isOpen(entry) || this.isRunning(entry) || entry.status.type === "compacting") return
+      const woken = await this.runOperation(entry, { kind: "prompt", prompt: [] })
+      if (!woken.ok && woken.error._tag !== "LaneBusy" && woken.error._tag !== "InvalidMessage") {
+        throw laneError(woken.error)
+      }
+    }).catch((error: unknown) => {
+      this.options.emit([
+        { type: "kernel.error", sessionID: entry.id, message: `唤醒会话失败:${(error as Error)?.message ?? String(error)}` },
+      ])
+    })
+  }
+
+  /**
+   * 撤回一条还没被取走的排队消息(§6.9):原文与图片交回,让用户改了再发。`already_consumed` = 它刚被这一轮取走。
+   */
+  async cancelQueued(
+    sessionID: string,
+    entryId: string,
+  ): Promise<{ kind: "cancelled" | "already_consumed" | "not_found"; text?: string; files?: Array<{ mime: string; url: string }> }> {
+    const entry = this.entries.get(sessionID)
+    if (!entry || !isOpen(entry)) return { kind: "not_found" }
+    const item = entry.queued?.find((queued) => queued.entryId === entryId)
+    const result = await entry.lane!.cancelQueued(entryId, this.context)
+    if (!result.ok) throw laneError(result.error)
+    if (result.value.kind !== "cancelled") return { kind: result.value.kind }
+    const message = item?.type === "message" && item.message.role === "user" ? item.message : undefined
+    if (!message) return { kind: "cancelled" }
+    const files =
+      typeof message.content === "string"
+        ? []
+        : message.content.flatMap((block) =>
+            block.type === "image" ? [{ mime: block.mimeType, url: `data:${block.mimeType};base64,${block.data}` }] : [],
+          )
+    return { kind: "cancelled", text: textOf(message.content), ...(files.length ? { files } : {}) }
+  }
+
+  // -------------------------------------------------------------------------
+  // 子 agent(docs/子agent-设计方案-v0.4-20260918.md §6)
+  // -------------------------------------------------------------------------
+
+  /** 这个主会话派出的任务(任务面板;task.list RPC)。 */
+  tasks(sessionID: string): TaskView[] {
+    return this.taskManager.list(sessionID)
+  }
+
+  /** 界面上的停止键(task.stop RPC)。后台任务照常带着部分结果发 killed 通知(CC 同款)。 */
+  stopTask(taskID: string): Promise<StopOutcome> {
+    return this.taskManager.stop(taskID)
+  }
+
+  /** 卡片上的"转后台"(task.background RPC)。false = 已经在后台 / 已经结束 / 这个宿主不能后台。 */
+  backgroundTask(taskID: string): boolean {
+    return this.taskManager.moveToBackground(taskID)
+  }
+
+  /** TaskManager 用我们的全部接口。它不碰 harness,不跨 await 留 lane 引用 —— 每次现取。 */
+  private taskPort(): TaskPort {
+    return {
+      createChild: (parentID, spec) => this.createChild(parentID, spec),
+      run: (childID, input) => this.runChild(childID, input),
+      steer: async (childID, text) => {
+        const entry = await this.ensureOpen(childID)
+        const queued = await entry.lane!.steer(text, undefined, this.context)
+        if (!queued.ok) throw laneError(queued.error)
+      },
+      abort: (childID) => this.requestStop(childID),
+      lastText: (childID, fromTipId) => this.lastAssistantText(childID, fromTipId),
+      deliver: (parentID, message) => this.deliver(parentID, message),
+      pin: (childID, pinned) => {
+        const entry = this.entries.get(childID)
+        if (entry) entry.pinned = pinned
+      },
+      cancelConfirms: (childID) => this.desk.cancel(childID),
+      recordMeta: (childID, patch) => this.recordMeta(childID, patch),
+      childMeta: (parentID, childID) => this.childMeta(parentID, childID),
+      emit: (events) => this.options.emit(events),
+    }
+  }
+
+  /**
+   * 建子会话(§6.2 第 3、4 步):文件头带 parentSessionId、会话名 = description、写 yoma/subagent 值、发 session.created,
+   * 再打开并**钉住** —— 钉住要早于打开:openEntry 的末尾就会跑一次 LRU,十几个同时派出的兄弟会话正是在那一刻互相淘汰。
+   */
+  private async createChild(parentID: string, spec: ChildSpec): Promise<string> {
+    const parent = this.entries.get(parentID)
+    if (!parent) throw sessionNotFound(parentID)
+    const session = await this.repoLocked(() =>
+      this.repo.create({ cwd: parent.cwd, parentSessionId: parentID }, this.context),
+    )
+    const meta = session.metadata
+    const entry: Entry = {
+      id: meta.id,
+      cwd: meta.cwd,
+      title: spec.description,
+      createdAt: meta.createdAt,
+      updatedAt: Date.now(),
+      meta,
+      session,
+      status: { type: "idle" },
+      touched: Date.now(),
+      parentID,
+      child: {
+        agent: spec.agent,
+        ...(parent.profiles?.find((profile) => profile.name === spec.agent)
+          ? { profile: parent.profiles.find((profile) => profile.name === spec.agent)! }
+          : {}),
+        ...(spec.model ? { model: spec.model } : {}),
+      },
+      pinned: true,
+    }
+    this.entries.set(entry.id, entry)
+    await session.setName(spec.description, this.context)
+    await session.setValue(
+      SUBAGENT_META,
+      {
+        agent: spec.agent,
+        parentSessionId: parentID,
+        toolCallId: spec.toolCallId,
+        description: spec.description,
+        background: spec.background,
+        createdAt: Date.now(),
+        notified: false,
+      },
+      this.context,
+    )
+    this.options.emit([{ type: "session.created", session: toView(entry) }])
+    try {
+      await this.ensureOpen(entry.id)
+    } catch (error) {
+      entry.pinned = false
+      throw error
+    }
+    return entry.id
+  }
+
+  /**
+   * 在子会话上起一轮(首轮或续跑)。首轮照 CC:每个预加载的技能一条 user 消息在前,然后是任务书
+   * (profile.initialPrompt 拼在前面);排队时攒下的 send_message 接在最后。
+   */
+  private async runChild(childID: string, input: { prompt: string; first: boolean; extra: string[] }): Promise<void> {
+    const entry = await this.ensureOpen(childID)
+    await this.admit(entry, async () => {
+      const messages = input.first ? this.firstMessages(entry, input.prompt) : [userMessage(input.prompt)]
+      messages.push(...input.extra.map(userMessage))
+      const started = await this.runOperation(entry, { kind: "prompt", prompt: messages })
+      if (started.ok) return
+      // 已经有一轮在跑(收件箱唤醒抢先起了一轮):那就排进它的收件箱,效果相同。
+      if (started.error._tag === "LaneBusy") {
+        for (const message of messages) {
+          const queued = await entry.lane!.steer(message, undefined, this.context)
+          if (!queued.ok) throw laneError(queued.error)
+        }
+        return
+      }
+      throw laneError(started.error)
+    })
+  }
+
+  private firstMessages(entry: Entry, prompt: string): AgentMessage[] {
+    const profile = entry.child?.profile
+    const messages: AgentMessage[] = []
+    for (const name of profile?.skills ?? []) {
+      const skill = entry.skills?.find((item) => item.name === name)
+      if (skill) messages.push(userMessage(formatSkillInvocation(skill)))
+      else {
+        this.options.emit([
+          { type: "kernel.error", sessionID: entry.id, message: `agent ${profile?.name} 要预加载的技能 ${name} 没找到,跳过` },
+        ])
+      }
+    }
+    messages.push(userMessage(profile?.initialPrompt ? `${profile.initialPrompt}\n\n${prompt}` : prompt))
+    return messages
+  }
+
+  /** 请求停掉子会话在飞的那一轮,不等它落定(落定走 run_end → TaskManager)。 */
+  private async requestStop(childID: string): Promise<void> {
+    const entry = this.entries.get(childID)
+    if (!entry) return
+    if (entry.preparing) {
+      entry.preparing.cancelled = true
+      entry.preparing.controller.abort()
+    }
+    this.desk.cancel(entry.id)
+    const lane = entry.lane
+    const operationId = entry.operationId
+    if (!lane || !operationId) return
+    const requested = await lane.requestAbort(operationId, this.context)
+    if (!requested.ok && requested.error._tag !== "OperationMismatch") throw laneError(requested.error)
+  }
+
+  /** 这一轮(fromTipId 之后)最后一段 assistant 文字;没给 fromTipId 就看整条历史。完成与被停(部分结果)同一个算法。 */
+  private async lastAssistantText(childID: string, fromTipId: string | null | undefined): Promise<string | undefined> {
+    const entry = await this.ensureOpen(childID, true)
+    const branch: Pick<Branch, "findEntries"> | undefined = entry.lane ?? (await entry.session?.branch("main", this.context))
+    if (!branch) return undefined
+    const newest = await branch.findEntries(
+      { order: "newestFirst", ...(fromTipId ? { stopAtId: fromTipId } : {}) },
+      this.context,
+    )
+    for (const item of newest) {
+      if (fromTipId && item.id === fromTipId) break
+      if (item.type !== "message" || item.message.role !== "assistant") continue
+      // 同 domain/agents/finalize.ts:多个 text 块按行拼;纯工具调用的那条跳过,往前找。
+      const body = item.message.content
+        .flatMap((block) => (block.type === "text" ? [block.text] : []))
+        .join("\n")
+        .trim()
+      if (body) return body
+    }
+    return undefined
+  }
+
+  /** 通知投递(§6.4 第 2–4 步):父被 LRU 关了就重开,steer 进收件箱(持久化),父空闲就叫醒。 */
+  private async deliver(parentID: string, message: AgentMessage): Promise<void> {
+    const entry = await this.ensureOpen(parentID)
+    const queued = await entry.lane!.steer(message, undefined, this.context)
+    if (!queued.ok) throw laneError(queued.error)
+    this.wake(entry)
+  }
+
+  private async recordMeta(childID: string, patch: Partial<SubagentMeta>): Promise<void> {
+    const entry = this.entries.get(childID)
+    if (!entry) return
+    const write = async () => {
+      const opened = await this.ensureOpen(childID, true)
+      const session = opened.session
+      if (!session) return
+      const current = (await session.getValue(SUBAGENT_META, this.context))?.value
+      if (current) await session.setValue(SUBAGENT_META, { ...current, ...patch }, this.context)
+    }
+    const next = (entry.metaWrites ?? Promise.resolve()).then(write)
+    entry.metaWrites = next.catch(() => {})
+    await next
+  }
+
+  private async childMeta(parentID: string, childID: string): Promise<SubagentMeta | undefined> {
+    let entry = this.entries.get(childID)
+    if (!entry) {
+      await this.list()
+      entry = this.entries.get(childID)
+    }
+    if (!entry || entry.parentID !== parentID) return undefined
+    const opened = await this.ensureOpen(childID, true)
+    return (await opened.session?.getValue(SUBAGENT_META, this.context))?.value
   }
 
   /**
@@ -1492,7 +2168,10 @@ export class SessionManager {
   /** 淘汰空闲最久的会话。只丢内存态,不丢磁盘,重开很便宜。 */
   private evictIdle(): void {
     // 正在装配的不算"活着的":它还没有 lane,淘汰它只会把自己那次 open 拆掉。
-    const live = [...this.entries.values()].filter((e) => isOpen(e) && !e.opening && e.status.type === "idle")
+    // 钉住的也不算:子 agent 任务排队中 / 刚打开还没 accept / 两轮之间都是 idle,关掉它等于把任务拆了(§6.7)。
+    const live = [...this.entries.values()].filter(
+      (e) => isOpen(e) && !e.opening && !e.pinned && e.status.type === "idle",
+    )
     if (live.length <= MAX_LIVE_SESSIONS) return
     live.sort((a, b) => a.touched - b.touched)
     for (const entry of live.slice(0, live.length - MAX_LIVE_SESSIONS)) void this.dispose(entry).catch(() => {})
@@ -1540,6 +2219,10 @@ export class SessionManager {
     entry.toolchain = undefined
     entry.running = false
     entry.operationId = undefined
+    // 收件箱在 JSONL 里(持久化),重开时从那里接着来;内存里这份副本随会话一起丢。
+    entry.queued = undefined
+    entry.turnCounts = undefined
+    entry.maxTurnsHit = undefined
   }
 
   /** 收掉 refreshMachineEnv 退役下来的执行环境(它们可能还拖着子进程)。 */
@@ -1551,8 +2234,31 @@ export class SessionManager {
   }
 
   async disposeAll(): Promise<void> {
-    for (const entry of this.entries.values()) await this.dispose(entry)
+    // 不再派生、不再投通知;排队中的任务直接落定。
+    this.taskManager.shutdown()
+    // 主会话先关:它们的停止顺着前台 agent 调用的中止停掉子 agent。反过来的话子 agent 先被停,主会话拿着
+    // "子 agent 被停"的工具结果会再请求一次模型 —— 退出途中多跑一轮,而那一轮可能是一条烧录。
+    const entries = [...this.entries.values()]
+    for (const entry of entries.filter((item) => !item.parentID)) await this.dispose(entry)
+    for (const entry of entries.filter((item) => item.parentID)) await this.dispose(entry)
   }
+}
+
+/** 收件箱 → `session.queue` 的视图:用户排队的消息给原文,子 agent 的通知只给个记号。 */
+function queueView(items: readonly LaneQueuedItem[]): QueuedItemView[] {
+  return items.flatMap((item): QueuedItemView[] => {
+    if (item.type !== "message") return []
+    const message = item.message
+    if (message.role === "user") {
+      const images = typeof message.content === "string" ? 0 : message.content.filter((block) => block.type === "image").length
+      return [{ kind: "prompt", entryId: item.entryId, text: textOf(message.content), images }]
+    }
+    if (message.role === "custom" && message.customType === TASK_NOTIFICATION_TYPE) {
+      const taskID = (message.details as { taskID?: unknown } | undefined)?.taskID
+      return [{ kind: "notification", entryId: item.entryId, ...(typeof taskID === "string" ? { taskID } : {}) }]
+    }
+    return []
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -1564,6 +2270,8 @@ function toView(entry: Entry): ViewSession {
     title: entry.title || defaultTitle(entry),
     time: { created: entry.createdAt, updated: entry.updatedAt },
     ...(entry.model ? { model: entry.model } : {}),
+    ...(entry.parentID ? { parentID: entry.parentID } : {}),
+    ...(entry.child?.agent ? { agent: entry.child.agent } : {}),
   }
 }
 

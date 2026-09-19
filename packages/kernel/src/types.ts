@@ -40,7 +40,51 @@ export interface Session {
   }
   cost?: number
   tokens?: Tokens
+  /** 子 agent 的会话:派它的主会话。侧边栏与首页只列没有它的(子会话从卡片与任务面板打开)。 */
+  parentID?: string
+  /** 子 agent 的类型(subagent_type)。重开进程后在会话真正打开之前可能还不知道。 */
+  agent?: string
 }
+
+// ---------------------------------------------------------------------------
+// 子 agent 任务(docs/子agent-设计方案-v0.4-20260918.md §6、§7)
+// ---------------------------------------------------------------------------
+
+export type TaskViewStatus = "pending" | "running" | "completed" | "failed" | "killed"
+
+/**
+ * 一个子 agent 任务此刻的样子:`task.updated` 事件、任务面板、卡片都用它。
+ * 子会话的 busy / idle 与任务的 pending / killed 不是一回事,所以任务状态单走这一条,不复用 session.status。
+ */
+export interface TaskView {
+  /** = 子会话 id(CC 的 agentId)。 */
+  id: string
+  parentID: string
+  agent: string
+  description: string
+  status: TaskViewStatus
+  /** 结果走通知而不是工具结果。 */
+  background: boolean
+  /** 这一次运行开始的时刻(续跑会重置)。 */
+  startedAt: number
+  endedAt?: number
+  /** 已经开始的 assistant 轮数。 */
+  turns: number
+  lastTool?: string
+  usage: { totalTokens: number; toolUses: number; durationMs: number }
+  /** 宿主写的可读进度日志。 */
+  outputFile: string
+  maxTurnsReached?: boolean
+  error?: string
+}
+
+/**
+ * 会话收件箱里排着的一条(`session.queue` 事件)。`prompt` 是用户在忙的时候发的,界面画在输入框上方,
+ * 点它可以撤回来改;`notification` 是子 agent 的完成通知,只是让界面知道有东西在等,不给撤回。
+ */
+export type QueuedItemView =
+  | { kind: "prompt"; entryId: string; text: string; images: number }
+  | { kind: "notification"; entryId: string; taskID?: string }
 
 export interface Tokens {
   input: number
@@ -235,6 +279,12 @@ export interface ToolConfirmView {
   input: Record<string, unknown>
   askedAt: number
   status: ToolConfirmStatus
+  /**
+   * 前台子 agent 冒上来的询问:`sessionID` 是显示它的**主会话**,这两个字段说是哪个子 agent 在问
+   * (确认条写"子 agent「…」想运行 …")。主会话自己的询问没有它们。
+   */
+  agent?: string
+  taskID?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -480,6 +530,24 @@ export interface SessionNotFoundError {
 export function sessionNotFound(sessionID: string): Error & { data: SessionNotFoundError } {
   const error = new Error(`未知会话 ${sessionID}`) as Error & { data: SessionNotFoundError }
   error.data = { _tag: "SessionNotFoundError", sessionID, message: error.message }
+  return error
+}
+
+/**
+ * 往子 agent 的会话里直接发消息。子 agent 只听主 agent 的(续跑走 send_message),永远看不到用户的输入流 ——
+ * CC 同款。结构化同 SessionNotFoundError:前端据此把子会话页的输入框收起来,而不是弹错误页。
+ */
+export interface SubagentSessionError {
+  _tag: "SubagentSessionError"
+  sessionID: string
+  message: string
+}
+
+export function subagentSession(sessionID: string): Error & { data: SubagentSessionError } {
+  const error = new Error("这是子 agent 的会话,只能由主 agent 经 send_message 续跑") as Error & {
+    data: SubagentSessionError
+  }
+  error.data = { _tag: "SubagentSessionError", sessionID, message: error.message }
   return error
 }
 

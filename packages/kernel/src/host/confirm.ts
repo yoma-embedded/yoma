@@ -33,6 +33,12 @@ export type SettledStatus = Exclude<ToolConfirmStatus, "pending">
 
 interface Waiting {
   view: ToolConfirmView
+  /**
+   * 这条询问**属于**哪个会话:cancel() 按它撤。与 view.sessionID(显示在哪)通常是同一个;前台子 agent 冒上来的
+   * 询问显示在主会话,却属于子会话 —— 子会话被停 / 被关 / 转后台时要撤掉的是它,主会话自己停下来时不该误撤
+   * (那条路由子会话的中止接着撤)。
+   */
+  owner: string
   settle(status: SettledStatus): void
 }
 
@@ -53,7 +59,11 @@ export class ConfirmDesk {
    * cancel() 覆盖信号不会来的路径 —— fail() 把状态打回 idle、操作已经不在飞、会话被关。
    * 两条都接,漏一条的表现都是"点停止没反应",直到十分钟超时才动。
    */
-  ask(request: ToolConfirmRequest, signal: AbortSignal | undefined): Promise<SettledStatus> {
+  ask(
+    request: ToolConfirmRequest,
+    signal: AbortSignal | undefined,
+    owner: string = request.sessionID,
+  ): Promise<SettledStatus> {
     // 已经在中止了:不挂起也不发事件 —— 这条询问没有任何人见过,发一条结算只是噪音。
     if (signal?.aborted) return Promise.resolve("cancelled")
     const view: ToolConfirmView = { ...request, status: "pending" }
@@ -73,7 +83,7 @@ export class ConfirmDesk {
       // 内核跑在 utilityProcess 里:一条没人答的确认不能把进程吊住不退(同 host/stream.ts)。
       ;(timer as { unref?: () => void }).unref?.()
       signal?.addEventListener("abort", onAbort, { once: true })
-      this.waiting.set(view.id, { view, settle })
+      this.waiting.set(view.id, { view, owner, settle })
       // 登记完再 emit:emit 是同步的,万一调用方就地回了一句答案,也找得到这条。
       this.options.emit(view)
     })
@@ -90,21 +100,22 @@ export class ConfirmDesk {
     return true
   }
 
-  /** 未决的询问。事件不重放,所以首屏与 resync 都得能问一遍现状。 */
+  /** 未决的询问,按**显示**的会话筛。事件不重放,所以首屏与 resync 都得能问一遍现状。 */
   pending(sessionID?: string): ToolConfirmView[] {
     const views = [...this.waiting.values()].map((waiting) => waiting.view)
     return sessionID === undefined ? views : views.filter((view) => view.sessionID === sessionID)
   }
 
   /**
-   * 这个会话的未决询问一律按 cancelled 结算。
+   * **属于**这个会话的未决询问一律按 cancelled 结算(见 Waiting.owner)。
    *
    * stop、closeEntry、fail、run_end 各自都调(与 gate 信号两条路各自成立,别互相指望):挂起中的
    * 钩子占着 drive,取消与 waitForIdle 都得等它先回来;而 fail 把状态打回 idle 之后若还挂着一条,
    * 用户点"允许"会让一条已宣告失败的轮次真的去烧板。
    */
-  cancel(sessionID: string): void {
+  cancel(owner: string): void {
     // 先把 id 抄出来再结算:settle 会就地从未决表里删自己,边遍历边删是能跑但读不出对错的写法。
-    for (const id of this.pending(sessionID).map((view) => view.id)) this.waiting.get(id)?.settle("cancelled")
+    const ids = [...this.waiting.values()].filter((waiting) => waiting.owner === owner).map((waiting) => waiting.view.id)
+    for (const id of ids) this.waiting.get(id)?.settle("cancelled")
   }
 }

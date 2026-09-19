@@ -1,9 +1,11 @@
 /**
- * P0 原型:子 agent 方案(docs/子agent-设计方案-v0.4-20260918.md §12)依赖的 v2 行为,逐条跑一遍。
+ * 子 agent 依赖的 v2 行为(docs/子agent-设计方案-v0.4-20260918.md §1、§12 P0),逐条钉住 —— **上游哨兵**。
  *
  * 只碰上游的公开接口(AgentHarness / AgentLane / JsonlSessionRepo / hooks / custom 消息),**不经过**
- * SessionManager —— 这里回答的是"v2 本身是不是这样",宿主怎么接是 P2 的事。结论写回设计文档 §12;
- * P2 时转成正式测试或删掉。每个 harness 一份 faux provider,并行的子 agent 回复不会串到别人的脚本里。
+ * SessionManager:这里回答的是"v2 本身是不是这样",宿主怎么接由 subagents.test.ts 的场景管。
+ * 上游升级(npm run upstream:update)之后先看这个文件:它红了,说明子 agent 依赖的哪条前提变了
+ * (收件箱在结束边界的重排、空闲时 accept 空 prompt、requestAbort 摘排队项、maxTurns 要整批 terminate …),
+ * 比在宿主场景里对着一个超时猜原因快得多。P0 原型(2026-09-18)转来,每个 harness 一份 faux provider。
  */
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -161,7 +163,7 @@ const noopTool: SpikeTool = {
   execute: async () => ({ content: [{ type: "text", text: "ok" }], details: undefined }),
 }
 
-describe("子 agent P0:v2 行为核实", () => {
+describe("子 agent 依赖的 v2 行为", () => {
   test(
     "(a) 子会话:parentSessionId 写进文件头,list 不开会话就拿得到;独立 harness 跑完一轮,取得到最后一条 assistant 文本",
     async () => {

@@ -23,8 +23,10 @@ import type {
   Message,
   Part,
   ProviderInfo,
+  QueuedItemView,
   Session,
   SessionStatus,
+  TaskView,
   ToolConfirmView,
   ToolchainFamiliesView,
   ToolchainInstallPhaseView,
@@ -90,8 +92,14 @@ export interface KernelMethods {
   "session.rename": { params: { sessionID: string; title: string }; result: Session }
   "session.status": { params: { sessionID: string }; result: SessionStatus }
   "session.messages": { params: { sessionID: string; cursor?: string; limit?: number }; result: MessagePage }
-  /** 发起一轮。**立即返回**,结果全部走事件流 —— 一轮可能跑几分钟。 */
-  "session.prompt": { params: { sessionID: string; input: PromptInput }; result: { messageID: string } }
+  /**
+   * 发起一轮。**立即返回**,结果全部走事件流 —— 一轮可能跑几分钟。
+   *
+   * 会话正忙时不再打断当前轮,而是排进收件箱(`queued: true`,照 CC):在下一个工具轮次结束、下一次请求之前
+   * 插进去,排队期间它出现在 `session.queue` 里。所以 `queued` 时前端**不做乐观插入** —— 它被取走时才随
+   * message 事件落在 transcript 里的真实位置。想打断当前轮要按停止。
+   */
+  "session.prompt": { params: { sessionID: string; input: PromptInput }; result: { messageID: string; queued?: boolean } }
   "session.abort": { params: { sessionID: string }; result: void }
   "session.compact": { params: { sessionID: string }; result: void }
   /**
@@ -242,6 +250,10 @@ export type KernelEvent =
    */
   | { type: "message.part.delta"; sessionID: string; messageID: string; partID: string; field: "text"; delta: string }
   | { type: "vcs.updated"; directory: string; info: VcsInfo }
+  /** 子 agent 任务的每次状态 / 进度变化(派出、开跑、每轮、每个工具、落定)。 */
+  | { type: "task.updated"; task: TaskView }
+  /** 会话收件箱的现状(整份,不是增量):忙时发的消息与还没被取走的子 agent 通知。 */
+  | { type: "session.queue"; sessionID: string; items: QueuedItemView[] }
   /**
    * 工具跑之前那一问的每一次状态变化:`status:"pending"` 是新挂起一条,其余 status 都是
    * "这条结算了,从确认条上删掉"。按 `confirm.sessionID` 归属会话。
