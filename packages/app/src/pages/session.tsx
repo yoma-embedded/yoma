@@ -64,6 +64,7 @@ import { Persist, persisted } from "@/utils/persist"
 import { formatServerError } from "@/utils/server-errors"
 import { directoryKey } from "@/context/global-sync/utils"
 import { createSessionOwnership } from "./session/session-ownership"
+import { prependRetracted, type RetractedMessage } from "./session/composer/queue-retract"
 
 type FollowupItem = FollowupDraft & { id: string }
 type FollowupEdit = Pick<FollowupItem, "id" | "prompt" | "context">
@@ -954,10 +955,28 @@ export default function Page() {
       },
     ),
   )
+  // 子 agent 的任务同理:task.updated 进服务器级的会话 store,事件不重放,所以进会话页与内核重连时问一次现状。
+  const seedTasks = (sessionID: string) => {
+    void kernel.task
+      .list({ sessionID })
+      .then((list) => serverSync().session.seedTasks(sessionID, list))
+      .catch(() => {})
+  }
+  createEffect(
+    on(
+      () => params.id,
+      (sessionID) => {
+        if (sessionID) seedTasks(sessionID)
+      },
+    ),
+  )
   onMount(() => {
     const stop = serverSDK().event.listen((event) => {
       if (event.type === "kernel.connected") {
-        if (params.id) seedConfirms(params.id)
+        if (params.id) {
+          seedConfirms(params.id)
+          seedTasks(params.id)
+        }
         return
       }
       if (event.type !== "tool.confirm") return
@@ -988,6 +1007,64 @@ export default function Page() {
       })
   }
 
+  /**
+   * 这一页是子 agent 的会话时,派它的主会话 id。会话信息还没到时先看任务视图(种子与事件都比会话详情早),
+   * 免得输入框先冒出来再消失。
+   */
+  const subagentParent = createMemo(() => {
+    const id = params.id
+    if (!id) return
+    return sync().session.get(id)?.parentID ?? sync().data.task[id]?.parentID
+  })
+
+  // ── 排队中(会话忙时发的消息,照 CC;设计 §6.9)──────────────────────────────────
+  // 数据是内核的 session.queue(收件箱现状)。子 agent 的通知也在收件箱里,但它不归用户改,这里只列 user 那几条。
+  const queuedPrompts = createMemo(() => {
+    const id = params.id
+    if (!id) return []
+    return (sync().data.queue[id] ?? []).flatMap((item) => (item.kind === "prompt" ? [item] : []))
+  })
+  const [queueUI, setQueueUI] = createStore<{ retracting: string[] }>({ retracting: [] })
+  /**
+   * 撤回:逐条 cancelQueued,撤成功的原文与图片拼回输入框(排队的在前、正在打的在后,照 CC);已经被这一轮
+   * 取走的提示一句 —— 它已经在 transcript 里了。输入框按发起撤回时的会话捕获,中途切走也回不错地方。
+   */
+  const retractQueued = async (entryIds: readonly string[]) => {
+    const sessionID = params.id
+    if (!sessionID || entryIds.length === 0) return
+    const owner = sessionOwnership.capture()
+    const promptSession = prompt.capture()
+    setQueueUI("retracting", (ids) => [...ids, ...entryIds])
+    const back: RetractedMessage[] = []
+    let consumed = 0
+    try {
+      for (const entryId of entryIds) {
+        const result = await kernel.session.cancelQueued({ sessionID, entryId })
+        if (result.kind === "cancelled") back.push({ entryId, text: result.text ?? "", files: result.files })
+        else consumed++
+      }
+    } catch (err) {
+      fail(err)
+    } finally {
+      setQueueUI("retracting", (ids) => ids.filter((id) => !entryIds.includes(id)))
+    }
+    if (back.length > 0) {
+      const next = prependRetracted(promptSession.current(), back)
+      promptSession.set(next.prompt, next.cursor)
+      owner.run(() => requestAnimationFrame(() => inputRef?.focus()))
+    }
+    if (consumed > 0) showToast({ title: language.t("session.queueDock.consumed") })
+  }
+  /** 输入框里按 ↑(空输入):排着的全部撤回来(照 CC 的 popAllEditable)。正在撤的不重复发。 */
+  const retractAllQueued = () => {
+    const ids = queuedPrompts()
+      .map((item) => item.entryId)
+      .filter((id) => !queueUI.retracting.includes(id))
+    if (ids.length === 0) return queuedPrompts().length > 0
+    void retractQueued(ids)
+    return true
+  }
+
   const composerRegion = () => {
     const controller = createSessionComposerRegionController({
       sessionKey,
@@ -997,6 +1074,14 @@ export default function Page() {
       confirms: () =>
         params.id && confirms.items.length
           ? { items: confirms.items, replying: confirms.replying, onReply: replyConfirm }
+          : undefined,
+      queue: () =>
+        queuedPrompts().length
+          ? {
+              items: queuedPrompts(),
+              retracting: queueUI.retracting,
+              onRetract: (entryId) => void retractQueued([entryId]),
+            }
           : undefined,
       followup: () =>
         params.id
@@ -1031,6 +1116,7 @@ export default function Page() {
             onEditLoaded={clearFollowupEdit}
             shouldQueue={queueEnabled}
             onQueue={queueFollowup}
+            onRetractQueued={retractAllQueued}
             onAbort={() => {
               const id = params.id
               if (!id) return
@@ -1147,7 +1233,8 @@ export default function Page() {
                   </Switch>
                 </div>
 
-                <Show when={params.id}>{(_) => composerRegion()}</Show>
+                {/* 子 agent 的会话没有输入框:它只听派它的主 agent(照 CC),用户要插话走主会话。 */}
+                <Show when={params.id && !subagentParent()}>{(_) => composerRegion()}</Show>
               </div>
 
               {/* 右栏（三子页）由面板自己左边缘那根手柄统一调宽，这根只服务旧布局，免得同一条缝上叠两根 */}

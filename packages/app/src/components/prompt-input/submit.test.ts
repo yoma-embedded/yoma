@@ -11,9 +11,12 @@ const setModelCalls: Array<{ sessionID: string; providerID: string; modelID: str
 const optimistic: Array<{
   directory?: string
   sessionID?: string
-  message: { model: { providerID: string; modelID: string } }
+  message: { id: string; model: { providerID: string; modelID: string } }
 }> = []
 const optimisticSeeded: boolean[] = []
+const optimisticRemoved: string[] = []
+/** 下一次 prompt 由"内核"回 `queued: true`(会话正忙,排进收件箱)。 */
+let queueNext = false
 const storedSessions: Record<string, Array<{ id: string; title?: string }>> = {}
 const promoted: Array<{ directory: string; sessionID: string }> = []
 const syncedDirectories: string[] = []
@@ -64,7 +67,7 @@ const kernelClient = {
     },
     prompt: async (sessionID: string, input: { text: string }) => {
       sentPrompts.push({ sessionID, text: input.text, setModelCallsBefore: setModelCalls.length })
-      return { messageID: "message-1" }
+      return queueNext ? { messageID: "message-1", queued: true } : { messageID: "message-1" }
     },
     abort: async () => undefined,
   },
@@ -146,7 +149,7 @@ beforeAll(async () => {
           add: (value: {
             directory?: string
             sessionID?: string
-            message: { model: { providerID: string; modelID: string } }
+            message: { id: string; model: { providerID: string; modelID: string } }
           }) => {
             optimistic.push(value)
             optimisticSeeded.push(
@@ -155,7 +158,9 @@ beforeAll(async () => {
                 !!storedSessions[value.directory]?.find((item) => item.id === value.sessionID)?.title,
             )
           },
-          remove: () => undefined,
+          remove: (value: { messageID: string }) => {
+            optimisticRemoved.push(value.messageID)
+          },
         },
       },
       set: () => undefined,
@@ -211,6 +216,8 @@ beforeEach(() => {
   setModelCalls.length = 0
   optimistic.length = 0
   optimisticSeeded.length = 0
+  optimisticRemoved.length = 0
+  queueNext = false
   promoted.length = 0
   promotedDrafts.length = 0
   syncedDirectories.length = 0
@@ -300,5 +307,31 @@ describe("prompt submit", () => {
 
     expect(storedSessions[DIRECTORY]?.map((item) => item.id)).toEqual(["session-1"])
     expect(optimisticSeeded).toEqual([true])
+  })
+
+  test("会话正忙、内核排队(queued):乐观插入的那条撤掉", async () => {
+    // 照 CC:忙时发的消息进收件箱,被这一轮取走时才随事件落在 transcript 里的真实位置(内核铸新 id)。
+    // 乐观那条留着的话,它先挂在末尾、取走时再出现一次 —— 同一句话两条。
+    params = { id: "session-1" }
+    queueNext = true
+    const submit = createPromptSubmit({ ...baseInput(), info: () => ({ id: "session-1" }) })
+
+    await submit.handleSubmit(event())
+    await flushMicrotasks()
+
+    expect(sentPrompts).toHaveLength(1)
+    expect(optimistic).toHaveLength(1)
+    expect(optimisticRemoved).toEqual([optimistic[0]!.message.id])
+  })
+
+  test("没排队时乐观那条留着(内核按原文认领它的 id)", async () => {
+    params = { id: "session-1" }
+    const submit = createPromptSubmit({ ...baseInput(), info: () => ({ id: "session-1" }) })
+
+    await submit.handleSubmit(event())
+    await flushMicrotasks()
+
+    expect(sentPrompts).toHaveLength(1)
+    expect(optimisticRemoved).toEqual([])
   })
 })

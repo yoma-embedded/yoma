@@ -273,6 +273,8 @@ describe("子 agent 宿主(P2)", () => {
       expect(textOf(script.last("派后台").messages.at(-1))).toContain("Async agent launched successfully.")
       const [task] = manager.tasks(parent.id)
       expect(task).toMatchObject({ status: "running", background: true })
+      // 子会话页问 task.list 拿的是它自己那条(横幅要状态;事件不重放)。
+      expect(manager.tasks(task!.id).map((own) => own.id)).toEqual([task!.id])
 
       release.resolve()
       await waitFor(() => script.count("派后台") === 3 && idle(manager, parent.id), 10_000, "父被叫醒又收工")
@@ -1083,6 +1085,48 @@ describe("子 agent 宿主(P2)", () => {
       expect(seen).toContain("这句要留着")
       expect(seen).not.toContain("算了不问了")
       expect(await manager.cancelQueued(parent.id, kept)).toEqual({ kind: "already_consumed" })
+    },
+    SLOW,
+  )
+
+  test(
+    "(v) 重开进程后列表里的会话是懒的(占位标题,子会话还不知道类型);打开时推一条 session.updated 补上真名与类型",
+    async () => {
+      const { manager, reopen, events, script, workspace } = setup()
+      script.route("查手册", text("查到了"))
+      script.route(
+        "派一个",
+        fauxAssistantMessage([
+          fauxToolCall("agent", { description: "查手册", prompt: "查手册", subagent_type: "Explore" }),
+        ]),
+        text("好了"),
+      )
+      const parent = await manager.create(workspace, "派子 agent 的会话")
+      await manager.prompt(parent.id, { text: "派一个" })
+      await waitFor(() => script.count("派一个") === 2 && idle(manager, parent.id), 10_000, "父收工")
+      const [child] = childrenOf(events, parent.id)
+      await manager.disposeAll()
+
+      const again = reopen()
+      const lazy = (await again.list(workspace)).find((session) => session.id === child!.id)
+      expect(lazy?.title).not.toBe("查手册")
+      expect(lazy?.agent).toBeUndefined()
+
+      const mark = events.length
+      await again.messages(child!.id)
+      await again.messages(parent.id)
+      const updated = events.slice(mark).flatMap((event) => (event.type === "session.updated" ? [event.session] : []))
+      expect(updated.find((session) => session.id === child!.id)).toMatchObject({
+        title: "查手册",
+        agent: "Explore",
+        parentID: parent.id,
+      })
+      expect(updated.find((session) => session.id === parent.id)?.title).toBe("派子 agent 的会话")
+
+      // 已经开着的再读一次不重复推。
+      const settled = events.length
+      await again.messages(child!.id)
+      expect(events.slice(settled).filter((event) => event.type === "session.updated")).toEqual([])
     },
     SLOW,
   )

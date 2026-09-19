@@ -127,7 +127,10 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
       modelID: input.draft.model.modelID,
       thinking: input.draft.variant ?? undefined,
     })
-    await input.client.session.prompt(input.draft.sessionID, promptInput)
+    const sent = await input.client.session.prompt(input.draft.sessionID, promptInput)
+    // 会话正忙:内核把它排进收件箱(照 CC,不打断),被这一轮取走时才随事件落在 transcript 里的真实位置,
+    // 排队期间画在输入框上方(session.queue)。乐观插入的那条撤掉,否则它先挂在末尾、取走时再出现一次。
+    if (sent.queued) remove()
     return true
   } catch (err) {
     batch(() => {

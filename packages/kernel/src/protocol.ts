@@ -15,6 +15,7 @@
  */
 
 import type {
+  AgentInfo,
   FileDiff,
   FileEntry,
   LaCaptureInfo,
@@ -27,6 +28,7 @@ import type {
   Session,
   SessionStatus,
   TaskView,
+  TaskViewStatus,
   ToolConfirmView,
   ToolchainFamiliesView,
   ToolchainInstallPhaseView,
@@ -85,6 +87,7 @@ export interface KernelMethods {
   /** 首跑预检:key / 引擎。失败带 code。 */
   "app.preflight": { params: void; result: PreflightReport }
 
+  /** 主会话列表。子 agent 的会话不在里面(它们带 `parentID`,从 agent 卡片与任务面板按 id 打开)。 */
   "session.list": { params: { directory?: string }; result: Session[] }
   "session.get": { params: { sessionID: string }; result: Session }
   "session.create": { params: { directory: string; title?: string }; result: Session }
@@ -101,6 +104,18 @@ export interface KernelMethods {
    */
   "session.prompt": { params: { sessionID: string; input: PromptInput }; result: { messageID: string; queued?: boolean } }
   "session.abort": { params: { sessionID: string }; result: void }
+  /**
+   * 撤回一条还没被取走的排队消息(`session.queue` 里 `kind: "prompt"` 的那条),原文与图片交回,让用户改了再发。
+   * `already_consumed` = 它刚被这一轮取走(已经进 transcript 了),提示一句即可。
+   */
+  "session.cancelQueued": {
+    params: { sessionID: string; entryId: string }
+    result: {
+      kind: "cancelled" | "already_consumed" | "not_found"
+      text?: string
+      files?: Array<{ mime: string; url: string }>
+    }
+  }
   "session.compact": { params: { sessionID: string }; result: void }
   /**
    * 顶替 opencode 的 revert。yoma 只能把会话树的 leaf 挪回某条消息(navigateTree),
@@ -113,6 +128,22 @@ export interface KernelMethods {
     result: Session
   }
 
+
+  /** 这个目录下能派的 agent(内建 + `~/.yoma/agents` + 沿祖先链的 `.yoma/agents`,同名后者覆盖前者)。 */
+  "agent.list": { params: { directory: string }; result: AgentInfo[] }
+  /**
+   * 这个会话派出的子 agent 任务(状态栏的任务面板);它自己就是子会话时,列表里还有它自己那条(子会话页的横幅要状态)。
+   * 事件 `task.updated` 只推变化,首屏与 reload 靠它拿现状。
+   * 内核重启之后注册表是空的:之前的任务只剩子会话本身(侧边栏不列,从卡片打开)。
+   */
+  "task.list": { params: { sessionID: string }; result: TaskView[] }
+  /** 停一个子 agent 任务(界面的停止键)。后台任务照常带着部分结果发 killed 通知(CC 同款)。 */
+  "task.stop": { params: { taskID: string }; result: { stopped: boolean; status?: TaskViewStatus } }
+  /**
+   * 把一个前台子 agent 转到后台(卡片上的按钮):那次 agent 调用立刻交回,子 agent 不停、接着跑,完成后发通知。
+   * `moved: false` = 已经在后台 / 已经结束 / 这个宿主不许后台。
+   */
+  "task.background": { params: { taskID: string }; result: { moved: boolean } }
 
   "model.list": { params: void; result: ProviderInfo[] }
   /**

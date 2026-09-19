@@ -43,12 +43,14 @@ import type {
   MessageError,
   Part,
   ReasoningPart,
+  TaskNotificationPart,
   TextPart,
   ToolPart,
   ToolState,
   Tokens,
   UserMessage as ViewUser,
 } from "../types.ts"
+import { notificationSummary, parseTaskNotification, TASK_NOTIFICATION_TYPE } from "./domain/agents/notification.ts"
 
 const COUNTER_BITS = 12n
 const BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -386,6 +388,9 @@ export class SessionProjection {
     if (message.role === "compactionSummary" || message.role === "branchSummary") return []
     // custom 消息带 display 开关 —— 内核明说不给人看的,就别渲染。
     if (message.role === "custom" && message.display === false) return []
+    if (message.role === "custom" && message.customType === TASK_NOTIFICATION_TYPE) {
+      return this.applyTaskNotification(message, givenID)
+    }
 
     const timestamp = Number(message.timestamp) || Date.now()
     const id = this.mintID(timestamp, givenID)
@@ -425,6 +430,68 @@ export class SessionProjection {
     }
     this.messages.set(id, { info, parts })
     return [{ type: "message.updated", message: info }, ...parts.map(partEvent)]
+  }
+
+  /**
+   * 后台子 agent 的完成通知(docs/子agent-设计方案-v0.4-20260918.md §6.4、§7)。
+   *
+   * 对模型它是 user 角色(v2 在模型边界把 custom 投成 user),对界面分组也该是:投成一条 **synthetic 的 user 消息**
+   * + 一个 `task` part,并**当作一轮的起点**(turnParentID 指向它)—— 被它叫醒的那一轮回复归在它下面,不挂到
+   * 上一个用户轮上。通知落在一轮中间(父正忙,下一个工具边界插进来)时同理:之后的回复是在回应它。
+   * 字段优先取消息 details(宿主投递时写的结构化那份),result 与 summary 从 XML 里读 —— XML 就是模型看到的原文。
+   */
+  private applyTaskNotification(message: Extract<AgentMessage, { role: "custom" }>, givenID?: string): KernelEvent[] {
+    const timestamp = Number(message.timestamp) || Date.now()
+    const id = this.mintID(timestamp, givenID)
+    this.turnParentID = id
+    this.lastID = id
+
+    const xml =
+      typeof message.content === "string"
+        ? message.content
+        : message.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n")
+    const parsed = parseTaskNotification(xml)
+    const details = (message.details ?? {}) as {
+      taskID?: unknown
+      agent?: unknown
+      description?: unknown
+      status?: unknown
+      usage?: unknown
+    }
+    const status = (
+      details.status === "completed" || details.status === "failed" || details.status === "killed"
+        ? details.status
+        : (parsed.status ?? "completed")
+    ) as TaskNotificationPart["status"]
+    const description = typeof details.description === "string" ? details.description : ""
+    const usage = (details.usage && typeof details.usage === "object" ? details.usage : parsed.usage) as
+      | TaskNotificationPart["usage"]
+      | undefined
+    const part: TaskNotificationPart = {
+      id: this.partID(id, 0),
+      sessionID: this.sessionID,
+      messageID: id,
+      type: "task",
+      taskID: typeof details.taskID === "string" ? details.taskID : (parsed.taskID ?? ""),
+      agent: typeof details.agent === "string" ? details.agent : "",
+      description,
+      status,
+      summary: parsed.summary ?? notificationSummary(status, description),
+      ...(parsed.result !== undefined ? { result: parsed.result } : {}),
+      ...(usage
+        ? { usage: { totalTokens: usage.totalTokens, toolUses: usage.toolUses, durationMs: usage.durationMs } }
+        : {}),
+    }
+    const info: ViewUser = {
+      id,
+      sessionID: this.sessionID,
+      role: "user",
+      time: { created: timestamp },
+      model: { providerID: this.providerID, modelID: this.modelID },
+      synthetic: true,
+    }
+    this.messages.set(id, { info, parts: [part] })
+    return [{ type: "message.updated", message: info }, partEvent(part)]
   }
 
   /**

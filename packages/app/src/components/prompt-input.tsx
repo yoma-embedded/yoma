@@ -151,6 +151,11 @@ export interface PromptInputProps {
   onEditLoaded?: () => void
   shouldQueue?: () => boolean
   onQueue?: (draft: FollowupDraft) => void
+  /**
+   * 空输入框里按 ↑:会话忙时排着的消息先撤回来改(照 CC),没有排队的才翻历史。
+   * 返回 true = 接住了(有东西可撤),这一下 ↑ 不再翻历史。
+   */
+  onRetractQueued?: () => boolean
   onAbort?: () => void
   onSubmit?: () => void
   toolbar?: JSX.Element
@@ -1235,6 +1240,10 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
         .join("")
       const direction = event.key === "ArrowUp" ? "up" : "down"
       if (!canNavigateHistoryAtCursor(direction, textContent, cursorPosition, store.historyIndex >= 0)) return
+      if (direction === "up" && store.historyIndex < 0 && props.onRetractQueued?.()) {
+        event.preventDefault()
+        return
+      }
       if (navigateHistory(direction)) {
         event.preventDefault()
       }

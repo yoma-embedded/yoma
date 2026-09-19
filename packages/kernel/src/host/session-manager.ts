@@ -49,7 +49,7 @@ import { BUILTIN_AGENTS, DEFAULT_AGENT_TYPE } from "./domain/agents/builtin.ts"
 import { loadAgentProfiles } from "./domain/agents/load.ts"
 import { TASK_NOTIFICATION_TYPE } from "./domain/agents/notification.ts"
 import type { AgentProfile } from "./domain/agents/profile.ts"
-import { resolveAgentTools, SUBAGENT_TOOL_NAMES } from "./domain/agents/select.ts"
+import { describeAgentTools, resolveAgentTools, SUBAGENT_TOOL_NAMES } from "./domain/agents/select.ts"
 import type { StopOutcome } from "./domain/agents/task-host.ts"
 import { TaskManager, type ChildSpec, type SubagentMeta, type TaskPort } from "./tasks.ts"
 import { bindExecutionEnv } from "./domain/execution-env.ts"
@@ -85,6 +85,7 @@ import {
 
 import type { KernelEvent, PromptInput } from "../protocol.ts"
 import type {
+  AgentInfo,
   ProviderInfo,
   QueuedItemView,
   Session as ViewSession,
@@ -851,6 +852,7 @@ export class SessionManager {
   private async readEntry(entry: Entry): Promise<Entry> {
     const session = entry.session ?? (await this.repo.open(entry.meta, this.context))
     entry.session = session
+    await this.fillListed(entry, session)
     const projection = this.newProjection(entry)
     const branch = await session.branch("main", this.context)
     if (branch) await this.replay(branch, projection)
@@ -875,6 +877,7 @@ export class SessionManager {
 
     const session = entry.session ?? (await this.repo.open(entry.meta, this.context))
     entry.session = session
+    await this.fillListed(entry, session)
     entry.toolchain = toolchain
     // engines/bin 前置进 PATH:bash 工具里要有 rg(在例程语料里 grep 全靠它,Windows
     // 没有内置 grep)。机器级目录(Yoma 装的 + 用户手指的)夹在中间:项目清单解析到的
@@ -1036,7 +1039,6 @@ export class SessionManager {
           ])
         }
       }
-      entry.title = (await harness.getName(this.context)) ?? entry.title
       // 持久化旧会话可能保留旧工具名单;本机实际能力优先于历史配置。
       preparationSignal?.throwIfAborted()
       await lane.setActiveTools(entry.activeToolNames, this.context)
@@ -1104,6 +1106,29 @@ export class SessionManager {
     // 没有任务认领的一轮只会让结果无处可去。
     if (!entry.parentID) this.wake(entry)
     return entry
+  }
+
+  /**
+   * 列表里的会话是懒的:标题是占位(repo.list 只读文件头,拿不到后来写进去的会话名),子会话的类型要读了会话值
+   * 才知道。第一次把会话读出来(只读看历史,或者装配)时补上;有变化就推一条 session.updated —— 不推的话界面
+   * 一直停在占位上(子会话页的标题就是任务描述,占位却是工程目录名)。
+   */
+  private async fillListed(entry: Entry, session: PiSession<JsonlSessionMetadata>): Promise<void> {
+    const listed = toView(entry)
+    // 读不出来就留着占位:这一步只关乎显示,不能挡住打开(openEntry 在这之后才进 try,抛出去会留下半开的会话)。
+    try {
+      entry.title = (await session.getName(this.context)) ?? entry.title
+      if (entry.parentID && !entry.child) {
+        const agent = (await session.getValue(SUBAGENT_META, this.context))?.value?.agent
+        if (agent) entry.child = { agent }
+      }
+    } catch {
+      return
+    }
+    const view = toView(entry)
+    if (view.title !== listed.title || view.agent !== listed.agent) {
+      this.options.emit([{ type: "session.updated", session: view }])
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -1853,8 +1878,31 @@ export class SessionManager {
   // -------------------------------------------------------------------------
 
   /** 这个主会话派出的任务(任务面板;task.list RPC)。 */
+  /** 这个会话派出去的任务;它自己是子会话时再带上它自己那条(子会话页的横幅要状态,事件不重放)。 */
   tasks(sessionID: string): TaskView[] {
-    return this.taskManager.list(sessionID)
+    const own = this.taskManager.get(sessionID)
+    const spawned = this.taskManager.list(sessionID)
+    return own ? [own, ...spawned] : spawned
+  }
+
+  /**
+   * 这个目录下能派的 agent(agent.list RPC)。现读现算,与会话打开时的快照同一个加载器 —— 开着的会话里 agent 工具
+   * 的描述仍是它打开那一刻的快照(改了 md 重开会话生效),界面列的是磁盘现状。
+   */
+  async agents(directory: string): Promise<AgentInfo[]> {
+    const loaded = await loadAgentProfiles({
+      cwd: directory,
+      configDir: this.configDir,
+      homeDir: this.options.subagents?.homeDir,
+    })
+    return loaded.profiles.map((profile) => ({
+      name: profile.name,
+      description: profile.description,
+      source: profile.source,
+      tools: describeAgentTools(profile),
+      ...(profile.model && profile.model !== "inherit" ? { model: profile.model } : {}),
+      ...(profile.background ? { background: true } : {}),
+    }))
   }
 
   /** 界面上的停止键(task.stop RPC)。后台任务照常带着部分结果发 killed 通知(CC 同款)。 */

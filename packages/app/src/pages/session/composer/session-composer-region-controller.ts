@@ -17,14 +17,22 @@ export type SessionComposerConfirmDock = {
   onReply: (id: string, allow: boolean) => void
 }
 
+/** "排队中":会话忙时发的消息(内核收件箱里 user 的那几条)+ 正在撤回的 + 撤回动作。 */
+export type SessionComposerQueueDock = {
+  items: { entryId: string; text: string; images: number }[]
+  retracting: readonly string[]
+  onRetract: (entryId: string) => void
+}
+
 /**
- * 组合区（排队追问 + 输入框）的容器控制器。
+ * 组合区(确认条 + 排队中 + 排队追问 + 输入框)的容器控制器。
  *
  * 相对 opencode 删掉的:
  *  - todo dock 和它那套开合弹簧动画 —— yoma 没有 todowrite;
  *  - revert dock —— yoma 没有文件快照,回滚只能挪 leaf 指针,给不出"恢复到这条消息"
  *    的文件级语义,留一个会撒谎的按钮比没有按钮危险得多;
- *  - parentID / child / openParent —— 没有子会话。
+ *  - parentID / child / openParent —— 子 agent 的会话不给输入框(只读 transcript + 顶部条),
+ *    组合区在那里整个不挂,用不着这几样。
  */
 export function createSessionComposerRegionController(input: {
   sessionKey: Accessor<string>
@@ -33,6 +41,7 @@ export function createSessionComposerRegionController(input: {
   centered: Accessor<boolean>
   followup: Accessor<SessionComposerFollowupDock | undefined>
   confirms: Accessor<SessionComposerConfirmDock | undefined>
+  queue: Accessor<SessionComposerQueueDock | undefined>
   setPromptRef: (el: HTMLDivElement) => void
   setDockRef: (el: HTMLDivElement) => void
 }) {
@@ -61,6 +70,7 @@ export function createSessionComposerRegionController(input: {
     centered: input.centered,
     followup: input.followup,
     confirms: input.confirms,
+    queue: input.queue,
     setPromptRef: input.setPromptRef,
     setDockRef: input.setDockRef,
     handoffPrompt: () => getSessionHandoff(input.sessionKey())?.prompt,

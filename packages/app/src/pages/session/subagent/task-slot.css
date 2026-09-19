@@ -1,0 +1,145 @@
+/**
+ * 状态栏的「子 agent」格与它弹出的任务面板。token 全用 bench.css 的(`--bench-*`),
+ * 所以格子长得和状态条那几格是一家,面板和目标卡是一家。
+ */
+
+/* ---------------------------------------------------------------- 格子 */
+
+[data-component="session-status-bar"] button[data-component="subagent-task-slot"] {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px;
+  height: 18px;
+  border: none;
+  border-left: 1px solid var(--bench-line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--bench-ink);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+[data-component="session-status-bar"] button[data-component="subagent-task-slot"]:hover,
+[data-component="session-status-bar"] button[data-component="subagent-task-slot"][aria-expanded="true"] {
+  background: var(--bench-surface-raised);
+}
+[data-component="session-status-bar"] button[data-component="subagent-task-slot"]:focus-visible {
+  outline: 2px solid var(--bench-active);
+  outline-offset: -1px;
+}
+[data-component="subagent-task-slot"] [data-slot="label"] {
+  color: var(--bench-muted);
+}
+[data-component="subagent-task-slot"] [data-slot="value"] {
+  font-family: var(--bench-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  color: var(--bench-faint);
+}
+
+/* ---------------------------------------------------------------- 面板 */
+
+/** 定位与投影同目标卡(`console/target-slot.css`):挂在 body 上,位置现算,z-index 让开对话框与 toast。 */
+[data-component="subagent-task-panel"] {
+  position: fixed;
+  z-index: 40;
+  max-height: min(420px, 60vh);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--bench-line);
+  border-radius: 8px;
+  background: var(--bench-surface);
+  color: var(--bench-ink);
+  font-size: 12px;
+  filter: drop-shadow(0 6px 18px rgb(0 0 0 / 28%));
+}
+[data-component="subagent-task-panel"] [data-slot="head"] {
+  flex: none;
+  padding: 8px 12px 6px;
+  border-bottom: 1px solid var(--bench-line);
+  color: var(--bench-muted);
+  font-size: 11px;
+  font-weight: 550;
+}
+[data-component="subagent-task-panel"] [data-slot="list"] {
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  overflow-y: auto;
+}
+[data-component="subagent-task-panel"] [data-slot="task"] {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 12px;
+}
+[data-component="subagent-task-panel"] [data-slot="task"] + [data-slot="task"] {
+  border-top: 1px solid var(--bench-line);
+}
+[data-component="subagent-task-panel"] [data-slot="task"] > [data-component="bench-led"] {
+  margin-top: 5px;
+}
+[data-component="subagent-task-panel"] [data-slot="body"] {
+  flex: 1;
+  min-width: 0;
+}
+[data-component="subagent-task-panel"] [data-slot="title"] {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+[data-component="subagent-task-panel"] [data-slot="agent"] {
+  flex: none;
+  font-family: var(--bench-mono);
+  font-size: 10.5px;
+  color: var(--bench-muted);
+}
+[data-component="subagent-task-panel"] [data-slot="description"] {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-component="subagent-task-panel"] [data-slot="facts"] {
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--bench-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  color: var(--bench-faint);
+}
+[data-component="subagent-task-panel"] [data-slot="task"][data-look="failed"] [data-slot="facts"] {
+  color: var(--bench-fail);
+}
+[data-component="subagent-task-panel"] [data-slot="actions"] {
+  flex: none;
+  display: flex;
+  gap: 4px;
+}
+[data-component="subagent-task-panel"] [data-slot="action"] {
+  padding: 1px 8px;
+  border: 1px solid var(--bench-line);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--bench-ink);
+  font-size: 11px;
+  line-height: 18px;
+  cursor: pointer;
+}
+[data-component="subagent-task-panel"] [data-slot="action"]:hover {
+  border-color: var(--bench-line-strong);
+  background: var(--bench-surface-raised);
+}
+[data-component="subagent-task-panel"] [data-slot="action"][data-tone="stop"] {
+  color: var(--bench-fail);
+}
+[data-component="subagent-task-panel"] [data-slot="action"]:focus-visible {
+  outline: 2px solid var(--bench-active);
+  outline-offset: 1px;
+}

@@ -598,6 +598,27 @@ CC:模型在跑的时候,用户敲的消息进队列,在下一个工具轮次结
 
 **P3 协议 + 投影器 + UI**:按 §7 做;i18n 中英;desktop 冒烟与 e2e 工具数 +4;`e2e:paint` 覆盖卡片与子会话页;实测十几个子会话同时流式时 renderer 的内存(§8)。
 
+**P3 结果(2026-09-19)**:
+
+- 内核(协议 + 投影器):`types.ts` 加 `TaskNotificationPart`(`type: "task"`)、`UserMessage.synthetic`、`AgentInfo`;投影器把 `task-notification` 的 custom 消息投成 synthetic user + task part 并设 `turnParentID`(live 与重放同一个函数);`domain/agents/notification.ts` 加 `parseTaskNotification`(结果取第一个 `<result>` 到最后一个 `</result>`,结果里自己带 `</result>` 也不截断);RPC `agent.list`、`task.list`、`task.stop`、`task.background`、`session.cancelQueued` 接进 host 与客户端;`session.list` 不列子会话;`task.list` 对子会话再带上它自己那条(子会话页的顶部条要状态,事件不重放)。
+- session-ui:agent 卡片(`agent-tool.tsx` + 纯函数 `agent-card.ts`)与完成通知行,登记进 `message-part.tsx`(工具表 + `PART_MAPPING.task`);synthetic 用户消息画成通知行,不画用户气泡;Data 上下文加 `task` 与 `stopTask` / `backgroundTask`(宿主不给就不渲染按钮)。
+- app:
+  - store:服务器级会话 store 加 `task` / `queue`(`task.updated` / `session.queue`);进会话页与内核重连时 `task.list` 种一次,按"谁走得更远"合并(`taskAhead`:startedAt → 阶段 → 轮数 → 工具数)—— 只认事件的话漏掉的事件会让任务永远停在"在跑",只认列表的话请求在路上时到的完成事件会被倒回去;内核重启后列表里没有的"在跑"任务删掉;删主会话连带清它的任务与收件箱。
+  - 子会话不进目录的会话列表(事件归约、`index`、侧栏 / 首页的 `isRootVisibleSession` 三处)、跑完不响铃、"改上一条重发"不退到通知前面。
+  - 输入框(§6.9):忙时发送收到 `queued` 就撤掉乐观插入;输入框上方"排队中"一栏(`session.queue` 里 user 的那几条),每条"撤回修改",空输入框按 ↑ 一次撤回全部(照 CC 的 `popAllEditable`:排队的在前、正在打的在后,光标停在撤回那段末尾);已被取走的提示一句。
+  - 确认条:前台子 agent 冒上来的询问写"子 agent「…」· 烧录想执行"。
+  - 子会话页:没有输入框;时间线标题行左边「← 主会话 / 类型」,右边任务状态(灯 · 状态 · 轮数 · 工具调用 · 耗时)与「停止」,不给重命名 / 删除菜单;`/undo`、`/compact` 对子会话禁用。
+  - 状态栏「子 agent」格(派过才出现,`N 个在跑` / `N 个`),点开是任务面板:每个任务一行,「打开」进子会话,「停止」只给还在跑的。
+  - i18n:`session.subagent.*`、`session.queueDock.*`、`session.confirmDock.agentWants` 中英两份,两个前缀进 parity 测试。
+- desktop:冒烟与 e2e 的工具清单本来就跟 `TOOL_NAMES` 走,不用改数字。`e2e:paint` 加子 agent 一段:种子 `scripts/e2e-seed-subagent.ts` 在 Electron 起来**之前**用 faux 模型 + 真内核宿主在暂存根里跑一段真会话(一个前台 Explore、一个后台 general-purpose,后台的完成通知回到主会话、主会话被叫醒再答一句),窗口起来后按目录原子 rename 进 app 的会话根 —— 两个进程同时往一个会话根里建会话会撞上游的 `.jsonl.tmp` 竞态(P2 结果第 1 条)。点的是:侧栏只列主会话(两个子会话都不列)、前台 agent 卡片的折叠态与展开态(结果 + 「打开子会话」)、后台完成通知画成通知行(不是用户气泡)且展开有结果、子会话页(有「← 主会话」、没有输入框、标题是任务描述)、点回主会话;每一步零异常零 console.error。
+- 实测撞出来、设计稿没写到的:**列表里的会话是懒的**。`repo.list` 只读文件头,标题是占位(工程目录名);子会话的类型要读会话值才知道;而只读查看(`session.messages`)从来不读会话名 —— 于是从磁盘加载的会话,打开看了之后界面上的标题仍是占位。子会话页的标题就是任务描述,这条在 P3 必须修:`fillListed` 在只读查看与装配两条路上都补名字与类型,有变化就推 `session.updated`(读不出来就留占位,不挡打开)。顺带看到但**没改**的:`defaultTitle` 按 `/` 切路径,Windows 上占位显示的是整条路径(与子 agent 无关,只影响没打开过的会话在列表里的占位)。
+- renderer 内存(§8):只量了服务器级会话 store 这一层(happy-dom,事件直接 apply,不含 MessagePort 的结构化克隆与 DOM)。12 个子会话 × 10 轮(每轮 20 段文字 + 2 个工具 × 5 KB):3480 条事件 37 ms、堆 +3.6 MB;12 × 30 轮(每轮 40 段 + 2 × 20 KB):17 640 条事件 169 ms(约 10 µs/条)、堆 +21 MB,约是工具输出原文的 1.5 倍;对照 1 个会话 × 30 轮 +1.8 MB。与内容量线性,会话数有 40 个的淘汰上限(`SESSION_CACHE_LIMIT`,正在看的钉住)—— 暂不需要"只给被看着的会话转发 message 事件"。
+- 验证:typecheck 11/11 + 根(`--force`);全量 `npm test` 256 个文件 3218 过 / 117 跳过 / 3 挂 —— 挂的是 `kernel-domain` 的 `toolchain-install.test.ts`(本地假下载服务 `fetch failed`;当时同机在跑 e2e,单独重跑 31/31 过,本次没碰那块);`e2e:paint` 65 项(新增 20 项子 agent)连跑三次全过,`e2e:ipc`、`e2e:renderer` 全过;`smoke` 的内核装配 21 个工具与 `TOOL_NAMES` 一致(这个 worktree 没编引擎,借主检出的 engines 跑,引擎那项因主检出缺 `stm32ck-import.exe` 报红,与本次无关);oxlint 新写的文件 0 警告(改到的两个旧文件里原有 14 条)。变异 21/21 全抓到:忙时不撤乐观插入、`taskAhead` 恒真 / 恒假、种子不删子会话自己那条 / 不删消失的在跑任务、`task.updated` 不进 store、删主会话不清任务、撤回不换行 / 顺序颠倒、排队栏不锁正在撤的、任务面板与顶部条对结束的也给停止键、确认条不写子 agent、任务面板不按主会话筛、侧栏 / 目录列表不滤子会话、`task.list` 不带子会话自己、`session.list` 不滤子会话、懒打开不推 `session.updated` / 不读类型、通知不设 `turnParentID`。
+- 没覆盖到的(如实):
+  - `e2e:paint` 里是 app 自己的内核、没有模型,种进去的任务不在它的注册表里,所以状态栏「子 agent」格与任务面板、子会话页的状态与停止键、"排队中"一栏都**没在真窗口里跑过**,只有组件渲染测试(`test-browser/subagent-ui.test.ts`,happy-dom)与纯函数测试;
+  - 输入框按 ↑ 撤回(`prompt-input.tsx` 的一行分支)与会话页的撤回流程(`retractQueued`:逐条 `cancelQueued` → 拼回输入框)、子会话不响铃、目录 `index` 跳过子会话、"改上一条重发"跳过通知,这几处没有测试;
+  - `npm run test:bench` 什么也量不了:性能用例(`e2e/performance/**/*.spec.ts`)在 7c470b7 清 OpenCode 残留时删了,只剩工具文件 —— `packages/app/AGENTS.md` 要求的"改会话 / 时间线代码前先记基线"这次做不到。时间线本身的改动只是标题行多两个只在子会话里出现的小组件。
+
 **P4 无人值守宿主与文档**:bench / 信箱传 `background: false`;`CLAUDE.md` 加"子 agent"一节、更新工具清单;把结论回填本文。
 
 **P5 以后**:fork 型子 agent、`isolation: worktree`、`hardware: true` + 设备互斥、`agent` 工具 `replay: "safe"` + `invocation.setMemo` 重启后重新挂接、启动时补发没通知的结果、只给被看着的会话转发 message 事件、"快模型"设置、父会话 cost 汇总。

@@ -9,7 +9,8 @@
  * 相对 opencode 删掉的 Part 变体,以及原因:
  *   step-start / step-finish  yoma 的每轮状态是 turn_start/turn_end 事件,不落 transcript
  *   snapshot / patch          没有文件快照 —— "回滚"只是 navigateTree() 把会话树的 tip 挪回去
- *   subtask                   没有子代理
+ *   subtask                   子 agent 另有形状:派生是 `agent` 工具的 ToolPart,后台完成的通知是 `task` part
+ *                             (TaskNotificationPart,挂在一条 synthetic 的 user 消息上)
  *   agent                     只有一个系统提示词,没有 persona,也没有 @agent 提及的偏移量
  *   retry                     重试在内核里(retry_* 事件),不落 transcript —— 失败仍是一条带 error 的 assistant 消息
  *
@@ -78,6 +79,19 @@ export interface TaskView {
   error?: string
 }
 
+/** 一个能派的 agent(`agent.list`):内建、用户级(`~/.yoma/agents`)或项目级(`.yoma/agents`)。 */
+export interface AgentInfo {
+  name: string
+  description: string
+  source: "built-in" | "user" | "project"
+  /** 工具的一句话说明(与 agent 工具描述里那一行同算法):"All tools" / "All tools except …" / 白名单。 */
+  tools: string
+  /** 定义里钉的模型("provider/modelId");不写 = 跟随主会话。 */
+  model?: string
+  /** 定义要求每次都在后台跑。 */
+  background?: boolean
+}
+
 /**
  * 会话收件箱里排着的一条(`session.queue` 事件)。`prompt` 是用户在忙的时候发的,界面画在输入框上方,
  * 点它可以撤回来改;`notification` 是子 agent 的完成通知,只是让界面知道有东西在等,不给撤回。
@@ -132,6 +146,11 @@ export interface UserMessage {
     providerID: string
     modelID: string
   }
+  /**
+   * 不是用户打的字:宿主替后台子 agent 送回来的完成通知(身上是一个 `task` part)。界面画成一行通知而不是用户气泡;
+   * 它仍然是一轮的起点 —— 被它叫醒的那一轮回复挂在它下面(对模型它本来就是 user 角色)。
+   */
+  synthetic?: boolean
 }
 
 export interface AssistantMessage {
@@ -206,7 +225,25 @@ export interface ToolPart extends PartBase {
   state: ToolState
 }
 
-export type Part = TextPart | ReasoningPart | FilePart | ToolPart | CompactionPart
+/**
+ * 后台子 agent 落定后送回主会话的那条通知(`<task-notification>`,docs/子agent-设计方案-v0.4-20260918.md §6.4)。
+ * 模型看到的是 XML;界面从这里拿结构化字段画一行状态 + 可展开的结果。
+ */
+export interface TaskNotificationPart extends PartBase {
+  type: "task"
+  /** = 子会话 id:点开就是那个子会话。 */
+  taskID: string
+  agent: string
+  description: string
+  status: "completed" | "failed" | "killed"
+  /** CC 的那句话:Agent "…" completed / failed: … / was stopped。 */
+  summary: string
+  /** 最终文字;被停时是部分结果。 */
+  result?: string
+  usage?: { totalTokens: number; toolUses: number; durationMs: number }
+}
+
+export type Part = TextPart | ReasoningPart | FilePart | ToolPart | CompactionPart | TaskNotificationPart
 
 export type PartType = Part["type"]
 

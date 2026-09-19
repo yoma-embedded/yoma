@@ -36,6 +36,15 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { resolveElectron } from "./electron-bin.ts"
+import {
+  BACKGROUND_ANSWER,
+  BACKGROUND_DESCRIPTION,
+  moveSeededSessions,
+  seedSubagentSession,
+  SUBAGENT_ANSWER,
+  SUBAGENT_DESCRIPTION,
+  SUBAGENT_PARENT_TITLE,
+} from "./e2e-seed-subagent.ts"
 
 const PAGE_TIMEOUT_MS = 60_000
 const MOUNT_TIMEOUT_MS = 30_000
@@ -213,6 +222,19 @@ writeFileSync(
     screenshot: { file: "screen.png", createdAt: 1789000000001 },
   }),
 )
+
+// 子 agent:Electron 起来之前,用 faux 模型 + 真内核宿主在暂存根里种一对主 / 子会话;窗口起来之后再原子地
+// 挪进 app 的会话根(理由见 e2e-seed-subagent.ts 文件头)。种不出来就别开窗口了。
+const seedStaging = join(tmpRoot, "seed-sessions")
+const seededSubagent = await seedSubagentSession({
+  stagingRoot: seedStaging,
+  workspace,
+  scratch: join(tmpRoot, "seed-scratch"),
+}).catch((error: unknown) => {
+  console.error(`FAIL 子 agent 种子:${(error as Error).message}`)
+  rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+  process.exit(1)
+})
 
 const logTail: string[] = []
 // 端口在我们探完之后才被占(另一个 Electron 刚好起来)的兜底:Chromium 会把 bind 失败
@@ -723,6 +745,102 @@ try {
   }
   check("会话页没崩到错误页", (await evaluate<boolean>(CRASHED)) === false)
   drain("会话页")
+
+  // ------------------------------------------------------------------ 4b. 子 agent
+  // 种好的主 / 子会话挪进 app 的会话根,reload 之后:侧栏只列主会话;主会话里有 agent 卡片,展开有结果与
+  // 「打开子会话」;子会话页有「← 主会话」、没有输入框;点回去又是主会话。卡片与子会话页的渲染只有这里跑真窗口。
+  const info = await evaluate<{ sessionsRoot?: string } | string>(
+    `window.api.kernel.request("app.info").catch((error) => "ERR " + error.message)`,
+  )
+  const sessionsRoot = typeof info === "object" ? info.sessionsRoot : undefined
+  check("app.info 回了会话根", !!sessionsRoot, typeof info === "string" ? info : String(sessionsRoot))
+  if (sessionsRoot) moveSeededSessions(seedStaging, sessionsRoot)
+  await send("Page.reload", { ignoreCache: false })
+  // 侧栏的工程组缺省收着,点开才列会话(列的是 session.list,子 agent 的会话内核就不给)。
+  const expandProject = await waitFor(
+    `(() => {
+    const button = [...document.querySelectorAll('[data-component="codex-sidebar"] button[aria-expanded]')]
+      .find((el) => (el.textContent ?? "").includes(${json(WORKSPACE_NAME)}))
+    if (!button) return false
+    if (button.getAttribute("aria-expanded") !== "true") button.click()
+    return true
+  })()`,
+    MOUNT_TIMEOUT_MS,
+  )
+  check("侧栏点得开工程组", expandProject)
+  const parentRow = `document.querySelector('[data-component="codex-sidebar"] button[data-session-id=${json(seededSubagent.parentID)}]')`
+  check("侧栏列出派子 agent 的主会话", await waitFor(`!!${parentRow}`, APPEAR_TIMEOUT_MS))
+  check(
+    "侧栏不列子 agent 的会话(前台、后台两个都不列)",
+    await evaluate<boolean>(
+      `![${json(seededSubagent.childID)}, ${json(seededSubagent.backgroundID)}].some((id) => document.querySelector('[data-component="codex-sidebar"] button[data-session-id="' + id + '"]'))`,
+    ),
+  )
+  await evaluate(`${parentRow}?.click()`)
+  // 前台那张 agent 卡片:按折叠态的"类型 · 描述"认,之后的查询都收在这张卡里(同一页上还有后台那张与通知行)。
+  const agentCard = `[...document.querySelectorAll('[data-component="tool-part-wrapper"]')].find((el) => (el.querySelector('[data-component="hw-trigger"] [data-slot="action"]')?.textContent ?? "").includes(${json(`Explore · ${SUBAGENT_DESCRIPTION}`)}))`
+  check("主会话里画出 agent 卡片(Explore · 描述)", await waitFor(`!!${agentCard}`, MOUNT_TIMEOUT_MS))
+  check(
+    "agent 卡片折叠态带完成结论",
+    await evaluate<boolean>(
+      `(${agentCard}?.querySelector('[data-component="hw-trigger"] [data-slot="conclusion"]')?.textContent ?? "").length > 0`,
+    ),
+  )
+  await evaluate(`${agentCard}?.querySelector('[data-component="tool-trigger"]')?.click()`)
+  check(
+    "展开 agent 卡片:结果与「打开子会话」",
+    await waitFor(
+      `(${agentCard}?.querySelector('[data-component="agent-result"]')?.textContent ?? "").includes(${json(SUBAGENT_ANSWER)})
+        && !!${agentCard}?.querySelector('[data-component="agent-actions"] button')`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  // 后台那个的完成通知:挂在一条 synthetic 的用户消息上,画成通知行(不是用户气泡),展开是结果全文。
+  const notice = `[...document.querySelectorAll('[data-component="task-notification"]')].find((el) => (el.textContent ?? "").includes(${json(BACKGROUND_DESCRIPTION)}))`
+  check(
+    "后台子 agent 的完成通知画成通知行(不是用户气泡)",
+    await waitFor(
+      `!!${notice} && ${notice}.getAttribute("data-status") === "completed" && !!${notice}.closest('[data-component="user-message"][data-synthetic]')`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  await evaluate(`${notice}?.querySelector('[data-component="tool-trigger"]')?.click()`)
+  check(
+    "展开通知行:后台子 agent 的结果",
+    await waitFor(
+      `(${notice}?.querySelector('[data-component="agent-result"]')?.textContent ?? "").includes(${json(BACKGROUND_ANSWER)})`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  drain("主会话(agent 卡片 + 通知行)")
+  await evaluate(`${agentCard}?.querySelector('[data-component="agent-actions"] button')?.click()`)
+  check(
+    "子会话页:「← 主会话」在位、没有输入框",
+    await waitFor(
+      `!!document.querySelector('[data-component="subagent-back"]') && !document.querySelector('[data-component="session-prompt-dock"]')`,
+      MOUNT_TIMEOUT_MS,
+    ),
+  )
+  check(
+    "子会话页画出子 agent 的 transcript 与标题",
+    await waitFor(
+      `(document.querySelector('[data-session-title]')?.textContent ?? "").includes(${json(SUBAGENT_DESCRIPTION)})
+        && document.body.innerText.includes(${json(SUBAGENT_ANSWER)})`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  check("子会话页没崩到错误页", (await evaluate<boolean>(CRASHED)) === false)
+  drain("子会话页")
+  await evaluate(`document.querySelector('[data-component="subagent-back"] button')?.click()`)
+  check(
+    "「← 主会话」回得去(输入框回来了)",
+    await waitFor(
+      `!!document.querySelector('[data-component="session-prompt-dock"]') && (document.querySelector('[data-session-title]')?.textContent ?? "").includes(${json(SUBAGENT_PARENT_TITLE)})`,
+      MOUNT_TIMEOUT_MS,
+    ),
+  )
+  check("主会话页没崩到错误页", (await evaluate<boolean>(CRASHED)) === false)
+  drain("回到主会话")
 
   // ------------------------------------------------------------------ 5. 草稿页
   const clickedNew = await clickText(["新对话", "New chat"])

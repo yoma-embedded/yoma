@@ -16,7 +16,11 @@ import { afterEach, describe, expect, it } from "vitest"
 import { BUILTIN_AGENTS, DEFAULT_AGENT_TYPE } from "../src/host/domain/agents/builtin.ts"
 import { EMPTY_RESULT_MARKER, lastAssistantText } from "../src/host/domain/agents/finalize.ts"
 import { agentDirectories, loadAgentProfiles, parseAgentMarkdown } from "../src/host/domain/agents/load.ts"
-import { formatTaskNotification, notificationSummary } from "../src/host/domain/agents/notification.ts"
+import {
+  formatTaskNotification,
+  notificationSummary,
+  parseTaskNotification,
+} from "../src/host/domain/agents/notification.ts"
 import type { AgentDiagnostic } from "../src/host/domain/agents/profile.ts"
 import {
   describeAgentTools,
@@ -299,5 +303,31 @@ describe("formatTaskNotification(CC enqueueAgentNotification 的形状)", () => 
 </task-notification>`)
     expect(notificationSummary("failed", "d", "rate limited")).toBe('Agent "d" failed: rate limited')
     expect(notificationSummary("failed", "d")).toBe('Agent "d" failed: Unknown error')
+  })
+
+  it("parseTaskNotification 是它的逆:字段齐全、多行结果、缺席的可选段都读得回来", () => {
+    const full = {
+      taskID: "s-1",
+      toolCallID: "call-9",
+      outputFile: "/tmp/yoma/p/tasks/s-1.output",
+      status: "completed" as const,
+      description: "Trace clock tree",
+      result: "第一行\n第二行 <result>嵌套</result>\n<total_tokens>1</total_tokens>",
+      usage: { totalTokens: 1200, toolUses: 7, durationMs: 5300 },
+    }
+    expect(parseTaskNotification(formatTaskNotification(full))).toEqual({
+      taskID: "s-1",
+      toolCallID: "call-9",
+      outputFile: "/tmp/yoma/p/tasks/s-1.output",
+      status: "completed",
+      summary: 'Agent "Trace clock tree" completed',
+      result: full.result,
+      usage: full.usage,
+    })
+    expect(
+      parseTaskNotification(
+        formatTaskNotification({ taskID: "s-2", outputFile: "/o", status: "failed", description: "d", error: "boom" }),
+      ),
+    ).toEqual({ taskID: "s-2", outputFile: "/o", status: "failed", summary: 'Agent "d" failed: boom' })
   })
 })

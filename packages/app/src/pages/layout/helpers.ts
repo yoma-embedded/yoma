@@ -22,10 +22,11 @@ function sortSessions(now: number) {
   }
 }
 
-// The kernel has no session hierarchy — every session is a root — so "visible" is just
-// "lives in this directory and is not archived".
+// The only hierarchy is one level of sub-agent sessions (`parentID`); they never show in the
+// sidebar or on home (Claude Code does the same) — they are opened from the agent card and the task panel.
+// The kernel's session.list already leaves them out; this keeps the rule if one arrives by event.
 const isRootVisibleSession = (session: Session, directory: string) =>
-  pathKey(session.directory) === pathKey(directory) && !session.time?.archived
+  pathKey(session.directory) === pathKey(directory) && !session.time?.archived && !session.parentID
 
 export const roots = (store: SessionStore) =>
   (store.session ?? []).filter((session) => isRootVisibleSession(session, store.path.directory))

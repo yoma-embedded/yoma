@@ -126,7 +126,8 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
         enginesDir: options.enginesDir,
       }),
 
-    "session.list": ({ directory }) => sessions.list(directory),
+    // 只列主会话:子 agent 的会话不进侧边栏与首页(CC 同款),从卡片与任务面板打开;列进来还会占掉目录列表的配额。
+    "session.list": async ({ directory }) => (await sessions.list(directory)).filter((session) => !session.parentID),
     "session.get": ({ sessionID }) => sessions.get(sessionID),
     "session.create": ({ directory, title }) => sessions.create(directory, title),
     "session.delete": ({ sessionID }) => sessions.delete(sessionID),
@@ -135,10 +136,22 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     "session.messages": async ({ sessionID }) => sessions.messages(sessionID),
     "session.prompt": ({ sessionID, input }) => sessions.prompt(sessionID, input),
     "session.abort": ({ sessionID }) => sessions.abort(sessionID),
+    "session.cancelQueued": ({ sessionID, entryId }) => sessions.cancelQueued(sessionID, entryId),
     "session.compact": ({ sessionID }) => sessions.compact(sessionID),
     "session.navigate": ({ sessionID, messageID }) => sessions.navigate(sessionID, messageID),
     "session.setModel": ({ sessionID, providerID, modelID, thinking }) =>
       sessions.setModel(sessionID, providerID, modelID, thinking),
+
+    // 子 agent(docs/子agent-设计方案-v0.4-20260918.md §7)。
+    "agent.list": ({ directory }) => sessions.agents(directory),
+    "task.list": async ({ sessionID }) => sessions.tasks(sessionID),
+    "task.stop": async ({ taskID }) => {
+      const outcome = await sessions.stopTask(taskID)
+      return outcome.ok
+        ? { stopped: true, status: outcome.task.status }
+        : { stopped: false, ...(outcome.reason === "not_running" ? { status: outcome.status } : {}) }
+    },
+    "task.background": async ({ taskID }) => ({ moved: sessions.backgroundTask(taskID) }),
 
     "model.list": () => sessions.providers(),
     // 唯一一条主动碰模型目录网络的 RPC(开会话只恢复磁盘缓存)。设置页的"刷新模型列表"走它。

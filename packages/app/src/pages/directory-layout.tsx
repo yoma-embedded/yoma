@@ -13,6 +13,8 @@ import { sessionHref } from "@/utils/session-href"
 import { useServerSync } from "@/context/server-sync"
 import { INSTRUMENT_IDS, type InstrumentId } from "@/pages/session/bench/bench-status"
 import { revealInstrument, usedInstrumentContext } from "@/pages/session/console/reveal-instrument"
+import { kernel } from "@/utils/kernel"
+import { formatServerError } from "@/utils/server-errors"
 
 /**
  * 时间线里的硬件卡片按「在面板中打开」时走这里 —— v2-console 把它翻成"按数据形状去对应的
@@ -49,6 +51,22 @@ export function DirectoryDataProvider(
   const directory = () => (typeof props.directory === "function" ? props.directory() : props.directory)
   const slug = createMemo(() => base64Encode(directory()))
   const href = (sessionID: string) => sessionHref(sessionID)
+  const language = useLanguage()
+
+  // 子 agent 任务的「停止」「转到后台」(agent 卡片与状态栏的任务面板共用这一份)。不等结果:状态变化随
+  // task.updated 回来;否定的回答(stopped / moved 为 false)= 它刚好已经结束或已经在后台,按钮随下一条事件消失,
+  // 不必提示。只有请求本身失败(内核断开)才弹一句。
+  const taskAction = (run: (taskID: string) => Promise<unknown>) => (taskID: string) => {
+    void run(taskID).catch((error: unknown) =>
+      showToast({
+        variant: "error",
+        title: language.t("common.requestFailed"),
+        description: formatServerError(error, language.t),
+      }),
+    )
+  }
+  const stopTask = taskAction((taskID) => kernel.task.stop({ taskID }))
+  const backgroundTask = taskAction((taskID) => kernel.task.background({ taskID }))
 
   createEffect(() => {
     // A draft lives at /new-session?draftId=… and has no directory segment to normalize.
@@ -83,6 +101,8 @@ export function DirectoryDataProvider(
           onNavigateToSession={(sessionID: string) => navigate(href(sessionID))}
           onSessionHref={href}
           onOpenInstrument={openInstrument}
+          onStopTask={stopTask}
+          onBackgroundTask={backgroundTask}
         >
           <LocalProvider>{props.children}</LocalProvider>
         </DataProvider>

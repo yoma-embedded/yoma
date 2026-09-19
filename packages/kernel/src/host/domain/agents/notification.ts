@@ -32,6 +32,60 @@ export function notificationSummary(status: NotificationStatus, description: str
   return `Agent "${description}" was stopped`
 }
 
+/** 通知 XML 里读回来的东西(投影器用)。result 取第一个 `<result>` 到**最后一个** `</result>` —— 子 agent 的原话里可能自己带着这个标签。 */
+export interface ParsedTaskNotification {
+  taskID?: string
+  toolCallID?: string
+  outputFile?: string
+  status?: NotificationStatus
+  summary?: string
+  result?: string
+  usage?: TaskUsage
+}
+
+const STATUSES: ReadonlySet<string> = new Set(["completed", "failed", "killed"])
+
+function tag(xml: string, name: string): string | undefined {
+  const match = new RegExp(`<${name}>([^\\n]*?)</${name}>`).exec(xml)
+  return match?.[1]
+}
+
+/**
+ * formatTaskNotification 的逆。只认自己写出的形状;认不出的字段留空,调用方回落到消息的 details。
+ */
+export function parseTaskNotification(xml: string): ParsedTaskNotification {
+  const out: ParsedTaskNotification = {}
+  // 按 result 切成头、尾两段:头上的字段排在 result 之前,usage 排在它之后 —— 各在各的段里找,
+  // result 正文里碰巧出现的同名标签就不会被当真。
+  const open = xml.indexOf("<result>")
+  const close = xml.lastIndexOf("</result>")
+  const hasResult = open >= 0 && close > open
+  const head = hasResult ? xml.slice(0, open) : xml
+  const tail = hasResult ? xml.slice(close) : xml
+  if (hasResult) out.result = xml.slice(open + "<result>".length, close)
+  const taskID = tag(head, "task-id")
+  if (taskID) out.taskID = taskID
+  const toolCallID = tag(head, "tool-use-id")
+  if (toolCallID) out.toolCallID = toolCallID
+  const outputFile = tag(head, "output-file")
+  if (outputFile) out.outputFile = outputFile
+  const status = tag(head, "status")
+  if (status && STATUSES.has(status)) out.status = status as NotificationStatus
+  const summary = tag(head, "summary")
+  if (summary) out.summary = summary
+  const totalTokens = tag(tail, "total_tokens")
+  const toolUses = tag(tail, "tool_uses")
+  const durationMs = tag(tail, "duration_ms")
+  if (totalTokens !== undefined && toolUses !== undefined && durationMs !== undefined) {
+    out.usage = {
+      totalTokens: Number(totalTokens) || 0,
+      toolUses: Number(toolUses) || 0,
+      durationMs: Number(durationMs) || 0,
+    }
+  }
+  return out
+}
+
 export function formatTaskNotification(notification: TaskNotification): string {
   const lines = [
     "<task-notification>",
