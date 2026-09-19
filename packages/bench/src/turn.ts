@@ -19,6 +19,17 @@
  * `session.prompt` 立刻返回,轮次结束只能看事件。状态机是 busy →(中间可能夹几段
  * compacting)→ idle:重试与阈值/溢出压缩都留在同一段 busy 里。判据是 **idle 静默
  * 一小段时间**,而不是"第一个 idle" —— 状态只要回跳一次,就说明这一轮还没完。
+ *
+ * ## 子 agent
+ *
+ * 宿主传 `subagents: { background: false }`:子 agent 一律前台,`run_in_background` 从 schema 里摘掉。
+ * 后台子 agent 在跑的时候主会话是 idle 的,"idle 静默"这个判据就说谎了;而且一轮一个子进程,
+ * 轮一结束后台任务也活不下来。前台的子 agent 跑在主会话那次 agent 调用里面,主会话一直 busy,
+ * 所以主会话 idle 就意味着整轮(连同子 agent)都完了。
+ *
+ * 子会话的事件与主会话走同一个事件流,**收工判定、正文、工具清单只认本轮的根会话**:子会话自己也会
+ * busy → idle,前台子 agent 一收工它就 idle,而主会话正拿着结果准备下一次请求 —— 那段首字延迟里没有任何
+ * 事件,把子会话的 idle 当成这一轮的 idle 就是提前收工。用量两边都算:子 agent 花的也是这一轮的钱。
  */
 
 import { createKernelHost, type KernelHost } from "@yoma-desktop/kernel/host"
@@ -49,8 +60,11 @@ export interface TurnOptions {
   sessionID?: string
   /** 本轮要说的话。 */
   prompt: string
-  /** 事件旁路,用来打印进度。 */
-  onEvent?: (event: KernelEvent) => void
+  /**
+   * 事件旁路,用来打印进度。`origin.subagent`:这条事件属于子 agent 的会话(本轮根会话之外) ——
+   * 它们的工具调用夹在主会话那次 agent 调用中间,进度里要分得出来。
+   */
+  onEvent?: (event: KernelEvent, origin: { subagent: boolean }) => void
   /** 测试注入 faux provider。 */
   resolveModels?: Parameters<typeof createKernelHost>[0]["resolveModels"]
   /**
@@ -86,9 +100,11 @@ export interface TurnToolCall {
 
 export interface TurnResult {
   sessionID: string
-  /** 本轮 assistant 说的正文(拼接所有 text part)。 */
+  /** 本轮 assistant 说的正文(拼接所有 text part)。只算根会话:子 agent 的结论经 agent 工具交回,由主 agent 转述。 */
   text: string
+  /** 根会话的工具调用。子 agent 的不在这里(它们折叠在那次 agent 调用里)。 */
   toolCalls: TurnToolCall[]
+  /** 本轮用量,含子 agent。 */
   usage: TurnUsage
   /** 非空表示本轮是被中断/出错结束的。 */
   stopReason?: string
@@ -144,6 +160,9 @@ export async function runTurn(options: TurnOptions): Promise<TurnResult> {
 
   const totals = (): TurnUsage => [...usageByMessage.values()].reduce(addUsage, zeroUsage())
 
+  /** 本轮的根会话。续跑时调用方给;新建时在 session.create 之后才有(那之前不会有它的状态事件)。 */
+  let sessionID = options.sessionID ?? ""
+
   const host: KernelHost = createKernelHost({
     sessionsRoot: options.sessionsRoot,
     stateDir: options.stateDir,
@@ -158,6 +177,8 @@ export async function runTurn(options: TurnOptions): Promise<TurnResult> {
     // confirmTools **不开**:调试台无人值守,没人点"允许"。开了的话一条烧录调用会挂在确认台上
     // 一直到它十分钟的超时,而这一轮结束的判据是"idle 静默 700ms" —— 挂起期间 lane 一直 busy,
     // 于是整轮只能等到一小时硬超时才收场,报告里看到的是"agent 卡住了"。
+    // 子 agent 一律前台(文件头「子 agent」一节)。
+    subagents: { background: false },
     onEvents: (batch) => {
       for (const event of batch) handleEvent(event)
     },
@@ -174,23 +195,32 @@ export async function runTurn(options: TurnOptions): Promise<TurnResult> {
   }
 
   function handleEvent(event: KernelEvent) {
-    options.onEvent?.(event)
+    const owner = eventSession(event)
+    const subagent = owner !== undefined && owner !== sessionID
+    options.onEvent?.(event, { subagent })
     switch (event.type) {
       case "session.status":
+        // 只认根会话(文件头「子 agent」一节):子会话的 idle 不是这一轮的 idle。
+        if (subagent) break
         if (event.status.type === "idle") scheduleSettle()
         else cancelSettle()
         break
       case "message.updated": {
         const message = event.message
         if (message.role !== "assistant") break
-        assistantMessages.add(message.id)
         const assistant = message as AssistantMessage
-        usageByMessage.set(assistant.id, { tokens: assistant.tokens, cost: assistant.cost })
-        if (assistant.error) errors.push(`${assistant.error.name}: ${assistant.error.data.message}`)
+        // 用量按"会话 + 消息"记:投影器铸的消息 id 只在一个会话里唯一,子 agent 的与主会话的可能撞上。
+        usageByMessage.set(`${message.sessionID}/${assistant.id}`, { tokens: assistant.tokens, cost: assistant.cost })
+        if (assistant.error) {
+          errors.push(`${subagent ? "子 agent " : ""}${assistant.error.name}: ${assistant.error.data.message}`)
+        }
+        assistantMessages.add(message.id)
         break
       }
       case "message.part.updated": {
         const part = event.part
+        // 子 agent 的正文与工具调用都不进这一轮的结果(文件头「子 agent」一节),这里是唯一的一道过滤。
+        if (subagent) break
         // synthetic 是"不是模型直接说的"(压缩 / 分支摘要),同样不该进根因分析。
         if (part.type === "text" && assistantMessages.has(part.messageID) && !part.synthetic) {
           textByPart.set(part.id, part.text)
@@ -206,11 +236,12 @@ export async function runTurn(options: TurnOptions): Promise<TurnResult> {
         break
       }
       case "message.part.delta":
-        // 流式增量:快照事件已经带全文,这里只需要保证"有动静"不算静默。
-        cancelSettle()
+        // 流式增量:快照事件已经带全文,这里只需要保证"有动静"不算静默。子 agent 的动静不算 ——
+        // 结算只由根会话的状态排起,也只由它撤销。
+        if (!subagent) cancelSettle()
         break
       case "kernel.error":
-        errors.push(event.message)
+        errors.push(subagent ? `子 agent:${event.message}` : event.message)
         break
       default:
         break
@@ -227,7 +258,6 @@ export async function runTurn(options: TurnOptions): Promise<TurnResult> {
   // 直接退出(实测:打包冒烟里 mother 走到"分析中"就消失)。bun 的存活语义不同,
   // 开发态从不暴露 —— 所以这里必须显式抓一个 ref 句柄,离开时归还。
   const keepalive = setInterval(() => {}, 60_000)
-  let sessionID = options.sessionID ?? ""
   try {
     if (!sessionID) {
       const session = (await host.handle("session.create", {
@@ -281,5 +311,29 @@ export async function runTurn(options: TurnOptions): Promise<TurnResult> {
     stopReason,
     errors,
     elapsedMs: Date.now() - started,
+  }
+}
+
+/** 事件属于哪个会话;不属于任何会话的(项目、模型目录、任务视图……)给 undefined。 */
+function eventSession(event: KernelEvent): string | undefined {
+  switch (event.type) {
+    case "session.created":
+    case "session.updated":
+      return event.session.id
+    case "session.deleted":
+    case "session.status":
+    case "session.queue":
+    case "message.removed":
+    case "message.part.removed":
+    case "message.part.delta":
+      return event.sessionID
+    case "message.updated":
+      return event.message.sessionID
+    case "message.part.updated":
+      return event.part.sessionID
+    case "kernel.error":
+      return event.sessionID
+    default:
+      return undefined
   }
 }

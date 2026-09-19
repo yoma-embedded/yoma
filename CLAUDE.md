@@ -46,7 +46,7 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
 
 四个盒子(`boundary.test.ts` 的说法):**餐厅** = app / session-ui / ui / util / desktop,只认**菜单**
 (kernel 的门 `.`,浏览器安全);**厨房** = kernel 的门 `./host` + bench;**工具间** =
-`kernel/src/host/domain/` 与 `host/tools/<名字>/{contract.ts,session.ts}`(住户:grep、find、ls、powershell、toolchain、flash、log、la、gdb、datasheet、netlist、stm32config);
+`kernel/src/host/domain/` 与 `host/tools/<名字>/{contract.ts,session.ts}`(住户:grep、find、ls、powershell、toolchain、flash、log、la、scope、gdb、datasheet、netlist、stm32config,以及子 agent 四件 agent、task_output、task_stop、send_message —— 清单的真源是 `TOOL_NAMES`,今天 21 个);
 **发动机** = `packages/{agent,ai,chord,telemetry}`(哈希锁定)。
 
 门就是 `packages/kernel/package.json` 的 `exports`,七道(外加 `./package.json`):
@@ -494,10 +494,10 @@ kernel 接它 —— 从前那份自有 harness(`agent-legacy` / `@yoma/agent`)�
 | `npm run typecheck` | turbo 跑全部 11 个包,再加根 `tsconfig.json` —— **必须常绿 11/11 + 根**(`packages/kernel` 自己那份 include 的是 `src` + `test`;从前只有被 kernel 的 paths 拉到的内核源码受检,test 目录没人查) |
 | `npm run lint` | oxlint |
 | `npm test` | 全量单测:`vitest run`,项目清单在根 `vitest.config.ts`(每个包一份 `vitest.config.ts`,app 另有 browser / perf 两份)|
-| `npm run smoke -w packages/desktop` | 内核冒烟:对 **构建产物** 验证内核装配(内核自带的 4 个工具)+ 4 个引擎二进制 |
+| `npm run smoke -w packages/desktop` | 内核冒烟:对 **构建产物** 验证内核装配(工具清单与 `TOOL_NAMES` 逐字同序,今天 21 个)+ 引擎二进制 |
 | `npm run e2e:ipc -w packages/desktop` | 生产路径:真 utilityProcess + 真 MessagePort + 真协议帧(不开窗口) |
 | `npm run e2e:renderer -w packages/desktop` | 最后一跳:真窗口 + 真 preload + **真 contextBridge**(含 mailbox 桥三条) |
-| `npm run e2e:paint -w packages/desktop` | 真窗口首屏 + 点一遍:Electron 跑构建产物 + 接 CDP,首页 / 会话页(含逻辑分析仪面板)/ 草稿页 / 手册库 / 调试台全点一遍,零 `exceptionThrown` 零 `console.error` / Log 错误(含资源 404)(窗口会在屏幕上闪几秒,别去点它) |
+| `npm run e2e:paint -w packages/desktop` | 真窗口首屏 + 点一遍:Electron 跑构建产物 + 接 CDP,首页 / 会话页(含逻辑分析仪面板)/ 子 agent 卡片、完成通知行与子会话页 / 草稿页 / 手册库 / 调试台全点一遍,零 `exceptionThrown` 零 `console.error` / Log 错误(含资源 404)(窗口会在屏幕上闪几秒,别去点它) |
 | `npm run smoke:mailbox -w packages/desktop` | 调试台冒烟:Electron RUN_AS_NODE 对打包产物跑完整**本机演练**(假模型,零 key 零硬件) |
 | `npm run e2e:mailbox -w packages/desktop` | main 托管端到端:真 kernel.js 的 `mailbox.setActive` 往返 + 假守护喂 `@@event` + 停止杀树 + 锁冲突人话 |
 | `tsx packages/bench/src/cli.ts check <job.json>` | 校验任务书 + 本机内核装配 |
@@ -748,13 +748,68 @@ v3 规格(`pi/packages/agent/docs/harness.md` §5.5/§5.6)的形状 —— hooks
 `NO_AMBIENT_AUTH`**。目录有 40 家,开发机上一个 `ANTHROPIC_API_KEY` 或一份
 `~/.aws/credentials` 就会让"首跑无凭据"的测试说谎,逐个删环境变量列不全。生产不传。
 
+### 子 agent(`host/tasks.ts` + `host/domain/agents/` + 四个工具,2026-09-19)
+
+照 Claude Code 做,设计与逐期结果在 `docs/子agent-设计方案-v0.4-20260918.md`。主 agent 用 `agent` 工具派一个
+子 agent:它是一个**独立的子会话**(会话文件头带 `parentSessionId`,视图上是 `Session.parentID`),有自己的
+harness、系统提示词和按 profile 裁过的工具池,跑完把最后一段话交回那次工具调用。另外三件:`task_output`
+(等 / 读后台任务的结果)、`task_stop`、`send_message`(给跑着的子 agent 插话,或让结束了的接着跑)。
+
+- **定义**(`host/domain/agents/`):内建 `general-purpose` / `Explore`(只读、一次性)/ `datasheet`;md 定义
+  (frontmatter 的 tools / disallowedTools / model / maxTurns / background / skills …)从 `~/.yoma/agents` 与沿 cwd
+  往上、到 home 为止的 `.yoma/agents` 读,同名后者覆盖前者。工具结果、完成通知(`<task-notification>`)与提示词
+  里的说明照 CC 原文。**子 agent 拿不到**:子 agent 四件(不许套娃)与硬件五件(flash / log / la / scope / gdb ——
+  模块级的探针租约与采集器是按一个会话设计的)。思考档缺省 off(照 CC)。
+- **宿主**(`host/tasks.ts` 的 TaskManager,文件头是每任务副作用登记表):派生、并发闸(缺省 10,
+  `YOMA_MAX_CONCURRENT_AGENTS`,超出排 pending)、前台等结果与转后台(卡片按钮;`YOMA_AUTO_BACKGROUND_MS` 自动转,
+  缺省关)、完成通知**原子去重、逐父串行**地 steer 进主会话收件箱:主会话忙就在下一个工具边界插进去,空闲就
+  起一轮把它取走(accept 空 prompt)。模型:`YOMA_SUBAGENT_MODEL` > 调用参数 > profile > 跟随主会话。
+  `output_file` 是给模型读的进度日志,落 `<系统临时目录>/yoma/<主会话>/tasks/`。
+- **session-manager 的子会话分支**:按 profile 装配(工具只减不加,筛掉的实例当场收掉)、maxTurns 钩子、运行中与
+  排队中的子会话 **LRU 钉住**(关掉 harness 不等于中止,下次打开它会躺在 `open` 里)、删主会话级联删子会话、
+  `disposeAll` 先关主会话再关子会话(反过来的话主会话拿着"子 agent 被停"的结果会再请求一次模型)、子会话拒收
+  用户消息(`SubagentSessionError`)。确认门:前台子 agent 的询问冒到主会话的确认条上(写明是哪个子 agent),
+  后台的直接拒 —— 没人看着它。
+- **所有会话的行为都改了:忙时发消息排队,不打断**(照 CC)。`session.prompt` 回 `queued: true`,消息 steer 进
+  收件箱、在下一个工具边界送给模型;排队期间在 `session.queue` 事件里,界面画在输入框上方,可以撤回
+  (`session.cancelQueued`,原文与图片交回输入框;空输入框按 ↑ 一次撤回全部)。想打断要按停止。**已知缺口**:
+  停止(`requestAbort`)会把收件箱里排着的消息与通知摘下来丢掉,用户 2026-09-18 定暂缓(补法写在设计稿 §6.9)。
+- **界面**:agent 卡片与完成通知行(`session-ui/src/components/agent-tool.tsx`);子会话不进侧栏与首页
+  (`session.list` 就不给,事件归约与 `isRootVisibleSession` 各再挡一道),从卡片与状态栏的「子 agent」任务面板
+  打开;子会话页没有输入框,标题行是「← 主会话 / 类型」与任务状态、停止。任务状态走 `task.updated` 事件 +
+  `task.list` 种子,两者按"谁走得更远"合并(`server-session.ts` 的 `taskAhead`)。
+- **无人值守宿主**:见「调试台」第 3 条。
+
+付过学费的(都有测试钉着):
+
+1. **上游 `JsonlSessionRepo` 的 create / list / delete 在同一进程里并发不安全**:create 先列目录查 id 有没有被占,
+   新会话先写 `.jsonl.tmp` 再改名;另一个 create / list 恰好列到那个 tmp、再去 lstat 时它已经改名 → ENOENT。
+   一条消息并行派 12 个子 agent 几乎必现。宿主把这三个操作串成一条队(`repoLocked`)。**跨进程**同理:e2e 的种子
+   因此先在暂存根里种好,再整目录 rename 进 app 的会话根(`desktop/scripts/e2e-seed-subagent.ts`)。
+2. **失败收场的一轮不取收件箱**(上游失败提交只动 tip),而且之后不会再有 `queue_update`:`run_end` 时"收件箱
+   非空就叫醒"不是冗余。叫醒一共三处(投递时、收件箱变非空时、`run_end` / 压缩结束时),前两处互为兜底。
+3. **accept 会把收件箱里排着的消息收在本次 prompt 之前**:乐观插入的消息 id 按原文认领(`pendingUser`),
+   不能按"下一条 user 消息"认领 —— 会被排队的那条抢走。
+4. **列表里的会话是懒的**:`repo.list` 只读文件头,标题是占位;而只读查看(`session.messages`)从来不读会话名 ——
+   从磁盘加载的会话看完了标题仍是占位。`fillListed` 在只读与装配两条路上补名字与子会话类型,有变化推
+   `session.updated`。
+5. **事件流不分会话**:子会话的 `session.status`、消息、工具调用与主会话的走同一条流,凡是按事件判断"这一轮"
+   的地方都要先看 sessionID(bench 那次就是这么漏的,见「调试台」第 3 条)。
+6. **上游哨兵**:`host/subagent-v2.test.ts` 钉着本方案依赖的 v2 行为(steer 在工具边界插入、空闲时 accept 空
+   prompt 取收件箱、`requestAbort` 传到工具的 abortSignal、maxTurns 钩子……)。升级 `packages/agent` 之后它先红,
+   能直接指出是哪条前提变了。
+
+测试:`host/subagents.test.ts`(场景 22 例)、`host/subagent-v2.test.ts`、`test/agents-domain.test.ts`、
+`test/tools-agent.test.ts`、`host/projector.test.ts` 的通知一组、`bench/src/turn.test.ts` 的子 agent 一组、
+app 的 `test-browser/subagent-ui.test.ts`,以及 `e2e:paint` 的子 agent 一段。
+
 ### 调试台(`packages/bench`)
 
 host 的**第二个宿主**:`createKernelHost()` 是纯 Node 装配(零 Electron 依赖),
 bench 直接 import 它跑无人值守任务,于是投影器、自动压缩、工具装配、会话协议全部白得。
 `sessionsRoot` 默认指向 desktop 的 userData —— 跑完在桌面端直接回放。
 
-两条不变式,动这个包之前先读:
+三条不变式,动这个包之前先读:
 
 1. **一轮一个子进程**(`turn-entry.ts`)。yoma 的探针租约/gdb 会话表/log 采集器都是
    模块级全局,进程边界 = 免费且可靠的清理,下一轮不会撞上"探针被占着"。
@@ -762,6 +817,11 @@ bench 直接 import 它跑无人值守任务,于是投影器、自动压缩、�
 2. **代码不裁决任何东西**。跑几轮、花多少、算不算做完,全归模型 —— 没有轮数/token/
    墙钟上限。代码只在"决定 JSON 连着两次读不出来"时终局(记 `by:"policy"`),
    那不是裁决,是没法把它的话变成动作。要提前收工就在桌面端按停止。
+3. **子 agent 一律前台,收工只认本轮的根会话**(`turn.ts` 文件头「子 agent」一节)。`runTurn` 传
+   `subagents: { background: false }`:后台子 agent 在跑时主会话是 idle,"idle 静默"这个判据就说谎了,
+   而且一轮一个子进程,后台任务活不过这一轮。子会话的事件与主会话走同一条流 —— 只看 `session.status`
+   不看 sessionID 的话,前台子 agent 一收工(它的 idle)这一轮就被判完,而主会话正要拿着结果发下一次
+   请求。正文(`result.text`)与工具清单只收根会话的,用量连子 agent 一起算。信箱两端都经 `runTurn`。
 
 **yoma 在用户项目里只有一个落脚点:`<工程>/.yoma/`**(2026-08-11 起;从前是 `.bench/`
 与 `.yoma/` 两个目录、两份 .gitignore、两套相反策略):
@@ -1289,6 +1349,9 @@ Windows 失败时这里超时变红,本来也不该有只含 mac 的 Release)。
 
 ## 已知的未完成项
 
+- **子 agent**(见「子 agent」一节):停止键会丢掉收件箱里排着的消息与通知(暂缓);状态栏任务面板、子会话页的
+  状态与停止、"排队中"一栏只有组件渲染测试,没在真窗口里跑过(`e2e:paint` 里的内核没有模型);fork 型子 agent、
+  worktree 隔离、硬件子 agent、重启后重新挂接前台调用等见设计稿 P5。
 - **工具链自动安装只在 Windows 上真装过**(五个包都装过,见「工具链自动安装」一节);macOS / Linux 的
   tar 路径与可执行位处理没有真机验过。运行期镜像只有 `YOMA_TOOLCHAIN_MIRROR` 一个口子,维护者若要自建
   镜像,把包放到 `<镜像>/<文件名>` 即可。内核 utilityProcess 里的 `fetch` 不认系统代理设置(main 进程的

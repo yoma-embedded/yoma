@@ -475,6 +475,9 @@ CC:模型在跑的时候,用户敲的消息进队列,在下一个工具轮次结
 - 理由:bench 判一轮结束靠 idle 静默,后台子 agent 在跑的时候父会话是 idle,这个判据就说谎了;而且 bench 一轮一个子进程,轮结束子进程退出,后台任务本来也活不下来。
 - 这两个宿主不传 `confirmTools`,不存在冒泡问题。
 - bench 的 `check` 和信箱都走 `TOOL_NAMES`,+4 自动跟上。
+- (P4 补)**收工判据要分会话**:子会话的 `session.status` 与主会话走同一条事件流。bench 只看"idle 静默"而不看 sessionID 的话,
+  前台子 agent 一收工(它的 idle)这一轮就被判完,而主会话正要拿着结果发下一次请求。状态、正文、工具清单只认本轮的根会话,
+  用量连子 agent 一起算。
 
 ## 10. 决策
 
@@ -620,6 +623,22 @@ CC:模型在跑的时候,用户敲的消息进队列,在下一个工具轮次结
   - `npm run test:bench` 什么也量不了:性能用例(`e2e/performance/**/*.spec.ts`)在 7c470b7 清 OpenCode 残留时删了,只剩工具文件 —— `packages/app/AGENTS.md` 要求的"改会话 / 时间线代码前先记基线"这次做不到。时间线本身的改动只是标题行多两个只在子会话里出现的小组件。
 
 **P4 无人值守宿主与文档**:bench / 信箱传 `background: false`;`CLAUDE.md` 加"子 agent"一节、更新工具清单;把结论回填本文。
+
+**P4 结果(2026-09-19)**:
+
+- bench:`turn.ts` 的 `runTurn`(bench 任务台、eval、信箱两端都经它)传 `subagents: { background: false }`。bench `check` 与
+  desktop 冒烟本来就与 `TOOL_NAMES` 逐字比,不用改。
+- 实测撞出来、§9 原先没写到的:**bench 的收工判据不分会话**。`runTurn` 的"idle 静默 700 ms"看的是任何一条 `session.status`,
+  而子会话自己也会 busy → idle:前台子 agent 一收工,它的 idle 就把结算排上了;主会话此刻正拿着结果准备下一次请求,
+  首字延迟(真模型 1–3 s)里没有任何事件 —— 700 ms 一到这一轮就被判完,子进程随即退出。同一条流里子会话的正文与工具
+  调用还会混进 `result.text`(终报的根因分析)和工具清单。改成:状态、正文、工具清单只认本轮的根会话,流式增量也只有
+  根会话的才撤销结算;用量按"会话 + 消息"记、连子 agent 一起算;provider 错误与 `kernel.error` 照收、子 agent 的加前缀。
+  进度输出里子 agent 的工具行缩进一级,`agent` 那一行带上类型与描述。§9 已补这一条。
+- `CLAUDE.md`:新增「子 agent」一节(结构、所有会话忙时排队、界面、六条付过学费的);「调试台」加第 3 条不变式;工具间住户、
+  冒烟、`e2e:paint` 三处清单更新;「已知的未完成项」加一条。
+- 验证:bench 17 个文件 152 例全过(新增 1 例:子 agent 一律前台、主会话首字慢 600 ms 时不提前收工、正文与工具清单只认
+  主会话、用量等于两边之和);变异第一轮 6 条抓 5 条,漏的是一道冗余的第二重过滤(已删,只留一处),删后 5/5;typecheck
+  11/11 + 根;桌面产物重建后 `smoke:mailbox`(打包产物跑完整的本机信箱演练)与 `e2e:mailbox` 全过。
 
 **P5 以后**:fork 型子 agent、`isolation: worktree`、`hardware: true` + 设备互斥、`agent` 工具 `replay: "safe"` + `invocation.setMemo` 重启后重新挂接、启动时补发没通知的结果、只给被看着的会话转发 message 事件、"快模型"设置、父会话 cost 汇总。
 
