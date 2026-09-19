@@ -187,7 +187,7 @@ env:cwd / 平台 / 日期 / 模型                     ← CC computeEnvInfo
 
 ### 4.3 来源、发现、覆盖
 
-- 内建(代码)< 用户 `<configDir>/agents/*.md`(即 `~/.yoma/agents`)< 项目:从 cwd **向上到文件系统根**逐层的 `<dir>/.yoma/agents/*.md`,外层先、内层后,同名后者覆盖前者(CC `markdownConfigLoader.ts:297` 同款;与上下文文件的祖先链同解,`resources.ts:44-81`)。技能不沿祖先找,两边不一致 —— 先照 CC,技能要不要跟上另议。
+- 内建(代码)< 用户 `<configDir>/agents/*.md`(即 `~/.yoma/agents`)< 项目:从 cwd **向上到 home 为止(不含 home)**逐层的 `<dir>/.yoma/agents/*.md`,cwd 不在 home 下时一直走到文件系统根;外层先、内层后,同名后者覆盖前者(CC `markdownConfigLoader.ts:297` 同款)。P1 实现时从"走到文件系统根"改成止于 home:home 那一份就是用户级,而且不停在 home 的话,测试里注入的 configDir 挡不住开发机真实的 `~/.yoma/agents` 从祖先链混进来(`LoadAgentsOptions.homeDir` 可注入)。技能不沿祖先找,两边不一致 —— 先照 CC,技能要不要跟上另议。
 - 解析:切出首部两个 `---` 之间的块,用 `yaml` 解析(kernel 的 package.json 加 `"yaml": "2.9.0"`,与 agent 包同一个钉子;上游的 `parseFrontmatter` 不导出)。没有 `name` 的 md **静默跳过**(目录里常有说明文档);字段非法记诊断(`kernel.error`,同技能诊断)后忽略该字段。
 - **快照式**:会话打开时读一次(与技能、上下文文件同),agent 列表在会话内不变,所以 `agent` 的工具描述在会话内字节稳定。改了 md 重开会话生效。
 - `.yoma/.gitignore` 是黑名单,不含 `agents/`,所以 `.yoma/agents/*.md` 随项目提交 —— 与 CC 的 `.claude/agents/` 一致,正是想要的。
@@ -225,7 +225,7 @@ env:cwd / 平台 / 日期 / 模型                     ← CC computeEnvInfo
 
 四个工具,照工具样板一个工具一个目录:`host/tools/{agent,task_output,task_stop,send_message}/{contract.ts,session.ts}`。`TOOL_NAMES` 末尾追加 `"agent", "task_output", "task_stop", "send_message"`;装配面与契约总表同名同序(`tool-names.test.ts`);desktop 冒烟、kernel-smoke、bench check 三处跟着 +4。
 
-**恒定登记**(同 powershell 的"全平台恒定登记"):装配面永远装出这四件;没有注入 `TaskHost` 的宿主(自检那条路)execute 时报"这个宿主不支持子 agent";子会话里由 §5.3 的硬黑名单裁掉。契约都没有 `confirm`(CC:Agent 工具 `isReadOnly: true`,权限检查下放给子 agent 自己调的工具,分析 §3.3)。
+**恒定登记**(同 powershell 的"全平台恒定登记"):装配面永远装出这四件;没有注入 `TaskHost` 的宿主(自检那条路)execute 时报"这个宿主不支持子 agent";子会话里由 §5.3 的硬黑名单裁掉。**没注入 TaskHost 的会话不激活这四件**(`session-manager.ts` 的 `activeToolNames`,P1 起):模型看得见却用不了的工具只会让它空转一次;P2 给主会话注入门面之后才激活。契约都没有 `confirm`(CC:Agent 工具 `isReadOnly: true`,权限检查下放给子 agent 自己调的工具,分析 §3.3)。
 
 ### 5.1 `agent`
 
@@ -554,6 +554,13 @@ CC:模型在跑的时候,用户敲的消息进队列,在下一个工具轮次结
 | (g) | 父卡在工具里时 steer 一条通知 + 一条用户消息,`requestAbort` 的返回值 `steer` 就是这两条(`["custom", "user"]`),之后收件箱为空 —— §14"停止键清空收件箱"的根,已钉成事实,本期不处理 |
 
 **P1 定义与工具**(用假的 `TaskHost`):`host/domain/agents/*`(类型、内建三份、加载与覆盖、frontmatter、`resolveAgentTools`)+ 四个工具的契约与 session + `TOOL_NAMES` +4。测试:agent 列表与工具描述的渲染;硬黑名单 / 硬件层 / 黑白名单;后台关闭时 schema 里没有 `run_in_background`;前台 / 后台 / 被停三种结果的**逐字**文本;`oneShot` 省尾巴;空结果占位句;`task_output` 的 block / timeout;`send_message` 的三个分支;前台时 `abortSignal` 的转发。`boundary.test.ts`、`tool-names.test.ts`、`npm run typecheck` 全绿。
+
+**P1 结果(2026-09-18)**:
+
+- 新文件:`host/domain/agents/{profile,builtin,load,select,finalize,notification,task-host}.ts`;`host/tools/agent/{contract,description,session}.ts`、`host/tools/{task_output,task_stop,send_message}/{contract,session}.ts`;测试 `test/agents-domain.test.ts`、`test/tools-agent.test.ts`。
+- 改动:`host/tools/index.ts`、`host/tools/contracts.ts`、`types.ts`(`TOOL_NAMES` 末尾 +4);`host/system-prompt.ts` 加 `agentPrompt` / `environment`(主 agent 的提示词对新旧两版 5 组输入逐字节比对,完全相同);`host/session-manager.ts` 抽出 `activeToolNames`(没注入 TaskHost 不激活四件);kernel 的 `package.json` 加 `yaml: 2.9.0`,lockfile 只多这一行(本机 npm 11.17 顺手抹掉的十处 `"peer": true` 已还原)。
+- 验证:三个测试文件 62 例全过;`kernel` 项目 20 个文件 228 例全过(含 `tool-names.test.ts`、`boundary.test.ts`、宿主端到端);`kernel-domain` 1397 例 1278 过 / 114 跳过 / 2 挂 —— 两条都在 `tools-la.test.ts`,没有 P1 改动的 develop 上同一文件连跑 3 次也次次挂,是本机 Windows 杀进程的时序问题,与本次无关;`bench` 151 例全过;typecheck 11/11;oxlint 0 警告。变异验证 10/10 被抓:硬件层不挡、尾巴写成 SendMessage、一次性 agent 也带尾巴、祖先目录内层先外层后、未接宿主的四件被激活、中止信号不转发、子 agent 丢了工具守则、task_output 缺省超时改掉、祖先链不止于 home、被停的 summary 改词。
+- 与设计的两处微调(已改回上文):项目 agent 目录的祖先链止于 home(§4.3);没注入 TaskHost 的会话不激活四件(§5)。
 
 **P2 宿主**(**先写场景测试,再写实现** —— v0.2 §14 的四处缺口,全是"把设计场景放到现有代码上走一遍时序"才掉出来的,同类问题大概率还有):`host/tasks.ts` + §6.8 的 SessionManager 改动。`host.test.ts`(faux)场景:
 

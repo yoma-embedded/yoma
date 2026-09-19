@@ -190,3 +190,45 @@ describe("全装配面的提示词", () => {
 		expect(toolGuidelines(TOOL_NAMES).length).toBeGreaterThan(2);
 	});
 });
+
+// 子 agent(docs/子agent-设计方案-v0.4-20260918.md §4.2):照 CC 用 agent 自己的正文换掉主正文、追加四条 Notes 与
+// env 块;但工具清单与守则照留 —— yoma 的守则写在系统提示词里,走 customPrompt 就连守则一起丢了。
+describe("agentPrompt(子 agent)", () => {
+	it("换掉 Yoma 主正文,工具清单与该工具的守则照留,接上 CC 的四条 Notes", () => {
+		const prompt = buildSystemPrompt({ agentPrompt: "You are a datasheet researcher.", selectedTools: ["read", "datasheet"], cwd: "/p" });
+		expect(prompt.startsWith("You are a datasheet researcher.\n\nNotes:\n- Agent threads always have their cwd reset between bash calls")).toBe(true);
+		expect(prompt).not.toContain("You are Yoma, a coding and embedded-development agent");
+		expect(prompt).not.toContain("Working principles:");
+		expect(prompt).toContain("Available tools:\n- read\n- datasheet");
+		expect(toolGuidelines(["datasheet"]).length).toBeGreaterThan(0);
+		for (const guideline of toolGuidelines(["datasheet"])) expect(prompt).toContain(guideline);
+		expect(prompt).toContain("For clear communication with the user the assistant MUST avoid using emojis.");
+	});
+
+	it("结尾是 env 块而不是 cwd 行;没给的行不出", () => {
+		const full = buildSystemPrompt({
+			agentPrompt: "A",
+			cwd: "D:\\proj",
+			environment: { platform: "win32", date: "2026-09-18", model: "deepseek/deepseek-v4-flash" },
+		});
+		expect(full.endsWith(
+			"Here is useful information about the environment you are running in:\n<env>\nWorking directory: D:/proj\nPlatform: win32\nToday's date: 2026-09-18\n</env>\nYou are powered by the model deepseek/deepseek-v4-flash.",
+		)).toBe(true);
+		expect(full).not.toContain("Current working directory:");
+		const bare = buildSystemPrompt({ agentPrompt: "A", cwd: "/p" });
+		expect(bare.endsWith("<env>\nWorking directory: /p\n</env>")).toBe(true);
+	});
+
+	it("项目上下文与技能照旧拼在正文后面;不给 contextFiles 就没有(Explore 的 omitContextFiles 靠宿主不传)", () => {
+		const withContext = buildSystemPrompt({ agentPrompt: "A", cwd: "/p", contextFiles: [{ path: "/p/AGENTS.md", content: "use HAL" }] });
+		expect(withContext).toContain('<project_instructions path="/p/AGENTS.md">\nuse HAL\n</project_instructions>');
+		expect(buildSystemPrompt({ agentPrompt: "A", cwd: "/p" })).not.toContain("<project_context>");
+	});
+
+	it("customPrompt 优先于 agentPrompt;空的 agentPrompt 仍是子 agent 形状", () => {
+		const custom = buildSystemPrompt({ customPrompt: "C", agentPrompt: "A", cwd: "/p" });
+		expect(custom.startsWith("C")).toBe(true);
+		expect(custom).toContain("Current working directory: /p");
+		expect(buildSystemPrompt({ agentPrompt: "", cwd: "/p" }).startsWith("Notes:\n")).toBe(true);
+	});
+});

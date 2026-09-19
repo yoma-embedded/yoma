@@ -250,7 +250,8 @@ export interface ToolConfirmView {
  * 嵌入式那一套(flash/gdb/la/scope/…)2026-09-10 归零;2026-09-11 起按样板
  * host/tools/<名字>/{contract.ts,session.ts} 逐个重写,首个是 flash;2026-09-12 从 pi 移植了
  * grep / find / ls / powershell;2026-09-14 回来的是 log、toolchain、la 与 gdb
- * (四件套之后先放文件工具,再是这台机器本身,硬件最后)。
+ * (四件套之后先放文件工具,再是这台机器本身,硬件最后)。2026-09-18 末尾加子 agent 四件
+ * (agent / task_output / task_stop / send_message,docs/子agent-设计方案-v0.4-20260918.md §5)。
  * 退役的名字**不必**留在这里:界面按任意工具名走万能卡,旧会话重放照样画得出来。
  */
 export const TOOL_NAMES = [
@@ -271,6 +272,10 @@ export const TOOL_NAMES = [
   "datasheet",
   "netlist",
   "stm32config",
+  "agent",
+  "task_output",
+  "task_stop",
+  "send_message",
 ] as const
 
 export type ToolName = (typeof TOOL_NAMES)[number]

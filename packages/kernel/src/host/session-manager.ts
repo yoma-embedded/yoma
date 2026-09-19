@@ -38,6 +38,7 @@ import {
   type ThinkingLevel,
 } from "@earendil-works/pi-agent-core"
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node"
+import { SUBAGENT_TOOL_NAMES } from "./domain/agents/select.ts"
 import { bindExecutionEnv } from "./domain/execution-env.ts"
 import { inspectStm32Availability, type Stm32Availability } from "./domain/stm32/availability.ts"
 import {
@@ -167,6 +168,18 @@ export function createAgentTools(
     execute: (id, params, onUpdate, context, invocation, ctx) =>
       tool.execute(id, params, onUpdate, { ...context, env: options.invocationEnv!() }, invocation, ctx),
   }))
+}
+
+/**
+ * 这一轮真正交给模型的工具名。两道筛:本机没有 STM32 资源时 stm32config 不激活;子 agent 四件在宿主注入
+ * TaskHost 之前不激活(它们照常登记,TOOL_NAMES 平台无关;模型看得见却用不了的工具只会让它空转一次)。
+ * 开会话与"下一轮前重核本机资源"两处必须同解。
+ */
+export function activeToolNames(tools: readonly RegisteredTool[], stm32Available: boolean): string[] {
+  return tools
+    .map((tool) => tool.name)
+    .filter((name) => stm32Available || name !== "stm32config")
+    .filter((name) => !SUBAGENT_TOOL_NAMES.includes(name))
 }
 
 /**
@@ -776,9 +789,7 @@ export class SessionManager {
       })
       entry.stm32Availability = await this.inspectStm32(entry, preparationSignal)
       preparationSignal?.throwIfAborted()
-      entry.activeToolNames = tools
-        .map((tool) => tool.name)
-        .filter((name) => entry.stm32Availability!.available || name !== "stm32config")
+      entry.activeToolNames = activeToolNames(tools, entry.stm32Availability!.available)
       const created = await AgentHarness.create<ExecutionToolContext>(
         {
           session,
@@ -968,9 +979,7 @@ export class SessionManager {
   private async refreshAvailability(entry: Entry, signal: AbortSignal): Promise<void> {
     const availability = await this.inspectStm32(entry, signal)
     signal.throwIfAborted()
-    const names = entry
-      .tools!.map((tool) => tool.name)
-      .filter((name) => availability.available || name !== "stm32config")
+    const names = activeToolNames(entry.tools!, availability.available)
     await entry.lane!.setActiveTools(names, this.context)
     entry.stm32Availability = availability
     entry.activeToolNames = names

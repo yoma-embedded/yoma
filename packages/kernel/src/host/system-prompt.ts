@@ -7,6 +7,11 @@
  *
  * 2026-09-10 工具归零:工具的单行摘要与使用守则从前由 collectToolPromptData 从工具
  * 定义里收集,工具没了这条路也一起删 —— 现在只收 selectedTools 这一份名字清单。
+ *
+ * 2026-09-18 子 agent(docs/子agent-设计方案-v0.4-20260918.md §4.2):`agentPrompt` 照 CC 的
+ * runAgent + enhanceSystemPromptWithEnvDetails,用 agent 自己的正文换掉 Yoma 主正文、追加四条 Notes 与 env 块;
+ * 但工具清单与工具守则**照留** —— yoma 的守则写在系统提示词里(契约的 guidelines),不在工具描述里,
+ * 走 customPrompt 那条路就连守则一起丢了。
  */
 import { formatSkillsForSystemPrompt, type Skill } from "@earendil-works/pi-agent-core";
 
@@ -15,6 +20,13 @@ import { toolGuidelines } from "./tools/contracts.ts";
 export interface BuildSystemPromptOptions {
 	/** Custom system prompt (replaces default). */
 	customPrompt?: string;
+	/**
+	 * 子 agent 的正文(profile.prompt)。给了它就换掉 Yoma 的主正文,工具清单与守则照留,并追加 CC 的四条 Notes;
+	 * 结尾的 cwd 行换成 env 块。customPrompt 优先于它。
+	 */
+	agentPrompt?: string;
+	/** 子 agent 的 env 块(CC computeEnvInfo):平台、日期、模型。只在 agentPrompt 时用;没给的行不出。 */
+	environment?: { platform?: string; date?: string; model?: string };
 	/** Tools to include in prompt. Default: [read, bash, edit, write] */
 	selectedTools?: string[];
 	/** Text to append to system prompt. */
@@ -27,10 +39,19 @@ export interface BuildSystemPromptOptions {
 	skills?: Skill[];
 }
 
+/** CC `constants/prompts.ts` enhanceSystemPromptWithEnvDetails 的四条 Notes,原文。 */
+export const SUBAGENT_NOTES = `Notes:
+- Agent threads always have their cwd reset between bash calls, as a result please only use absolute file paths.
+- In your final response, share file paths (always absolute, never relative) that are relevant to the task. Include code snippets only when the exact text is load-bearing (e.g., a bug you found, a function signature the caller asked for) — do not recap code you merely read.
+- For clear communication with the user the assistant MUST avoid using emojis.
+- Do not use a colon before tool calls. Text like "Let me read the file:" followed by a read tool call should just be "Let me read the file." with a period.`;
+
 /** Build the system prompt with tools, guidelines, and context */
 export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	const {
 		customPrompt,
+		agentPrompt,
+		environment,
 		selectedTools,
 		appendSystemPrompt,
 		cwd,
@@ -47,6 +68,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	// Build tools list based on selected tools.
 	// Every registered tool must be listed so the model never has to guess its capabilities.
 	const tools = selectedTools || ["read", "bash", "edit", "write"];
+	const isAgent = !customPrompt && agentPrompt !== undefined;
 
 	// customPrompt 只替换正文;收尾四段(append / 项目上下文 / 技能 / cwd)两条路共用
 	// 下面**唯一**一份 —— 从前是各写一遍,而它们必须逐字节一致(这段文本决定模型看到的
@@ -81,7 +103,12 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 
 		const guidelines = [...guidelinesSet].map((g) => `- ${g}`).join("\n");
 
-		prompt = `You are Yoma, a coding and embedded-development agent.
+		if (isAgent) {
+			prompt = [agentPrompt!.trim(), SUBAGENT_NOTES, `Available tools:\n${toolsList}`, `Tool-specific rules:\n${guidelines}`]
+				.filter(Boolean)
+				.join("\n\n");
+		} else {
+			prompt = `You are Yoma, a coding and embedded-development agent.
 
 Use only the tools listed below. Do not invent unavailable tools or claim that an action was performed unless its tool result proves it.
 
@@ -112,6 +139,7 @@ ${toolsList}
 
 Tool-specific rules:
 ${guidelines}`;
+		}
 	}
 
 	if (appendSection) {
@@ -133,7 +161,18 @@ ${guidelines}`;
 		prompt += `\n\n${formatSkillsForSystemPrompt(skills)}`;
 	}
 
-	prompt += `\nCurrent working directory: ${promptCwd}`;
+	if (isAgent) {
+		// CC computeEnvInfo 的形状;没给的行不出。
+		const envLines = [
+			`Working directory: ${promptCwd}`,
+			...(environment?.platform ? [`Platform: ${environment.platform}`] : []),
+			...(environment?.date ? [`Today's date: ${environment.date}`] : []),
+		];
+		prompt += `\n\nHere is useful information about the environment you are running in:\n<env>\n${envLines.join("\n")}\n</env>`;
+		if (environment?.model) prompt += `\nYou are powered by the model ${environment.model}.`;
+	} else {
+		prompt += `\nCurrent working directory: ${promptCwd}`;
+	}
 
 	return prompt;
 }

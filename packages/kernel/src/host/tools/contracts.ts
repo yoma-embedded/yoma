@@ -5,6 +5,7 @@
  * 装配(真正 new 出工具)在 index.ts,那边是厨房;两张表必须同名同序,tool-names.test.ts 钉着。
  */
 
+import { AGENT_CONTRACT } from "./agent/contract.ts"
 import type { ToolContract } from "./contract-types.ts"
 import { DATASHEET_CONTRACT } from "./datasheet/contract.ts"
 import { FIND_CONTRACT } from "./find/contract.ts"
@@ -17,10 +18,13 @@ import { LS_CONTRACT } from "./ls/contract.ts"
 import { NETLIST_CONTRACT } from "./netlist/contract.ts"
 import { POWERSHELL_CONTRACT } from "./powershell/contract.ts"
 import { SCOPE_CONTRACT } from "./scope/contract.ts"
+import { SEND_MESSAGE_CONTRACT } from "./send_message/contract.ts"
 import { STM32CONFIG_CONTRACT } from "./stm32config/contract.ts"
+import { TASK_OUTPUT_CONTRACT } from "./task_output/contract.ts"
+import { TASK_STOP_CONTRACT } from "./task_stop/contract.ts"
 import { TOOLCHAIN_CONTRACT } from "./toolchain/contract.ts"
 
-/** 四件套之后先放文件工具,再是这台机器本身(工具链),硬件之后是手册,最后是原理图 → 固件那条线(netlist、stm32config);顺序与 index.ts 的装配、types.ts 的 TOOL_NAMES 逐字同序。 */
+/** 四件套之后先放文件工具,再是这台机器本身(工具链),硬件之后是手册,再是原理图 → 固件那条线(netlist、stm32config),最后是子 agent 四件;顺序与 index.ts 的装配、types.ts 的 TOOL_NAMES 逐字同序。 */
 export const TOOL_CONTRACTS = [
   GREP_CONTRACT,
   FIND_CONTRACT,
@@ -35,6 +39,10 @@ export const TOOL_CONTRACTS = [
   DATASHEET_CONTRACT,
   NETLIST_CONTRACT,
   STM32CONFIG_CONTRACT,
+  AGENT_CONTRACT,
+  TASK_OUTPUT_CONTRACT,
+  TASK_STOP_CONTRACT,
+  SEND_MESSAGE_CONTRACT,
 ] as const satisfies readonly ToolContract[]
 
 export function toolContract(name: string): ToolContract | undefined {
