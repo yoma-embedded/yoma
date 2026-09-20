@@ -1,6 +1,6 @@
 {
   "name": "@earendil-works/pi-agent-core",
-  "version": "0.85.1",
+  "version": "0.86.0",
   "private": true,
   "description": "General-purpose agent with transport abstraction, state management, and attachment support",
   "type": "module",
@@ -25,6 +25,10 @@
     "./harness/context": {
       "types": "./src/harness/context.ts",
       "import": "./src/harness/context.ts"
+    },
+    "./experimental/pico3": {
+      "types": "./src/harness/pico3/index.ts",
+      "import": "./src/harness/pico3/index.ts"
     },
     "./harness/env/nodejs": {
       "types": "./src/harness/env/nodejs.ts",

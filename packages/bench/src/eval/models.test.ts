@@ -1,7 +1,9 @@
 /**
- * 评测模型注册表:vision-exp 真的能被选中,且 input 含 image、单价非 0(否则 cost 列静默为 0)。
+ * 评测模型注册表:带视觉的那个模型真的能被选中,且 input 含 image、单价非 0(否则 cost 列静默为 0)。
  *
  * 2026-09 起该模型由 pi-ai 内建目录提供,不再走本地追加表;原来的漂移闸门已完成使命并删除。
+ * 2026-09-20(pi-ai 0.86.0):DeepSeek 把 `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp`
+ * 一起换成了 `deepseek-flash`(V4.1 Flash,自带视觉),这里跟着改 id,断言不变。
  * `withExtraModels` 的机制测试改用合成条目。
  */
 
@@ -15,7 +17,7 @@ import { NO_AMBIENT_AUTH } from "@yoma-desktop/kernel/host/models"
 
 import { resolveEvalModels, withExtraModels } from "./models.ts"
 
-const VISION = "deepseek-v4-flash-vision-exp"
+const VISION = "deepseek-flash"
 
 const dirs: string[] = []
 afterEach(() => {
@@ -30,7 +32,7 @@ function configDirWithKey(entries: Record<string, unknown>): string {
 }
 
 describe("resolveEvalModels", () => {
-  test("追加的 vision-exp 能被选中,且 input 含 image、单价非 0", async () => {
+  test("带视觉的 deepseek-flash 能被选中,且 input 含 image、单价非 0", async () => {
     const configDir = configDirWithKey({ deepseek: { type: "api_key", key: "sk-test" } })
     const { models, model } = await resolveEvalModels({
       configDir,
@@ -47,21 +49,21 @@ describe("resolveEvalModels", () => {
     expect(model.cost.cacheRead).toBeGreaterThan(0)
     // 内建条目一个不少,追加的排在后面。
     const ids = models.getModels("deepseek").map((m) => m.id)
-    expect(ids).toContain("deepseek-v4-flash")
+    expect(ids).toContain("deepseek-v4-pro")
     expect(ids).toContain(VISION)
     // 没凭据的 provider 从注册表删掉(与 resolveModel 同一条纪律)。
     expect(models.getModels("anthropic")).toHaveLength(0)
   })
 
-  test("内建模型照常可选(对照组 deepseek-v4-flash)", async () => {
+  test("内建模型照常可选(对照组 deepseek-v4-pro)", async () => {
     const configDir = configDirWithKey({ deepseek: { type: "api_key", key: "sk-test" } })
     const { model } = await resolveEvalModels({
       configDir,
       providerID: "deepseek",
-      modelID: "deepseek-v4-flash",
+      modelID: "deepseek-v4-pro",
       authContext: NO_AMBIENT_AUTH,
     })
-    expect(model.id).toBe("deepseek-v4-flash")
+    expect(model.id).toBe("deepseek-v4-pro")
   })
 
   test("没有 key 时报错并指向 auth.json", async () => {
@@ -75,7 +77,7 @@ describe("resolveEvalModels", () => {
     const configDir = configDirWithKey({ deepseek: { type: "api_key", key: "sk-test" } })
     await expect(
       resolveEvalModels({ configDir, providerID: "deepseek", modelID: "nope", authContext: NO_AMBIENT_AUTH }),
-    ).rejects.toThrow(/Model deepseek\/nope not found.*deepseek-v4-flash/s)
+    ).rejects.toThrow(/Model deepseek\/nope not found.*deepseek-flash/s)
   })
 
   test("未知 provider 报错", async () => {

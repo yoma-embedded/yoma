@@ -5,7 +5,13 @@
  * 流式文本先截断再长回来看起来像"网络抖动"。所以必须在这一层钉死。
  */
 import { describe, expect, test } from "vitest"
-import type { AssistantMessage, AssistantMessageEvent, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai"
+import type {
+  AssistantMessage,
+  AssistantMessageEvent,
+  JsonValue,
+  ToolResultMessage,
+  UserMessage,
+} from "@earendil-works/pi-ai"
 import type { AgentMessage, BranchSummaryEntry, CompactionEntry, CustomEntry } from "@earendil-works/pi-agent-core"
 
 import { removalEvents, SessionProjection } from "./projector.ts"
@@ -53,7 +59,7 @@ function assistant(
   }
 }
 
-function toolResult(toolCallId: string, text: string, details?: unknown, timestamp = T0 + 5): ToolResultMessage {
+function toolResult(toolCallId: string, text: string, details?: JsonValue, timestamp = T0 + 5): ToolResultMessage {
   return {
     role: "toolResult",
     toolCallId,

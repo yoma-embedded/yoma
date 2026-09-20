@@ -13,9 +13,17 @@
  * 会如实变成一轮可见的失败。
  */
 
-import { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, type Model } from "@earendil-works/pi-ai"
+import {
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxText,
+  fauxToolCall,
+  type JsonObject,
+  type Model,
+} from "@earendil-works/pi-ai"
 
-export type FauxPart = { text: string } | { tool: string; input: Record<string, unknown> }
+export type FauxPart = { text: string } | { tool: string; input: JsonObject }
 
 /** 一次 provider 响应的内容(一条 assistant 消息的 parts)。 */
 export type FauxMessage = FauxPart[]

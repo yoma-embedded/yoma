@@ -8,6 +8,8 @@
  *
  * 2026-09:`deepseek-v4-flash-vision-exp` 已随 pi-ai 0.85.1 进入内建目录(字段与本地补丁逐项一致),
  * 补丁按原定的漂移闸门指示删除,追加表现在是空的。下次又要跑目录外的模型时往这里加。
+ * 2026-09-20(pi-ai 0.86.0):DeepSeek 把 flash 一族并成 `deepseek-flash`(V4.1 Flash,自带视觉),
+ * 旧的 `deepseek-v4-flash` / `-vision-exp` 已不在目录里 —— 评测的缺省模型随之改成 `deepseek-flash`。
  *
  * 追加条目的 `input` 必须含 `"image"`:pi-ai 的 openai-completions 在 `model.input.includes("image")`
  * 为假时**静默丢掉**工具结果里的图片(datasheet `view_figure`、la 预览就白发了)。
