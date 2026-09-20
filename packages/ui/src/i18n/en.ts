@@ -213,7 +213,7 @@ export const dict: Record<string, string> = {
   "ui.tool.agent.label": "Sub-agent",
   "ui.tool.agent.state.pending": "Queued",
   "ui.tool.agent.state.running": "Running",
-  "ui.tool.agent.state.background": "Moved to background",
+  "ui.tool.agent.state.background": "Running in background",
   "ui.tool.agent.state.completed": "Done",
   "ui.tool.agent.state.failed": "Failed",
   "ui.tool.agent.state.killed": "Stopped",
@@ -225,7 +225,7 @@ export const dict: Record<string, string> = {
   "ui.tool.agent.noResult": "The sub-agent finished without any text.",
   "ui.tool.agent.inBackground": "Running in the background. The result comes back to this session as a notification.",
   "ui.tool.agent.detached":
-    "Moved to the background; its current state isn't known here. The result comes back as a notification.",
+    "Running in the background (live progress sits in the agents bar above the composer). The result comes back to this session as a notification.",
   "ui.tool.agent.readout.agent": "Agent",
   "ui.tool.agent.readout.turns": "Turns",
   "ui.tool.agent.readout.tools": "Tool uses",

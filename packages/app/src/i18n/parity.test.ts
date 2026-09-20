@@ -17,6 +17,7 @@ const PARITY_PREFIXES = [
   "session.bench.",
   // 子 agent:任务面板、子会话页的顶部条、输入框上方的"排队中"。
   "session.subagent.",
+  "session.subagentDock.",
   "session.queueDock.",
 ] as const
 

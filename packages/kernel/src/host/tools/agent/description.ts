@@ -6,6 +6,10 @@
  * SendMessage → send_message)、例子换成嵌入式场景、以及 yoma 自己的两条(硬件工具不给子 agent、后台子 agent 问不了人)。
  * "Don't peek / Don't race" 在 CC 里写在 fork 段,道理对后台 agent 一样成立,这里挪给后台用。
  * 宿主不能后台时(bench / 信箱),后台相关的段落与例子整段不出(CC 在 CLAUDE_CODE_DISABLE_BACKGROUND_TASKS 下同样摘掉)。
+ *
+ * **与 CC 的一处刻意不同**(用户 2026-09-20 定):CC 缺省前台、后台要显式要;这里缺省后台,只有"拿不到结果就一步都
+ * 走不下去"才显式 `run_in_background: false`。所以这几段话的方向是反的 —— 桌面端有人看着屏幕,主 agent 卡在一次
+ * 子 agent 调用里的那几分钟,用户只能看着一个转圈的"思考中"。
  */
 
 import type { AgentProfile } from "../../domain/agents/profile.ts"
@@ -28,8 +32,9 @@ export function agentToolDescription(profiles: readonly AgentListing[], options:
     "- When the agent is done, it will return a single message back to you. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result.",
     ...(background
       ? [
-          "- You can optionally run agents in the background using the run_in_background parameter. When an agent runs in the background, you will be automatically notified when it completes — do NOT sleep, poll, or proactively check on its progress. Continue with other work or respond to the user instead.",
-          "- **Foreground vs background**: Use foreground (default) when you need the agent's results before you can proceed — e.g., research agents whose findings inform your next steps. Use background when you have genuinely independent work to do in parallel.",
+          "- **Agents run in the background by default.** The call returns immediately with an agentId; you are automatically notified when the agent completes — do NOT sleep, poll, or proactively check on its progress. Keep working or answer the user instead.",
+          "- Right after launching one, tell the user in one short line what you delegated and that you will report back when it lands. They see a live list of running agents, but not why you launched them.",
+          "- Set `run_in_background: false` only when you cannot take a single further step without the result — that blocks your turn until the agent finishes, and the user sees nothing but a spinner meanwhile. Prefer launching it in the background and doing the parts you can do now.",
         ]
       : []),
     "- To continue a previously spawned agent, use send_message with the agent's ID as the `to` field. The agent resumes with its full context preserved. Each agent invocation starts fresh — provide a complete task description.",
@@ -58,10 +63,18 @@ export function agentToolDescription(profiles: readonly AgentListing[], options:
 
 <example>
 user: "Wire up the ADC DMA, and tell me whether the STM32G071 ADC can sample at 2.5 MSPS."
-assistant: I'll ask the datasheet agent about the ADC limit in the background while I start on the DMA wiring.
-agent({ description: "ADC max sample rate", subagent_type: "datasheet", run_in_background: true, prompt: "For the STM32G071 (reference manual RM0444, datasheet DS12232): what is the maximum ADC conversion rate at 12-bit resolution, and under which ADC clock and sampling-time conditions? Cite the page or section and quote the table row." })
+assistant: I'll ask the datasheet agent about the ADC limit while I start on the DMA wiring — I'll tell you what it says when it comes back.
+agent({ description: "ADC max sample rate", subagent_type: "datasheet", prompt: "For the STM32G071 (reference manual RM0444, datasheet DS12232): what is the maximum ADC conversion rate at 12-bit resolution, and under which ADC clock and sampling-time conditions? Cite the page or section and quote the table row." })
 <commentary>
-The datasheet answer does not block the DMA work, so it runs in the background; the result arrives later as a notification, in a separate turn.
+No run_in_background needed — it is the default. The DMA work does not depend on the answer, so the assistant keeps going and the result arrives later as a notification, in a separate turn.
+</commentary>
+</example>
+
+<example>
+user: "Which linker script is this build using? Don't change anything yet."
+assistant: agent({ description: "Find linker script", subagent_type: "Explore", run_in_background: false, prompt: "Find which linker script this CMake/Makefile build passes to the linker (-T flag), report its path and the FLASH/RAM region sizes it declares, with file paths and line numbers." })
+<commentary>
+The user asked one question and nothing else can proceed without the answer, so this one blocks: run_in_background: false.
 </commentary>
 </example>`
     : ""

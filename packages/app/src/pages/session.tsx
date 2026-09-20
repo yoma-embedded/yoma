@@ -1,5 +1,6 @@
 import type { ToolConfirmView, UserMessage } from "@yoma-desktop/kernel"
 import { useDialog } from "@yoma-desktop/ui/context/dialog"
+import { useData } from "@yoma-desktop/session-ui/context"
 import { createQuery, useMutation, useQueryClient } from "@tanstack/solid-query"
 import {
   onCleanup,
@@ -65,6 +66,7 @@ import { formatServerError } from "@/utils/server-errors"
 import { directoryKey } from "@/context/global-sync/utils"
 import { createSessionOwnership } from "./session/session-ownership"
 import { prependRetracted, type RetractedMessage } from "./session/composer/queue-retract"
+import { dockTasks } from "./session/subagent/task-view"
 
 type FollowupItem = FollowupDraft & { id: string }
 type FollowupEdit = Pick<FollowupItem, "id" | "prompt" | "context">
@@ -92,6 +94,8 @@ export default function Page() {
   const location = useLocation()
   const { params, sessionKey, workspaceKey, tabs, view } = useSessionLayout()
   const sessionOwnership = createSessionOwnership(sessionKey)
+  // 打开子会话 / 停止子 agent 的回调由宿主挂在 Data 上下文上(agent 卡片、状态栏任务面板、子 agent 坞同一份)。
+  const data = useData()
 
   createEffect(() => {
     if (!prompt.ready()) return
@@ -1017,6 +1021,15 @@ export default function Page() {
     return sync().session.get(id)?.parentID ?? sync().data.task[id]?.parentID
   })
 
+  // ── 固定的「子 agent」坞(缺省后台之后"谁在跑"要有个不随对话滚动的位置)──────────────
+  // 只画还没完事的:排队中 / 在跑 / 跑完但通知还在收件箱里排着。停止与打开走 Data 上下文那一份回调
+  // (与 agent 卡片、状态栏任务面板同一份),这里不再写一遍 RPC。
+  const subagentRows = createMemo(() => {
+    const id = params.id
+    if (!id) return []
+    return dockTasks(sync().data.task, id, sync().data.queue[id])
+  })
+
   // ── 排队中(会话忙时发的消息,照 CC;设计 §6.9)──────────────────────────────────
   // 数据是内核的 session.queue(收件箱现状)。子 agent 的通知也在收件箱里,但它不归用户改,这里只列 user 那几条。
   const queuedPrompts = createMemo(() => {
@@ -1075,6 +1088,18 @@ export default function Page() {
         params.id && confirms.items.length
           ? { items: confirms.items, replying: confirms.replying, onReply: replyConfirm }
           : undefined,
+      subagents: () => {
+        const rows = subagentRows()
+        if (!rows.length) return undefined
+        return {
+          items: rows,
+          onOpen: (taskID) => data.navigateToSession?.(taskID),
+          onStop: (taskID) => data.stopTask?.(taskID),
+          onStopAll: () => {
+            for (const row of rows) if (!row.reporting) data.stopTask?.(row.task.id)
+          },
+        }
+      },
       queue: () =>
         queuedPrompts().length
           ? {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest"
 import type { TaskView } from "@yoma-desktop/kernel"
-import { sessionTasks, taskActive, taskElapsed, taskLook } from "./task-view"
+import { dockTasks, sessionTasks, taskActive, taskElapsed, taskLook } from "./task-view"
 
 const task = (id: string, input: Partial<TaskView> = {}): TaskView => ({
   id,
@@ -50,5 +50,28 @@ describe("子 agent 任务的读法", () => {
     expect(
       taskElapsed(task("a", { status: "killed", usage: { totalTokens: 0, toolUses: 0, durationMs: 4_200 } }), 99_000),
     ).toBe("4 s")
+  })
+
+  test("坞只画没完事的:排队中 / 在跑 / 跑完但通知还排着;汇报完的与别的会话的不画", () => {
+    const tasks = {
+      live: task("live"),
+      queued: task("queued", { status: "pending", startedAt: 2_000 }),
+      reported: task("reported", { status: "completed" }),
+      waiting: task("waiting", { status: "completed", startedAt: 5 }),
+      other: task("other", { parentID: "another" }),
+    }
+    const rows = dockTasks(tasks, "main", [
+      { kind: "notification", entryId: "n1", taskID: "waiting" },
+      { kind: "prompt", entryId: "p1", text: "排队的消息", images: 0 },
+      // taskID 认不出来的通知不该把谁点亮。
+      { kind: "notification", entryId: "n2" },
+    ])
+    expect(rows.map((row) => [row.task.id, row.reporting])).toEqual([
+      ["queued", false],
+      ["live", false],
+      ["waiting", true],
+    ])
+    // 在跑与排队中的按开始时间新的在前,汇报中的排在它们后面。
+    expect(dockTasks(tasks, "main", undefined).map((row) => row.task.id)).toEqual(["queued", "live"])
   })
 })

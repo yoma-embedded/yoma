@@ -1864,13 +1864,7 @@ export class SessionManager {
     if (result.value.kind !== "cancelled") return { kind: result.value.kind }
     const message = item?.type === "message" && item.message.role === "user" ? item.message : undefined
     if (!message) return { kind: "cancelled" }
-    const files =
-      typeof message.content === "string"
-        ? []
-        : message.content.flatMap((block) =>
-            block.type === "image" ? [{ mime: block.mimeType, url: `data:${block.mimeType};base64,${block.data}` }] : [],
-          )
-    return { kind: "cancelled", text: textOf(message.content), ...(files.length ? { files } : {}) }
+    return { kind: "cancelled", ...userPayload(message) }
   }
 
   // -------------------------------------------------------------------------
@@ -2113,7 +2107,7 @@ export class SessionManager {
    * 操作:重开会话带进来的、或者 deferred 挂着的那种没有本地 drive,少这一步
    * waitForIdle 就会永远停在那里(cli 的 abort() 是同一套动作)。
    */
-  private async stop(entry: Entry): Promise<void> {
+  private async stop(entry: Entry, options: { returnUserMessages?: boolean } = {}): Promise<QueuedUserPayload[]> {
     // 还在准备期(压缩附件)的那一轮:lane 上什么都没有,只能靠这个标记让它别再开跑。
     if (entry.preparing) {
       entry.preparing.cancelled = true
@@ -2123,12 +2117,15 @@ export class SessionManager {
     // 先回来。顺序反了的表现是"点停止没反应",一直到确认台十分钟超时才动。
     this.desk.cancel(entry.id)
     const lane = entry.lane
-    if (!lane) return
+    if (!lane) return []
+    const dropped: AgentMessage[] = []
     const operationId = entry.operationId
     if (operationId) {
       // OperationMismatch = 那个操作已经自己结束了,不是错误。
       const requested = await lane.requestAbort(operationId, this.context)
       if (!requested.ok && requested.error._tag !== "OperationMismatch") throw laneError(requested.error)
+      // requestAbort **把收件箱里排着的东西一并摘下来交回**(v2 的事实,subagent-v2.test.ts (g))。
+      if (requested.ok) dropped.push(...requested.value.steer, ...requested.value.followUp)
     }
     const pending = (await lane.inspectExecution(this.context)).current
     if (pending) {
@@ -2137,13 +2134,52 @@ export class SessionManager {
       if (!aborted.ok && aborted.error._tag !== "NoActiveOperation") throw laneError(aborted.error)
     }
     await lane.waitForIdle(this.context)
+    return this.restoreInbox(entry, dropped, options.returnUserMessages === true)
   }
 
-  async abort(sessionID: string): Promise<void> {
+  /**
+   * 停止摘下来的收件箱怎么处置(设计稿 §6.9)。
+   *
+   * **通知一律放回去**:那是子 agent 已经跑完的结论,丢了就是白跑一趟,而且界面上看不出少了什么 ——
+   * 缺省后台之后这条更要紧,子 agent 的结论大多正躺在收件箱里等主 agent 汇报。放回去再叫醒一次,
+   * 主 agent 下一轮就会看到。
+   *
+   * **用户自己打的字**:按停止时交回调用方(`session.abort` 的返回值),界面把它退回输入框 —— 用户按停止的
+   * 意思是"这轮别跑了",不是"我那句话不要了"。其余路径(手动压缩、关会话、LRU 淘汰)没有人接,原样放回
+   * 收件箱:压缩完 / 重开之后它还在,照样会被取走。
+   */
+  private async restoreInbox(entry: Entry, dropped: readonly AgentMessage[], returnUserMessages: boolean) {
+    const returned: QueuedUserPayload[] = []
+    for (const message of dropped) {
+      if (returnUserMessages && message.role === "user") {
+        returned.push(userPayload(message))
+        continue
+      }
+      const restored = await entry.lane!.steer(message, undefined, this.context)
+      if (!restored.ok) {
+        this.options.emit([
+          {
+            type: "kernel.error",
+            sessionID: entry.id,
+            message: `排队的内容没能放回收件箱:${laneErrorMessage(restored.error)}`,
+          },
+        ])
+      }
+    }
+    // 放回去的东西没人驱动:叫醒一次(空闲才真起一轮,忙着就在边界上被取走)。
+    // 与"收件箱变非空就叫醒"那一处(queue_update)**互为兜底**,单删一处测不出来 —— 别当死代码删掉,理由见
+    // 设计稿 P2 结果第 2 条:失败收场的那一轮根本不发 queue_update。
+    if (dropped.length > returned.length) this.wake(entry)
+    return returned
+  }
+
+  /** 中断这一轮。排队的用户消息交回调用方(界面退回输入框);子 agent 的通知留在收件箱里,见 `restoreInbox`。 */
+  async abort(sessionID: string): Promise<{ returned?: QueuedUserPayload[] }> {
     const entry = this.entries.get(sessionID)
-    if (!entry || (!isOpen(entry) && !entry.preparing)) return
-    await this.stop(entry)
+    if (!entry || (!isOpen(entry) && !entry.preparing)) return {}
+    const returned = await this.stop(entry, { returnUserMessages: true })
     this.options.emit(this.setStatus(entry, { type: "idle" }))
+    return returned.length > 0 ? { returned } : {}
   }
 
   /** 手动压缩。状态(compacting → idle)由 compaction_start/end 事件发出去。 */
@@ -2290,6 +2326,20 @@ export class SessionManager {
     for (const entry of entries.filter((item) => !item.parentID)) await this.dispose(entry)
     for (const entry of entries.filter((item) => item.parentID)) await this.dispose(entry)
   }
+}
+
+/** 交回界面的一条排队用户消息:原文与图片(撤回与按停止交回都用它)。 */
+export type QueuedUserPayload = { text: string; files?: Array<{ mime: string; url: string }> }
+
+/** 排队的用户消息 → 界面能填回输入框的样子。图片用 data: URL,与 prompt 收的形状一致。 */
+function userPayload(message: Extract<AgentMessage, { role: "user" }>): QueuedUserPayload {
+  const files =
+    typeof message.content === "string"
+      ? []
+      : message.content.flatMap((block) =>
+          block.type === "image" ? [{ mime: block.mimeType, url: `data:${block.mimeType};base64,${block.data}` }] : [],
+        )
+  return { text: textOf(message.content), ...(files.length ? { files } : {}) }
 }
 
 /** 收件箱 → `session.queue` 的视图:用户排队的消息给原文,子 agent 的通知只给个记号。 */

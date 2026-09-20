@@ -140,7 +140,7 @@ describe("agent 工具:描述与 schema", () => {
 })
 
 describe("agent 工具:交给宿主的东西", () => {
-  it("缺省类型 general-purpose;model 去空白;toolCallId 与父的中止信号原样交给宿主", async () => {
+  it("缺省类型 general-purpose、缺省后台;model 去空白;toolCallId 与父的中止信号原样交给宿主", async () => {
     const { host, calls } = fakeHost({ spawn: async () => ({ kind: "completed", task: task(), text: "done", oneShot: false }) })
     const controller = new AbortController()
     await runAgent(
@@ -154,7 +154,8 @@ describe("agent 工具:交给宿主的东西", () => {
       description: "Trace clock tree",
       prompt: "find SystemClock_Config",
       model: "deepseek/deepseek-v4-flash",
-      runInBackground: false,
+      // 缺省后台(用户 2026-09-20 定,偏离 CC):模型不写这个参数就是后台。
+      runInBackground: true,
     })
     expect(calls.spawn[0]!.call.toolCallId).toBe("call-1")
     expect(calls.spawn[0]!.call.signal).toBe(controller.signal)
@@ -168,12 +169,17 @@ describe("agent 工具:交给宿主的东西", () => {
     expect(calls.spawn).toEqual([])
   })
 
-  it("run_in_background:能后台时照交;不能后台时模型硬塞进来也不认", async () => {
+  it("run_in_background:不写就是后台,写 false 才同步等;不能后台的宿主一律前台", async () => {
     const launched = async (): Promise<SpawnOutcome> => ({ kind: "async_launched", task: task({ background: true, status: "running" }) })
     const allowed = fakeHost({ spawn: launched })
-    await runAgent(createAgentTool({ host: allowed.host }), { description: "d", prompt: "p", run_in_background: true }).result
+    await runAgent(createAgentTool({ host: allowed.host }), { description: "d", prompt: "p" }).result
     expect(allowed.calls.spawn[0]!.request.runInBackground).toBe(true)
 
+    const waiting = fakeHost({ spawn: async () => ({ kind: "completed", task: task(), text: "x", oneShot: true }) })
+    await runAgent(createAgentTool({ host: waiting.host }), { description: "d", prompt: "p", run_in_background: false }).result
+    expect(waiting.calls.spawn[0]!.request.runInBackground).toBe(false)
+
+    // 不能后台的宿主(bench / 信箱):模型硬塞 true 也不认。
     const denied = fakeHost({ background: false, spawn: async () => ({ kind: "completed", task: task(), text: "x", oneShot: true }) })
     await runAgent(createAgentTool({ host: denied.host }), { description: "d", prompt: "p", run_in_background: true }).result
     expect(denied.calls.spawn[0]!.request.runInBackground).toBe(false)

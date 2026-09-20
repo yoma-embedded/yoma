@@ -305,6 +305,14 @@ export const dict = {
   "session.subagent.stop": "Stop",
   "session.subagent.parent": "Main session",
   "session.subagent.backTo": "Back to {{title}}",
+  "session.subagentDock.title": "Agents",
+  "session.subagentDock.running": "{{count}} running",
+  "session.subagentDock.reportingCount": "{{count}} waiting to be reported",
+  "session.subagentDock.reporting": "done · waiting for the main agent",
+  "session.subagentDock.more": "{{count}} more",
+  "session.subagentDock.stopAll": "Stop all",
+  "session.subagentDock.collapse": "Collapse agents",
+  "session.subagentDock.expand": "Expand agents",
 
   // ---- 调试工作台(右栏"调试"档:状态条 + 仪器窗口)。`bench.*` 是信箱调试台那一页,别混。
   "session.bench.instrument.log": "Log",

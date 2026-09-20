@@ -58,14 +58,16 @@ function script() {
       PARENT_PROMPT,
       [
         fauxAssistantMessage([
-          fauxToolCall("agent", { description: SUBAGENT_DESCRIPTION, prompt: CHILD_PROMPT, subagent_type: "Explore" }),
+          // 前台那个要显式写 false:缺省是后台(用户 2026-09-20 定)。
+          fauxToolCall("agent", {
+            description: SUBAGENT_DESCRIPTION,
+            prompt: CHILD_PROMPT,
+            subagent_type: "Explore",
+            run_in_background: false,
+          }),
         ]),
         fauxAssistantMessage([
-          fauxToolCall("agent", {
-            description: BACKGROUND_DESCRIPTION,
-            prompt: BACKGROUND_PROMPT,
-            run_in_background: true,
-          }),
+          fauxToolCall("agent", { description: BACKGROUND_DESCRIPTION, prompt: BACKGROUND_PROMPT }),
         ]),
         text(`查到了:${SUBAGENT_ANSWER};手册在后台查`),
         text(`后台也查到了:${BACKGROUND_ANSWER}`),

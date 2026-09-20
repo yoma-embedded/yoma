@@ -748,12 +748,19 @@ v3 规格(`pi/packages/agent/docs/harness.md` §5.5/§5.6)的形状 —— hooks
 `NO_AMBIENT_AUTH`**。目录有 40 家,开发机上一个 `ANTHROPIC_API_KEY` 或一份
 `~/.aws/credentials` 就会让"首跑无凭据"的测试说谎,逐个删环境变量列不全。生产不传。
 
-### 子 agent(`host/tasks.ts` + `host/domain/agents/` + 四个工具,2026-09-19)
+### 子 agent(`host/tasks.ts` + `host/domain/agents/` + 四个工具,2026-09-19;2026-09-20 改缺省后台)
 
-照 Claude Code 做,设计与逐期结果在 `docs/子agent-设计方案-v0.4-20260918.md`。主 agent 用 `agent` 工具派一个
-子 agent:它是一个**独立的子会话**(会话文件头带 `parentSessionId`,视图上是 `Session.parentID`),有自己的
-harness、系统提示词和按 profile 裁过的工具池,跑完把最后一段话交回那次工具调用。另外三件:`task_output`
-(等 / 读后台任务的结果)、`task_stop`、`send_message`(给跑着的子 agent 插话,或让结束了的接着跑)。
+照 Claude Code 做,设计与逐期结果在 `docs/子agent-设计方案-v0.4-20260918.md`(§15 是偏离 CC 的那两条)。主 agent 用
+`agent` 工具派一个子 agent:它是一个**独立的子会话**(会话文件头带 `parentSessionId`,视图上是 `Session.parentID`),
+有自己的 harness、系统提示词和按 profile 裁过的工具池。另外三件:`task_output`(等 / 读后台任务的结果)、
+`task_stop`、`send_message`(给跑着的子 agent 插话,或让结束了的接着跑)。
+
+**缺省后台**(用户 2026-09-20 定,**偏离 CC**):不写 `run_in_background` 就是后台 —— 那次调用立刻交回一个 agentId,
+主 agent 继续对话 / 继续调工具,结论稍后以通知回到收件箱;只有"拿不到结果就一步都走不下去"才显式
+`run_in_background: false`(那会把主 agent 这一轮堵到子 agent 跑完)。理由:桌面端有人看着屏幕,主 agent 卡在一次
+子 agent 调用里的那几分钟,用户只能看着一个转圈的"思考中"。改这个缺省值时最容易忘的一处是测试 ——
+**所有测前台语义的场景都要显式写 `run_in_background: false`**,不写就是后台,那些"结果回到工具调用"的断言会
+全部落空(P1–P4 的 9 个场景当时就是这么红的)。bench 与信箱不受影响(`background: false` = 一律前台)。
 
 - **定义**(`host/domain/agents/`):内建 `general-purpose` / `Explore`(只读、一次性)/ `datasheet`;md 定义
   (frontmatter 的 tools / disallowedTools / model / maxTurns / background / skills …)从 `~/.yoma/agents` 与沿 cwd
@@ -769,12 +776,24 @@ harness、系统提示词和按 profile 裁过的工具池,跑完把最后一段
   排队中的子会话 **LRU 钉住**(关掉 harness 不等于中止,下次打开它会躺在 `open` 里)、删主会话级联删子会话、
   `disposeAll` 先关主会话再关子会话(反过来的话主会话拿着"子 agent 被停"的结果会再请求一次模型)、子会话拒收
   用户消息(`SubagentSessionError`)。确认门:前台子 agent 的询问冒到主会话的确认条上(写明是哪个子 agent),
-  后台的直接拒 —— 没人看着它。
+  后台的直接拒 —— 没人看着它。**缺省后台之后这条的含义变了**:子 agent 实际上干不了装工具链与探针类命令,它
+  报回主 agent,由主 agent 自己跑(该问时确认条弹一次、命令看得见)或先问用户 —— 与"板子操作留在主 agent 的
+  轮次里"一致。**不做派生时预授权**(用户 2026-09-20 定):派生那一刻没人知道它后面会跑哪条命令,而确认条的
+  规矩正是"整段显示真正要跑的那条,不截断"。
 - **所有会话的行为都改了:忙时发消息排队,不打断**(照 CC)。`session.prompt` 回 `queued: true`,消息 steer 进
   收件箱、在下一个工具边界送给模型;排队期间在 `session.queue` 事件里,界面画在输入框上方,可以撤回
-  (`session.cancelQueued`,原文与图片交回输入框;空输入框按 ↑ 一次撤回全部)。想打断要按停止。**已知缺口**:
-  停止(`requestAbort`)会把收件箱里排着的消息与通知摘下来丢掉,用户 2026-09-18 定暂缓(补法写在设计稿 §6.9)。
-- **界面**:agent 卡片与完成通知行(`session-ui/src/components/agent-tool.tsx`);子会话不进侧栏与首页
+  (`session.cancelQueued`,原文与图片交回输入框;空输入框按 ↑ 一次撤回全部)。想打断要按停止。
+  **按停止时收件箱不丢**(2026-09-20 补,缺省后台之后这条是主路径):`requestAbort` 摘下来的东西宿主接住 ——
+  通知重新 steer 回收件箱并叫醒(子 agent 已经跑完的结论,丢了就是白跑一趟,而且界面上看不出少了什么),
+  用户排着的那句话经 `session.abort` 的 `returned` 交回界面、退回输入框(排队的原文在前、正在打的在后)。
+  手动压缩 / 关会话 / LRU 淘汰没有人接,两样都原样放回收件箱。
+- **界面**:**输入框正上方一条固定的「子 agent」坞**(`pages/session/subagent/subagent-dock.tsx`,2026-09-20;
+  竖向顺序 确认条 → 子 agent 坞 → 排队中 → 输入框):缺省后台之后"谁在跑"必须有个不随对话滚动的位置。坞只画
+  **还没完事的** —— 排队中 / 在跑 / 跑完但通知还在收件箱里排着(`task-view.ts` 的 `dockTasks`);汇报完就去掉,
+  结论在对话里那条通知行上。封顶 3 行、多的折成"还有 N 个"、可折叠、全空不渲染。停止**各停各的**:会话的停止
+  只中断主 agent 这一轮,后台子 agent 继续跑完并汇报;要停某一个在坞里点它(在跑的 ≥2 个时坞头有「全部停止」),
+  从坞里停掉的照样发"已停止"通知(带部分结果)—— 不告诉主 agent,它会一直等或者编一个结果出来。
+  agent 卡片与完成通知行(`session-ui/src/components/agent-tool.tsx`);子会话不进侧栏与首页
   (`session.list` 就不给,事件归约与 `isRootVisibleSession` 各再挡一道),从卡片与状态栏的「子 agent」任务面板
   打开;子会话页没有输入框,标题行是「← 主会话 / 类型」与任务状态、停止。任务状态走 `task.updated` 事件 +
   `task.list` 种子,两者按"谁走得更远"合并(`server-session.ts` 的 `taskAhead`)。
@@ -1349,8 +1368,8 @@ Windows 失败时这里超时变红,本来也不该有只含 mac 的 Release)。
 
 ## 已知的未完成项
 
-- **子 agent**(见「子 agent」一节):停止键会丢掉收件箱里排着的消息与通知(暂缓);状态栏任务面板、子会话页的
-  状态与停止、"排队中"一栏只有组件渲染测试,没在真窗口里跑过(`e2e:paint` 里的内核没有模型);fork 型子 agent、
+- **子 agent**(见「子 agent」一节):子 agent 坞、状态栏任务面板、子会话页的状态与停止、"排队中"一栏都只有组件
+  渲染测试,**没在真窗口里跑过**(`e2e:paint` 里的内核没有模型,种进去的任务不在它的注册表里);fork 型子 agent、
   worktree 隔离、硬件子 agent、重启后重新挂接前台调用等见设计稿 P5。
 - **工具链自动安装只在 Windows 上真装过**(五个包都装过,见「工具链自动安装」一节);macOS / Linux 的
   tar 路径与可执行位处理没有真机验过。运行期镜像只有 `YOMA_TOOLCHAIN_MIRROR` 一个口子,维护者若要自建

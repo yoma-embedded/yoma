@@ -27,7 +27,8 @@ const agentParameters = Type.Object({
   ),
   run_in_background: Type.Optional(
     Type.Boolean({
-      description: "Set to true to run this agent in the background. You will be notified when it completes.",
+      description:
+        "Agents run in the background by default: the call returns immediately and you are notified when the agent completes. Set to false only when you cannot proceed without the result — that blocks your turn until the agent finishes.",
     }),
   ),
 })

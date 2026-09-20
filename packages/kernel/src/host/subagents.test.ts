@@ -1,5 +1,9 @@
 /**
- * 子 agent 的宿主场景(docs/子agent-设计方案-v0.4-20260918.md §12 P2 的 (a)–(q),(o) 暂缓;(r)–(u) 是变异验证后补的)。
+ * 子 agent 的宿主场景(docs/子agent-设计方案-v0.4-20260918.md §12 P2 的 (a)–(q),(o) 暂缓;(r)–(u) 是变异验证后补的;
+ * (v) 懒打开补会话名是 P3 撞出来的;(w) 是"缺省后台"那次产品决定)。
+ *
+ * **缺省后台之后**(用户 2026-09-20 定):测前台语义的场景都显式写 `run_in_background: false` —— 不写就是后台,
+ * 那些"结果回到工具调用"的断言会全部落空。
  *
  * 走完整的 SessionManager:主会话、子会话、TaskManager、通知投递、排队、确认冒泡都是真的,只有模型是 faux。
  * 所有会话共用一份 faux(SessionManager 只解析一次模型目录),所以每一步都交给同一个"路由"工厂:按这次请求里
@@ -225,7 +229,7 @@ describe("子 agent 宿主(P2)", () => {
       script.route(
         "派三个",
         fauxAssistantMessage(
-          answers.map(([prompt]) => fauxToolCall("agent", { description: prompt, prompt, subagent_type: "Explore" })),
+          answers.map(([prompt]) => fauxToolCall("agent", { description: prompt, prompt, subagent_type: "Explore", run_in_background: false })),
         ),
         text("三路结果都齐了"),
       )
@@ -304,7 +308,7 @@ describe("子 agent 宿主(P2)", () => {
         "一起派",
         fauxAssistantMessage([
           fauxToolCall("agent", { description: "短活", prompt: "后台短活", run_in_background: true }),
-          fauxToolCall("agent", { description: "长活", prompt: "前台长活" }),
+          fauxToolCall("agent", { description: "长活", prompt: "前台长活", run_in_background: false }),
         ]),
         text("都知道了"),
       )
@@ -483,7 +487,7 @@ describe("子 agent 宿主(P2)", () => {
       )
       script.route(
         "派有限",
-        fauxAssistantMessage([fauxToolCall("agent", { description: "有限", prompt: "看目录", subagent_type: "limited" })]),
+        fauxAssistantMessage([fauxToolCall("agent", { description: "有限", prompt: "看目录", subagent_type: "limited", run_in_background: false })]),
         text("好"),
       )
 
@@ -556,8 +560,8 @@ describe("子 agent 宿主(P2)", () => {
       script.route(
         "派两个看工具",
         fauxAssistantMessage([
-          fauxToolCall("agent", { description: "通用", prompt: "看看工具" }),
-          fauxToolCall("agent", { description: "只读", prompt: "看看只读工具", subagent_type: "Explore" }),
+          fauxToolCall("agent", { description: "通用", prompt: "看看工具", run_in_background: false }),
+          fauxToolCall("agent", { description: "只读", prompt: "看看只读工具", subagent_type: "Explore", run_in_background: false }),
         ]),
         text("好"),
       )
@@ -604,7 +608,7 @@ describe("子 agent 宿主(P2)", () => {
         await untilAborted(options?.signal)
         return fauxAssistantMessage([])
       })
-      script.route("派前台", fauxAssistantMessage([fauxToolCall("agent", { description: "慢慢查", prompt: "慢慢查" })]))
+      script.route("派前台", fauxAssistantMessage([fauxToolCall("agent", { description: "慢慢查", prompt: "慢慢查", run_in_background: false })]))
 
       const parent = await manager.create(workspace)
       await manager.prompt(parent.id, { text: "派前台" })
@@ -718,8 +722,8 @@ describe("子 agent 宿主(P2)", () => {
       script.route(
         "派两个",
         fauxAssistantMessage([
-          fauxToolCall("agent", { description: "甲", prompt: "子甲" }),
-          fauxToolCall("agent", { description: "乙", prompt: "子乙" }),
+          fauxToolCall("agent", { description: "甲", prompt: "子甲", run_in_background: false }),
+          fauxToolCall("agent", { description: "乙", prompt: "子乙", run_in_background: false }),
         ]),
         text("好"),
       )
@@ -762,7 +766,7 @@ describe("子 agent 宿主(P2)", () => {
       )
       script.route(
         "派烧录",
-        fauxAssistantMessage([fauxToolCall("agent", { description: "前台烧", prompt: "前台烧录" })]),
+        fauxAssistantMessage([fauxToolCall("agent", { description: "前台烧", prompt: "前台烧录", run_in_background: false })]),
         text("好"),
       )
       script.route(
@@ -815,7 +819,7 @@ describe("子 agent 宿主(P2)", () => {
         "派慢活",
         fauxAssistantMessage([
           fauxToolCall("agent", { description: "陪跑", prompt: "后台陪跑", run_in_background: true }),
-          fauxToolCall("agent", { description: "慢活", prompt: "前台慢活" }),
+          fauxToolCall("agent", { description: "慢活", prompt: "前台慢活", run_in_background: false }),
         ]),
         text("看到插话了"),
       )
@@ -918,7 +922,7 @@ describe("子 agent 宿主(P2)", () => {
       })
       script.route(
         "派前台慢活",
-        fauxAssistantMessage([fauxToolCall("agent", { description: "慢活", prompt: "慢活转后台" })]),
+        fauxAssistantMessage([fauxToolCall("agent", { description: "慢活", prompt: "慢活转后台", run_in_background: false })]),
         text("先干别的"),
         text("收到"),
       )
@@ -954,7 +958,7 @@ describe("子 agent 宿主(P2)", () => {
       })
       script.route(
         "派久活",
-        fauxAssistantMessage([fauxToolCall("agent", { description: "久活", prompt: "跑得久" })]),
+        fauxAssistantMessage([fauxToolCall("agent", { description: "久活", prompt: "跑得久", run_in_background: false })]),
         text("先回来了"),
       )
       const parent = await manager.create(workspace)
@@ -1056,7 +1060,7 @@ describe("子 agent 宿主(P2)", () => {
       })
       script.route(
         "派卡住",
-        fauxAssistantMessage([fauxToolCall("agent", { description: "卡住", prompt: "前台卡住" })]),
+        fauxAssistantMessage([fauxToolCall("agent", { description: "卡住", prompt: "前台卡住", run_in_background: false })]),
         text("第二次请求"),
       )
       const queueItem = (wanted: string) => {
@@ -1097,7 +1101,7 @@ describe("子 agent 宿主(P2)", () => {
       script.route(
         "派一个",
         fauxAssistantMessage([
-          fauxToolCall("agent", { description: "查手册", prompt: "查手册", subagent_type: "Explore" }),
+          fauxToolCall("agent", { description: "查手册", prompt: "查手册", subagent_type: "Explore", run_in_background: false }),
         ]),
         text("好了"),
       )
@@ -1127,6 +1131,85 @@ describe("子 agent 宿主(P2)", () => {
       const settled = events.length
       await again.messages(child!.id)
       expect(events.slice(settled).filter((event) => event.type === "session.updated")).toEqual([])
+    },
+    SLOW,
+  )
+
+  test(
+    "(w) 缺省后台:不写 run_in_background 就是后台 —— 这一轮的工具结果是\"已派出\",父先收工,结论随通知回来",
+    async () => {
+      const { manager, script, workspace } = setup()
+      const release = deferred()
+      script.route("查时钟树", async (_context, options) => {
+        await hold(release.promise, options?.signal)
+        return text("HSE 8 MHz → PLL 168 MHz")
+      })
+      script.route(
+        "派一个",
+        fauxAssistantMessage([
+          fauxToolCall("agent", { description: "查时钟", prompt: "查时钟树", subagent_type: "Explore" }),
+        ]),
+        text("已经派出去了,查到就告诉你"),
+        text("时钟树查完了"),
+      )
+
+      const parent = await manager.create(workspace)
+      await manager.prompt(parent.id, { text: "派一个" })
+      // 子 agent 还卡在闸门上,父已经收工:说明那次调用立刻交回了。
+      await waitFor(() => script.count("派一个") === 2 && idle(manager, parent.id), 10_000, "父这一轮先收工")
+      expect(textOf(script.last("派一个").messages.at(-1))).toContain("Async agent launched successfully.")
+      expect(manager.tasks(parent.id)[0]).toMatchObject({ status: "running", background: true })
+
+      release.resolve()
+      await waitFor(() => script.count("派一个") === 3 && idle(manager, parent.id), 10_000, "通知把父叫醒")
+      const notes = notificationsIn(script.last("派一个"))
+      expect(notes).toHaveLength(1)
+      expect(notes[0]).toContain("HSE 8 MHz")
+    },
+    SLOW,
+  )
+
+  test(
+    "(x) 按停止:排着的用户消息交回调用方,子 agent 的通知留在收件箱、下一轮被取走",
+    async () => {
+      const { manager, script, workspace, events } = setup()
+      const holdForeground = deferred()
+      const queuedKinds = () => {
+        for (const event of [...events].reverse()) {
+          if (event.type === "session.queue" && event.sessionID) return event.items.map((item) => item.kind)
+        }
+        return []
+      }
+      script.route("后台干活", text("后台的结论"))
+      script.route("前台卡住", async (_context, options) => {
+        await hold(holdForeground.promise, options?.signal)
+        return text("前台跑完了")
+      })
+      script.route(
+        "派两个",
+        fauxAssistantMessage([
+          fauxToolCall("agent", { description: "后台", prompt: "后台干活" }),
+          fauxToolCall("agent", { description: "前台", prompt: "前台卡住", run_in_background: false }),
+        ]),
+        text("停下之后再说"),
+      )
+
+      const parent = await manager.create(workspace)
+      await manager.prompt(parent.id, { text: "派两个" })
+      // 后台那个已经跑完、通知排进了收件箱;前台那个还卡着,所以父一直忙。
+      await waitFor(() => queuedKinds().includes("notification"), 10_000, "通知进收件箱")
+      expect((await manager.prompt(parent.id, { text: "排着的那句" })).queued).toBe(true)
+      await waitFor(() => queuedKinds().includes("prompt"), 5000, "用户消息也排上队")
+
+      const stopped = await manager.abort(parent.id)
+      expect(stopped.returned).toEqual([{ text: "排着的那句" }])
+
+      // 通知没丢:放回收件箱之后被叫醒的那一轮取走它;用户那句话不在里面(已经交回输入框)。
+      await waitFor(() => script.count("派两个") === 2 && idle(manager, parent.id), 10_000, "通知被取走")
+      const asked = script.last("派两个")
+      expect(notificationsIn(asked)).toHaveLength(1)
+      expect(notificationsIn(asked)[0]).toContain("后台的结论")
+      expect(asked.messages.map(textOf)).not.toContain("排着的那句")
     },
     SLOW,
   )

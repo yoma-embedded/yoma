@@ -22,6 +22,7 @@ vi.mock("@yoma-desktop/session-ui/context", () => ({ useData: () => actions }))
 
 import { SessionConfirmDock } from "../src/pages/session/composer/session-confirm-dock"
 import { SessionQueueDock } from "../src/pages/session/composer/session-queue-dock"
+import { SubagentDock } from "../src/pages/session/subagent/subagent-dock"
 import { TaskSlot } from "../src/pages/session/subagent/task-slot"
 import { SubagentStatus } from "../src/pages/session/subagent/subagent-header"
 
@@ -172,5 +173,55 @@ describe("确认条", () => {
     const text = root.textContent ?? ""
     expect(text).toContain('session.confirmDock.agentWants{"agent":"general-purpose","tool":"flash"}')
     expect(text).toContain('session.confirmDock.wants{"tool":"flash"}')
+  })
+})
+
+describe("固定的子 agent 坞", () => {
+  const row = (id: string, input: Partial<TaskView> = {}, reporting = false) => ({ task: task(id, input), reporting })
+
+  test("在跑的给停止、待汇报的不给;多于三行折起来;两个以上在跑才有「全部停止」", () => {
+    const onOpen = vi.fn()
+    const onStop = vi.fn()
+    const onStopAll = vi.fn()
+    const [props, setProps] = createStore({
+      items: [row("a"), row("b"), row("done", { status: "completed" }, true)],
+      onOpen,
+      onStop,
+      onStopAll,
+      attached: true,
+    })
+    dispose = render(() => createComponent(SubagentDock, props), root)
+
+    const rows = () => [...root.querySelectorAll('[data-slot="subagent-row"]')]
+    expect(rows()).toHaveLength(3)
+    expect(root.textContent).toContain('session.subagentDock.running{"count":2}')
+    // 待汇报那一行:没有停止键,读数说等主 agent 汇报。
+    expect(rows()[2]!.textContent).toContain("session.subagentDock.reporting")
+    expect(button(rows()[2]!, "session.subagent.stop")).toBeUndefined()
+
+    button(rows()[0]!, "session.subagent.stop")!.click()
+    expect(onStop).toHaveBeenCalledWith("a")
+    button(rows()[2]!, "session.subagent.open")!.click()
+    expect(onOpen).toHaveBeenCalledWith("done")
+    button(root, "session.subagentDock.stopAll")!.click()
+    expect(onStopAll).toHaveBeenCalled()
+
+    // 第四行折起来。
+    setProps("items", (items) => [...items, row("d")])
+    expect(rows()).toHaveLength(3)
+    expect(root.textContent).toContain('session.subagentDock.more{"count":1}')
+
+    // 只剩一个在跑:没有「全部停止」。
+    setProps("items", [row("a")])
+    expect(button(root, "session.subagentDock.stopAll")).toBeUndefined()
+  })
+
+  test("折叠之后只剩标题那一行", () => {
+    dispose = render(() => createComponent(SubagentDock, { items: [row("a"), row("b")], attached: false }), root)
+    expect(root.querySelectorAll('[data-slot="subagent-row"]')).toHaveLength(2)
+
+    root.querySelector<HTMLButtonElement>('button[aria-label="session.subagentDock.collapse"]')!.click()
+    expect(root.querySelectorAll('[data-slot="subagent-row"]')).toHaveLength(0)
+    expect(root.textContent).toContain("session.subagentDock.title")
   })
 })

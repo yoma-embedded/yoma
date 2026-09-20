@@ -15,6 +15,9 @@ const optimistic: Array<{
 }> = []
 const optimisticSeeded: boolean[] = []
 const optimisticRemoved: string[] = []
+const promptSets: Array<{ prompt: Prompt; cursor?: number }> = []
+/** 下一次 session.abort 交回的排队用户消息。 */
+let abortReturns: Array<{ text: string; files?: Array<{ mime: string; url: string }> }> = []
 /** 下一次 prompt 由"内核"回 `queued: true`(会话正忙,排进收件箱)。 */
 let queueNext = false
 const storedSessions: Record<string, Array<{ id: string; title?: string }>> = {}
@@ -32,7 +35,9 @@ const prompt = {
   cursor: () => 0,
   dirty: () => true,
   reset: () => undefined,
-  set: () => undefined,
+  set: (value: Prompt, cursor?: number) => {
+    promptSets.push({ prompt: value, cursor })
+  },
   context: {
     add: () => undefined,
     remove: () => undefined,
@@ -69,7 +74,7 @@ const kernelClient = {
       sentPrompts.push({ sessionID, text: input.text, setModelCallsBefore: setModelCalls.length })
       return queueNext ? { messageID: "message-1", queued: true } : { messageID: "message-1" }
     },
-    abort: async () => undefined,
+    abort: async () => (abortReturns.length ? { returned: abortReturns } : {}),
   },
 }
 
@@ -217,6 +222,8 @@ beforeEach(() => {
   optimistic.length = 0
   optimisticSeeded.length = 0
   optimisticRemoved.length = 0
+  promptSets.length = 0
+  abortReturns = []
   queueNext = false
   promoted.length = 0
   promotedDrafts.length = 0
@@ -333,5 +340,27 @@ describe("prompt submit", () => {
 
     expect(sentPrompts).toHaveLength(1)
     expect(optimisticRemoved).toEqual([])
+  })
+
+  test("按停止:内核交回的排队消息退回输入框(排队的原文在前)", async () => {
+    // 缺省后台之后这条更要紧:停止时收件箱里常躺着东西,不接住就静默消失。
+    params = { id: "session-1" }
+    abortReturns = [{ text: "排着的那句" }]
+    const submit = createPromptSubmit({ ...baseInput(), info: () => ({ id: "session-1" }) })
+
+    await submit.abort()
+
+    expect(promptSets).toHaveLength(1)
+    expect(promptSets[0]!.prompt[0]).toMatchObject({ type: "text", content: `排着的那句\nls` })
+    expect(promptSets[0]!.cursor).toBe("排着的那句".length)
+  })
+
+  test("按停止:没有交回的东西就不碰输入框", async () => {
+    params = { id: "session-1" }
+    const submit = createPromptSubmit({ ...baseInput(), info: () => ({ id: "session-1" }) })
+
+    await submit.abort()
+
+    expect(promptSets).toEqual([])
   })
 })

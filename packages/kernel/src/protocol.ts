@@ -103,7 +103,14 @@ export interface KernelMethods {
    * message 事件落在 transcript 里的真实位置。想打断当前轮要按停止。
    */
   "session.prompt": { params: { sessionID: string; input: PromptInput }; result: { messageID: string; queued?: boolean } }
-  "session.abort": { params: { sessionID: string }; result: void }
+  /**
+   * 中断这一轮。收件箱里排着的**用户消息**交回来(`returned`),界面退回输入框 —— 按停止的意思是"这轮别跑了",
+   * 不是"我那句话不要了";子 agent 的完成通知不交回,内核自己放回收件箱(丢了就是子 agent 白跑一趟)。
+   */
+  "session.abort": {
+    params: { sessionID: string }
+    result: { returned?: Array<{ text: string; files?: Array<{ mime: string; url: string }> }> }
+  }
   /**
    * 撤回一条还没被取走的排队消息(`session.queue` 里 `kind: "prompt"` 的那条),原文与图片交回,让用户改了再发。
    * `already_consumed` = 它刚被这一轮取走(已经进 transcript 了),提示一句即可。

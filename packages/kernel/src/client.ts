@@ -70,7 +70,8 @@ export interface KernelClient {
     messages(params: { sessionID: string; cursor?: string; limit?: number }): Promise<MessagePage>
     /** 会话正忙时内核排队而不打断(`queued: true`):调用方别做乐观插入,排队项看 `session.queue` 事件。 */
     prompt(sessionID: string, input: PromptInput): Promise<KernelResult<"session.prompt">>
-    abort(sessionID: string): Promise<void>
+    /** 中断这一轮。排队的用户消息在 `returned` 里交回来(退回输入框);子 agent 的通知内核自己留着。 */
+    abort(sessionID: string): Promise<KernelResult<"session.abort">>
     /** 撤回一条还没被取走的排队消息,原文与图片交回。 */
     cancelQueued(params: { sessionID: string; entryId: string }): Promise<KernelResult<"session.cancelQueued">>
     compact(sessionID: string): Promise<void>

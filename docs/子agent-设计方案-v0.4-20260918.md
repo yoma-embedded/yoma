@@ -237,7 +237,7 @@ env:cwd / 平台 / 日期 / 模型                     ← CC computeEnvInfo
 | `prompt` | "The task for the agent to perform" |
 | `subagent_type?` | 缺省 `general-purpose` |
 | `model?` | `provider/modelId`,覆盖 profile |
-| `run_in_background?` | "Set to true to run this agent in the background. You will be notified when it completes."(`CC:…/AgentTool.tsx:87`)。宿主关后台时**从 schema 里摘掉**(`Type.Omit`,CC 同款,分析 §3.1) |
+| `run_in_background?` | **缺省后台**(用户 2026-09-20 定,偏离 CC —— 见 §11 与 §15):不写就是后台,立刻交回一个 agentId,结果以通知回来;只有"拿不到结果就一步都走不下去"才写 `false`(那会把主 agent 这一轮堵到子 agent 跑完)。宿主关后台时**从 schema 里摘掉**(`Type.Omit`,CC 同款,分析 §3.1) |
 
 **描述**:契约里放静态部分,`session.ts` 装配时把本会话的 agent 列表拼进去(同 stm32config 在 session.ts 里追加覆盖范围)。结构逐段照 `CC:tools/AgentTool/prompt.ts` 的非 fork 版:
 
@@ -438,7 +438,7 @@ CC:模型在跑的时候,用户敲的消息进队列,在下一个工具轮次结
 - **`prompt()` 在忙时**(有在飞操作):不再 `stop()`。图片照常压缩,然后 `lane.steer(userMessage, images)`,返回 `{ messageID, queued: true }`。会话状态不变(仍是 busy)。
 - **不做乐观插入**:排队的消息还不在 transcript 里,界面把它画在输入框上方的"排队中"一栏(数据来自 `session.queue` 事件,即收件箱里 user 角色的排队项);被取走时它随 `message_end` 进 transcript,落在真实的位置(当前工具轮次的结果之后)。所以 `pendingUserID` 只给"空闲时直接发"的那条用。
 - **改一条排着的消息**:点"排队中"里的那一条或按 ↑ → `session.cancelQueued { sessionID, entryId }`(`lane.cancelQueued`)→ 撤回成功就把原文与图片还给输入框;`already_consumed` 说明它刚被取走,提示一句即可。
-- **停止键 / Esc(暂缓,用户 2026-09-18 定:"这个坑记下了,先不管")**:`requestAbort` 会把排队项摘下来作为返回值交回(§1),本期**不接**,停止时排着的用户消息与通知会丢 —— 已知缺口,记在 §14。以后要补的做法照 CC:user 角色的原样交回(`session.abort` 的结果带 `returned: [{ text, images }]`),界面拼回输入框(CC `popAllEditable`:排队文本在前、原输入在后);`task-notification` 重新排队并 wake(§6.4);手动压缩(`compact()` 会先 stop)走同一段处理。
+- **停止键 / Esc(2026-09-20 已补,当初定的"先不管"随缺省后台一起解决)**:`requestAbort` 把排队项摘下来交回(§1),宿主接住 —— **通知重新 steer 回收件箱并 wake**(子 agent 已经跑完的结论,丢了就是白跑一趟,而且界面上看不出少了什么);**用户自己打的字**交回调用方(`session.abort` 的结果带 `returned: [{ text, files? }]`),界面按"排队的原文在前、正在打的在后"拼回输入框(照 CC 的 `popAllEditable`)。手动压缩 / 关会话 / LRU 淘汰没有人接,两样都原样放回收件箱(压缩完、重开之后照样被取走)。
 - **竞态**:判断"忙"与 `steer` 之间这一轮恰好结束 → 排队项躺在空闲 lane 的收件箱里 → 被 `run_end` 那条"收件箱非空就 wake"接住,和通知是同一条路。准备期(压缩图片、`Entry.preparing`)里又来一条 → `prompt()` 按会话串行,后来的那条等前一条 accept 完再判断忙闲。
 - **不受影响的宿主**:bench 与信箱只在空闲时发 prompt。
 - 这是对**所有**会话的行为改变,不依赖子 agent,可以在 P2 里先单独做、单独测。
@@ -524,6 +524,8 @@ CC:模型在跑的时候,用户敲的消息进队列,在下一个工具轮次结
 | 内建 `Plan` / `statusline-setup` / `claude-code-guide` / `verification` | 不做;多一个 `datasheet` | 前者依赖 plan mode,后三个是 CC 专属 |
 | Explore 只禁 Edit / Write / NotebookEdit | 另禁 `toolchain`、`stm32config` | 这两个工具的写入不走 bash,提示词挡不住 |
 | plugin / flag / policy 三层 agent 来源 | 只有内建 / 用户 / 项目 | yoma 没有插件与策略层 |
+| **缺省前台**,后台要模型显式要 | **缺省后台**,同步等要显式 `run_in_background: false` | 桌面端有人看着屏幕:主 agent 卡在一次子 agent 调用里的那几分钟,用户只能看着一个转圈的"思考中",而主 agent 本可以继续对话、继续干别的(用户 2026-09-20 定,§15) |
+| 跑着的任务在终端里按 Ctrl+O 之类翻 | 输入框正上方一条固定的「子 agent」坞 | 缺省后台之后"谁在跑"必须有个不随对话滚动的位置(§15) |
 | fork / worktree / memory / hooks / MCP / teammate / coordinator | 本期不做 | 见 §2 |
 
 ## 12. 分期与验证(场景测试先行)
@@ -672,7 +674,7 @@ CC:模型在跑的时候,用户敲的消息进队列,在下一个工具轮次结
 - **通知丢失窗口**:见 §6.4 的已知缺口。
 - **锁定目录**:原型、测试、注释副本都不要放进 `packages/{agent,ai,chord,telemetry}`,`upstream:check` 会失败。
 - **排队改的是所有会话的行为**(§6.9):上线后"忙时发消息"从"打断重来"变成"等这一轮的工具跑完再看到",要在发版说明里写一句;想打断要按停止或 Esc。
-- **停止键会把收件箱清空(已知,本期不处理)**:`requestAbort` 摘下排队项作为返回值,宿主不接住,排着的用户消息和子 agent 的通知会在用户按停止的那一刻静默消失(§1、§6.4、§6.9)。用户 2026-09-18 知悉并决定先不管;补的做法写在 §6.9。
+- ~~停止键会把收件箱清空~~ **2026-09-20 已补**(§6.9、§15):通知重新排回收件箱并叫醒,用户排着的那句话交回界面退回输入框。缺省后台之后这条从"边角"变成主路径 —— 子 agent 的结论大多正躺在收件箱里等主 agent 汇报。
 - **确认冒泡的边角**:转后台时挂着的询问、子会话被停时的撤销、用户切走父会话时确认条的去向。P2 场景 (m) 与 P3 的界面都要覆盖。
 - **三处工具清单闸门**:`TOOL_NAMES`、desktop 冒烟、bench check;+4 漏掉一处,表现和"构建产物坏了"一模一样。
 - **contextBridge 会剥掉 Error**:任务相关 RPC 的失败也要走普通对象(`CLAUDE.md`「会咬人的地方」第一条)。
@@ -681,3 +683,25 @@ CC:模型在跑的时候,用户敲的消息进队列,在下一个工具轮次结
 - **Windows 上的杀进程测试**:子 agent 被停时,它的 bash 子进程由执行环境杀树;断言"已经死了"要按 `CLAUDE.md` 的真等待来写(本机 `tools-la` 那条偶发就是这一类)。
 - **JSONL 增长与事件量**:见 §8。
 - **上游演进**:v2 的运行时将来会被 pico 替换。本方案只依赖 `agent-harness.ts` 的公开接口(AgentHarness / AgentLane、hooks、events、SessionRepo、custom 消息),不碰 `runtime/` 内部;pico 的 subagent 工具(run / spawn / send / status / wait / stop)与 job 完成时的 notice entry 和本方案同构,到时可以对照。
+
+## 15. 缺省后台 + 固定的子 agent 坞(用户 2026-09-20 定)
+
+P1–P4 照 CC:`agent` 工具缺省**前台**,主 agent 那一轮卡在这次调用里等子 agent 跑完。真机上用户看到的就是"派完之后一直思考中",于是定了两件事。
+
+**决定**
+
+1. **缺省后台**:不写 `run_in_background` 就是后台 —— 立刻交回 agentId,主 agent 继续对话 / 继续调工具,结论稍后以通知回来;只有"拿不到结果就一步都走不下去"才显式 `run_in_background: false`。bench 与信箱不变(`background: false` = 一律前台)。
+2. **界面上给子 agent 一个固定位置**:输入框正上方一条「子 agent」坞,不随对话滚动。竖向顺序:确认条 → 子 agent 坞 → 排队中 → 输入框。
+3. **权限照原样**(用户 2026-09-20 定):后台子 agent 撞到要确认的操作仍然不弹确认、报回主 agent,由主 agent 自己跑(该问时确认条弹一次,命令看得见)或先问用户。**不做派生时预授权** —— 派生那一刻没人知道它后面会跑哪条命令,而确认条的规矩正是"整段显示真正要跑的那条"。代价:子 agent 干不了装工具链与探针类命令,这与"板子操作留在主 agent 的轮次里"一致。
+4. **停止各停各的**:主会话的停止只中断主 agent 这一轮,后台子 agent 继续跑完并汇报;要停某一个就在坞里点它的「停止」(在跑的 ≥2 个时坞头还有「全部停止」)。从坞里停掉的子 agent **照样发"已停止"通知**(带部分结果)—— 那活是主 agent 派的,不告诉它,它会一直等或者干脆编一个结果。
+
+**实现**
+
+- 内核:`agent` 工具一行(`run_in_background !== false`);工具描述与例子整段改写(默认后台、结果以通知送达、不要用 `task_output` 死等、派出去之后用一句话告诉用户派了什么);`session.abort` 接住被摘下来的收件箱(§6.9)并把用户消息交回来(协议的 `returned`)。
+- 前端:`pages/session/subagent/subagent-dock.tsx` + `task-view.ts` 的 `dockTasks`(坞只画**还没完事的**:排队中 / 在跑 / 跑完但通知还在收件箱里排着;汇报完就去掉,结论在对话里那条通知行上)。行数封顶 3 行、多的折成"还有 N 个"、整坞可折叠、全空不渲染;耗时一秒一跳。停止与打开走 Data 上下文那一份回调(与 agent 卡片、状态栏任务面板同一份)。按停止时交回的排队消息经 `prependRetracted` 拼回输入框(与撤回同一条路)。卡片文案里"已转到后台"改成"后台运行中"。
+- 验证(2026-09-20):typecheck 11/11 + 根;全量 `npm test` 256 个文件 3229 过 / 117 跳过 / 0 挂;变异 10 条抓到 9 条 ——
+  漏的那条是"放回收件箱之后叫醒",它与 `queue_update` 那一处**互为兜底**(P2 结果第 2 条),已在代码里注明别当死代码删;
+  `e2e:paint` 65/65(种子里那个前台 Explore 改成显式 `run_in_background: false`)、`e2e:ipc` / `e2e:renderer` /
+  `smoke:mailbox` 全过;oxlint 0 警告。**没验到的**:子 agent 坞没在真窗口里跑过(`e2e:paint` 的内核没有模型,
+  种进去的任务不在它的注册表里),真模型下"派完继续对话"的实际体感也要等一次真机会话。
+- 测试:场景 (w) 缺省后台(这一轮的工具结果是"已派出"、父先收工、结论随通知回来)、(x) 按停止时通知不丢 / 用户消息交回;`tools-agent` 的参数三态(不写 / false / 宿主不许后台);`submit.test.ts` 的停止交回;坞的组件渲染测试;P1–P4 那些测前台语义的场景全部显式写上 `run_in_background: false`(不写就是后台,那些"结果回到工具调用"的断言会全部落空 —— 这正是改缺省值时最容易忘的一处)。

@@ -4,7 +4,7 @@
  * 数据是内核的 `TaskView`(`task.updated` 事件 + `task.list`,折在服务器级的会话 store 里)。
  * session-ui 的 agent 卡片有自己一份(它从工具调用出发,还要认工具结果),这里只从任务出发。
  */
-import type { TaskView } from "@yoma-desktop/kernel"
+import type { QueuedItemView, TaskView } from "@yoma-desktop/kernel"
 
 /** 界面上的样子:内核的 status 之外多一档"后台在跑"。 */
 export type TaskLook = "pending" | "running" | "background" | "completed" | "failed" | "killed"
@@ -40,4 +40,25 @@ export function taskElapsed(task: TaskView, now: number): string {
   const seconds = Math.max(0, Math.floor((end - task.startedAt) / 1000))
   if (seconds < 60) return `${seconds} s`
   return `${Math.floor(seconds / 60)} min ${String(seconds % 60).padStart(2, "0")} s`
+}
+
+/** 固定坞里的一行。`reporting` = 跑完了但通知还在收件箱里排着,主 agent 还没汇报。 */
+export type DockTask = { task: TaskView; reporting: boolean }
+
+/**
+ * 输入框上方那条坞要画的行:这个会话**还没完事**的子 agent —— 排队中、在跑,以及跑完了但结论还没被主 agent
+ * 取走的。完全结束(通知已经进 transcript)的不画:它就在对话里那条通知行上,坞不留旧账。
+ */
+export function dockTasks(
+  tasks: Readonly<Record<string, TaskView>> | undefined,
+  sessionID: string,
+  queue: readonly QueuedItemView[] | undefined,
+): DockTask[] {
+  const pendingReport = new Set(
+    (queue ?? []).flatMap((item) => (item.kind === "notification" && item.taskID ? [item.taskID] : [])),
+  )
+  return sessionTasks(tasks, sessionID).flatMap((task): DockTask[] => {
+    if (taskActive(task)) return [{ task, reporting: false }]
+    return pendingReport.has(task.id) ? [{ task, reporting: true }] : []
+  })
 }

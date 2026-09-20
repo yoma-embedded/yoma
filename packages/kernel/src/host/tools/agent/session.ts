@@ -52,8 +52,9 @@ export function createAgentTool(options: AgentToolOptions = {}): AgentTool {
           description: input.description,
           prompt: input.prompt,
           model: input.model?.trim() || undefined,
-          // 宿主不能后台时 schema 里没有这个参数;模型硬塞进来的也不认。
-          runInBackground: background && input.run_in_background === true,
+          // **缺省后台**(产品决定,偏离 CC:用户 2026-09-20 定):主 agent 派完就继续干活 / 答话,结果以通知回来;
+          // 只有显式 run_in_background:false 才同步等。宿主不能后台时 schema 里没有这个参数,模型硬塞进来的也不认。
+          runInBackground: background && input.run_in_background !== false,
         },
         {
           toolCallId,
