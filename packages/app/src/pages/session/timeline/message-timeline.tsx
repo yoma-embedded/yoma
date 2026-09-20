@@ -51,6 +51,7 @@ import { createTimelineProjection } from "./projection"
 import { MessageComment, TimelineRow, TimelineRowMap } from "./rows"
 import { ModelRequestStatus } from "./model-request-status"
 import { filterVirtualIndexes } from "./virtual-items"
+import { SubagentBack, SubagentStatus } from "../subagent/subagent-header"
 
 const emptyMessages: MessageType[] = []
 const emptyParts: PartType[] = []
@@ -948,6 +949,15 @@ export function MessageTimeline(props: {
               <div
                 class="flex items-center gap-1 min-w-0 flex-1"
               >
+                {/* 子 agent 的会话:标题前面是「← 主会话 / 类型」,右边是任务状态与停止(没有菜单、没有输入框)。 */}
+                <Show when={info()?.parentID}>
+                  {(parentID) => (
+                    <SubagentBack
+                      parentID={parentID()}
+                      agent={info()?.agent ?? sync().data.task[sessionID()!]?.agent}
+                    />
+                  )}
+                </Show>
                 <div class="flex items-center min-w-0 flex-1 w-full">
                   <Show when={titleLabel() || title.editing}>
                     <Show
@@ -996,50 +1006,55 @@ export function MessageTimeline(props: {
               <Show when={sessionID()} keyed>
                 {(id) => (
                   <div class="shrink-0 flex items-center gap-2">
+                    <Show when={info()?.parentID}>
+                      <SubagentStatus sessionID={id} />
+                    </Show>
                     <SessionContextUsage placement="bottom" buttonAppearance="v2" />
-                    <MenuV2
-                      gutter={6}
-                      placement="bottom-end"
-                      open={title.menuOpen}
-                      onOpenChange={(open) => {
-                        setTitle("menuOpen", open)
-                        if (open) return
-                      }}
-                    >
-                      <MenuV2.Trigger
-                        as={IconButtonV2}
-                        icon={<IconV2 name="outline-dots" />}
-                        variant="ghost-muted"
-                        size="large"
-                        aria-label={language.t("common.moreOptions")}
-                        aria-expanded={title.menuOpen}
-                      />
-                      <MenuV2.Portal>
-                        <MenuV2.Content
-                          style={{ width: "120px", "min-width": "120px" }}
-                          onCloseAutoFocus={(event) => {
-                            if (title.pendingRename) {
-                              event.preventDefault()
-                              setTitle("pendingRename", false)
-                              openTitleEditor()
-                            }
-                          }}
-                        >
-                          <MenuV2.Item
-                            onSelect={() => {
-                              setTitle("pendingRename", true)
-                              setTitle("menuOpen", false)
+                    <Show when={!info()?.parentID}>
+                      <MenuV2
+                        gutter={6}
+                        placement="bottom-end"
+                        open={title.menuOpen}
+                        onOpenChange={(open) => {
+                          setTitle("menuOpen", open)
+                          if (open) return
+                        }}
+                      >
+                        <MenuV2.Trigger
+                          as={IconButtonV2}
+                          icon={<IconV2 name="outline-dots" />}
+                          variant="ghost-muted"
+                          size="large"
+                          aria-label={language.t("common.moreOptions")}
+                          aria-expanded={title.menuOpen}
+                        />
+                        <MenuV2.Portal>
+                          <MenuV2.Content
+                            style={{ width: "120px", "min-width": "120px" }}
+                            onCloseAutoFocus={(event) => {
+                              if (title.pendingRename) {
+                                event.preventDefault()
+                                setTitle("pendingRename", false)
+                                openTitleEditor()
+                              }
                             }}
                           >
-                            {language.t("common.rename")}
-                          </MenuV2.Item>
-                          <MenuV2.Separator />
-                          <MenuV2.Item onSelect={() => dialog.show(() => <DialogDeleteSession sessionID={id} />)}>
-                            {language.t("common.delete")}...
-                          </MenuV2.Item>
-                        </MenuV2.Content>
-                      </MenuV2.Portal>
-                    </MenuV2>
+                            <MenuV2.Item
+                              onSelect={() => {
+                                setTitle("pendingRename", true)
+                                setTitle("menuOpen", false)
+                              }}
+                            >
+                              {language.t("common.rename")}
+                            </MenuV2.Item>
+                            <MenuV2.Separator />
+                            <MenuV2.Item onSelect={() => dialog.show(() => <DialogDeleteSession sessionID={id} />)}>
+                              {language.t("common.delete")}...
+                            </MenuV2.Item>
+                          </MenuV2.Content>
+                        </MenuV2.Portal>
+                      </MenuV2>
+                    </Show>
                   </div>
                 )}
               </Show>

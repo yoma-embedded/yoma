@@ -18,8 +18,12 @@ import {
   fauxProvider,
   fauxText,
   fauxToolCall,
+  getCurrentTools,
   type Model,
+  type TranscriptContext,
 } from "@earendil-works/pi-ai"
+
+import type { AssistantMessage } from "@yoma-desktop/kernel"
 
 import { parseJob, type Job } from "./job.ts"
 import { runTurn } from "./turn.ts"
@@ -179,6 +183,51 @@ describe("runTurn", () => {
 
     expect(second.sessionID).toBe(first.sessionID)
     expect(second.text).toContain("二")
+  })
+})
+
+describe("runTurn · 子 agent", () => {
+  // schema 里没有 run_in_background;子会话收工不算这一轮收工;正文与工具清单只认主会话,用量连子 agent 一起算。
+  test("一律前台,子会话收工不算本轮收工,结果只认主会话、用量连子 agent 算", async () => {
+    const workspace = tempDir("bench-ws-")
+    let schema = ""
+    const usage = new Map<string, { output: number; subagent: boolean }>()
+    const result = await runTurn({
+      ...turnOptions(workspace, [
+        (context: TranscriptContext) => {
+          schema = JSON.stringify(getCurrentTools(context.messages).find((tool) => tool.name === "agent")?.parameters)
+          return fauxAssistantMessage([
+            fauxToolCall("agent", { description: "查时钟", prompt: "查时钟树", subagent_type: "Explore" }),
+          ])
+        },
+        // 子 agent 自己也调一次工具:它不该出现在这一轮的工具清单里。
+        fauxAssistantMessage([fauxToolCall("ls", { path: "." })]),
+        fauxAssistantMessage([fauxText("子 agent 的结论:HSE 8 MHz")]),
+        // 主会话拿着结果发下一次请求,首字很慢(真模型常要 1–3 s)。这段空档里最近的一条状态事件是子会话的
+        // idle —— 把它当成这一轮的 idle,settle 一到就提前收工,正文里就没有下面这句。
+        async () => {
+          await new Promise((resolve) => setTimeout(resolve, 600))
+          return fauxAssistantMessage([fauxText("主会话收尾:时钟配置没问题")])
+        },
+      ]),
+      onEvent: (event, origin) => {
+        if (event.type !== "message.updated" || event.message.role !== "assistant") return
+        const message = event.message as AssistantMessage
+        usage.set(`${message.sessionID}/${message.id}`, { output: message.tokens.output, subagent: origin.subagent })
+      },
+    })
+    // 子 agent 的进度日志落在 <系统临时目录>/yoma/<主会话>/ 下,一并收掉。
+    dirs.push(path.join(tmpdir(), "yoma", result.sessionID))
+
+    expect(schema).toContain("subagent_type")
+    expect(schema).not.toContain("run_in_background")
+    expect(result.stopReason).toBeUndefined()
+    expect(result.text).toContain("主会话收尾")
+    expect(result.text).not.toContain("子 agent 的结论")
+    expect(result.toolCalls.map((call) => call.tool)).toEqual(["agent"])
+    const subagentOutput = [...usage.values()].filter((item) => item.subagent).reduce((n, item) => n + item.output, 0)
+    expect(subagentOutput).toBeGreaterThan(0)
+    expect(result.usage.tokens.output).toBe([...usage.values()].reduce((n, item) => n + item.output, 0))
   })
 })
 

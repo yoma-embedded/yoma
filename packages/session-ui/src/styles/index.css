@@ -10,3 +10,4 @@
 @import "../components/bench.css" layer(components);
 @import "../components/hw-tool.css" layer(components);
 @import "../components/open-instrument.css" layer(components);
+@import "../components/agent-tool.css" layer(components);

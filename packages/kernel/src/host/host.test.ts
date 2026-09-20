@@ -141,6 +141,7 @@ function makeHost(
     reasoningModel?: boolean
     defaultThinkingLevel?: string
     confirmTools?: boolean
+    subagents?: Parameters<typeof createKernelHost>[0]["subagents"]
   } = {},
 ) {
   const events: KernelEvent[] = []
@@ -156,6 +157,7 @@ function makeHost(
     version: "test",
     defaultThinkingLevel: options.defaultThinkingLevel,
     confirmTools: options.confirmTools,
+    subagents: options.subagents,
     onEvents: (batch) => events.push(...batch),
     // 全放行,免得冒烟测试卡在权限弹窗上。权限本身有独立测试。
     resolveModels: async () => harnessWith(steps, options.reasoningModel),
@@ -708,6 +710,88 @@ describe("会话不存在", () => {
     expect(data?._tag).toBe("SessionNotFoundError")
     expect(data?.sessionID).toBe(stale)
     await host.dispose()
+  })
+})
+
+describe("子 agent 的 RPC", () => {
+  test("agent.list 列出内建与项目定义;task.* 与 cancelQueued 对不存在的东西给结构化的否定,不抛", async () => {
+    // 祖先链止于工作区的上一层:只认 <ws>/.yoma/agents,不会走到开发机上别的目录。
+    const workspace = tempDir("yoma-ws-")
+    const { host } = makeHost([], { workspace, subagents: { homeDir: path.dirname(workspace) } })
+    mkdirSync(path.join(workspace, ".yoma", "agents"), { recursive: true })
+    writeFileSync(
+      path.join(workspace, ".yoma", "agents", "reviewer.md"),
+      "---\nname: reviewer\ndescription: 审代码\ntools: read, grep\nmodel: faux/plain\n---\n只读审查。\n",
+    )
+    try {
+      const agents = await host.handle("agent.list", { directory: workspace })
+      expect(agents.map((agent) => agent.name)).toEqual(["general-purpose", "Explore", "datasheet", "reviewer"])
+      expect(agents.find((agent) => agent.name === "reviewer")).toEqual({
+        name: "reviewer",
+        description: "审代码",
+        source: "project",
+        tools: "read, grep",
+        model: "faux/plain",
+      })
+      expect(agents.find((agent) => agent.name === "Explore")?.tools).toBe(
+        "All tools except edit, write, toolchain, stm32config",
+      )
+
+      const session = (await host.handle("session.create", { directory: workspace })) as Session
+      expect(await host.handle("task.list", { sessionID: session.id })).toEqual([])
+      expect(await host.handle("task.stop", { taskID: "nope" })).toEqual({ stopped: false })
+      expect(await host.handle("task.background", { taskID: "nope" })).toEqual({ moved: false })
+      expect(await host.handle("session.cancelQueued", { sessionID: session.id, entryId: "nope" })).toEqual({
+        kind: "not_found",
+      })
+    } finally {
+      await host.dispose()
+    }
+  })
+})
+
+describe("子 agent 的列表与任务", () => {
+  test("派出去的子会话:session.list 不列它;task.list 对主会话列任务、对子会话给它自己那条", async () => {
+    const workspace = tempDir("yoma-ws-")
+    const { host, events } = makeHost(
+      [
+        fauxAssistantMessage([
+          fauxToolCall("agent", { description: "查时钟", prompt: "查时钟树", subagent_type: "Explore" }),
+        ]),
+        fauxAssistantMessage([fauxText("HSE 8 MHz → PLL 168 MHz")]),
+        fauxAssistantMessage([fauxText("好了")]),
+      ],
+      { workspace, subagents: { homeDir: path.dirname(workspace), outputRoot: tempDir("yoma-tasks-") } },
+    )
+    const lastStatus = (sessionID: string) =>
+      events
+        .flatMap((event) =>
+          event.type === "session.status" && event.sessionID === sessionID ? [event.status.type] : [],
+        )
+        .at(-1)
+    try {
+      const parent = (await host.handle("session.create", { directory: workspace })) as Session
+      await host.handle("session.prompt", { sessionID: parent.id, input: { text: "派一个" } })
+      await waitFor(
+        () =>
+          events.some((event) => event.type === "task.updated" && event.task.status === "completed") &&
+          lastStatus(parent.id) === "idle",
+        20_000,
+      )
+      const child = events.flatMap((event) =>
+        event.type === "session.created" && event.session.parentID === parent.id ? [event.session] : [],
+      )[0]!
+
+      expect((await host.handle("session.list", { directory: workspace })).map((session) => session.id)).toEqual([
+        parent.id,
+      ])
+      expect((await host.handle("task.list", { sessionID: parent.id })).map((task) => [task.id, task.status])).toEqual([
+        [child.id, "completed"],
+      ])
+      expect((await host.handle("task.list", { sessionID: child.id })).map((task) => task.id)).toEqual([child.id])
+    } finally {
+      await host.dispose()
+    }
   })
 })
 

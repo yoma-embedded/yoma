@@ -14,6 +14,7 @@ import { useSDK, type DirectorySDK } from "@/context/sdk"
 import { useSync, type DirectorySync } from "@/context/sync"
 import { Identifier } from "@/utils/id"
 import { buildRequestParts } from "./build-request-parts"
+import { prependRetracted } from "@/pages/session/composer/queue-retract"
 import { setCursorPosition } from "./editor-dom"
 import { ScopedKey } from "@/utils/scoped-key"
 import { sessionHref } from "@/utils/session-href"
@@ -127,7 +128,10 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
       modelID: input.draft.model.modelID,
       thinking: input.draft.variant ?? undefined,
     })
-    await input.client.session.prompt(input.draft.sessionID, promptInput)
+    const sent = await input.client.session.prompt(input.draft.sessionID, promptInput)
+    // 会话正忙:内核把它排进收件箱(照 CC,不打断),被这一轮取走时才随事件落在 transcript 里的真实位置,
+    // 排队期间画在输入框上方(session.queue)。乐观插入的那条撤掉,否则它先挂在末尾、取走时再出现一次。
+    if (sent.queued) remove()
     return true
   } catch (err) {
     batch(() => {
@@ -193,7 +197,18 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       pending.delete(key)
       return Promise.resolve()
     }
-    return sdk().client.session.abort(sessionID).catch(() => {})
+    const target = prompt.capture()
+    const aborted = await sdk().client.session.abort(sessionID).catch(() => undefined)
+    // 收件箱里排着的用户消息交回来了:退回输入框(排队的原文在前、正在打的在后,同撤回那条路)。
+    // 按停止的意思是"这一轮别跑了",不是"我刚打的那句不要了" —— 不接住就静默消失。
+    // 子 agent 的完成通知不在这里,内核自己放回了收件箱。
+    const returned = aborted?.returned
+    if (!returned?.length) return
+    const next = prependRetracted(
+      target.current(),
+      returned.map((item, index) => ({ entryId: `stopped-${index}`, text: item.text, files: item.files })),
+    )
+    target.set(next.prompt, next.cursor)
   }
 
   const restoreCommentItems = (

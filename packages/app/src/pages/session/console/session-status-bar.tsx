@@ -4,6 +4,8 @@
  * 不用点、不用切页、不用记得右栏有第三档:烧了哪一版、gdb 停在哪、串口还在不在吐字,
  * 一直在余光里。这是这套界面与"一个深色的通用聊天应用"之间唯一不用解释的差别。
  *
+ * 状况后面是「子 agent」格(派过才有,`subagent/task-slot.tsx`),点开是这个会话的任务面板。
+ *
  * 右半边两样:
  * - 一行轻量读数(日志行数 / 还没看过的 error 数)。它们来自**已经在读的那份 feed**
  *   (`log-feed.ts` 按工程目录引用计数),不额外发请求;
@@ -25,6 +27,7 @@ import { consoleUI } from "./console-state"
 import { dotsBesideAttention, useUnseenSet } from "./evidence-view"
 import { revealInstrument } from "./reveal-instrument"
 import { TargetSlot } from "./target-slot"
+import { TaskSlot } from "../subagent/task-slot"
 import "./console.css"
 
 export function SessionStatusBar() {
@@ -78,6 +81,9 @@ export function SessionStatusBar() {
         unseen={dots()}
         emptyHint={t("session.bench.strip.empty")}
       />
+
+      {/* 这个会话派过子 agent 才出现;点开是任务面板(CC 的任务面板)。 */}
+      <TaskSlot />
 
       <span data-slot="rule" />
 

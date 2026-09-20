@@ -1,6 +1,8 @@
 import { Show, type JSX } from "solid-js"
 import { SessionConfirmDock } from "@/pages/session/composer/session-confirm-dock"
 import { SessionFollowupDock } from "@/pages/session/composer/session-followup-dock"
+import { SessionQueueDock } from "@/pages/session/composer/session-queue-dock"
+import { SubagentDock } from "@/pages/session/subagent/subagent-dock"
 import type { SessionComposerRegionController } from "./session-composer-region-controller"
 
 export function SessionComposerRegion(props: {
@@ -33,6 +35,28 @@ export function SessionComposerRegion(props: {
               items={controller.confirms()!.items}
               replying={controller.confirms()!.replying}
               onReply={controller.confirms()!.onReply}
+              attached={
+                !controller.subagents()?.items.length &&
+                !controller.queue()?.items.length &&
+                !controller.followup()?.items.length
+              }
+            />
+          </Show>
+          {/* 子 agent 坞:缺省后台之后"现在有谁在跑"必须有个不随对话滚动的位置。 */}
+          <Show when={controller.subagents()?.items.length}>
+            <SubagentDock
+              items={controller.subagents()!.items}
+              onOpen={controller.subagents()!.onOpen}
+              onStop={controller.subagents()!.onStop}
+              onStopAll={controller.subagents()!.onStopAll}
+              attached={!controller.queue()?.items.length && !controller.followup()?.items.length}
+            />
+          </Show>
+          <Show when={controller.queue()?.items.length}>
+            <SessionQueueDock
+              items={controller.queue()!.items}
+              retracting={controller.queue()!.retracting}
+              onRetract={controller.queue()!.onRetract}
               attached={!controller.followup()?.items.length}
             />
           </Show>

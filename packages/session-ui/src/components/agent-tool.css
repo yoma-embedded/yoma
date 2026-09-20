@@ -1,0 +1,30 @@
+/**
+ * 子 agent 的两张卡(agent-tool.tsx):agent 工具卡片与完成通知行。
+ *
+ * 外壳与原语全部复用硬件卡(hw-tool.css / bench.css):折叠态那一行、读数行、等宽块都是同一套。
+ * 这里只放它们没有的三样:按钮行、结果区的上限、以及通知所在的 synthetic 用户消息不画成右侧气泡。
+ */
+
+/* 通知挂在一条 synthetic 的 user 消息上:它不是用户说的话,不靠右、不当气泡,跟工具卡片一样占满一行。 */
+[data-component="user-message"][data-synthetic] {
+  align-items: stretch;
+}
+
+/* 结果是 markdown,可能很长:卡片里内部滚动,不许把时间线撑出几千像素(同 HwMono 的规矩)。 */
+[data-component="agent-result"] {
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+[data-component="agent-actions"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 8px;
+}
+
+/* 通知行与 agent 卡片同一个外壳;卡片外那一圈留白与工具卡片一致。 */
+[data-component="task-notification"] {
+  width: 100%;
+}

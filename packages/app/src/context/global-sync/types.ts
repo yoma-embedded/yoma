@@ -1,4 +1,4 @@
-import type { Message, Part, Session, SessionStatus, VcsInfo } from "@yoma-desktop/kernel"
+import type { Message, Part, QueuedItemView, Session, SessionStatus, TaskView, VcsInfo } from "@yoma-desktop/kernel"
 import { NormalizedProviderListResponse } from "@yoma-desktop/session-ui/context"
 
 /**
@@ -59,6 +59,14 @@ export type State = {
   }
   part_text_accum_delta: {
     [partID: string]: string
+  }
+  /** 子 agent 任务(按任务 id)。与 message / part 一样住在服务器级的会话 store 里,目录 store 只转发。 */
+  task: {
+    [taskID: string]: TaskView
+  }
+  /** 会话收件箱现状(按会话 id)。 */
+  queue: {
+    [sessionID: string]: QueuedItemView[]
   }
 }
 

@@ -14,6 +14,9 @@ import { useLanguage } from "@/context/language"
  * **不截断命令**:一条 140 字的 openocd 命令用 truncate 只剩前 60 字,mass_erase 藏在省略号后面
  * 用户就点了允许(2026-09-13 猎漏确认),所以整段换行显示,超高时在框内滚动。
  * 多条未决时按提问顺序堆叠,最早的在最上面(内核给的顺序)。
+ *
+ * 前台子 agent 的询问冒到主会话这里来(`item.agent`):写明是哪个子 agent 在问 —— 用户看着的是主会话,
+ * 不说的话这条烧录像是主 agent 自己要跑的。后台子 agent 不问,内核直接挡掉(没人看着它)。
  */
 export function SessionConfirmDock(props: {
   items: ToolConfirmView[]
@@ -45,7 +48,9 @@ export function SessionConfirmDock(props: {
           {(item) => (
             <div class="flex items-start gap-2 min-w-0 py-1">
               <span class="shrink-0 pt-0.5 text-13-medium text-text-strong">
-                {language.t("session.confirmDock.wants", { tool: toolName(item) })}
+                {item.agent
+                  ? language.t("session.confirmDock.agentWants", { agent: item.agent, tool: toolName(item) })
+                  : language.t("session.confirmDock.wants", { tool: toolName(item) })}
               </span>
               <span
                 data-slot="confirm-summary"

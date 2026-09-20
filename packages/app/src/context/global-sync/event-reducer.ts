@@ -86,6 +86,9 @@ export function applyDirectoryEvent(input: {
   switch (event.type) {
     case "session.created": {
       const info = event.session
+      // 子 agent 的会话不进目录的会话列表(侧边栏 / 首页只列主会话,内核的 session.list 也不给它们):
+      // 进来的话还会挤掉列表配额里真正的会话。它们的内容照常在服务器级的会话 store 里,按 id 打开。
+      if (info.parentID) break
       const result = Binary.search(input.store.session, info.id, (s) => s.id)
       if (result.found) {
         input.setStore("session", result.index, reconcile(info))
@@ -101,6 +104,7 @@ export function applyDirectoryEvent(input: {
     }
     case "session.updated": {
       const info = event.session
+      if (info.parentID) break
       const result = Binary.search(input.store.session, info.id, (s) => s.id)
       if (info.time.archived) {
         if (result.found) {

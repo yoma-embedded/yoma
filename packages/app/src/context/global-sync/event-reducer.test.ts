@@ -221,6 +221,22 @@ describe("applyDirectoryEvent", () => {
     }
   })
 
+  test("子 agent 的会话不进目录的会话列表:created / updated 都跳过,计数不动", () => {
+    const [store, setStore] = createStore(baseState({ session: [session({ id: "main" })], sessionTotal: 1 }))
+    const child = { ...session({ id: "child" }), parentID: "main" }
+
+    applyDirectoryEvent({ event: { type: "session.created", session: child }, store, setStore, directory: "/tmp" })
+    applyDirectoryEvent({
+      event: { type: "session.updated", session: { ...child, title: "renamed" } },
+      store,
+      setStore,
+      directory: "/tmp",
+    })
+
+    expect(store.session.map((item) => item.id)).toEqual(["main"])
+    expect(store.sessionTotal).toBe(1)
+  })
+
   test("cleans caches for trimmed sessions on session.created", () => {
     const dropped = session({ id: "ses_b" })
     const kept = session({ id: "ses_a" })
