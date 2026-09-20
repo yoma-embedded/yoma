@@ -18,7 +18,9 @@ import {
   fauxProvider,
   fauxText,
   fauxToolCall,
+  getCurrentSystemPrompt,
   type Model,
+  type TranscriptContext,
 } from "@earendil-works/pi-ai"
 import { AgentHarness } from "@earendil-works/pi-agent-core"
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node"
@@ -845,8 +847,8 @@ describe("项目资源发现", () => {
     let systemPrompt = ""
     const { host } = makeHost(
       [
-        (context: { systemPrompt?: string }) => {
-          systemPrompt = context?.systemPrompt ?? ""
+        (context: TranscriptContext) => {
+          systemPrompt = getCurrentSystemPrompt(context.messages)
           return fauxAssistantMessage([fauxText("好")])
         },
       ],
@@ -871,8 +873,8 @@ describe("项目资源发现", () => {
     let systemPrompt = ""
     const { host } = makeHost(
       [
-        (context: { systemPrompt?: string }) => {
-          systemPrompt = context?.systemPrompt ?? ""
+        (context: TranscriptContext) => {
+          systemPrompt = getCurrentSystemPrompt(context.messages)
           return fauxAssistantMessage([fauxText("好")])
         },
       ],

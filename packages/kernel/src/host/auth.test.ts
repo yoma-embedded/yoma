@@ -60,8 +60,10 @@ describe("连接对话框的可配置目录来自 yoma 的 configurableProviders
 
     const ids = listed.map(([id]) => id)
     for (const id of ["deepseek", "moonshotai-cn", "anthropic", "openai"]) expect(ids).toContain(id)
-    // 只有 OAuth / 还要账号 id / 目录要联网拉
-    for (const id of ["openai-codex", "cloudflare-workers-ai", "radius"]) expect(ids).not.toContain(id)
+    // 只有 OAuth / 还要账号 id
+    for (const id of ["openai-codex", "cloudflare-workers-ai"]) expect(ids).not.toContain(id)
+    // radius 从 pi-ai 0.86.0 起随包带基线目录,一个 key 就能用(从前目录要联网拉,所以亮不起来)。
+    expect(ids).toContain("radius")
     cleanup()
   })
 })

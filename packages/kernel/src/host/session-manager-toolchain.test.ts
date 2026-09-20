@@ -26,7 +26,9 @@ import {
   fauxProvider,
   fauxText,
   fauxToolCall,
+  getCurrentSystemPrompt,
   type Model,
+  type TranscriptContext,
 } from "@earendil-works/pi-ai"
 
 import type { KernelEvent } from "../protocol.ts"
@@ -124,8 +126,8 @@ describe("有清单且工具解析成功", () => {
 
     let systemPrompt = ""
     const { manager, events } = makeManager([
-      (context: { systemPrompt?: string }) => {
-        systemPrompt = context?.systemPrompt ?? ""
+      (context: TranscriptContext) => {
+        systemPrompt = getCurrentSystemPrompt(context.messages)
         return fauxAssistantMessage([fauxToolCall("bash", { command: 'echo "$YOMA_TC_TEST_BIN|$PATH"' })])
       },
       fauxAssistantMessage([fauxText("好")]),
@@ -175,8 +177,8 @@ describe("有清单但工具缺失", () => {
 
     let systemPrompt = ""
     const { manager, events } = makeManager([
-      (context: { systemPrompt?: string }) => {
-        systemPrompt = context?.systemPrompt ?? ""
+      (context: TranscriptContext) => {
+        systemPrompt = getCurrentSystemPrompt(context.messages)
         return fauxAssistantMessage([fauxText("好")])
       },
     ])
@@ -204,8 +206,8 @@ describe("没有清单", () => {
 
     let systemPrompt = ""
     const { manager, events } = makeManager([
-      (context: { systemPrompt?: string }) => {
-        systemPrompt = context?.systemPrompt ?? ""
+      (context: TranscriptContext) => {
+        systemPrompt = getCurrentSystemPrompt(context.messages)
         return fauxAssistantMessage([fauxText("好")])
       },
     ])
@@ -430,8 +432,8 @@ describe("内置执行器使用会话工具链", () => {
     let prompt = ""
     const { manager, events } = makeManager(
       [
-        (context: { systemPrompt?: string }) => {
-          prompt = context.systemPrompt ?? ""
+        (context: TranscriptContext) => {
+          prompt = getCurrentSystemPrompt(context.messages)
           return call()
         },
         done(),
@@ -490,8 +492,8 @@ describe("内置执行器使用会话工具链", () => {
     const workspace = project()
     const events: KernelEvent[] = []
     const prompts: string[] = []
-    const capture = (run: boolean) => (context: { systemPrompt?: string }) => {
-      prompts.push(context.systemPrompt ?? "")
+    const capture = (run: boolean) => (context: TranscriptContext) => {
+      prompts.push(getCurrentSystemPrompt(context.messages))
       return run ? call() : done()
     }
     const host = createKernelHost({

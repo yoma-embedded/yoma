@@ -8,7 +8,7 @@
  *     --cwd /app \
  *     (--instruction "…" | --instruction-file /path/to/instruction.md) \
  *     --out /logs/agent/result.json [--events /logs/agent/events.jsonl] \
- *     [--provider deepseek --model deepseek-v4-flash-vision-exp --thinking max] \
+ *     [--provider deepseek --model deepseek-flash --thinking max] \
  *     [--config-dir DIR --sessions-root DIR --state-dir DIR --timeout-ms N] \
  *     [--faux script.json]
  *
@@ -36,7 +36,7 @@ const USAGE = `yoma-eval-entry (${BUILD_STAMP})
   --out FILE                 结果 JSON 落点(必填)
   --events FILE              事件流 JSONL 落点(transcript)
   --provider ID              默认 deepseek(env: YOMA_PROVIDER)
-  --model ID                 默认 deepseek-v4-flash-vision-exp(env: YOMA_MODEL)
+  --model ID                 默认 deepseek-flash(env: YOMA_MODEL)
   --thinking LEVEL           off/minimal/low/medium/high/xhigh/max(env: YOMA_THINKING)
   --config-dir DIR           凭据/技能/上下文目录,默认 <cwd>/.yoma-eval-config
   --sessions-root DIR        会话 JSONL 根目录,默认 <config-dir>/sessions
@@ -122,7 +122,7 @@ async function main(): Promise<void> {
   }
 
   const providerID = flags.get("provider") ?? process.env.YOMA_PROVIDER ?? "deepseek"
-  const modelID = flags.get("model") ?? process.env.YOMA_MODEL ?? "deepseek-v4-flash-vision-exp"
+  const modelID = flags.get("model") ?? process.env.YOMA_MODEL ?? "deepseek-flash"
 
   process.stderr.write(
     `yoma-eval-entry (${BUILD_STAMP}) · ${providerID}/${modelID}${faux ? " · faux" : ""} · cwd=${cwd}\n`,

@@ -32,7 +32,7 @@ function options(overrides: Partial<EvalOptions> = {}): EvalOptions {
     cwd,
     instruction: "看一眼工作目录,说说这是什么工程",
     providerID: "deepseek",
-    modelID: "deepseek-v4-flash-vision-exp",
+    modelID: "deepseek-flash",
     configDir,
     sessionsRoot: path.join(configDir, "sessions"),
     stateDir: path.join(configDir, "state"),
@@ -50,7 +50,7 @@ describe("runEval · faux", () => {
 
     expect(output.faux).toBe(true)
     expect(output.providerID).toBe("deepseek")
-    expect(output.modelID).toBe("deepseek-v4-flash-vision-exp")
+    expect(output.modelID).toBe("deepseek-flash")
     // 档位不填 → 落到 kernel 的 DEFAULT_THINKING_LEVEL(max),不是关掉。
     expect(output.thinking).toBe("max")
     expect(output.result.text).toContain("空工程")

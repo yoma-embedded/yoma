@@ -73,10 +73,14 @@ export interface JobModel {
  *
  * 仍把 Flash 放在第一候选:档位表和 Pro 一样(high/max),单价大约三分之一,
  * 省下的换成思考。任务书写了完整 model 则听任务书的,两端一致。
+ *
+ * 2026-09-20:随 pi-ai 0.86.0 的目录,DeepSeek 把 `deepseek-v4-flash` 换成了
+ * `deepseek-flash`(V4.1 Flash,带视觉、1M 上下文);旧 id 已不在目录里,写它
+ * 就是第一轮 `未知模型 deepseek/…`。
  */
 export const DEFAULT_MODEL = {
   providerID: "deepseek",
-  modelID: "deepseek-v4-flash",
+  modelID: "deepseek-flash",
 } as const
 
 export interface Job {

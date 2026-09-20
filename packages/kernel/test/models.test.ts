@@ -148,7 +148,7 @@ describe("resolveModel", () => {
 		const compatOf = (provider: string, id: string) =>
 			(models.getModel(provider, id) as Model<"openai-completions"> | undefined)?.compat;
 
-		for (const id of ["deepseek-v4-pro", "deepseek-v4-flash"]) {
+		for (const id of ["deepseek-v4-pro", "deepseek-flash"]) {
 			expect(compatOf("deepseek", id)?.maxTokensField).toBe("max_tokens");
 		}
 		expect(compatOf("moonshotai-cn", "kimi-k2.6")?.maxTokensField).toBe("max_tokens");
@@ -204,10 +204,10 @@ describe("resolveModel", () => {
 		expect(fromSettings.model.id).toBe("kimi-k2.6");
 
 		process.env.YOMA_PROVIDER = "deepseek";
-		process.env.YOMA_MODEL = "deepseek-v4-flash";
+		process.env.YOMA_MODEL = "deepseek-flash";
 		const fromEnv = await resolveModel(dir, isolated);
 		expect(fromEnv.model.provider).toBe("deepseek");
-		expect(fromEnv.model.id).toBe("deepseek-v4-flash");
+		expect(fromEnv.model.id).toBe("deepseek-flash");
 	});
 
 	it("lets explicit host selections override defaults and environment without mutating process.env", async () => {
@@ -218,10 +218,10 @@ describe("resolveModel", () => {
 		const { model } = await resolveModel(dir, {
 			...isolated,
 			provider: "deepseek",
-			modelId: "deepseek-v4-flash",
+			modelId: "deepseek-flash",
 		});
 		expect(model.provider).toBe("deepseek");
-		expect(model.id).toBe("deepseek-v4-flash");
+		expect(model.id).toBe("deepseek-flash");
 		expect(process.env.YOMA_PROVIDER).toBe("unavailable-provider");
 		expect(process.env.YOMA_MODEL).toBe("unavailable-model");
 	});
@@ -256,10 +256,9 @@ describe("configurableProviders", () => {
 		for (const id of ["deepseek", "moonshotai-cn", "anthropic", "openai", "google", "openrouter"]) {
 			expect(ids).toContain(id);
 		}
-		// 只有 OAuth / 要账号 id、区域、项目 / 目录要联网拉 —— 填一个 key 永远亮不起"已连接"。
+		// 只有 OAuth / 要账号 id、区域、项目 —— 填一个 key 永远亮不起"已连接"。
 		for (const id of [
 			"openai-codex",
-			"radius",
 			"amazon-bedrock",
 			"google-vertex",
 			"cloudflare-ai-gateway",
@@ -267,6 +266,8 @@ describe("configurableProviders", () => {
 		]) {
 			expect(ids).not.toContain(id);
 		}
+		// radius 从 pi-ai 0.86.0 起随包带一份基线目录(从前只能联网拉),一个 key 就能用。
+		expect(ids).toContain("radius");
 		// 名字跟 pi-ai 走,桌面端不再另维护一份。
 		expect(list.find((p) => p.id === "deepseek")?.name).toBe("DeepSeek");
 	});

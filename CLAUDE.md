@@ -21,7 +21,7 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
 
 **内核与上游 pi 的关系**(2026-08-21 核实;嵌入式应用层的细节在 `packages/kernel/UPSTREAM.md`):
 应用层与当年那份 `agent` 分叉自上游 **2026-07-13 的快照 `f8f75544b`**(不是 `v0.80.6`)。
-`pi-ai` 现在是仓内上游包(`packages/ai`,0.85.1,哈希锁定);从前那份自有 harness
+`pi-ai` 现在是仓内上游包(`packages/ai`,0.86.0,哈希锁定);从前那份自有 harness
 建在上游的 v1 `AgentHarness` 上 —— **上游自己的 CLI 从没用过它**(生产路径是 `Agent` +
 上游 coding-agent 的 `AgentSession`),2026-08-04 上游把它掏空成 v2 空壳、8-11 又定了 v3 规格。
 那份自有分叉(`agent-legacy`)已于 2026-09-10 删除,`agent` 现在是**哈希锁定的上游拷贝**;
@@ -283,6 +283,14 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
   `host/model-startup.test.ts` 覆盖这些时序,app 的 browser 回归钉住更新事件后旧响应不能盖回列表。
   教训的形状:**"我的清单比别人少"先问"别人那一条是从哪来的",别默认是同步落后。** 这次如果直接去补同步,
   再同步一百次也补不出那个模型。
+  **2026-09-20 补一条相反方向的**:内建快照**可以**刷,但那是一次显式的、与源码同步分开的动作。
+  同步 0.86.0 时上游新增了 `providers/radius.models.ts`,它 import 的 `providers/data/radius.json`
+  在我们的快照里根本没有(那个目录被上游的版本库忽略,同步工具按设计不碰它)—— 于是这次整份 `data/`
+  取自**已发布的 npm 包** `@earendil-works/pi-ai@0.86.0` 的 `dist/providers/data`(逐字节等于该版本的
+  src 数据:没变的那几份与仓里原有的一字不差,可以自己 cmp),`upstream-lock.json` 的
+  `generatedSnapshot.provenance` 写明了这个来源。副作用是内建目录跟着新了一轮(`deepseek-flash`
+  从此**内建就有**,不再只靠 `withRemoteCatalog` 拉;radius 也因此有了基线目录)。别拿 pi 检出的
+  工作树去凑这份数据:那台机器的 data/ 是它自己上次生成的,既不对应任何提交,也不一定比仓里的新。
 
 - **gdb 第一刀:纯函数层**(2026-09-14,第 6 步第 7 刀,从 attic/tools/gdb-mi.ts + gdb.ts 的纯函数部分移植):
   `host/domain/gdb/{mi,cortex-m,render,elf,eval-policy,index}.ts` —— MI3 分帧与解析、Cortex-M 故障解码、帧渲染、
@@ -655,8 +663,10 @@ v3 规格(`pi/packages/agent/docs/harness.md` §5.5/§5.6)的形状 —— hooks
   `resolveModel()` 的不变式是**注册 == 已配置**:全部注册、逐个 `checkAuth()`、没凭据的删掉,
   所以注册表里的一律 `authenticated`。连接对话框列的是 `configurableProviders()`:运行时
   用假交互跑一遍各家的 `apiKey.login`,只问一个 secret 的才算"一个 key 就能用";
-  bedrock / vertex / cloudflare(还要账号 id、区域、项目)、openai-codex(只有 OAuth)、
-  radius(目录要联网拉)由此自动排除 —— 这些家填了 key 也永远亮不起"已连接"。
+  bedrock / vertex / cloudflare(还要账号 id、区域、项目)、openai-codex(只有 OAuth)
+  由此自动排除 —— 这些家填了 key 也永远亮不起"已连接"。radius 从前也在这张排除表里
+  (目录要联网拉),pi-ai 0.86.0 起它随包带一份基线目录,一个 key 就能用,于是自己回到了列表里
+  —— 这张表是**算出来的**,别去手写。
   `thinkingLevels` 必须走 pi-ai 的 `getSupportedThinkingLevels(model)` 去问,编错的后果是
   档位能选但发不出去。
 - **默认思考档位**(`src/thinking.ts` + `KernelHostOptions.defaultThinkingLevel`)。
@@ -675,7 +685,10 @@ v3 规格(`pi/packages/agent/docs/harness.md` §5.5/§5.6)的形状 —— hooks
   另:`setModel` 换模型之后**必须重钳当前档位** —— 构造期那次是按 `ensureModels()`
   的默认模型算的,而调用方紧接着要换成任务书钉的那个。
 - **调试台的默认模型**(`bench/src/job.ts` 的 `DEFAULT_MODEL`,`parseJob` 里落定)。
-  任务书不写模型时,两端都跑 `deepseek/deepseek-v4-flash`,档位 `max`
+  任务书不写模型时,两端都跑 `deepseek/deepseek-flash`,档位 `max`
+  (2026-09-20 随 pi-ai 0.86.0 的目录改名:DeepSeek 把 `deepseek-v4-flash` 与
+  `deepseek-v4-flash-vision-exp` 并成了 `deepseek-flash` = V4.1 Flash,自带视觉、1M 上下文,
+  单价 0.3/1.2;旧 id 已不在目录里,写它就是第一轮"未知模型")
   (`DEFAULT_THINKING_LEVEL` 因此从 `high` 提到 `max`:Flash 的单价只有 V4 Pro 的
   三分之一,省下的换成想得更狠;想得不够的代价是多跑一轮,比 token 贵得多)。
   **不落定的话它是看不见的**:两侧各自回落到内核的"本机第一个有凭据的 provider 的
