@@ -43,10 +43,13 @@
 import { copyFile, mkdir, readdir, readFile, rename, rm } from "node:fs/promises"
 import path from "node:path"
 
+import type { LicenseService } from "@yoma-desktop/kernel/host"
+
 import type { FauxScript } from "../faux.ts"
 import { fileExists, readJsonFile } from "../fsx.ts"
 import type * as git from "../git.ts"
 import { runRoleDaemon } from "./daemon.ts"
+import { licenseGateForTurn, licensePausedFrom, type LicensePausedOutcome } from "./license.ts"
 import { runTurnInChildProcess, type TurnInput } from "../runner.ts"
 import type { TurnResult } from "../turn.ts"
 import { benchRolePrompt, runnerRoundPrompt } from "./prompts.ts"
@@ -83,6 +86,11 @@ export interface MailboxRunnerOptions {
   turnEntry?: string
   /** 技能/上下文/凭据全局目录;演练与测试传临时目录隔离,生产缺省 ~/.yoma。 */
   configDir?: string
+  /**
+   * 付费执行的授权闸门(见 license.ts)。**代码级注入口** —— host.ts / cli.ts 逐字段构造
+   * 这个对象,不从 `MailboxHostConfig` 或命令行取任何授权相关的值。不传就按编译期策略现建。
+   */
+  license?: LicenseService
   /** 本机演练的假模型脚本,按轮取 `fauxTurns[round-1]`。生产不传。 */
   fauxTurns?: FauxScript[]
   onProgress?: (message: string) => void
@@ -98,6 +106,8 @@ export type RunnerStepOutcome =
   | { kind: "finalized"; verdict: MailboxVerdict }
   /** 挂起等人。工位机上多半就站着那个人 —— 这一侧的宿主要能把它显示出来。 */
   | { kind: "awaiting-human"; round: number; ask: string }
+  /** 软件授权不满足,这一轮**没有开始**,信箱原样留着(见 license.ts)。不是 blocked、不退避。 */
+  | LicensePausedOutcome
   | { kind: "blocked"; detail: string }
 
 const RUNNER_AUTHOR = { name: "yoma-mailbox-runner", email: "bench@yoma.local" }
@@ -289,6 +299,12 @@ export async function runnerStep(options: MailboxRunnerOptions): Promise<RunnerS
     return { kind: "awaiting-human", round: snapshot.state.round, ask: snapshot.state.ask }
   }
 
+  // 到这里才确定"这一步要开始一轮付费执行"。闸门排在**任何副作用之前** —— 附件还没落进
+  // 工作目录、子进程还没起、板子一个字节都没被碰。不满足就原样返回暂停:这一轮不算跑过,
+  // 待执行的指令还在信箱里,导入授权后下一次轮询从这儿接着走。
+  const paused = licenseGateForTurn(options, snapshot.state.instruction.round)
+  if (paused) return paused
+
   return runRound(options, snapshot.job, snapshot.state.instruction, snapshot.rounds, progress)
 }
 
@@ -363,6 +379,11 @@ async function runRound(
     await saveLocalState(root, {})
     return finishWithError(`agent 轮执行失败:${(error as Error).message}`)
   }
+
+  // 竞态兜底:守护这边检查通过之后、子进程真的开跑之前授权到期(或被换成无效文件),
+  // 子进程的内核在 session.prompt 第一行拒掉,结果里带的是 licenseBlocked 而不是失败。
+  // 同样按暂停处理:不写 result.json、不提交、不归档投递目录 —— 这一轮没有发生过。
+  if (turn.licenseBlocked) return licensePausedFrom(turn.licenseBlocked, round)
 
   sessionID = turn.sessionID
   await saveLocalState(root, { sessionID })

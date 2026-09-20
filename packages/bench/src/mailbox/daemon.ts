@@ -99,6 +99,15 @@ function isAlive(pid: number): boolean {
  *
  * `blocked` 用工厂传进来而不是就地造:泛型表达不了"T 的联合里含 blocked 分支"。
  * 进度串(`(空闲)…` 与 `⚠ …(Ns 后重试)`)是桌面端事件里看得见的文本,逐字保留。
+ *
+ * ## `license-paused` 为什么走正常轮询而不是退避
+ *
+ * 它不是故障,而是"等一件人手上的事"(导入授权),与 blocked 的成因完全不同:退避防的是
+ * "每 15 秒重跑一遍昂贵步骤",而暂停这一步**什么都不跑、什么都不写** —— 一次轮询的代价就是
+ * 读一次不到 1 KB 的授权文件加一次验签。压成分钟级只会让续费之后干等几分钟。
+ *
+ * 进度行**只在进入暂停和解除时各打一次**:每一拍刷一行的话,桌面端的 200 行环形进度会被
+ * 一条挂了一夜的暂停整个挤掉(与 turn-entry 去重工具状态行同一条教训)。
  */
 export async function runRoleDaemon<T extends { kind: string; detail?: string }>(params: {
   clone: string
@@ -115,6 +124,8 @@ export async function runRoleDaemon<T extends { kind: string; detail?: string }>
   const lock = await acquireRoleLock(params.clone, params.role)
   if (!lock.ok) return params.blocked(lock.detail)
   let blockedStreak = 0
+  /** 上一步是不是授权暂停 —— 只为了让那条进度行进一次、出一次。 */
+  let licensePaused = false
   try {
     for (;;) {
       let outcome: T
@@ -125,6 +136,17 @@ export async function runRoleDaemon<T extends { kind: string; detail?: string }>
       }
       params.onStep?.(outcome)
       if (outcome.kind === "idle") params.onProgress?.(`(空闲)${outcome.detail}`)
+      if (outcome.kind === "license-paused") {
+        if (!licensePaused) {
+          licensePaused = true
+          params.onProgress?.(`⏸ ${outcome.detail ?? "软件授权不满足,已在轮次边界暂停"}`)
+        }
+      } else if (licensePaused) {
+        // 说"暂停解除"而不是"授权恢复了":这一步也可能是因为信箱状态变了(比如另一侧
+        // 推了新东西)才走到不查授权的分支上,那时授权其实还没续。
+        licensePaused = false
+        params.onProgress?.("▶ 授权暂停已解除,守护接着跑")
+      }
       if (outcome.kind === params.terminalKind || params.once) return outcome
       blockedStreak = outcome.kind === "blocked" ? blockedStreak + 1 : 0
       const delay = backoffSeconds(params.pollSeconds, blockedStreak)

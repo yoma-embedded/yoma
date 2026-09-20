@@ -124,6 +124,10 @@ jobs:
         env:
           # tag 没有 workflow_dispatch inputs,正式发布固定走 prod。
           YOMA_CHANNEL: ${{ inputs.channel || 'prod' }}
+          # 授权是**编译期常量**:这两个 repository variable 决定这个包是商业版还是社区版、信任哪把公钥。
+          # 公钥不是秘密,所以用 vars 而不是 secrets。两个都没设 = 空串 = 社区构建 = 与从前完全一致。
+          YOMA_EDITION: ${{ vars.YOMA_EDITION }}
+          YOMA_LICENSE_TRUST_JSON: ${{ vars.YOMA_LICENSE_TRUST_JSON }}
         run: npm run build:desktop
 
       # 当场编过就指那份 dist;否则 stage-engines 按 engines.lock.json 下载预编译产物。
@@ -132,6 +136,10 @@ jobs:
           YOMA_CHANNEL: ${{ inputs.channel || 'prod' }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           YOMA_ENGINES_DIR: ${{ env.BUILD_ENGINES == 'true' && format('{0}/engines-dist', github.workspace) || '' }}
+          # 商业构建时 package:win 会先对 out/ 跑一遍产物检查(四个入口的注入、公钥、没有私钥/签发工具);
+          # 社区构建(变量没设)那一步自己跳过。
+          YOMA_EDITION: ${{ vars.YOMA_EDITION }}
+          YOMA_LICENSE_TRUST_JSON: ${{ vars.YOMA_LICENSE_TRUST_JSON }}
         run: npm run package:win -w packages/desktop
 
       - name: 检查产物里的引擎确实是 Windows 二进制

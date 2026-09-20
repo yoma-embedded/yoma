@@ -6,6 +6,7 @@
 import { describe, expect, test } from "vitest"
 
 import type { MailboxHostConfig } from "@yoma-desktop/bench"
+import type { LicenseRequiredData } from "@yoma-desktop/kernel"
 import {
   MailboxController,
   restartDelayMs,
@@ -28,6 +29,15 @@ interface Harness {
   launchThrows?: string
   /** 接线层的兜底工程目录(真实现里是 composeJob 从模板位置推导出来的)。 */
   derivedProjectDir?: string
+  /** 授权:undefined = 不检查(社区构建 / 没注入);给了就是"这台机器现在的资格"。 */
+  licensed?: { ok: true } | { ok: false; message: string; data: LicenseRequiredData }
+}
+
+const EXPIRED: LicenseRequiredData = {
+  _tag: "LicenseRequiredError",
+  state: "expired",
+  execution: "mailbox.start",
+  expiresAt: "2026-09-01T00:00:00Z",
 }
 
 function makeHarness(initial?: MailboxSettings): Harness {
@@ -71,6 +81,8 @@ function makeHarness(initial?: MailboxSettings): Harness {
         entry.cancelled = true
       }
     },
+    // 每次都问 harness 的当前值:用例要能在"暂停之后导入了授权"这一刻把答案改掉。
+    checkLicense: () => harness.licensed ?? { ok: true },
   }
   harness.controller = new MailboxController(deps)
   return harness as Harness
@@ -312,5 +324,159 @@ describe("本机工程目录", () => {
     harness.derivedProjectDir = "/Users/ben/fw"
     harness.controller.start({ kind: "runner" })
     expect(harness.launches[0]!.config.projectDir).toBe("/work/fw")
+  })
+})
+
+describe("软件授权", () => {
+  test("授权不满足时四种 kind 都不 spawn,落 paused 并带上原因", () => {
+    for (const kind of ["runner", "mother", "sim", "init"] as const) {
+      const harness = makeHarness({ ...SETTINGS, role: kind === "mother" ? "mother" : "runner" })
+      harness.licensed = { ok: false, message: "软件授权已于 2026-09-01 到期", data: EXPIRED }
+
+      const started = harness.controller.start({ kind, jobFile: kind === "init" ? "/tmp/job.json" : undefined })
+      expect(started.ok, kind).toBe(false)
+      expect(started.ok === false && started.license, kind).toEqual(EXPIRED)
+      // 关键断言:进程根本没起。守护一起来就会去轮询、开分支、烧板子。
+      expect(harness.launches, kind).toHaveLength(0)
+
+      const status = harness.controller.status()
+      expect(status.phase, kind).toBe("paused")
+      expect(status.license, kind).toEqual(EXPIRED)
+      expect(status.message, kind).toContain("到期")
+      // paused 不是 error:任务状态完好,界面不该把人引去查日志。
+      expect(status.phase, kind).not.toBe("error")
+    }
+  })
+
+  test("paused 之后导入了授权,再点开跑就正常 spawn", () => {
+    const harness = makeHarness(SETTINGS)
+    harness.licensed = { ok: false, message: "尚未激活", data: { ...EXPIRED, state: "missing" } }
+    expect(harness.controller.start({ kind: "runner" }).ok).toBe(false)
+    expect(harness.controller.status().phase).toBe("paused")
+
+    // 用户在设置页导入了授权文件 —— 服务每次重新读盘,所以下一次问就是新答案。
+    harness.licensed = { ok: true }
+    expect(harness.controller.start({ kind: "runner" })).toEqual({ ok: true })
+    expect(harness.launches).toHaveLength(1)
+    const status = harness.controller.status()
+    expect(status.phase).toBe("running")
+    // 过期的解释要擦掉,否则界面一直挂着"去激活"。
+    expect(status.license).toBeUndefined()
+  })
+
+  test("paused 态下可以改配置", () => {
+    const harness = makeHarness(SETTINGS)
+    harness.licensed = { ok: false, message: "尚未激活", data: EXPIRED }
+    harness.controller.start({ kind: "runner" })
+    expect(harness.controller.status().phase).toBe("paused")
+    // 只有 running / stopping 才拒改配置 —— 暂停期间换个远端、填工程目录都该允许。
+    expect(harness.controller.configure({ ...SETTINGS, branch: "next" })).toEqual({ ok: true })
+    expect(harness.saved?.branch).toBe("next")
+  })
+
+  test("退出码 4:不重启,落 paused 并带上守护报的原因", () => {
+    const harness = makeHarness(SETTINGS)
+    harness.controller.start({ kind: "runner" })
+    emit(harness, 0, { type: "done", exitCode: 4, detail: "授权已于 2026-09-01 到期", license: EXPIRED })
+    harness.launches[0]!.io.onExit(4)
+
+    const status = harness.controller.status()
+    expect(status.phase).toBe("paused")
+    expect(status.license).toEqual(EXPIRED)
+    expect(status.message).toContain("任务状态已保留")
+    // 重启只会得到同一个退出码,而退避期间 phase 显示的是 running —— 看起来像在干活。
+    expect(harness.timers).toHaveLength(0)
+    expect(harness.launches).toHaveLength(1)
+  })
+
+  test("退出码 0 但带 license(跑着的时候到期,在轮次边界收场)也是 paused,不是 done、不重启", () => {
+    // 守护那边的第二种形态(bench 的 mailbox/host.ts:finish(0, detail, undefined, license))。
+    // 只认退出码 4 的话,常驻角色会掉进崩溃退避,屏幕上是"异常退出(code 0),5s 后重启"。
+    for (const kind of ["runner", "sim"] as const) {
+      const harness = makeHarness(SETTINGS)
+      harness.controller.start({ kind })
+      emit(harness, 0, { type: "done", exitCode: 0, detail: "授权到期,已在第 3 轮边界停下", license: EXPIRED })
+      harness.launches[0]!.io.onExit(0)
+
+      const status = harness.controller.status()
+      expect(status.phase, kind).toBe("paused")
+      expect(status.license, kind).toEqual(EXPIRED)
+      expect(status.message, kind).toContain("轮次边界")
+      expect(harness.timers, kind).toHaveLength(0)
+      expect(harness.launches, kind).toHaveLength(1)
+    }
+  })
+
+  test("退出码 4 但事件没带 license 也要落 paused(不能掉回崩溃重启)", () => {
+    const harness = makeHarness(SETTINGS)
+    harness.controller.start({ kind: "runner" })
+    emit(harness, 0, { type: "done", exitCode: 4, detail: "没有有效授权" })
+    harness.launches[0]!.io.onExit(4)
+
+    expect(harness.controller.status().phase).toBe("paused")
+    expect(harness.controller.status().license?._tag).toBe("LicenseRequiredError")
+    expect(harness.timers).toHaveLength(0)
+  })
+
+  test("init 的接力被授权拦住 → paused 而不是 error(入箱是成功的)", () => {
+    const harness = makeHarness(SETTINGS)
+    harness.controller.start({ kind: "init", jobFile: "/tmp/job.json", thenStart: true })
+    // init 自己跑完了(那一刻还有授权),接力常驻角色时才撞上到期。
+    harness.licensed = { ok: false, message: "软件授权已到期", data: EXPIRED }
+    emit(harness, 0, { type: "done", exitCode: 0, detail: "已入箱" })
+    harness.launches[0]!.io.onExit(0)
+
+    expect(harness.launches).toHaveLength(1)
+    const status = harness.controller.status()
+    expect(status.phase).toBe("paused")
+    expect(status.license).toEqual(EXPIRED)
+    expect(status.message).toContain("任务已入箱")
+  })
+
+  test("崩溃重启之前再问一次:期间到期就暂停,不反复拉起注定退出的守护", () => {
+    const harness = makeHarness(SETTINGS)
+    harness.controller.start({ kind: "runner" })
+    harness.launches[0]!.io.onExit(1)
+    expect(harness.timers).toHaveLength(1)
+
+    // 退避窗口跨过了到期时刻。
+    harness.licensed = { ok: false, message: "软件授权已到期", data: EXPIRED }
+    harness.timers[0]!.fn()
+
+    expect(harness.launches).toHaveLength(1)
+    const status = harness.controller.status()
+    expect(status.phase).toBe("paused")
+    expect(status.license).toEqual(EXPIRED)
+  })
+
+  test("停止在任何授权状态下照常 —— 在飞的任务永远停得掉", () => {
+    const harness = makeHarness(SETTINGS)
+    harness.controller.start({ kind: "runner" })
+    // 跑起来之后授权到期(守护还没查到):用户按停止,必须照常杀树。
+    harness.licensed = { ok: false, message: "软件授权已到期", data: EXPIRED }
+    expect(harness.controller.stop()).toEqual({ ok: true })
+    expect(harness.stops).toEqual([{ pid: 1001, force: false }])
+    harness.launches[0]!.io.onExit(143)
+    expect(harness.controller.status().phase).toBe("idle")
+  })
+
+  test("退出码 3(锁冲突)等老路径不受影响", () => {
+    const harness = makeHarness(SETTINGS)
+    harness.controller.start({ kind: "runner" })
+    emit(harness, 0, { type: "done", exitCode: 3, detail: "runner 已有实例在跑(pid 42)" })
+    harness.launches[0]!.io.onExit(3)
+
+    const status = harness.controller.status()
+    expect(status.phase).toBe("error")
+    expect(status.message).toContain("另一个 Yoma 实例")
+    expect(status.license).toBeUndefined()
+  })
+
+  test("不注入 checkLicense 时行为与从前一字不差", () => {
+    const harness = makeHarness(SETTINGS)
+    harness.licensed = undefined
+    expect(harness.controller.start({ kind: "runner" })).toEqual({ ok: true })
+    expect(harness.launches).toHaveLength(1)
+    expect(harness.controller.status().license).toBeUndefined()
   })
 })

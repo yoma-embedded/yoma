@@ -14,6 +14,7 @@ import { kernelSelfCheck } from "@yoma-desktop/kernel/host"
 import { JobSpecError, type JobModel } from "./job.ts"
 import { activeRoleLocks } from "./mailbox/daemon.ts"
 import { initMailbox } from "./mailbox/init.ts"
+import { licenseGateForStart } from "./mailbox/license.ts"
 import { resolveMotherModel, runMailboxMother } from "./mailbox/mother.ts"
 import { cloneDirFor, defaultMailboxRoot } from "./mailbox/paths.ts"
 import { runMailboxRunner } from "./mailbox/runner.ts"
@@ -36,6 +37,23 @@ function say(message: string): void {
 function fail(message: string): never {
   say(`${RED}✗ ${message}${RESET}`)
   process.exit(1)
+}
+
+/**
+ * 会开始付费执行的四个子命令(init / runner / mother / sim)共用的启动检查。
+ *
+ * 一处实现,四个入口都调它 —— 抄两份的代价不是多几行,而是"某天给 sim 加了个新入口忘了抄"
+ * 这种只在商业包上才看得见的漏洞。`check` / `status` / `ack` **不调**:校验任务书、看进度、
+ * 回执人工动作始终可用(与 host.ts 的 status 角色同一条规矩)。
+ *
+ * 退出码 4 = 没有有效授权,不是失败也不是崩溃(与守护的 done.exitCode 一致)。
+ */
+function requireLicenseToStart(what: string): void {
+  const refused = licenseGateForStart({})
+  if (!refused) return
+  say(`${YELLOW}⏸ ${what}:${refused.detail}${RESET}`)
+  say(`${DIM}  授权状态见桌面端「设置 → 授权」;这台机器上的授权文件位置也在那一页。${RESET}`)
+  process.exit(4)
 }
 
 /** 会话根目录默认指向 desktop 的 userData —— 这样跑完就能在桌面端直接回放。 */
@@ -164,6 +182,7 @@ async function commandMailbox(sub: string, rest: string[]): Promise<void> {
 
   if (sub === "init") {
     if (!target) fail("用法:yoma-bench mailbox init <mailbox-job.json> [信箱克隆目录] [--remote url]")
+    requireLicenseToStart("任务没有入箱")
     const mailboxJob = await loadMailboxJob(target)
     // 入箱发生在研发机上,而随后接手的守护是 mother —— 用它的克隆,别再建第二个。
     const clone = await resolveClone("mother", positionals[1], flags)
@@ -175,6 +194,8 @@ async function commandMailbox(sub: string, rest: string[]): Promise<void> {
   }
 
   if (sub === "runner" || sub === "mother") {
+    // 检查排在 resolveClone 之前:没有授权就连克隆都不建、锁都不抢。
+    requireLicenseToStart(`${sub} 守护没有启动`)
     const clone = await resolveClone(sub, target, flags)
     const common = {
       clone,
@@ -193,6 +214,11 @@ async function commandMailbox(sub: string, rest: string[]): Promise<void> {
     if (outcome.kind === "finalized" || outcome.kind === "done") {
       say(`${GREEN}✓${RESET} 闭环终局:${outcome.verdict.outcome} —— ${outcome.verdict.reason}`)
       process.exit(outcome.verdict.outcome === "passed" ? 0 : 1)
+    }
+    // 暂停不是失败(与 awaiting-human 同理):任务状态完好,退 0 让 cron 场景安静地等下一次。
+    if (outcome.kind === "license-paused") {
+      say(`${YELLOW}⏸ ${outcome.detail}${RESET}`)
+      process.exit(0)
     }
     process.exit(outcome.kind === "blocked" ? 1 : 0)
   }
@@ -270,6 +296,7 @@ async function commandMailbox(sub: string, rest: string[]): Promise<void> {
 
   if (sub === "sim") {
     if (!target) fail("用法:yoma-bench mailbox sim <mailbox-job.json> --project <工程目录> [--remote url]")
+    requireLicenseToStart("单机模拟没有启动")
     const result = await runSim({
       jobFile: target,
       projectDir: flags.project,

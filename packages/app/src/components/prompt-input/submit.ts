@@ -13,6 +13,7 @@ import { type ContextItem, type ImageAttachmentPart, type Prompt, type usePrompt
 import { useSDK, type DirectorySDK } from "@/context/sdk"
 import { useSync, type DirectorySync } from "@/context/sync"
 import { Identifier } from "@/utils/id"
+import { createLicenseNotice } from "@/licensing/license-notice"
 import { buildRequestParts } from "./build-request-parts"
 import { setCursorPosition } from "./editor-dom"
 import { ScopedKey } from "@/utils/scoped-key"
@@ -168,6 +169,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
   const params = useParams()
   const [search] = useSearchParams<{ draftId?: string }>()
   const drafts = useDrafts()
+  const licenseNotice = createLicenseNotice()
   const pendingKey = (sessionID: string) => ScopedKey.from(sessionID)
 
   const errorMessage = (err: unknown) => {
@@ -366,10 +368,15 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     }).catch((err) => {
       pending.delete(pendingKey(session.id))
       sync().set("session_status", session.id, { type: "idle" })
-      showToast({
-        title: language.t("prompt.toast.promptSendFailed.title"),
-        description: errorMessage(err),
-      })
+      // 没有有效授权时内核在执行入口就拒了这一轮:出专门的提示(带"打开授权设置"),
+      // 而不是一条通用的"发送失败 + 内核报错原文"。乐观消息的摘除与输入还原走的是
+      // 同一条路 —— 屏幕上不能留下一条"看着已经发出去了"的用户消息。
+      if (!licenseNotice.notifyIfLicense(err)) {
+        showToast({
+          title: language.t("prompt.toast.promptSendFailed.title"),
+          description: errorMessage(err),
+        })
+      }
       removeOptimisticMessage()
       if (restoreInput()) restoreCommentItems(submission.target(), commentItems)
     })

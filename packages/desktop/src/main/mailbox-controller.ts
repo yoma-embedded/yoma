@@ -13,6 +13,9 @@
  */
 
 import type { MailboxHostConfig, MailboxHostEvent, MailboxUiSnapshot, MailboxVerdict } from "@yoma-desktop/bench"
+// 菜单(浏览器安全的门)。授权检查本身在接线层 mailbox.ts 里经叶子门 ./host/licensing 建,
+// 控制器只认注入进来的一个函数 —— 它是纯逻辑,单测里那个函数是假的。
+import type { LicenseRequiredData } from "@yoma-desktop/kernel"
 
 export type MailboxRole = "runner" | "mother"
 export type MailboxTaskKind = MailboxRole | "sim" | "init"
@@ -52,12 +55,21 @@ export interface MailboxTaskRequest {
 
 export interface MailboxStatus {
   settings?: MailboxSettings
-  phase: "idle" | "running" | "stopping" | "done" | "error"
+  /**
+   * `paused`:因为软件授权不满足而停住(拒绝启动,或守护自己以退出码 4 结束)。
+   *
+   * 与 `error` **分开**是产品要求:任务状态完好无损(信箱里的轮次、本地克隆一个字节没动),
+   * 导入有效授权之后从原处接着跑。落成 error 的代价是用户以为出了故障去查日志、
+   * 甚至重新 init 一遍 —— 那才会真的丢东西。
+   */
+  phase: "idle" | "running" | "stopping" | "done" | "error" | "paused"
   task?: { kind: MailboxTaskKind; startedAt: number; restarts: number; pid?: number }
   snapshot?: MailboxUiSnapshot
-  done?: { exitCode: number; detail: string; verdict?: MailboxVerdict }
-  /** 给人看的一句话(锁冲突、崩溃重启中……)。 */
+  done?: { exitCode: number; detail: string; verdict?: MailboxVerdict; license?: LicenseRequiredData }
+  /** 给人看的一句话(锁冲突、崩溃重启中、授权不满足……)。 */
   message?: string
+  /** `paused` 时的原因;界面据此出"去激活 / 续费"的入口。 */
+  license?: LicenseRequiredData
 }
 
 export type MailboxPublicEvent = { type: "host"; event: MailboxHostEvent } | { type: "status"; status: MailboxStatus }
@@ -92,7 +104,21 @@ export interface MailboxControllerDeps {
    * 而要动手的人多半没盯着这个窗口 —— 不主动喊一声,挂起就等于卡死。
    */
   notify?(payload: { title: string; body: string }): void
+  /**
+   * 这台机器现在有没有资格开始一次付费执行(软件授权)。不注入 = 不检查(单测与社区构建)。
+   *
+   * 问在**spawn 之前**:守护起来就会去轮询、开分支、烧板子,拦在进程外面才叫"没开始"。
+   * 守护自己那一侧也查(退出码 4)—— 两道不是重复:授权可能在守护跑着的时候到期,
+   * 而这一道拦的是"点开跑的那一刻就不该起"。
+   */
+  checkLicense?(): { ok: true } | { ok: false; message: string; data: LicenseRequiredData }
 }
+
+/**
+ * `start()` 的结果。`license` 在且只在"被授权拦住"时给 —— 界面据此把提示换成
+ * "去激活 / 续费"而不是一条笼统的失败。
+ */
+export type MailboxStartResult = { ok: true } | { ok: false; message: string; license?: LicenseRequiredData }
 
 /** 崩溃重启退避:5s 起步,翻倍,封顶 60s。 */
 export function restartDelayMs(restarts: number): number {
@@ -118,7 +144,8 @@ interface ActiveTask {
   restarts: number
   handle?: MailboxLaunchHandle
   userStopped: boolean
-  done?: { exitCode: number; detail: string; verdict?: MailboxVerdict }
+  /** `license` 只在 `exitCode === 4` 时有(守护因为授权拒绝启动);事件里没带就按 missing 兜。 */
+  done?: { exitCode: number; detail: string; verdict?: MailboxVerdict; license?: LicenseRequiredData }
   cancelRestart?: () => void
   /** 本次 spawn 的时刻 —— 用来区分"跑了一阵才崩"和"起来就死"。 */
   spawnedAt: number
@@ -133,6 +160,8 @@ export class MailboxController {
   /** 已经为哪一轮的挂起喊过人(快照会重发,同一次挂起只响一下)。 */
   private announcedPark?: number
   private message?: string
+  /** `paused` 的原因。start 成功时清掉。 */
+  private license?: LicenseRequiredData
 
   constructor(deps: MailboxControllerDeps) {
     this.deps = deps
@@ -149,6 +178,7 @@ export class MailboxController {
       snapshot: this.snapshot,
       done: this.task?.done,
       message: this.message,
+      license: this.license,
     }
   }
 
@@ -173,11 +203,16 @@ export class MailboxController {
     return { ok: true }
   }
 
-  start(request: MailboxTaskRequest): { ok: true } | { ok: false; message: string } {
+  start(request: MailboxTaskRequest): MailboxStartResult {
     if (!this.settings && request.kind !== "sim") return { ok: false, message: "先配置信箱远端与角色" }
     if (this.phase === "running" || this.phase === "stopping") {
       return { ok: false, message: "已有任务在跑 —— 一个信箱同一时间只有一个任务" }
     }
+    // 授权排在结构性检查之后、一切副作用之前:在飞的任务不能被这一问改状态
+    // (那两条 return 的语义是"这次点击不算数"),但也不该先让人去补配置再撞授权的墙。
+    // 四种 kind 都要问:sim 是假模型不花钱,但它也起真的守护进程、也是"开始一次执行"。
+    const licensed = this.deps.checkLicense?.()
+    if (licensed && !licensed.ok) return this.pause(licensed.data, licensed.message)
     if (request.kind === "init" && !request.jobFile) {
       return { ok: false, message: "init 需要任务书(jobFile)" }
     }
@@ -211,10 +246,26 @@ export class MailboxController {
     }
     this.snapshot = undefined
     this.message = undefined
+    // 开跑成功就把上一次的"授权不满足"擦掉:它是一条过期的解释,留着界面会一直挂着激活入口。
+    this.license = undefined
     this.phase = "running"
     this.spawn()
     this.pushStatus()
     return { ok: true }
+  }
+
+  /**
+   * 落到 `paused`:没有进程、任务状态原样留着、界面拿得到"为什么"。
+   *
+   * 不清 `this.task`:paused 之后用户导入授权再点开跑,`start()` 会照常覆盖它;
+   * 而在那之前进度页还要显示这是哪一个任务被拦住了。
+   */
+  private pause(data: LicenseRequiredData, message: string): MailboxStartResult {
+    this.phase = "paused"
+    this.license = data
+    this.message = message
+    this.pushStatus()
+    return { ok: false, message, license: data }
   }
 
   stop(): { ok: true } | { ok: false; message: string } {
@@ -298,6 +349,20 @@ export class MailboxController {
       return
     }
     const done = task.done
+    // **带 license 的收场一律是"暂停"**,不看退出码。守护那边有两种形态(bench 的 mailbox/host.ts):
+    //   exitCode 4 —— 启动那一刻就没有有效授权,拒绝启动(信箱一个字节没碰);
+    //   exitCode 0 + license —— 跑着的时候授权到期,在**轮次边界**停下来干净收场(没有 verdict)。
+    // 只认 4 的那一版会把第二种当成"正常退出":常驻角色于是掉进崩溃退避重启,屏幕上写着
+    // "异常退出(code 0),5s 后重启",而重启起来的守护立刻又暂停 —— 一个看不懂的循环。
+    if (done?.license || done?.exitCode === 4) {
+      const refusedToStart = done.exitCode === 4
+      this.pause(
+        done.license ?? { _tag: "LicenseRequiredError", state: "missing", execution: "mailbox.start" },
+        `软件授权不满足,调试台已暂停(${refusedToStart ? "守护拒绝启动" : "在轮次边界停下"}):${done.detail}。` +
+          `任务状态已保留 —— 在「设置 → 授权」导入有效授权后重新开始,即从原处继续。`,
+      )
+      return
+    }
     if (done?.verdict) {
       // 正常终局(passed/failed/parked)。runner 的收尾(回刷/交付)已经做完才有 verdict。
       this.phase = "done"
@@ -312,8 +377,13 @@ export class MailboxController {
       this.task = undefined
       const started = this.start({ kind: role })
       if (!started.ok) {
-        this.phase = "error"
-        this.message = `任务已入箱,但守护没起来:${started.message}`
+        // 被授权拦住的接力**不是** error:入箱是成功的,任务完好地躺在信箱里等着。
+        // start() 已经把 phase 落成 paused 并记下原因,这里只把话说全。
+        if (started.license) this.message = `任务已入箱,但守护没起来:${started.message}`
+        else {
+          this.phase = "error"
+          this.message = `任务已入箱,但守护没起来:${started.message}`
+        }
         this.pushStatus()
       }
       return
@@ -356,6 +426,13 @@ export class MailboxController {
     })
     task.cancelRestart = schedule(() => {
       if (this.task !== task || task.userStopped) return
+      // 退避窗口可能跨过到期时刻(封顶 60s,而这里可以重启很多次)。不重新问一遍的话,
+      // 授权过期之后就是"反复拉起一个注定以退出码 4 退出的守护",每次都刷一条重启消息。
+      const licensed = this.deps.checkLicense?.()
+      if (licensed && !licensed.ok) {
+        this.pause(licensed.data, `软件授权不满足,调试台已暂停(崩溃重启前的检查):${licensed.message}`)
+        return
+      }
       this.message = undefined
       this.spawn()
       this.pushStatus()

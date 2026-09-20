@@ -3,13 +3,14 @@
 // (packages/desktop/src/main/mailbox.ts),这里只消费 platform.mailbox;web 平台显示提示。
 // 任务书由模板生成 —— 描述只进 task,硬件事实与安全约束永远来自模板。
 // 任务书**不带绝对路径**:工程目录是本机事实,由配置页的"工程目录"提供。
-import { For, Match, onCleanup, onMount, Show, Switch } from "solid-js"
+import { createMemo, For, Match, onCleanup, onMount, Show, Switch } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useNavigate } from "@solidjs/router"
 import { ButtonV2 } from "@yoma-desktop/ui/v2/button-v2"
 import { SelectV2 } from "@yoma-desktop/ui/v2/select-v2"
 import { TextInputV2 } from "@yoma-desktop/ui/v2/text-input-v2"
 import type {
+  LicenseRequiredData,
   MailboxEventView,
   MailboxRoleView,
   MailboxRoundView,
@@ -18,6 +19,11 @@ import type {
 import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
 import { sessionHref } from "@/utils/session-href"
+import { selectBenchLicensePause } from "@/licensing/bench-pause"
+import { formatInstant, licenseRequiredState, licenseStateDetailKey } from "@/licensing/format"
+import { createLicenseNotice } from "@/licensing/license-notice"
+import { useLicenseStatus } from "@/licensing/license-store"
+import "./bench.css"
 
 const LABEL = "text-[12px] text-v2-text-text-muted [font-weight:500]"
 const CARD = "rounded-[8px] border border-v2-border-border-base"
@@ -42,10 +48,24 @@ export default function BenchPage() {
     task: { templatePath: "", description: "", title: "" },
     /** 回执时人补的一句话("电源已设 24V")—— 它会进研发端下一轮的提示词。 */
     ackNote: "",
+    /**
+     * 守护在轮次边界因为授权停住那一下(`step` 的 `license-paused`)。
+     *
+     * 和 `status.license` 分开记是因为**该说的话不一样**:守护还活着、下一次轮询会自己
+     * 接着跑;而 `phase: "paused"` 是它已经退了(或者压根没起来),要人重新点开始。
+     * 两个都没有的时候横幅整个不出现。
+     */
+    stepPause: undefined as { state: string; detail?: string; expiresAt?: string; notBefore?: string } | undefined,
+    /** `start()` 直接因为授权被拒(守护没起来)。main 侧的 status 也会说,但不保证先到。 */
+    startPause: undefined as LicenseRequiredData | undefined,
   })
 
   const t = (key: string) => language.t(key as never)
   const say = (error: boolean, text: string) => setState("notice", { error, text })
+
+  // 授权状态与授权页、会话页的提交提示共用同一份 store —— 在这一页导入之后三处一起变。
+  const license = useLicenseStatus()
+  const licenseNotice = createLicenseNotice()
 
   /**
    * 所有 IPC 调用都从这里过。
@@ -68,6 +88,8 @@ export default function BenchPage() {
 
   function applyStatus(status: MailboxStatusView) {
     setState("status", status)
+    // 又跑起来了 → 之前那两条"因为授权停住"的记录都过期了,收掉,横幅别赖着不走。
+    if (status.phase === "running") setState({ startPause: undefined, stepPause: undefined })
     if (status.settings && !state.form.remote) {
       setState("form", {
         remote: status.settings.remote,
@@ -91,6 +113,19 @@ export default function BenchPage() {
     const inner = event.event.type === "child" ? event.event.event : event.event
     if (inner.type === "progress") pushLog(inner.message)
     if (inner.type === "step" && inner.outcome.detail) pushLog(inner.outcome.detail)
+    if (inner.type === "step") {
+      if (inner.outcome.kind === "license-paused") {
+        setState("stepPause", {
+          state: inner.outcome.state ?? "invalid",
+          detail: inner.outcome.detail,
+          expiresAt: inner.outcome.expiresAt,
+          notBefore: inner.outcome.notBefore,
+        })
+      } else {
+        // 又跑起来了(任何别的一步走通了)→ 这条暂停说明已经过期,收掉。
+        setState("stepPause", undefined)
+      }
+    }
     if (inner.type === "done") pushLog(inner.detail)
   }
 
@@ -104,6 +139,23 @@ export default function BenchPage() {
   const status = () => state.status
   const snapshot = () => state.status?.snapshot
   const running = () => state.status?.phase === "running" || state.status?.phase === "stopping"
+
+  /**
+   * 授权暂停横幅。**不是失败红条也不是成功条** —— 任务状态完好,只是不能开新的一轮。
+   *
+   * 两种来源该说的话不一样:
+   *  - `phase: "paused"`(拒绝启动 / 守护以退出码 4 结束)→ 要人重新点开始;
+   *  - `step` 的 `license-paused`(守护还活着,停在轮次边界)→ 它下一次轮询自己接着跑。
+   * 授权已经补好之后,自己会接着跑的那一种就不该再吓人,而要人点开始的那一种要留着。
+   */
+  const licensePause = createMemo(() =>
+    selectBenchLicensePause({
+      status: state.status,
+      startPause: state.startPause,
+      stepPause: state.stepPause,
+      licenseState: license.status()?.state,
+    }),
+  )
   /** 闭环挂起等人时的那条请求(没挂起就是 undefined —— 面板整个不出现)。 */
   const parked = () => {
     const current = snapshot()?.state
@@ -149,6 +201,21 @@ export default function BenchPage() {
     if (result) say(!result.ok, result.message)
   }
 
+  /**
+   * 起守护的三个入口共用的收尾。被授权拦下时**不出红条** —— 那不是"出了点问题",
+   * 任务状态完好,横幅自己会把"接下来怎么办"说清楚。
+   */
+  function settleStart(result: { ok: boolean; message?: string; license?: LicenseRequiredData }, okText: string) {
+    if (result.license) {
+      setState({ startPause: result.license, notice: undefined })
+      setState("tab", "progress")
+      return
+    }
+    setState("startPause", undefined)
+    say(!result.ok, result.ok ? okText : (result.message ?? t("bench.error.generic")))
+    if (result.ok) setState("tab", "progress")
+  }
+
   async function composeAndLaunch() {
     if (!mailbox) return
     setState("busy", true)
@@ -169,12 +236,7 @@ export default function BenchPage() {
     setState("busy", true)
     const started = await guard(() => mailbox.start({ kind: "init", jobFile: composed.jobFile, thenStart: true }))
     if (!started) return
-    if (!started.ok) {
-      say(true, started.message ?? t("bench.error.generic"))
-    } else {
-      say(false, t("bench.task.launched"))
-      setState("tab", "progress")
-    }
+    settleStart(started, t("bench.task.launched"))
   }
 
   async function startDaemon() {
@@ -187,16 +249,14 @@ export default function BenchPage() {
     }
     const result = await guard(() => mailbox.start({ kind: role }))
     if (!result) return
-    say(!result.ok, result.ok ? t("bench.task.daemonStarted") : (result.message ?? t("bench.error.generic")))
-    if (result.ok) setState("tab", "progress")
+    settleStart(result, t("bench.task.daemonStarted"))
   }
 
   async function startRehearsal() {
     if (!mailbox) return
     const result = await guard(() => mailbox.start({ kind: "sim", fresh: true }))
     if (!result) return
-    say(!result.ok, result.ok ? t("bench.task.rehearsalStarted") : (result.message ?? t("bench.error.generic")))
-    if (result.ok) setState("tab", "progress")
+    settleStart(result, t("bench.task.rehearsalStarted"))
   }
 
   async function stopTask() {
@@ -232,12 +292,55 @@ export default function BenchPage() {
           <h1 class="text-[16px] text-v2-text-text-base [font-weight:600]">{t("bench.title")}</h1>
           <PhaseBadge status={status()} t={t} />
           <span class="flex-1" />
-          <Show when={running()}>
+          {/* 停止在任何授权状态下都可用:暂停时按它是"这一单我不跑了",内核照样收得掉。 */}
+          <Show when={running() || status()?.phase === "paused"}>
             <ButtonV2 variant="neutral" onClick={() => void stopTask()}>
               {t("bench.task.stop")}
             </ButtonV2>
           </Show>
         </header>
+
+        <Show when={licensePause()}>
+          {(pause) => (
+            <div data-component="bench-license-banner">
+              <span data-slot="bench-license-title">{t("bench.license.title")}</span>
+              {/* 两条独立的 Show,不用 fallback:状态读不出来时**什么都不说**,
+                  而不是回落成"授权已就绪"—— 那会是一句假话。 */}
+              <Show when={pause().resolved}>
+                <span data-slot="bench-license-body">{t("bench.license.resolved")}</span>
+              </Show>
+              <Show when={!pause().resolved && pause().state}>
+                {(current) => (
+                  <span data-slot="bench-license-body">
+                    {t(licenseStateDetailKey(licenseRequiredState(current())))}
+                  </span>
+                )}
+              </Show>
+              <Show when={pause().instant}>
+                {(instant) => (
+                  <span data-slot="bench-license-body">
+                    {language.t("bench.license.instant", { date: formatInstant(instant()) })}
+                  </span>
+                )}
+              </Show>
+              <span data-slot="bench-license-note">{t(pause().note)}</span>
+              <Show when={pause().detail}>
+                {(detail) => <span data-slot="bench-license-detail">{detail()}</span>}
+              </Show>
+              <Show when={licenseNotice.canOpenSettings()}>
+                <div data-slot="bench-license-actions">
+                  <ButtonV2
+                    variant="contrast"
+                    data-action="bench-license-open"
+                    onClick={() => licenseNotice.openLicenseSettings()}
+                  >
+                    {t("bench.license.open")}
+                  </ButtonV2>
+                </div>
+              </Show>
+            </div>
+          )}
+        </Show>
 
         <Show when={status()?.message}>
           <div class={`${CARD} px-3 py-2 text-[12px] text-v2-text-text-muted`}>{status()!.message}</div>
@@ -488,12 +591,16 @@ function PhaseBadge(props: { status?: MailboxStatusView; t: (key: string) => str
   return (
     <span
       data-slot="bench-phase"
+      data-phase={phase()}
       class={`rounded-full px-2 py-0.5 text-[11px] ${
         phase() === "running"
           ? "bg-v2-background-bg-layer-01 text-v2-text-text-base"
           : phase() === "error"
             ? "text-v2-state-fg-danger"
-            : "text-v2-text-text-muted"
+            : // 暂停是"还没跑完,但也没坏":警告色,不是红色。
+              phase() === "paused"
+              ? "text-v2-state-fg-warning"
+              : "text-v2-text-text-muted"
       }`}
     >
       {props.t(`bench.phase.${phase()}`)}

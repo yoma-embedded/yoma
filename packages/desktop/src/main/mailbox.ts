@@ -26,6 +26,9 @@ import type { MailboxHostConfig } from "@yoma-desktop/bench"
 // out/main/index.js。理由写在 paths.ts 顶部。
 import { cloneDirFor } from "@yoma-desktop/bench/mailbox/paths"
 import { killTree } from "@yoma-desktop/kernel/host/engines"
+// 叶子门:授权子系统只依赖 node 内建与浏览器安全的视图类型,main 里 import 它不会把整个 host
+// (会话间、发动机)inline 进 out/main/index.js。策略是这个产物里的编译期常量,没有运行期开关。
+import { LicenseService } from "@yoma-desktop/kernel/host/licensing"
 import {
   MailboxController,
   type MailboxLaunchHandle,
@@ -97,6 +100,14 @@ export function createMailboxMain(options: MailboxMainOptions): MailboxMain {
   const children = new Map<MailboxLaunchHandle, ChildProcess>()
 
   /**
+   * 授权检查。每次问都重新读盘、重新验签、对着此刻的时钟判 —— 于是"另一个进程刚导入了续费"
+   * 与"刚刚到期"都不需要任何进程间通知,下一次点开跑就看得见。
+   *
+   * 授权文件与凭据 / 技能 / 上下文同一个 configDir(`~/.yoma`),测试传临时目录即隔离。
+   */
+  const license = new LicenseService({ configDir: options.configDir })
+
+  /**
    * composeJob 推导出的项目根 —— 本机"工程目录"没配时的兜底。
    *
    * 出题的那台机器天然就是工程所在的机器(模板住在 `<项目>/.yoma/bench/` 里),所以
@@ -113,6 +124,7 @@ export function createMailboxMain(options: MailboxMainOptions): MailboxMain {
     broadcast: options.broadcast,
     projectDir: resolveProjectDir,
     notify: options.notify,
+    checkLicense: () => license.check("mailbox.start"),
 
     launch(config, io) {
       mkdirSync(mailboxDir, { recursive: true })

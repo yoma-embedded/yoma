@@ -33,12 +33,16 @@
 import { copyFile, mkdir, readdir, stat, writeFile } from "node:fs/promises"
 import path from "node:path"
 
+import type { LicenseRequiredData } from "@yoma-desktop/kernel"
+import type { LicenseService } from "@yoma-desktop/kernel/host"
+
 import { fileExists, readJsonFile } from "../fsx.ts"
 import * as git from "../git.ts"
 import { resolveWorkspace, type Job, type JobModel } from "../job.ts"
 import { ensureYomaDir } from "../runner.ts"
 import { addUsage, runTurn, zeroUsage, type TurnOptions, type TurnResult, type TurnUsage } from "../turn.ts"
 import { runRoleDaemon } from "./daemon.ts"
+import { licenseGateForTurn, licensePausedFrom, type LicensePausedOutcome } from "./license.ts"
 import { renderMailboxReport } from "./report.ts"
 import {
   motherFollowUpPrompt,
@@ -84,6 +88,11 @@ export interface MailboxMotherOptions {
   enginesDir?: string
   /** 技能/上下文/凭据全局目录;演练与测试传临时目录隔离,生产缺省 ~/.yoma。 */
   configDir?: string
+  /**
+   * 付费执行的授权闸门(见 license.ts)。**代码级注入口** —— host.ts / cli.ts 逐字段构造
+   * 这个对象,不从 `MailboxHostConfig` 或命令行取任何授权相关的值。不传就按编译期策略现建。
+   */
+  license?: LicenseService
   /** 假模型注入(本机演练):跨分析轮共享同一条响应队列。生产不传。 */
   resolveModels?: TurnOptions["resolveModels"]
   onProgress?: (message: string) => void
@@ -99,6 +108,8 @@ export type MotherStepOutcome =
   | { kind: "done"; verdict: MailboxVerdict }
   /** 挂起等人。宿主拿它去发通知、去把请求显示出来 —— 这条路上没有别的唤醒机制。 */
   | { kind: "awaiting-human"; round: number; ask: string }
+  /** 软件授权不满足,这一步**没有分析、没有裁决、没有写入**(见 license.ts)。不是 blocked、不退避。 */
+  | LicensePausedOutcome
   | { kind: "blocked"; detail: string }
 
 export interface MotherDecisionPayload {
@@ -389,6 +400,12 @@ export async function motherStep(options: MailboxMotherOptions): Promise<MotherS
     return { kind: "awaiting-human", round: snapshot.state.round, ask: snapshot.state.ask }
   }
 
+  // 到这里才确定"这一步要开始一轮付费执行"(开局或分析)。闸门排在**任何副作用之前** ——
+  // 工作分支还没建、回传件还没落盘、模型还没被调用。不满足就原样返回暂停:不写 decision、
+  // 不下发指令、不提交、不推,信箱停在它本来的状态上,导入授权后下一次轮询接着走。
+  const paused = licenseGateForTurn(options, snapshot.state.kind === "kickoff" ? 0 : snapshot.state.round)
+  if (paused) return paused
+
   const outcome =
     snapshot.state.kind === "kickoff"
       ? await kickoff(options, snapshot.job, workspace, progress)
@@ -474,6 +491,8 @@ async function kickoff(
 
   const analysed = await analyse(options, mailboxJob, workspace, undefined)
   if (!analysed.ok) {
+    // 暂停不是"没给出合法决定":它连模型都没被问过,不写 decision、不写终局。
+    if (analysed.licenseBlocked) return licensePausedFrom(analysed.licenseBlocked, 0)
     const reason = `研发端开局未能给出合法决定:${analysed.error}`
     const decision = policyFailDecision(0, reason, analysed, new Date(now()).toISOString())
     return settleTerminal(options, mailboxJob, [], decision, "failed", reason, 0, 0)
@@ -542,6 +561,7 @@ async function decide(
     humanAck: allRounds.find((entry) => entry.round === round)?.humanAck,
   })
   if (!analysed.ok) {
+    if (analysed.licenseBlocked) return licensePausedFrom(analysed.licenseBlocked, round)
     const reason = `研发端未能给出合法决定:${analysed.error}`
     const decision = policyFailDecision(round, reason, analysed, new Date(now()).toISOString())
     return terminal(decision, "failed", reason)
@@ -744,7 +764,12 @@ async function finalize(
 
 type AnalyseResult =
   | { ok: true; payload: MotherDecisionPayload; usage: TurnUsage; sessionID?: string }
-  | { ok: false; error: string; usage: TurnUsage; sessionID?: string }
+  /**
+   * `licenseBlocked` 非空时这**不是**一个失败的分析:轮次压根没开始(内核在
+   * session.prompt 第一行就拒了)。调用方必须按暂停处理 —— 写 policy fail 等于
+   * 把"没付费"变成"任务失败",而这两件事的后果完全不同。
+   */
+  | { ok: false; error: string; usage: TurnUsage; sessionID?: string; licenseBlocked?: LicenseRequiredData }
 
 /**
  * 跑一轮研发端的内核会话。`input` 为空表示开局轮(信箱里还没有任何结果)。
@@ -792,6 +817,11 @@ async function analyse(
     await saveLocalState(options.clone, { ...(await readLocalState(options.clone)), sessionID: undefined })
     return { ok: false, error: `研发端轮执行失败:${(error as Error).message}`, usage }
   }
+  // 竞态兜底:这一步开跑前检查是通过的,而内核那一刻判过期。什么都没发生 —— 会话指针
+  // 不动(那个空会话不该顶掉正在延续的那个),用量不记(零元),交给调用方暂停。
+  if (turn.licenseBlocked) {
+    return { ok: false, error: "软件授权不满足,这一轮没有开始", usage, sessionID, licenseBlocked: turn.licenseBlocked }
+  }
   sessionID = turn.sessionID
   await book(turn.usage)
 
@@ -808,6 +838,9 @@ async function analyse(
       retry = await turnOnce(motherRetryPrompt(parsed.error), sessionID)
     } catch (error) {
       return { ok: false, error: `${parsed.error};重试轮执行失败:${(error as Error).message}`, usage, sessionID }
+    }
+    if (retry.licenseBlocked) {
+      return { ok: false, error: "软件授权不满足,重试轮没有开始", usage, sessionID, licenseBlocked: retry.licenseBlocked }
     }
     await book(retry.usage)
     parsed = parseMotherDecision(retry.text, parseContext)

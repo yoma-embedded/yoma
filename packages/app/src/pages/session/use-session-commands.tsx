@@ -16,6 +16,7 @@ import { extractPromptFromParts } from "@/utils/prompt"
 import { UserMessage } from "@yoma-desktop/kernel"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { useDrafts } from "@/context/drafts"
+import { createLicenseNotice } from "@/licensing/license-notice"
 import { createSessionOwnership } from "./session-ownership"
 
 export type SessionCommandContext = {
@@ -43,6 +44,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
   const sync = useSync()
   const drafts = useDrafts()
   const layout = useLayout()
+  const licenseNotice = createLicenseNotice()
   const { params, sessionKey, tabs } = useSessionLayout()
   const sessionOwnership = createSessionOwnership(sessionKey)
   const openDialog = async <T,>(load: () => Promise<T>, show: (value: T) => void) => {
@@ -173,7 +175,15 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       return
     }
 
-    await sdk().client.session.compact(sessionID)
+    // 压缩也过内核的执行入口:没有有效授权时它 reject。这条命令原来一个 catch 都没有,
+    // 于是被拒时是一个无人处理的 rejection —— 屏幕上一个字都不说。
+    await sdk().client.session.compact(sessionID).catch((err: unknown) => {
+      if (licenseNotice.notifyIfLicense(err)) return
+      showToast({
+        title: language.t("common.requestFailed"),
+        description: err instanceof Error ? err.message : String(err),
+      })
+    })
   }
 
   const sessionCmds = () => [

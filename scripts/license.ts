@@ -41,7 +41,10 @@ import {
 
 const PASSPHRASE_ENV = "YOMA_LICENSE_KEY_PASSPHRASE"
 
+/** 参数写错了:报错之后附上用法。 */
 class UsageError extends Error {}
+/** 参数没错,是工具**拒绝**这么做(覆盖密钥、把私钥写进仓库……):只说原因,不刷用法。退出码同为 2。 */
+class RefusedError extends Error {}
 
 interface Parsed {
   flags: Map<string, string | true>
@@ -106,7 +109,7 @@ function commandKeygen(parsed: Parsed): void {
   assertKeyId(keyId)
   const outDir = path.resolve(required(parsed, "out-dir"))
   if (insideGitWorkTree(outDir)) {
-    throw new UsageError(`${outDir} 在一个 git 工作区里。签名私钥必须放在仓库外(例如 ~/yoma-license-keys)`)
+    throw new RefusedError(`${outDir} 在一个 git 工作区里。签名私钥必须放在仓库外(例如 ~/yoma-license-keys)`)
   }
   const encrypt = parsed.flags.get("encrypt") === true
   const passphrase = process.env[PASSPHRASE_ENV]
@@ -116,7 +119,7 @@ function commandKeygen(parsed: Parsed): void {
   const publicFile = path.join(outDir, `${keyId}.public.json`)
   const trustFile = path.join(outDir, `${keyId}.trust.json`)
   for (const file of [privateFile, publicFile, trustFile]) {
-    if (existsSync(file)) throw new UsageError(`${file} 已存在。密钥绝不覆盖 —— 换一个 --key-id,或先自己把旧文件挪走`)
+    if (existsSync(file)) throw new RefusedError(`${file} 已存在。密钥绝不覆盖 —— 换一个 --key-id,或先自己把旧文件挪走`)
   }
 
   mkdirSync(outDir, { recursive: true, mode: 0o700 })
@@ -156,7 +159,7 @@ function readTrustEntries(file: string): TrustedLicenseKey[] {
 function commandTrust(parsed: Parsed): void {
   const out = path.resolve(required(parsed, "out"))
   if (parsed.positional.length === 0) throw new UsageError("至少给一个 <编号>.public.json")
-  if (existsSync(out) && parsed.flags.get("force") !== true) throw new UsageError(`${out} 已存在(要覆盖加 --force)`)
+  if (existsSync(out) && parsed.flags.get("force") !== true) throw new RefusedError(`${out} 已存在(要覆盖加 --force)`)
   const keys: TrustedLicenseKey[] = []
   for (const file of parsed.positional) {
     for (const key of readTrustEntries(path.resolve(file))) {
@@ -173,7 +176,7 @@ function commandIssue(parsed: Parsed): void {
   const keyFile = path.resolve(required(parsed, "key"))
   const keyId = required(parsed, "key-id")
   const out = path.resolve(required(parsed, "out"))
-  if (existsSync(out) && parsed.flags.get("force") !== true) throw new UsageError(`${out} 已存在(要覆盖加 --force)`)
+  if (existsSync(out) && parsed.flags.get("force") !== true) throw new RefusedError(`${out} 已存在(要覆盖加 --force)`)
   if (process.platform !== "win32" && (statSync(keyFile).mode & 0o077) !== 0) {
     say(`⚠ ${keyFile} 的权限对其他用户可读,建议 chmod 600`)
   }
@@ -190,10 +193,10 @@ function commandIssue(parsed: Parsed): void {
   if (renewFile) {
     // 旧文件必须是**这把钥匙**签的真授权:拿一份被改过的文件来续,等于替别人洗出一份真授权。
     const previous = verifyLicenseFile(readFileSync(path.resolve(renewFile), "utf8"), [trusted])
-    if (!previous.ok) throw new UsageError(`旧授权验不过(${previous.code}):${previous.message}`)
+    if (!previous.ok) throw new RefusedError(`旧授权验不过(${previous.code}):${previous.message}`)
     if (months === undefined) throw new UsageError("续费要给 --months 或 --years")
     licenseId = optional(parsed, "license-id") ?? previous.license.licenseId
-    if (licenseId !== previous.license.licenseId) throw new UsageError("续费必须沿用旧的 licenseId(要换编号就当新订单签发)")
+    if (licenseId !== previous.license.licenseId) throw new RefusedError("续费必须沿用旧的 licenseId(要换编号就当新订单签发)")
     customerLabel = optional(parsed, "customer") ?? previous.license.customerLabel
     period = renewalPeriod(previous.license, months, offset, Date.now())
   } else {
@@ -292,6 +295,6 @@ if (import.meta.filename === path.resolve(process.argv[1] ?? "")) {
   } catch (error) {
     process.stderr.write(`✗ ${(error as Error).message}\n`)
     if (error instanceof UsageError) process.stderr.write(`\n${USAGE}\n`)
-    process.exit(error instanceof UsageError ? 2 : 1)
+    process.exit(error instanceof UsageError || error instanceof RefusedError ? 2 : 1)
   }
 }

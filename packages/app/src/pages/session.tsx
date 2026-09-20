@@ -39,6 +39,7 @@ import { useSync } from "@/context/sync"
 import { PromptInput } from "@/components/prompt-input"
 import { useSettingsCommand } from "@/components/settings-dialog"
 import { type FollowupDraft, sendFollowupDraft } from "@/components/prompt-input/submit"
+import { createLicenseNotice } from "@/licensing/license-notice"
 import {
   createPromptInputController,
   createSessionComposerRegionController,
@@ -503,6 +504,7 @@ export default function Page() {
   useComposerCommands()
   useSettingsCommand()
   useConsoleCommands()
+  const licenseNotice = createLicenseNotice()
   useSessionCommands({
     navigateMessageByOffset,
     setActiveMessage,
@@ -721,6 +723,9 @@ export default function Page() {
   )
 
   const fail = (err: unknown) => {
+    // 授权不满足是"这一轮没开始",不是"内核出错":出带入口的专门提示,别把用户
+    // 送去查一条看不懂的内核报错。草稿留在队列里标成 failed,重发即可。
+    if (licenseNotice.notifyIfLicense(err)) return
     showToast({
       variant: "error",
       title: language.t("common.requestFailed"),

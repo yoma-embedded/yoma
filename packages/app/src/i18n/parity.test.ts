@@ -15,6 +15,11 @@ const PARITY_PREFIXES = [
   "session.confirmDock.",
   // 调试工作台:仪器名、状态词、空状态提示全在这一族下。漏一条的表现是面板上出现 `undefined`。
   "session.bench.",
+  // 授权:状态徽标、17 个错误码、购买说明。每个键都会被拼出来,漏一条就是界面上一块
+  // `undefined`。逐个状态 / 错误码的穷尽检查在 `licensing/i18n-keys.test.ts`。
+  "settings.license.",
+  "license.",
+  "bench.license.",
 ] as const
 
 /**

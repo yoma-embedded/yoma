@@ -27,10 +27,14 @@ import { writeFileSync } from "node:fs"
 import path from "node:path"
 import { sourceChildEnv } from "../node-source.ts"
 
+import type { LicenseRequiredData } from "@yoma-desktop/kernel"
+import type { LicenseService } from "@yoma-desktop/kernel/host"
+
 import type { FauxScript } from "../faux.ts"
 import { fauxResolveModels } from "../faux.ts"
 import { readTextFile } from "../fsx.ts"
 import { initMailbox } from "./init.ts"
+import { licenseDataOfPaused, licenseGateForStart } from "./license.ts"
 import { DEFAULT_POLL_SECONDS, loadMailboxJob } from "./spec.ts"
 import { runMailboxMother, type MotherStepOutcome } from "./mother.ts"
 import { runMailboxRunner, runnerWorkspaceFor, type RunnerStepOutcome } from "./runner.ts"
@@ -104,19 +108,44 @@ export type MailboxHostEvent =
   | { type: "snapshot"; snapshot: MailboxUiSnapshot }
   /** sim 角色转发的两个子进程的结构化事件(它们各自也说 @@event)。 */
   | { type: "child"; role: "runner" | "mother"; event: MailboxHostEvent }
-  | { type: "done"; exitCode: number; detail: string; verdict?: MailboxVerdict }
+  /**
+   * `license` 非空 = 这次收场跟软件授权有关,宿主据此把任务显示成"暂停"而不是"失败":
+   * - `exitCode: 4` —— 因为没有有效授权**拒绝启动**(信箱一个字节都没碰,不该自动重启);
+   * - `exitCode: 0` + `license` —— 守护跑到授权暂停那一步收场(`--once`/单步场景),状态保留着。
+   */
+  | { type: "done"; exitCode: number; detail: string; verdict?: MailboxVerdict; license?: LicenseRequiredData }
 
 export type EmitMailboxEvent = (event: MailboxHostEvent) => void
 
+/**
+ * 宿主的代码级接缝。**不是配置** —— `MailboxHostConfig` 是从 JSON 文件读进来的,授权相关的
+ * 东西一个字段都不许出现在那里面(否则正式包就有了"改配置文件关掉检查"的后门)。
+ */
+export interface MailboxHostSeams {
+  license?: LicenseService
+}
+
 /** 跑一个角色到自然终点,返回进程退出码。done 事件由这里统一发。 */
-export async function runMailboxHost(config: MailboxHostConfig, emit: EmitMailboxEvent): Promise<number> {
+export async function runMailboxHost(
+  config: MailboxHostConfig,
+  emit: EmitMailboxEvent,
+  seams: MailboxHostSeams = {},
+): Promise<number> {
   emit({ type: "hello", role: config.role, pid: process.pid })
   const progress = (message: string) => emit({ type: "progress", message })
   const branch = config.branch ?? "main"
 
-  const finish = (exitCode: number, detail: string, verdict?: MailboxVerdict): number => {
-    emit({ type: "done", exitCode, detail, verdict })
+  const finish = (exitCode: number, detail: string, verdict?: MailboxVerdict, license?: LicenseRequiredData): number => {
+    emit({ type: "done", exitCode, detail, verdict, license })
     return exitCode
+  }
+
+  // 启动检查:干活的四个角色(runner / mother / init / sim)在**抢锁与碰信箱之前**问一次。
+  // `status` 不问 —— 查看进度、读终报、看挂起请求始终可用,这与"停止/取消/保存证据不受
+  // 授权影响"是同一条产品规矩。
+  if (config.role !== "status") {
+    const refused = licenseGateForStart({ license: seams.license, configDir: config.configDir })
+    if (refused) return finish(4, refused.detail, undefined, refused.license)
   }
 
   if (config.role === "sim") {
@@ -175,6 +204,7 @@ export async function runMailboxHost(config: MailboxHostConfig, emit: EmitMailbo
       workRoot: config.workRoot,
       enginesDir: config.enginesDir,
       configDir: config.configDir,
+      license: seams.license,
       turnEntry: config.turnEntry,
       fauxTurns: config.faux?.turns,
       pollSeconds: config.pollSeconds ?? DEFAULT_POLL_SECONDS,
@@ -192,6 +222,8 @@ export async function runMailboxHost(config: MailboxHostConfig, emit: EmitMailbo
     if (outcome.kind === "blocked") return finish(3, outcome.detail)
     // 挂起不是失败:退 0,让 cron/--once 场景安静地等下一次(人还没动手而已)。
     if (outcome.kind === "awaiting-human") return finish(0, `第 ${outcome.round} 轮挂起,等人:${outcome.ask}`)
+    // 授权暂停同理不是失败:任务状态完好,导入授权后从原处继续。带上 license 让宿主显示成"暂停"。
+    if (outcome.kind === "license-paused") return finish(0, outcome.detail, undefined, licenseDataOfPaused(outcome))
     return finish(0, outcome.kind === "ran" ? `第 ${outcome.round} 轮已回填` : outcome.detail)
   }
 
@@ -202,6 +234,7 @@ export async function runMailboxHost(config: MailboxHostConfig, emit: EmitMailbo
     projectDir: config.projectDir,
     enginesDir: config.enginesDir,
     configDir: config.configDir,
+    license: seams.license,
     resolveModels: config.faux?.mother ? fauxResolveModels(config.faux.mother) : undefined,
     pollSeconds: config.pollSeconds ?? DEFAULT_POLL_SECONDS,
     once: config.once,
@@ -217,6 +250,7 @@ export async function runMailboxHost(config: MailboxHostConfig, emit: EmitMailbo
   }
   if (outcome.kind === "blocked") return finish(3, outcome.detail)
   if (outcome.kind === "awaiting-human") return finish(0, `第 ${outcome.round} 轮挂起,等人:${outcome.ask}`)
+  if (outcome.kind === "license-paused") return finish(0, outcome.detail, undefined, licenseDataOfPaused(outcome))
   return finish(0, outcome.kind === "decided" ? `第 ${outcome.round} 轮已裁决` : outcome.detail)
 }
 
@@ -228,6 +262,10 @@ function required<T>(value: T | undefined, name: string): T {
 /**
  * sim 的自我 spawn:两个角色子进程用同一个宿主入口、各自一份配置文件。
  * 演练与生产因此是同一条代码路径 —— 差别只剩远端是本地裸仓还是真仓库。
+ *
+ * **授权不跟着配置文件走**(这份 childConfig 里没有、也不许有授权字段):两个子进程各自按
+ * **自己那个构建的编译期策略**检查。生产里这正是要的语义(装的是同一个包);测试注入的
+ * `seams.license` 只对父进程有效,所以 sim 的授权用例断的是父进程那道启动检查。
  */
 function selfSpawn(config: MailboxHostConfig) {
   return (

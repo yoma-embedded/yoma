@@ -5,6 +5,7 @@ import type { DesktopMenuAction } from "../desktop-menu"
 import type { ManualsPlatform } from "../manuals/types"
 import type { UpdaterPlatform } from "../updater"
 import type {
+  LicenseRequiredData,
   MailboxComposeInputView,
   MailboxEventView,
   MailboxSettingsView,
@@ -15,7 +16,11 @@ import type {
 /** 信箱调试台(desktop only)。载荷类型是 kernel 的浏览器安全视图模型(mailbox-view)。 */
 export type MailboxPlatform = {
   configure(settings: MailboxSettingsView): Promise<{ ok: boolean; message?: string }>
-  start(task: MailboxTaskRequestView): Promise<{ ok: boolean; message?: string }>
+  /**
+   * 起守护。`license` 有值 = 没有有效授权,**守护根本没起**(不是崩溃):任务状态完好,
+   * 界面出暂停横幅而不是失败红条。
+   */
+  start(task: MailboxTaskRequestView): Promise<{ ok: boolean; message?: string; license?: LicenseRequiredData }>
   stop(): Promise<{ ok: boolean; message?: string }>
   status(): Promise<MailboxStatusView>
   probe(remote: string): Promise<{ ok: boolean; message: string }>

@@ -22,8 +22,8 @@
  */
 
 import { createKernelHost, type KernelHost } from "@yoma-desktop/kernel/host"
-import { DEFAULT_THINKING_LEVEL, type KernelEvent, type ProviderInfo } from "@yoma-desktop/kernel"
-import type { AssistantMessage, Session, Tokens } from "@yoma-desktop/kernel"
+import { DEFAULT_THINKING_LEVEL, isLicenseRequiredData, type KernelEvent, type ProviderInfo } from "@yoma-desktop/kernel"
+import type { AssistantMessage, LicenseRequiredData, Session, Tokens } from "@yoma-desktop/kernel"
 
 import { pickAvailableModel, type Job } from "./job.ts"
 
@@ -71,6 +71,20 @@ export interface TurnOptions {
   hardTimeoutMs?: number
 }
 
+/**
+ * 代码级接缝(第二个参数),**故意不在 `TurnOptions` 里**。
+ *
+ * `turn-entry.ts` 是 `runTurn({ ...JSON 文件 })` —— 把一个从磁盘读来的 `TurnInput` 整个展开进
+ * options。授权策略一旦是 options 上的字段,信箱里的一份 job/turn 输入就能把正式包的检查关掉。
+ * 所以它只能作为**函数参数**从代码里传进来:生产路径(turn-entry)一个字都不传,传它的只有测试。
+ */
+export interface TurnSeams {
+  /** 不传 = 这个构建编译期注入的那一份策略(社区 / 开发构建即不强制)。 */
+  licensePolicy?: Parameters<typeof createKernelHost>[0]["licensePolicy"]
+  /** 授权检查用的时钟。 */
+  licenseNow?: Parameters<typeof createKernelHost>[0]["licenseNow"]
+}
+
 export interface TurnUsage {
   tokens: Tokens
   cost: number
@@ -94,6 +108,24 @@ export interface TurnResult {
   stopReason?: string
   errors: string[]
   elapsedMs: number
+  /**
+   * 非空 = 这一轮因为软件授权不满足**压根没有开始**(内核在 `session.prompt` 第一行就拒了,
+   * 用户消息都没落盘)。它**不是业务失败**:`errors` 是空的、`text` 是空的、没有工具调用。
+   *
+   * 调用方要按"暂停"处理 —— 别往信箱里回填一个失败结果,也别让模型去解释它
+   * (授权不是模型能裁决的事)。守护侧的处理在 `mailbox/license.ts`。
+   */
+  licenseBlocked?: LicenseRequiredData
+}
+
+/**
+ * 从一个异常里认出"授权不满足"。认的是 `error.data._tag` 而不是类名或消息文本:
+ * `data` 是唯一能跨 MessagePort / contextBridge 活下来的结构化信息(根 CLAUDE.md
+ * "contextBridge 会把 Error 剥成一句话")。
+ */
+export function licenseRequiredDataOf(error: unknown): LicenseRequiredData | undefined {
+  const data = (error as { data?: unknown } | null | undefined)?.data
+  return isLicenseRequiredData(data) ? data : undefined
 }
 
 /**
@@ -118,7 +150,7 @@ export function addUsage(a: TurnUsage, b: TurnUsage): TurnUsage {
   }
 }
 
-export async function runTurn(options: TurnOptions): Promise<TurnResult> {
+export async function runTurn(options: TurnOptions, seams: TurnSeams = {}): Promise<TurnResult> {
   const started = Date.now()
   const settleMs = options.settleMs ?? SETTLE_MS
   const errors: string[] = []
@@ -155,6 +187,10 @@ export async function runTurn(options: TurnOptions): Promise<TurnResult> {
     defaultThinkingLevel: options.job.model?.thinking ?? DEFAULT_THINKING_LEVEL,
     toolchainSide: options.toolchainSide,
     toolchainManifestText: options.toolchainManifestText,
+    // 授权策略与时钟只从 seams 来。这里**逐字段**构造 KernelHostOptions(而不是 `...options`)
+    // 正是这条纪律的落点:options 里混进一个 licensePolicy 也到不了内核。
+    licensePolicy: seams.licensePolicy,
+    licenseNow: seams.licenseNow,
     // confirmTools **不开**:调试台无人值守,没人点"允许"。开了的话一条烧录调用会挂在确认台上
     // 一直到它十分钟的超时,而这一轮结束的判据是"idle 静默 700ms" —— 挂起期间 lane 一直 busy,
     // 于是整轮只能等到一小时硬超时才收场,报告里看到的是"agent 卡住了"。
@@ -228,6 +264,7 @@ export async function runTurn(options: TurnOptions): Promise<TurnResult> {
   // 开发态从不暴露 —— 所以这里必须显式抓一个 ref 句柄,离开时归还。
   const keepalive = setInterval(() => {}, 60_000)
   let sessionID = options.sessionID ?? ""
+  let licenseBlocked: LicenseRequiredData | undefined
   try {
     if (!sessionID) {
       const session = (await host.handle("session.create", {
@@ -257,20 +294,35 @@ export async function runTurn(options: TurnOptions): Promise<TurnResult> {
       }
     }
 
-    await host.handle("session.prompt", { sessionID, input: { text: options.prompt } })
+    try {
+      await host.handle("session.prompt", { sessionID, input: { text: options.prompt } })
+    } catch (error) {
+      // 授权不满足不是异常路径的一部分:内核在第一行就拒了,什么都没发生。把它变成结果里的
+      // 一个字段交给调用方按"暂停"处理,而不是抛给守护当成"这一轮失败了"回填进信箱。
+      licenseBlocked = licenseRequiredDataOf(error)
+      if (!licenseBlocked) throw error
+    }
 
-    const hardTimeout = setTimeout(() => {
-      stopReason ??= `一轮超过 ${Math.round((options.hardTimeoutMs ?? TURN_HARD_TIMEOUT_MS) / 60000)} 分钟仍未结束`
-      void abortNow().then(() => finish?.())
-    }, options.hardTimeoutMs ?? TURN_HARD_TIMEOUT_MS)
-    ;(hardTimeout as { unref?: () => void }).unref?.()
+    // 被拒时没有任何事件会来:等 idle 静默只会白等到一小时硬超时。
+    if (!licenseBlocked) {
+      const hardTimeout = setTimeout(() => {
+        stopReason ??= `一轮超过 ${Math.round((options.hardTimeoutMs ?? TURN_HARD_TIMEOUT_MS) / 60000)} 分钟仍未结束`
+        void abortNow().then(() => finish?.())
+      }, options.hardTimeoutMs ?? TURN_HARD_TIMEOUT_MS)
+      ;(hardTimeout as { unref?: () => void }).unref?.()
 
-    await done
-    clearTimeout(hardTimeout)
+      await done
+      clearTimeout(hardTimeout)
+    }
   } finally {
     clearInterval(keepalive)
     cancelSettle()
     await host.dispose().catch(() => {})
+  }
+
+  if (licenseBlocked) {
+    // 空文本、零工具调用、零错误 —— 这一轮没有发生过。usage 也一定是零元。
+    return { sessionID, text: "", toolCalls: [], usage: zeroUsage(), errors: [], elapsedMs: Date.now() - started, licenseBlocked }
   }
 
   return {
