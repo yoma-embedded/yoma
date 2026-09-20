@@ -33,6 +33,7 @@ import type {
   VcsInfo,
 } from "./types.ts"
 import type { ScopeCaptureInfo, ScopeViewParams, ScopeViewResult } from "./scope-view.ts"
+import type { LicenseStatusView } from "./license-view.ts"
 
 // ---------------------------------------------------------------------------
 // 请求
@@ -194,6 +195,20 @@ export interface KernelMethods {
   "scope.view": { params: ScopeViewParams; result: ScopeViewResult }
   "scope.screenshot": { params: { dir: string }; result: { url: string; createdAt: number } | undefined }
 
+  /**
+   * 软件授权的当前状态(每次调用都重新读盘、验签、对钟)。**只用于显示** —— 能不能开始一轮由内核在
+   * `session.prompt` / `session.compact` 入口自己判,协议里没有、也不会有"renderer 说自己付过费"的参数。
+   */
+  "license.status": { params: void; result: LicenseStatusView }
+  /**
+   * 导入一份授权文件的**文本**(renderer 读文件、内核验)。通过才原子落盘到 `<configDir>/license.json`,
+   * 立刻生效,不用重启;不通过就 reject,`error.data` 是 `{ _tag: "LicenseImportError", code }`,
+   * 原有授权一个字节都不动。
+   */
+  "license.import": { params: { text: string }; result: LicenseStatusView }
+  /** "复制诊断信息"的纯文本。只含授权与环境事实,不含任何密钥、授权原文与购买人称呼。 */
+  "license.diagnostics": { params: void; result: { text: string } }
+
   "project.list": { params: void; result: Array<{ directory: string; lastOpened: number }> }
   "project.add": { params: { directory: string }; result: Array<{ directory: string; lastOpened: number }> }
   "project.remove": { params: { directory: string }; result: Array<{ directory: string; lastOpened: number }> }
@@ -242,6 +257,8 @@ export type KernelEvent =
    */
   | { type: "message.part.delta"; sessionID: string; messageID: string; partID: string; field: "text"; delta: string }
   | { type: "vcs.updated"; directory: string; info: VcsInfo }
+  /** 授权状态变了(导入成功、到期、生效)。事件不重放:设置页打开时自己问一次 `license.status`。 */
+  | { type: "license.updated"; status: LicenseStatusView }
   /**
    * 工具跑之前那一问的每一次状态变化:`status:"pending"` 是新挂起一条,其余 status 都是
    * "这条结算了,从确认条上删掉"。按 `confirm.sessionID` 归属会话。

@@ -30,6 +30,7 @@ import type {
   ToolchainStatusView,
   VcsInfo,
 } from "./types.ts"
+import type { LicenseStatusView } from "./license-view.ts"
 
 export class KernelError extends Error {
   constructor(
@@ -116,6 +117,13 @@ export interface KernelClient {
     installCancel(params: { id: string }): Promise<void>
     installsActive(): Promise<string[]>
   }
+  license: {
+    /** 授权状态,只用于显示;执行资格由内核自己判。 */
+    status(): Promise<LicenseStatusView>
+    /** 导入授权文件的文本。被拒时抛 KernelError,`data` 是 `{ _tag: "LicenseImportError", code }`。 */
+    import(text: string): Promise<LicenseStatusView>
+    diagnostics(): Promise<{ text: string }>
+  }
   project: {
     list(): Promise<KernelResult<"project.list">>
     add(directory: string): Promise<KernelResult<"project.add">>
@@ -194,6 +202,11 @@ export function createKernelClient(transport: KernelTransport): KernelClient {
       install: (params) => call("toolchain.install", params),
       installCancel: (params) => call("toolchain.installCancel", params),
       installsActive: () => call("toolchain.installsActive", undefined),
+    },
+    license: {
+      status: () => call("license.status", undefined),
+      import: (text) => call("license.import", { text }),
+      diagnostics: () => call("license.diagnostics", undefined),
     },
     project: {
       list: () => call("project.list", undefined),

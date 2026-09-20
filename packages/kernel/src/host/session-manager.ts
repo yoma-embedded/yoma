@@ -54,6 +54,7 @@ import {
 import { installProgressEvent } from "./toolchain.ts"
 import { buildSystemPrompt } from "./system-prompt.ts"
 import { ConfirmDesk } from "./confirm.ts"
+import { LicenseService } from "./licensing/index.ts"
 import { ToolProgressThrottle } from "./tool-progress.ts"
 import { confirmNeeded } from "./tools/contracts.ts"
 import { processImage } from "./domain/image/process.ts"
@@ -304,6 +305,14 @@ export interface SessionManagerOptions {
    * 是两条调用路径,同一个包同时跑两路会往同一棵目录树里解压。**不传 = 两边各装各的**,所以桌面端必须传。
    */
   installRegistry?: InstallRegistry
+  /**
+   * 授权服务。**开始新的一轮**与**手动压缩**之前问它一次;已经接受的轮次不再回头查
+   * (到期不会把跑到一半的烧录杀掉),停止 / 取消 / 读历史 / 关会话一律不经过它。
+   *
+   * 不传 = 按这个构建编译期注入的策略自己建一个(社区 / 开发构建不强制)。`createKernelHost` 总是传:
+   * 它要把状态变化推成 `license.updated` 事件。
+   */
+  license?: LicenseService
 }
 
 export class SessionManager {
@@ -332,9 +341,12 @@ export class SessionManager {
    * 所以关着的宿主连事件都不会多一条。
    */
   private readonly desk: ConfirmDesk
+  /** 付费执行入口的那道检查。见 SessionManagerOptions.license。 */
+  private readonly license: LicenseService
 
   constructor(options: SessionManagerOptions) {
     this.options = options
+    this.license = options.license ?? new LicenseService({ configDir: options.configDir })
     this.desk = new ConfirmDesk({ emit: (confirm) => options.emit([{ type: "tool.confirm", confirm }]) })
     this.configDir = options.configDir ?? yomaConfigDir()
     this.env = new NodeExecutionEnv({ cwd: process.cwd() })
@@ -1270,6 +1282,11 @@ export class SessionManager {
   // -------------------------------------------------------------------------
 
   async prompt(sessionID: string, input: PromptInput): Promise<{ messageID: string }> {
+    // 授权检查排在**一切副作用之前**:下面那句 stop() 会中断正在跑的那一轮,而没有授权的新请求
+    // 不该有本事打断一轮已经被接受的执行(它可能正在烧录)。检查只在这里做一次 ——
+    // 通过之后这一轮(含轮内的自动压缩与重试)跑到自然结束,中途到期不回头查。
+    this.license.assertCanExecute("session.prompt")
+
     // 先只打开历史,把耗时的初始资源探测也纳入可取消的准备期。
     const entry = await this.ensureOpen(sessionID, true)
 
@@ -1415,6 +1432,9 @@ export class SessionManager {
 
   /** 手动压缩。状态(compacting → idle)由 compaction_start/end 事件发出去。 */
   async compact(sessionID: string): Promise<void> {
+    // 手动压缩是一次模型调用,与新的一轮同一道检查、同样排在 stop() 之前。
+    // 轮内的自动压缩不经过这里:那是已接受轮次的一部分。
+    this.license.assertCanExecute("session.compact")
     const entry = await this.ensureOpen(sessionID)
     const lane = entry.lane!
     // 和 prompt() 同一条规矩:一条 lane 同时只有一个操作,忙着就先中断 ——

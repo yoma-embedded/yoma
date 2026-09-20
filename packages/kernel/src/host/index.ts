@@ -14,6 +14,7 @@ import { createAgentTools, SessionManager, type SessionManagerOptions } from "./
 import { runPreflight, inspectEngines } from "./preflight.ts"
 import { yomaConfigDir } from "./auth.ts"
 import { laCaptures, laView } from "./la-view.ts"
+import { LicenseService, type LicensePolicy } from "./licensing/index.ts"
 import { scopeCaptures, scopeScreenshot, scopeView } from "./scope-view.ts"
 import { ProjectStore, listFiles, readFile, searchFiles, vcsDiff, vcsInfo, vcsInit } from "./services.ts"
 import { StreamSink } from "./stream.ts"
@@ -36,6 +37,9 @@ export { StreamSink } from "./stream.ts"
 // 有个可断言的对手 —— 那份副本必须是叶子模块,不能反过来 import 这里。
 export { yomaConfigDir } from "./auth.ts"
 export { inspectEngines, runPreflight } from "./preflight.ts"
+// 授权:bench 的守护在轮次边界问同一份规则。desktop 的 main 不走这里,走叶子门 `./host/licensing`。
+export { LicenseImportError, LicenseRequiredError, LicenseService, buildLicensePolicy } from "./licensing/index.ts"
+export type { LicenseCheck, LicensePolicy, LicenseServiceOptions, TrustedLicenseKey } from "./licensing/index.ts"
 
 export interface KernelHostOptions {
   /** engines/bin + engines/data 的所在目录。生产环境是 process.resourcesPath/engines。 */
@@ -69,6 +73,14 @@ export interface KernelHostOptions {
    * (无人值守,挂起只会等到十分钟超时)。详见 SessionManagerOptions。
    */
   confirmTools?: SessionManagerOptions["confirmTools"]
+  /**
+   * 授权策略(版本 + 可信公钥)。**生产一律不传** —— 不传就是这个构建编译期注入的那一份
+   * (`licensing/policy.ts`),正式包因此没有任何运行时入口能换掉它。传它的只有测试:
+   * 这是代码级的函数参数,不从 StartCommand、配置文件、环境变量取值。
+   */
+  licensePolicy?: LicensePolicy
+  /** 授权检查用的时钟。测试接缝,生产不传。 */
+  licenseNow?: () => number
   /** 成批推事件出去。host 已经做过合并,这里拿到的就是最终批次。 */
   onEvents(events: KernelEvent[]): void
 }
@@ -85,6 +97,14 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
   // 一个包同时只装一次;取消走这里的 AbortController。设置页的 RPC 与 agent 的 toolchain 工具
   // 共用这一个 —— 两边同时装同一个包会往同一棵目录树里解压,所以它必须在 SessionManager 之前建好。
   const installs = createInstallRegistry()
+  // 授权服务必须在 SessionManager 之前建好:开始一轮 / 手动压缩的资格检查就是问它。
+  // 调试台(bench)经由同一个 createKernelHost 进来,所以它的每一轮走的是同一道检查。
+  const license = new LicenseService({
+    configDir: options.configDir,
+    policy: options.licensePolicy,
+    now: options.licenseNow,
+    onChange: (status) => sink.push([{ type: "license.updated", status }]),
+  })
   const sessions = new SessionManager({
     sessionsRoot: options.sessionsRoot,
     enginesDir: options.enginesDir,
@@ -97,6 +117,7 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     toolchainManifestText: options.toolchainManifestText,
     confirmTools: options.confirmTools,
     installRegistry: installs,
+    license,
     emit: (events) => sink.push(events),
   })
   const projects = new ProjectStore(path.join(options.stateDir, "projects.json"))
@@ -231,6 +252,11 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
 
     "session.confirmReply": async ({ id, allow }) => ({ accepted: sessions.replyConfirm(id, allow) }),
     "session.confirms": async ({ sessionID }) => sessions.pendingConfirms(sessionID),
+
+    // 授权:查询、导入、诊断永远可用(未激活时也要能打开设置页导入)。
+    "license.status": async () => license.status(),
+    "license.import": async ({ text }) => license.importText(text),
+    "license.diagnostics": async () => ({ text: license.diagnostics({ appVersion: options.version }) }),
 
     "project.list": async () => projects.list(),
     "project.add": ({ directory }) => projects.add(directory),

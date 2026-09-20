@@ -19,6 +19,7 @@
     "check:ci": "npm run upstream:check && turbo typecheck --force && tsgo --noEmit -p tsconfig.json && npm run engines:rg && npm test",
     "test:windows": "vitest run --project agent --project kernel --project kernel-domain --project desktop",
     "test": "vitest run",
+    "license": "tsx scripts/license.ts",
     "upstream:check": "tsx scripts/check-upstream.ts",
     "upstream:diff": "tsx scripts/sync-upstream.ts",
     "upstream:update": "tsx scripts/sync-upstream.ts --apply",

@@ -9,6 +9,7 @@
  * 命名约定:一律带 View 后缀,别和 host 侧真类型混用。
  */
 
+import type { LicenseRequiredData } from "./license-view.ts"
 import type { Tokens } from "./types.ts"
 
 export type MailboxRoleView = "runner" | "mother"
@@ -163,18 +164,33 @@ export interface MailboxSnapshotView {
 export type MailboxHostEventView =
   | { type: "hello"; role: MailboxRoleView | "sim" | "init" | "status"; pid: number }
   | { type: "progress"; message: string }
-  | { type: "step"; outcome: { kind: string; detail?: string; round?: number } }
+  /**
+   * `kind: "license-paused"`:软件授权不满足(到期 / 未激活 / 未生效 / 无效),守护在**轮次边界**停住,
+   * 不跑新的一轮、不写任何结果。它不是业务成功也不是业务失败 —— 信箱状态原样留着,
+   * 导入有效授权之后守护下一次轮询自己接着跑。此时 `state` / `expiresAt` / `notBefore` 随之给出。
+   */
+  | {
+      type: "step"
+      outcome: { kind: string; detail?: string; round?: number; state?: string; expiresAt?: string; notBefore?: string }
+    }
   | { type: "snapshot"; snapshot: MailboxSnapshotView }
   | { type: "child"; role: MailboxRoleView; event: MailboxHostEventView }
-  | { type: "done"; exitCode: number; detail: string; verdict?: MailboxVerdictView }
+  /** `exitCode: 4` + `license`:守护因为没有有效授权**拒绝启动**(不是崩溃,不该自动重启)。 */
+  | { type: "done"; exitCode: number; detail: string; verdict?: MailboxVerdictView; license?: LicenseRequiredData }
 
 export interface MailboxStatusView {
   settings?: MailboxSettingsView
-  phase: "idle" | "running" | "stopping" | "done" | "error"
+  /**
+   * `paused`:因为软件授权不满足而停住(拒绝启动,或守护以退出码 4 结束)。与 `error` 分开:
+   * 任务状态完好,导入有效授权后重新开始即从原处继续。
+   */
+  phase: "idle" | "running" | "stopping" | "done" | "error" | "paused"
   task?: { kind: MailboxTaskRequestView["kind"]; startedAt: number; restarts: number; pid?: number }
   snapshot?: MailboxSnapshotView
-  done?: { exitCode: number; detail: string; verdict?: MailboxVerdictView }
+  done?: { exitCode: number; detail: string; verdict?: MailboxVerdictView; license?: LicenseRequiredData }
   message?: string
+  /** `paused` 时的原因;界面据此出"去激活 / 续费"的入口。 */
+  license?: LicenseRequiredData
 }
 
 export type MailboxEventView = { type: "host"; event: MailboxHostEventView } | { type: "status"; status: MailboxStatusView }
