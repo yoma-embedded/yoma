@@ -29,13 +29,28 @@ export interface KernelProcess {
   readonly ready: Promise<void>
 }
 
+/**
+ * 测试模式(`YOMA_TEST_ONBOARDING=1`,userData 已经落到临时根的那个模式)下,把**内核进程**的家目录
+ * 也挪走:`YOMA_TEST_KERNEL_HOME=<目录>`。内核的 configDir 默认是 `~/.yoma`(凭据、技能、授权文件),
+ * 不挪的话截图 / e2e 在界面里点一次「导入授权文件」,写的就是开发机上真实的 `~/.yoma/license.json`。
+ *
+ * 只改内核子进程的环境,不改 main 自己的:main 的钥匙串查找跟着 `$HOME` 走,给它假 HOME 会弹系统级的
+ * "找不到钥匙串"(根 CLAUDE.md「会咬人的地方」)。它只换授权文件**放在哪**,不换**查不查** ——
+ * 那是编译期常量,这里够不着。
+ */
+function testKernelHomeEnv(): Record<string, string> {
+  if (process.env.YOMA_TEST_ONBOARDING !== "1") return {}
+  const home = process.env.YOMA_TEST_KERNEL_HOME
+  return home ? { HOME: home, USERPROFILE: home } : {}
+}
+
 export function spawnKernel(options: KernelProcessOptions): KernelProcess {
   const entry = join(dirname(fileURLToPath(import.meta.url)), "kernel.js")
   const child: UtilityProcess = utilityProcess.fork(entry, [], {
     cwd: process.cwd(),
     serviceName: SERVICE_NAME,
     stdio: "pipe",
-    env: { ...process.env, YOMA_ENGINES_DIR: options.enginesDir ?? "" },
+    env: { ...process.env, ...testKernelHomeEnv(), YOMA_ENGINES_DIR: options.enginesDir ?? "" },
   })
 
   child.stdout?.on("data", (chunk: Buffer) => options.onStdout?.(chunk.toString("utf8").trimEnd()))

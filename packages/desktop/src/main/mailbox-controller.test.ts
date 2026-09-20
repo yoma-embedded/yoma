@@ -460,6 +460,36 @@ describe("软件授权", () => {
     expect(harness.controller.status().phase).toBe("idle")
   })
 
+  test("paused 下的停止 = 这一单不跑了:回 idle、原因清掉、没有进程可杀(两条进 paused 的路都一样)", () => {
+    // 路一:start 被拦,task 从没建起来。
+    const refused = makeHarness(SETTINGS)
+    refused.licensed = { ok: false, message: "软件授权已到期", data: EXPIRED }
+    refused.controller.start({ kind: "runner" })
+    expect(refused.controller.status().phase).toBe("paused")
+    expect(refused.controller.stop()).toEqual({ ok: true })
+    expect(refused.controller.status()).toMatchObject({ phase: "idle", message: "已停止" })
+    expect(refused.controller.status().license).toBeUndefined()
+    expect(refused.controller.status().task).toBeUndefined()
+    expect(refused.stops).toEqual([])
+
+    // 路二:守护带着 license 自己收场,task 还在。
+    const exited = makeHarness(SETTINGS)
+    exited.controller.start({ kind: "runner" })
+    emit(exited, 0, { type: "done", exitCode: 4, detail: "调试台守护没有启动", license: EXPIRED })
+    exited.launches[0]!.io.onExit(4)
+    expect(exited.controller.status().phase).toBe("paused")
+    expect(exited.controller.stop()).toEqual({ ok: true })
+    const after = exited.controller.status()
+    expect(after.phase).toBe("idle")
+    expect(after.license).toBeUndefined()
+    expect(after.task).toBeUndefined()
+    expect(after.done).toBeUndefined()
+    expect(exited.stops).toEqual([])
+
+    // 停过之后再停:回到老话术,不是又一次成功。
+    expect(exited.controller.stop()).toEqual({ ok: false, message: "没有在跑的任务" })
+  })
+
   test("退出码 3(锁冲突)等老路径不受影响", () => {
     const harness = makeHarness(SETTINGS)
     harness.controller.start({ kind: "runner" })

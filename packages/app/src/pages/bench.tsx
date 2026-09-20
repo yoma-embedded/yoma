@@ -88,8 +88,13 @@ export default function BenchPage() {
 
   function applyStatus(status: MailboxStatusView) {
     setState("status", status)
-    // 又跑起来了 → 之前那两条"因为授权停住"的记录都过期了,收掉,横幅别赖着不走。
-    if (status.phase === "running") setState({ startPause: undefined, stepPause: undefined })
+    // 又跑起来了 → "start 被授权拦下"那条记录过期了,收掉。
+    // stepPause **不能**在这里按 running 清:守护每发一步,main 紧跟着就广播一次 status(phase 仍是 running),
+    // 在这里清的话,活守护第一次进入授权暂停的横幅会被下一条 status 立刻抹掉。它由 handleEvent 里
+    // "任何别的一步走通了"来清;守护不在了(停掉 / 退出)则在这里清 —— 那句"它自己会接着跑"已经不成立。
+    // idle 也清:paused 下按了停止("这一单不跑了"),main 回到 idle,那条记录不该让横幅继续挂着。
+    if (status.phase === "running" || status.phase === "idle") setState("startPause", undefined)
+    if (status.phase !== "running" && status.phase !== "stopping") setState("stepPause", undefined)
     if (status.settings && !state.form.remote) {
       setState("form", {
         remote: status.settings.remote,

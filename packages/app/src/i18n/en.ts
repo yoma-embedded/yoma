@@ -727,7 +727,9 @@ export const dict = {
   "settings.license.toast.imported.title": "License imported",
   "settings.license.toast.imported.description": "{{customer}} · valid until {{end}}",
   "settings.license.toast.failed.title": "License file not accepted",
-  "settings.license.purchase.pricing": "{{monthly}} per seat / month, {{yearly}} per seat / year (introductory price)",
+  "settings.license.purchase.pricing": "{{monthly}} per seat / month, {{yearly}} per seat / year",
+  "settings.license.purchase.pricingTrial":
+    "{{monthly}} per seat / month, {{yearly}} per seat / year (introductory price)",
   "settings.license.purchase.modelsExcluded": "The software license fee does not include model usage. You bring your own model API key and pay the model provider directly.",
   "settings.license.purchase.renewal": "Renewing means importing the new license file from your developer: the same license ID is kept, it takes effect on import, and no restart is needed.",
   "settings.license.purchase.terms": "Licensed for a fixed term; the full feature set is open while it is valid. Payment and license delivery are handled by a person.",
@@ -744,6 +746,7 @@ export const dict = {
   "settings.license.diagnostics.action": "Copy",
   "settings.license.diagnostics.copied": "Diagnostics copied to the clipboard",
   "settings.license.diagnostics.failed": "Copy failed: {{message}}",
+  "settings.license.diagnostics.unavailable": "The clipboard is not available in this environment",
   "settings.license.statusFailed": "Could not read the license status: {{message}}",
   "license.required.missing.title": "Not activated — this run did not start",
   "license.required.missing.description": "The official commercial build needs a valid license to start a run. What you typed is still there; import a license and send again.",

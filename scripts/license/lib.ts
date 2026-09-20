@@ -163,8 +163,13 @@ export interface LicensePeriod {
  * 9 月 20 日买一个月 → 9 月 20 日 00:00 至 10 月 20 日 24:00。多给的这一天换来的是不必跟客户争
  * "20 号上午到底算不算到期"。
  */
-export function periodFromMonths(from: CalendarDate, months: number, offsetMinutes: number): LicensePeriod {
+/** 一次最多签 10 年。新签与续费共用:少了续费那一处,`--renew … --years 100` 会签出一份百年授权。 */
+export function assertMonths(months: number): void {
   if (!Number.isInteger(months) || months < 1 || months > 120) throw new Error("月数必须是 1–120 的整数")
+}
+
+export function periodFromMonths(from: CalendarDate, months: number, offsetMinutes: number): LicensePeriod {
+  assertMonths(months)
   const lastDay = addCalendarMonths(from, months)
   return periodBetween(from, lastDay, offsetMinutes)
 }
@@ -193,6 +198,7 @@ export function renewalPeriod(
   offsetMinutes: number,
   nowMs: number,
 ): LicensePeriod {
+  assertMonths(months)
   const previousExpiry = parseUtcIso(previous.expiresAt)
   const previousStart = parseUtcIso(previous.notBefore)
   if (previousExpiry === undefined || previousStart === undefined) throw new Error("旧授权的日期解析不出来")

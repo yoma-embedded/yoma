@@ -63,8 +63,10 @@ npm run package:mac                        # 或 package:win;商业构建会在�
 - 不设 `YOMA_EDITION`(或设成 `community`)= 社区 / 开发构建:**不检查授权**。`npm run dev:desktop` 平时就是这样。
 - `YOMA_EDITION=commercial` 却没有可信公钥 → **构建失败**,不会默认放行。
 - 构建日志会打印 edition 与每把公钥的指纹。**发包前核对它与你备份的指纹一致。**
-- `verify:commercial` 检查四个产物(`kernel.js`、`index.js`、`mailbox-host.mjs`、`mailbox-turn-entry.mjs`)里注入的公钥与
-  信任文件逐把一致,且产物里没有私钥、签发工具、测试密钥、运行时开关。
+- `verify:commercial` 检查四个产物(`kernel.js`、`index.js`、`mailbox-host.mjs`、`mailbox-turn-entry.mjs`,连同它们
+  import 的 chunk)里注入的公钥与信任文件逐把一致,且产物里没有私钥、签发工具、测试密钥、运行时开关。
+  `package:*` 会在 electron-builder 之前自动跑它:环境变量说是商业构建、**或者 `out/` 里的产物本身带着注入的公钥**,
+  两者有一个成立就跑全套(上一条命令带着变量 build、这一条忘了带变量就 package,也不会漏检)。
 - 产物里**没有**任何环境变量或配置文件能关掉检查或追加可信公钥。上面两个变量只在构建期被读。
 - CI(tag 触发的 `desktop-win.yml` / `desktop-mac.yml`):在 GitHub 仓库的 **Settings → Variables** 里设
   `YOMA_EDITION=commercial` 与 `YOMA_LICENSE_TRUST_JSON=<trust.json 的全文>`(公钥不是秘密,用 variable 不用 secret)。
@@ -92,7 +94,12 @@ npm run license -- issue \
 - 年付:`--years 1`(9,990 元/人/年)。指定结束日:`--until 2026-12-31`。`--from` 不写 = 今天。
 - 文件里存的是 UTC 时间;`--tz` 决定"哪一天的 0 点"按哪个时区算,不写 = 你电脑的时区。
 - `--license-id` 是订单 / 授权编号,**续费沿用同一个**。`--customer` 是购买人称呼,会显示在客户的授权页上,别写身份证号之类多余的信息。
-- 签完工具会自己用公钥验一遍;`npm run license -- inspect <文件> --trust <trust.json>` 可以随时复查。
+- `--key-id` 必须是这把私钥登记的编号:工具会读私钥**同目录**下的 `*.public.json` 核对,编号拼错或拿错私钥会拒签
+  (否则签得出来、客户那边却一律"授权无效")。所以私钥与它的 `public.json` 放在一起,别单独挪走私钥;
+  单独挪走时工具只能提醒你人工核对指纹。
+- 一次最多签 10 年(120 个月),新签与续费同一上限。
+- 签完工具会自己用公钥验一遍;发给客户之前再跑一次
+  `npm run license -- inspect <文件> --trust ~/yoma-license-keys/yoma-2026-a.trust.json`,看到「签名:✓ 有效」再发。
 
 **续费**(客户再次付款之后):
 
@@ -236,6 +243,8 @@ npm run license -- issue \
 | `packages/desktop/src/main/mailbox-controller.ts` | 调试台启动护栏、`paused` 态、退出码 4 不重启 |
 | `packages/app/src/components/settings-v2/` | 设置 → 授权 页;`packages/app/src/licensing/purchase.ts` 购买信息集中配置 |
 | `scripts/license.ts` + `scripts/license/lib.ts` | 签发工具(不在任何产物入口的依赖图上) |
+| `packages/desktop/scripts/e2e-license*.ts` | 授权闭环的真进程 e2e(`npm run e2e:license -w packages/desktop`) |
+| `packages/kernel/src/host/license-entrypoints.test.ts` | 守门:会话间里碰 `lane.accept / drive / compact` 的方法必须先过检查且排在 `stop()` 之前;三个产物入口不许出现授权的测试接缝 |
 
 ### 能启动付费执行的入口,以及各自经过哪道检查
 
@@ -263,6 +272,13 @@ npm run license -- issue \
   调试台守护下一次轮询就看得见,不需要任何进程间通知,也不需要重启。
 - 调试台的暂停是一种独立的步结果(`license-paused`)与控制器状态(`paused`),不写 result / decision / verdict,
   不交给模型判断,不进指数退避;信箱状态由文件存在性推断,所以"保留状态"不需要额外的存档。
+  `paused` 下按停止 = "这一单不跑了":回到 idle、原因清掉(没有进程可杀)。
+- **内核没有定时器盯着到期时刻**:`license.updated` 只在有人问(`license.status` / 执行入口的检查 / 导入 / 诊断)而状态
+  确实变了的时候才推。界面"到点自己变"靠的是 app 侧 `licensing/license-store.ts` 挂到 `expiresAt` / `notBefore` 的那只
+  重查定时器。事件经 `StreamSink` 的 16 ms 合并窗口出去,所以不能在 RPC 响应回来的那一刻断言事件已到。
+- 发送前 app 会**预检**一次(`license-notice.ts` 的 `blockedBeforeSend`):已知会被拒就不插乐观消息、不建新会话、不清输入框。
+  这只是体验(插了再摘会把虚拟时间线滚到一片空白上,历史看着像没了 —— 看图看出来的),**不是防线**:查不到或被绕过,
+  结果只是落回"发出去 → 内核拒 → 摘乐观消息"那条老路。排队的追加消息(轮次跑着时排进去的)仍走老路。
 
 ### 测试注入与正式产物的隔离
 
@@ -270,4 +286,43 @@ npm run license -- issue \
   `runMailboxHost` 的 seams。这些接缝不从 JSON 配置、命令行、环境变量取值:`TurnInput`、`MailboxHostConfig`、
   `StartCommand` 里都没有对应字段,`kernel-entry.ts` / `turn-entry.ts` / `host-entry.ts` 三个产物入口也不传它们。
 - 仓库里**没有任何测试私钥**:单测与 e2e 的密钥都是现场生成的临时密钥。
-- 真进程级的验证用"往临时目录打一份带临时公钥的商业产物"的方式做(`allowTestKeys` 只是 e2e 脚本里的函数参数)。
+- 真进程级的验证是 `npm run e2e:license -w packages/desktop`:现场生成临时密钥,经 `license-build.ts` 的
+  `allowTestKeys`(**只是函数参数**,没有任何环境变量能打开它)往 `os.tmpdir()` 打一份带临时公钥的商业产物,再在真进程里
+  加载它;也可以 `-- --out <desktop 目录> --key <私钥> --key-id <编号>` 对一份现成的商业 `out/` 跑。
+  内核进程的 HOME 指到临时目录,整条 e2e 不碰真实的 `~/.yoma`(脚本自己在开跑前后对账)。
+
+---
+
+## 第五部分:已实现 / 已验证 / 尚未验证(2026-09-20)
+
+全部验证都用**隔离的测试身份**:现场生成的临时密钥(或一把用完即删的一次性密钥)、临时 configDir / 临时 HOME、假模型、
+模拟硬件(`flash` 工具配无害慢命令)。没有读取真实凭据,没有产生模型费用,没有生成或触碰正式签名私钥。
+
+### 已实现并已验证(这台 Mac 上真跑过)
+
+| 要求 | 证据 |
+|---|---|
+| 有效授权可执行;续费导入立即生效、不重启 | `license-gate.test.ts`(同一个 host 实例,经 RPC 导入);`e2e:license` 腿 1:同一个内核进程,真的等到 10 秒有效期过完 → 被拒 → 导入续费 → 再次放行 |
+| 篡改 / 过期 / 未来生效 / 错误产品 / 未知公钥 / 损坏文件被拒 | `licensing.test.ts`(28 条,含"同一对象换一种 JSON 写法即验不过"、冒用可信编号、自带公钥不被信任);`e2e:license` 经真协议帧再验一遍错误码 |
+| 错误导入不破坏现有授权 | `licensing.test.ts`:8 种被拒的导入之后盘上字节逐一相同、无临时文件残留;导入不能让现状变差(过期的、更早到期的、未生效顶替有效的都不收) |
+| 断网仍可验证 | `licensing.test.ts` spy 住 `net.Socket.connect` / `dns.lookup` / `fetch`,验签、导入、检查全程零调用;`host/licensing/` 是只依赖 node 内建的叶子模块(有用例按 import 扫) |
+| 绕过 UI 直接调执行接口也不漏检 | `license-gate.test.ts` 直接 `host.handle("session.prompt")`;`e2e:license` 腿 1 直接发 MessagePort 帧、腿 2 从真 renderer 经 contextBridge(`data._tag` 完整存活);`license-entrypoints.test.ts` 守住"新增入口必须挂检查" |
+| 到期不打断已接受的硬件操作;停止与清理始终可用 | `license-gate.test.ts`:真 `flash` 子进程跑着时把时钟拨过到期 → 工具 completed、轮次正常到 idle;到期后 `session.abort` 照常;没授权的新请求打不断在飞轮次(变异:把检查挪到 `stop()` 之后恰好这一条变红) |
+| 调试台到期暂停、续费恢复(真实进程) | `e2e:license` 腿 3:真守护 + 真 turn 子进程 + 假模型 + **真的短有效期授权**。到期时刻落在第 2 轮之内 → 那一轮照常回填 → 两侧在轮次边界 `license-paused`(8 个轮询周期内远端提交数、轮次数不再增长,无 verdict,守护活着、未进退避)→ 暂停期间 SIGTERM 干净停下 → 过期时重启被拒(退出码 4)→ 导入续费 → 一直活着的守护**不重启自己恢复** → 跑到终局,轮次编号连续、每轮只跑一次 |
+| 商业产物不含私钥 / 签发工具 / 测试密钥 / 绕过开关;缺公钥构建失败 | `YOMA_EDITION=commercial` 无公钥 → 构建非零退出;一次性密钥的商业构建 `verify:commercial` 六项全过;社区产物被判不合格;换一把钥匙的 trust 文件核同一份产物 → 红 |
+| 授权页、激活提示、购买信息 | 截图工装对商业构建看过未激活 / 已激活 / 已到期 / 授权无效四种状态、购买块、发送被拒的提示(历史仍可见、输入保留) |
+
+数字:`e2e:license` 三条腿 34 / 13 / 73 共 120 条断言;变异自检(注释掉 `prompt()` 的检查)腿 1、腿 2 变红。
+
+### 尚未验证(如实)
+
+- **Windows 一行都没跑过。** 授权文件的 rename 重试、`taskkill` 停守护、`e2e:license`、商业构建与产物检查都只在 macOS 上验过。
+- **正式安装包。** 没有执行 `package:mac` / `package:win`:`verify:commercial --app <.app|app.asar>` 那条路只有单测;
+  "新电脑用正式安装包导入授权 → 配 Key → 真实板级任务"没有做。
+- **CI。** 两条 workflow 的变量透传只确认了 YAML 可解析,没有在 GitHub 上真跑。
+- **真机。** 到期不打断烧录用的是模拟硬件(真 `flash` 工具 + 无害命令),没有接真探针;信箱的暂停 / 恢复没有双机真跑 ——
+  按实施文档的约定,首发不要把实验性的远程闭环列入正式支持范围。
+- **调试台的暂停横幅没有看图**(点"开始"会经过 main,而 main 读的是真实 HOME;为了不碰真实 `~/.yoma` 没有做)。
+  它的决策逻辑有单测,样式没看过。英文界面也没有看图。
+- **排队的追加消息**在授权失效时仍走"发出去 → 内核拒"的老路,时间线可能短暂滚到空白处(内容都在,滚回去即可)。
+- 首版接受的限制不在"未验证"之列:转发、时钟回拨、修改客户端、自行构建社区版,都不防。

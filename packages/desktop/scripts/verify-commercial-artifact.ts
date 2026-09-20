@@ -92,7 +92,10 @@ const ISSUER_SYMBOLS = ["generateSigningKey", "issueLicense", "renewalPeriod"] a
 const FORBIDDEN_RUNTIME_SWITCHES = [EDITION_ENV, "YOMA_LICENSE_TRUST", "YOMA_LICENSE_KEY_PASSPHRASE", "allowTestKeys"] as const
 
 /** 执行入口的源码里不许出现的注入口(它们是测试的代码级接缝,生产装配面一个都不传)。 */
-const FORBIDDEN_ENTRY_SEAMS = ["licensePolicy", "licenseNow"] as const
+// 与 packages/kernel/src/host/license-entrypoints.test.ts 的那张表同一份:bench 侧的注入口叫
+// `license`(一个 LicenseService),只认前两个名字的话 host-entry 里 new 一个出来传下去不会被抓到 ——
+// 而发布流水线不跑 npm test,这道产物检查就是那条路上唯一的闸门。
+const FORBIDDEN_ENTRY_SEAMS = ["licensePolicy", "licenseNow", "LicenseService", "trustedKeys"] as const
 
 export interface InjectedPolicy {
   edition: "commercial" | "community"
@@ -503,13 +506,27 @@ async function main(argv: string[]): Promise<number> {
   const desktopDir = path.resolve(import.meta.dirname, "..")
   const repoRoot = path.resolve(desktopDir, "..", "..")
 
-  if (argv.includes("--if-commercial") && (process.env[EDITION_ENV] ?? "").trim() !== "commercial") {
-    console.log(`· ${EDITION_ENV} 不是 commercial:社区构建不检查授权,跳过商业产物检查`)
-    return 0
-  }
-
   const target = flag("app") ?? path.join(desktopDir, "out")
   const collected = await collectTarget(target)
+
+  // `--if-commercial`(打包脚本用):**环境变量说是商业,或产物本身像商业**,两者有一个成立就跑全套。
+  // 只看环境变量的话,"上一条命令带着变量 build 出商业 out/、这一条忘了带变量就 package"会把一份
+  // 商业产物不经检查地打进安装包。反过来 env=commercial 而产物没有注入,照旧是红的(走下面的全套)。
+  if (argv.includes("--if-commercial") && (process.env[EDITION_ENV] ?? "").trim() !== "commercial") {
+    const files = collected.files
+    const injected =
+      !!files &&
+      REQUIRED_MAIN_ARTIFACTS.some((entry) => {
+        const graph = resolveEntryGraph(entry, files)
+        return !!graph && extractInjectedPolicies(graph.text).some((policy) => policy.trustedKeys.length > 0)
+      })
+    if (!injected) {
+      console.log(`· ${EDITION_ENV} 不是 commercial,产物里也没有注入可信公钥:社区构建不检查授权,跳过商业产物检查`)
+      return 0
+    }
+    console.log(`· ${EDITION_ENV} 不是 commercial,但产物里注入了可信公钥 —— 这是一份商业产物,照常检查`)
+  }
+
   if (!collected.files) {
     console.error(`✗ ${collected.message}`)
     return 1

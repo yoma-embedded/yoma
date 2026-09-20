@@ -7,7 +7,12 @@
  */
 
 import { isLicenseImportErrorData, isLicenseRequiredData } from "@yoma-desktop/kernel"
-import type { LicenseImportErrorData, LicenseRequiredData } from "@yoma-desktop/kernel"
+import type {
+  LicenseImportErrorData,
+  LicenseRequiredData,
+  LicensedExecutionKind,
+  LicenseStatusView,
+} from "@yoma-desktop/kernel"
 
 function candidates(error: unknown): unknown[] {
   if (!error || typeof error !== "object") return []
@@ -35,4 +40,19 @@ export function licenseRequiredFrom(error: unknown): LicenseRequiredData | undef
 export function licenseImportErrorFrom(error: unknown): LicenseImportErrorData | undefined {
   for (const candidate of candidates(error)) if (isLicenseImportErrorData(candidate)) return candidate
   return undefined
+}
+
+/** 状态 → "会被内核以什么理由拒"。不强制 / 有效 = undefined(不会被拒)。 */
+export function licenseRequiredFromStatus(
+  status: LicenseStatusView,
+  execution: LicensedExecutionKind,
+): LicenseRequiredData | undefined {
+  if (!status.enforced || status.state === "active" || status.state === "not-required") return undefined
+  return {
+    _tag: "LicenseRequiredError",
+    state: status.state,
+    execution,
+    notBefore: status.license?.notBefore,
+    expiresAt: status.license?.expiresAt,
+  }
 }

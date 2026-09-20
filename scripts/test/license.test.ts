@@ -705,3 +705,66 @@ describe("license issue / inspect", () => {
     CLI_TIMEOUT,
   )
 })
+
+describe("license issue:--key-id 与私钥必须是同一把", () => {
+  it(
+    "编号拼错 / 拿错私钥 → 拒签,不产出文件;私钥旁边没有 public.json 时只能提醒人工核指纹",
+    () => {
+      const dir = tempDir("yoma-license-keyid-")
+      const out = path.join(dir, "ORD-KEYID.yoma-license")
+      const base = ["--license-id", "ORD-KEYID", "--customer", "编号核对", "--from", "2026-09-20", "--months", "1", "--tz", "+08:00"]
+
+      // 拼错编号:这把私钥登记在 acme-signing-1 名下,用别的名字签出来客户端一律"授权无效"。
+      const typo = license(["issue", "--key", keyFile, "--key-id", "acme-signing-2", ...base, "--out", out])
+      expect(typo.status).toBe(2)
+      expect(typo.stderr).toContain(KEY_ID)
+      expect(existsSync(out)).toBe(false)
+
+      // 拿错私钥:同目录里再生成一把,用 A 的编号配 B 的私钥。
+      const other = license(["keygen", "--key-id", "acme-signing-9", "--out-dir", keys])
+      expect(other.status, other.output).toBe(0)
+      const swapped = license([
+        "issue",
+        "--key",
+        path.join(keys, "acme-signing-9.private.pem"),
+        "--key-id",
+        KEY_ID,
+        ...base,
+        "--out",
+        out,
+      ])
+      expect(swapped.status).toBe(2)
+      expect(swapped.stderr).toContain("对不上")
+      expect(existsSync(out)).toBe(false)
+
+      // 私钥被单独挪走(旁边没有 public.json):核不了,照签,但要明说让人工核指纹。
+      const lonely = tempDir("yoma-license-lonely-")
+      const lonelyKey = path.join(lonely, "moved.private.pem")
+      writeFileSync(lonelyKey, readFileSync(keyFile, "utf8"), { mode: 0o600 })
+      const warned = license(["issue", "--key", lonelyKey, "--key-id", KEY_ID, ...base, "--out", out])
+      expect(warned.status, warned.output).toBe(0)
+      expect(warned.stdout).toContain("无法核对 --key-id")
+      expect(existsSync(out)).toBe(true)
+    },
+    CLI_TIMEOUT,
+  )
+
+  it(
+    "续费同样有 10 年上限:--renew … --years 100 被拒",
+    () => {
+      const dir = tempDir("yoma-license-cap-")
+      const first = path.join(dir, "first.yoma-license")
+      const issued = license([
+        "issue", "--key", keyFile, "--key-id", KEY_ID, "--license-id", "ORD-CAP", "--customer", "上限",
+        "--from", "2026-09-20", "--months", "1", "--tz", "+08:00", "--out", first,
+      ])
+      expect(issued.status, issued.output).toBe(0)
+      const out = path.join(dir, "century.yoma-license")
+      const century = license(["issue", "--key", keyFile, "--key-id", KEY_ID, "--renew", first, "--years", "100", "--out", out])
+      expect(century.status).not.toBe(0)
+      expect(century.stderr).toContain("1–120")
+      expect(existsSync(out)).toBe(false)
+    },
+    CLI_TIMEOUT,
+  )
+})

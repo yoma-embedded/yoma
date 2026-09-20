@@ -46,6 +46,30 @@ describe("调试台的授权暂停横幅", () => {
     expect(pause?.instant).toBeUndefined()
   })
 
+  test("守护已经不在了(被停掉 / 退出)→ 不再承诺「它自己会接着跑」", () => {
+    const stale = { state: "expired", detail: "paused at round 3", expiresAt: "2026-10-21T00:00:00.000Z" }
+    for (const phase of ["idle", "done", "error"] as const) {
+      expect(
+        selectBenchLicensePause({ status: status({ phase, message: "已停止" }), stepPause: stale, licenseState: "expired" }),
+        phase,
+      ).toBeUndefined()
+    }
+  })
+
+  test("start() 被拦时,上一单留下的 done.detail 不会被当成这次暂停的原因", () => {
+    const pause = selectBenchLicensePause({
+      status: status({
+        phase: "paused",
+        license: required(),
+        message: "软件授权已到期",
+        // 上一单的收场白:没有 license,与这次暂停无关。
+        done: { exitCode: 0, detail: "终局 passed" },
+      }),
+      licenseState: "expired",
+    })
+    expect(pause?.detail).toBe("软件授权已到期")
+  })
+
   test("守护还活着、停在轮次边界 → 它自己会接着跑", () => {
     const pause = selectBenchLicensePause({
       status: status({ phase: "running" }),

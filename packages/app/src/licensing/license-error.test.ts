@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest"
-import { licenseImportErrorFrom, licenseRequiredFrom } from "./license-error"
+import type { LicenseStatusView } from "@yoma-desktop/kernel"
+import { licenseImportErrorFrom, licenseRequiredFrom, licenseRequiredFromStatus } from "./license-error"
 
 /**
  * `KernelError` 把结构化信息同时放在 `error.data` 与 `cause.body`(前端 `unwrapNamedError()`
@@ -39,5 +40,54 @@ describe("从 rejection 里认出授权问题", () => {
     // 两类错误不能互相冒充。
     expect(licenseImportErrorFrom(required)).toBeUndefined()
     expect(licenseRequiredFrom(data)).toBeUndefined()
+  })
+})
+
+describe("licenseRequiredFromStatus:发送前预检用的「会不会被拒」", () => {
+  const base: Omit<LicenseStatusView, "state"> = {
+    edition: "commercial",
+    enforced: true,
+    checkedAt: "2026-09-20T00:00:00Z",
+    file: "/x",
+    trustedKeyIds: ["k"],
+  }
+  const license = {
+    licenseId: "ORD-1",
+    customerLabel: "c",
+    issuedAt: "2026-09-01T00:00:00Z",
+    notBefore: "2026-09-01T00:00:00Z",
+    expiresAt: "2026-10-01T00:00:00Z",
+    signingKeyId: "k",
+  }
+
+  test("有效 / 不强制 → 不会被拒", () => {
+    expect(licenseRequiredFromStatus({ ...base, state: "active", license }, "session.prompt")).toBeUndefined()
+    expect(
+      licenseRequiredFromStatus({ ...base, edition: "community", enforced: false, state: "not-required" }, "session.prompt"),
+    ).toBeUndefined()
+  })
+
+  test("未激活 / 到期 / 未生效 / 无效 → 与内核同形的拒绝理由,带上能说的日期", () => {
+    expect(licenseRequiredFromStatus({ ...base, state: "missing" }, "session.prompt")).toEqual({
+      _tag: "LicenseRequiredError",
+      state: "missing",
+      execution: "session.prompt",
+      notBefore: undefined,
+      expiresAt: undefined,
+    })
+    expect(licenseRequiredFromStatus({ ...base, state: "expired", license }, "session.compact")).toMatchObject({
+      state: "expired",
+      execution: "session.compact",
+      expiresAt: "2026-10-01T00:00:00Z",
+    })
+    expect(licenseRequiredFromStatus({ ...base, state: "not-yet-valid", license }, "session.prompt")?.notBefore).toBe(
+      "2026-09-01T00:00:00Z",
+    )
+    expect(licenseRequiredFromStatus({ ...base, state: "invalid" }, "session.prompt")?.state).toBe("invalid")
+  })
+
+  test("预检造出来的对象,走的是与内核报错同一条识别路径", () => {
+    const data = licenseRequiredFromStatus({ ...base, state: "missing" }, "session.prompt")
+    expect(licenseRequiredFrom({ data })).toEqual(data)
   })
 })

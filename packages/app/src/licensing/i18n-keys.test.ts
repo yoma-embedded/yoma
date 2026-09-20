@@ -24,7 +24,7 @@ import {
   licenseStateKey,
   type LicenseCountdown,
 } from "./format"
-import { PURCHASE } from "./purchase"
+import { PURCHASE, purchasePricingKey } from "./purchase"
 
 const enDict: Record<string, unknown> = en
 const zhDict: Record<string, unknown> = zh
@@ -138,11 +138,22 @@ describe("授权 i18n 键在两份字典里都真实存在", () => {
 
   test("价格文案里没有写死的数字,只有变量", () => {
     for (const dict of [zhDict, enDict]) {
-      const text = String(dict[PURCHASE.copy.pricing])
-      expect(text).toContain("{{monthly}}")
-      expect(text).toContain("{{yearly}}")
-      expect(text).not.toMatch(/\d/)
+      for (const key of [PURCHASE.copy.pricing, PURCHASE.copy.pricingTrial]) {
+        const text = String(dict[key])
+        expect(text).toContain("{{monthly}}")
+        expect(text).toContain("{{yearly}}")
+        expect(text).not.toMatch(/\d/)
+      }
     }
+  })
+
+  test("试售价标签由 purchase.ts 的 pricing.trial 决定,不写死在通用价格文案里", () => {
+    expect(String(zhDict[PURCHASE.copy.pricingTrial])).toContain("试售价")
+    expect(String(zhDict[PURCHASE.copy.pricing])).not.toContain("试售价")
+    expect(String(enDict[PURCHASE.copy.pricing]).toLowerCase()).not.toContain("introductory")
+    const standard = { ...PURCHASE, pricing: { ...PURCHASE.pricing, trial: false } }
+    expect(purchasePricingKey(standard)).toBe(PURCHASE.copy.pricing)
+    expect(purchasePricingKey({ ...standard, pricing: { ...standard.pricing, trial: true } })).toBe(PURCHASE.copy.pricingTrial)
   })
 
   /** 不许承诺未经验证的效果("效率提高 50–100 倍"那一类)。 */

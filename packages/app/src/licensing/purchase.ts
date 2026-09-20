@@ -36,7 +36,10 @@ export interface PurchasePricing {
   yearly: number
   /** 计价单位:按人。 */
   unit: "per-seat"
-  /** 试售价(还不是长期定价)—— 界面据此加一句"试售价"。 */
+  /**
+   * 试售价(还不是长期定价)。`true` 时价格行用 `copy.pricingTrial`(带"试售价"字样),
+   * 转成长期定价那天把它翻成 false 即可,不用去翻 i18n 字典。
+   */
   trial: boolean
 }
 
@@ -47,6 +50,8 @@ export interface PurchaseInfo {
   copy: {
     /** 价格行,变量 `{{monthly}}` / `{{yearly}}`。 */
     pricing: string
+    /** 同上,但标明是试售价。用哪一条由 `pricing.trial` 决定(见 `purchasePricingKey`)。 */
+    pricingTrial: string
     /** 软件授权费不包含模型费用。 */
     modelsExcluded: string
     /** 续费怎么做。 */
@@ -61,10 +66,16 @@ export const PURCHASE: PurchaseInfo = {
   contact: { configured: false, channels: [] },
   copy: {
     pricing: "settings.license.purchase.pricing",
+    pricingTrial: "settings.license.purchase.pricingTrial",
     modelsExcluded: "settings.license.purchase.modelsExcluded",
     renewal: "settings.license.purchase.renewal",
     contactPending: "settings.license.purchase.contactPending",
   },
+}
+
+/** 价格行该用哪一条文案。 */
+export function purchasePricingKey(info: PurchaseInfo = PURCHASE): string {
+  return info.pricing.trial ? info.copy.pricingTrial : info.copy.pricing
 }
 
 /**

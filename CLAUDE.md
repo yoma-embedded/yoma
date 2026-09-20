@@ -49,13 +49,14 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
 `kernel/src/host/domain/` 与 `host/tools/<名字>/{contract.ts,session.ts}`(住户:grep、find、ls、powershell、toolchain、flash、log、la、gdb、datasheet、netlist、stm32config);
 **发动机** = `packages/{agent,ai,chord,telemetry}`(哈希锁定)。
 
-门就是 `packages/kernel/package.json` 的 `exports`,七道(外加 `./package.json`):
+门就是 `packages/kernel/package.json` 的 `exports`,八道(外加 `./package.json`):
 
 | 门 | 谁用 |
 |---|---|
 | `.`(`src/index.ts`) | 餐厅:视图模型 / 协议 / 客户端,**浏览器安全** |
 | `./host`(`src/host/index.ts`) | 厨房大门:desktop 的 `kernel-entry.ts` 与 bench |
 | `./host/datasheet-server`、`./host/models`、`./host/toolchain-schema`、`./host/engines` | 四道**叶子**门:desktop main 的手册库页、bench 的模型目录与信箱工具链清单、main 的信箱守护杀进程树(`killTree`)—— main 走大门等于把整个 host inline 进 `out/main/index.js` |
+| `./host/licensing`(`src/host/licensing/index.ts`) | 第五道**叶子**门(2026-09-20):软件授权的验签 / 落盘 / 执行资格检查,只依赖 node 内建。main 的调试台启动护栏与 bench 的守护都从这里拿 `LicenseService`;**没有签发能力**(签发在仓库根 `scripts/license/`,不在任何产物入口的依赖图上)。见「软件授权」 |
 | `./tools/*/contract`(`src/host/tools/*/contract.ts`) | **契约门**:餐厅的工具卡片只从这里拿一个工具的名字 / 参数 / 结果格式 / 副标题函数,拿不到 `session.ts`。2026-09-11 起有住户了(flash) |
 | `./tools/contracts`(`src/host/tools/contracts.ts`) | **契约总表**:餐厅按工具名找契约(只 import 各 `contract.ts`);装配在 `host/tools/index.ts`,那是厨房 |
 
@@ -454,6 +455,9 @@ kernel 接它 —— 从前那份自有 harness(`agent-legacy` / `@yoma/agent`)�
 | `npm run e2e:paint -w packages/desktop` | 真窗口首屏 + 点一遍:Electron 跑构建产物 + 接 CDP,首页 / 会话页(含逻辑分析仪面板)/ 草稿页 / 手册库 / 调试台全点一遍,零 `exceptionThrown` 零 `console.error` / Log 错误(含资源 404)(窗口会在屏幕上闪几秒,别去点它) |
 | `npm run smoke:mailbox -w packages/desktop` | 调试台冒烟:Electron RUN_AS_NODE 对打包产物跑完整**本机演练**(假模型,零 key 零硬件) |
 | `npm run e2e:mailbox -w packages/desktop` | main 托管端到端:真 kernel.js 的 `mailbox.setActive` 往返 + 假守护喂 `@@event` + 停止杀树 + 锁冲突人话 |
+| `npm run e2e:license -w packages/desktop` | 授权闭环的真进程验证:现场生成临时密钥 → 往临时目录打一份商业产物 → 真 utilityProcess / 真 contextBridge / 真守护 + 真 turn 子进程(假模型、**真的短有效期授权**)跑「导入 → 执行 → 到期暂停 → 续费恢复」。`-- --out <desktop 目录> --key <私钥> --key-id <id>` 对现成的商业 `out/` 跑 |
+| `npm run verify:commercial -w packages/desktop [-- --trust-file <trust.json>]` | 商业产物检查:四个产物里注入的公钥与信任文件逐把一致,没有私钥 / 签发工具 / 测试密钥 / 运行时开关。`package:*` 在 electron-builder 之前自动跑(env 说是商业、或产物本身带注入的公钥,有一个成立就跑) |
+| `npm run license -- keygen\|trust\|issue\|inspect …` | 授权签发工具(**只给开发者**,不进安装包)。私钥只落仓库外、绝不覆盖、不上屏;操作手册 `docs/licensing.md` |
 | `tsx packages/bench/src/cli.ts check <job.json>` | 校验任务书 + 本机内核装配 |
 | `tsx packages/bench/src/cli.ts mailbox sim <job.json> --project <工程目录>` | 信箱闭环单机模拟(`init`/`runner`/`mother`/`status` 是生产形态的四个子命令;工程目录是本机事实,任务书里没有) |
 | `tsx engines/logic-analyzer/build.ts [--dist --out DIR]` | 只构建/安装逻辑分析仪引擎 yoma-la(`engines/build.ts` 会顺带做;Windows 要 MSYS2 ucrt64) |
@@ -1096,6 +1100,60 @@ Windows 失败时这里超时变红,本来也不该有只含 mac 的 Release)。
 以及:今天仓里**没有任何 engines-v\* 的 Release**(tag 在,Release 不在),`engines.lock.json` 钉的 `engines-v0.2.0`
 下载不到 —— "在 Mac 上打 Windows 包"那条预编译路径现在是断的;两条发版流水线都是当场编引擎,不受影响。
 
+### 软件授权(`host/licensing`,2026-09-20)
+
+首版付费桌面版的闭环:演示 → 客户付款 → 开发者人工签发 `.yoma-license` → 客户在「设置 → 授权」导入 → 续费再导一份。
+没有账号服务器、支付、硬件绑定;验签完全离线。操作手册、格式、入口清单、已验证 / 未验证在 `docs/licensing.md`。
+**首版明确接受**:授权可被转发、时钟可回拨、客户端可被修改、MIT 源码可自建社区版 —— 都不防,别为此扩范围。
+
+- **版本与可信公钥是编译期常量,不是运行时配置。** `packages/desktop/scripts/license-build.ts` 是唯一生成处:
+  `YOMA_EDITION=commercial` + `YOMA_LICENSE_TRUST_FILE`(或 CI 的 `YOMA_LICENSE_TRUST_JSON`)→ `define` 把
+  `__YOMA_LICENSE_BUILD__` 写进 `kernel.js` / `index.js` / `mailbox-host.mjs` / `mailbox-turn-entry.mjs`。没注入(tsx、vitest、
+  平时的 `dev:desktop`)= 社区版不强制;注入了但形状坏 = 商业版 + 零公钥,**一律拦**(`policy.ts` 的 fail-closed)。
+  商业构建缺公钥 / 公钥不是 Ed25519 / 编号是测试前缀 → 构建失败。产物里没有任何环境变量或配置能关检查、加公钥。
+- **检查只有一处,而且排在一切副作用之前**:`SessionManager.prompt()` / `compact()` 的第一行,**在 `stop()` 之前** ——
+  没授权的请求不该有本事打断一轮已经被接受的执行(它可能正在烧录)。通过之后这一轮(含轮内压缩与重试)不再回头查。
+  bench 的每一轮经 `createKernelHost` 进来,走的是同一道;`license-entrypoints.test.ts` 按源码扫
+  `lane.accept / drive / compact`,明天加第三个入口忘了挂检查就是一条红的用例。界面禁用按钮不算防线,协议里也没有
+  "renderer 声明已付费"的参数。
+- **`LicenseService` 不缓存**:每次检查重新读盘 + 验签 + 对钟(不到 1 KB、几十微秒)。换来的是"续费不用重启":桌面内核导入,
+  **另一个进程**里暂停着的守护下一次轮询就看得见,不需要任何进程间通知。
+- **测试注入口只能是函数参数**:`createKernelHost({ licensePolicy, licenseNow })`、`runTurn(options, seams)`、
+  `runMailboxHost(config, emit, seams)`、守护 options 的 `license`。**绝不进** `TurnInput` / `MailboxHostConfig` /
+  `StartCommand` 这类从 JSON 或消息读进来的结构 —— `turn-entry.ts` 是 `runTurn({...JSON})`,加在 options 上就是一个配置文件后门。
+  仓库里没有任何测试私钥,密钥全是用例现场生成的。
+- **导入规则:验不过不落盘,而且"导入不能让现状变差"。** 已过期的不收;当前有效时不收未生效的、也不收到期更早的
+  (多半是客户点错了旧文件)。写入是同目录临时文件 + fsync + rename。签名覆盖 payload 的**原始字节**,两边都不重新序列化 JSON。
+- **调试台的暂停是独立的一种结果**:步 `license-paused`(零写入、正常轮询、不进 blocked 退避、进度行进出各一条)、
+  守护启动被拒退出码 4、控制器 `phase: "paused"`。不是成功也不是失败,更不交给模型判断。`paused` 下的停止 = 回 idle。
+  **带 `license` 的 `done` 一律按 paused 处理,不看退出码**:跑着时到期、在轮次边界干净收场的是 `exitCode: 0` + `license`,
+  只认 4 的话它会掉进崩溃退避("异常退出 code 0,5s 后重启",起来又立刻暂停)。
+- 付过学费的几条:
+  1. **产物检查要按入口的 import 图看,不能只看入口文件。** electron-vite 把 main 拆成共享 chunk,注入的策略实际落在
+     `out/main/chunks/*.js` 里;只看 `kernel.js` 本身四条检查全红,而产物其实是对的 —— 那种误报一定会被人关掉。
+     `policy.ts` 自己的两个同形字面量(`COMMUNITY_POLICY` 与 fail-closed 那份)也会进产物,检查只认"带至少一把公钥"的注入。
+  2. **`--if-commercial` 不能只看环境变量。** 上一条命令带着变量 build 出商业 `out/`、这一条忘了带变量就 package,只看 env 的
+     闸门会把一份商业产物不经检查地放过去。现在 env 说是商业、**或产物本身带注入的公钥**,有一个成立就跑全套。
+  3. **`--key-id` 只是一个名字,工具没法从私钥知道它该叫什么。** 拼错照样签得出来、自检也过(自检用的是从这把私钥推出的公钥),
+     而客户端按名字找公钥 —— 客户付了钱、导不进去。`issue` 因此读私钥同目录的 `*.public.json` 核对,对不上就拒签。
+  4. **乐观消息插了再摘,会把虚拟时间线滚到一片空白上**(内容还在 DOM 里,视口停在下面)。单测、typecheck、`querySelector`
+     全看不出来,是截图看出来的:没授权的用户每点一次发送,历史就"消失"一次。所以发送前先预检(`blockedBeforeSend`,
+     每次重新问内核、不读缓存),已知会被拒就什么都别插。预检只是体验,防线仍在内核。
+  5. **内核没有定时器盯到期时刻。** `license.updated` 只在有人问且状态真变了时才推;界面"到点自己变"靠 app 侧 store 挂到
+     `expiresAt` 的重查定时器。事件过 `StreamSink` 的 16 ms 合并窗口,别在 RPC 响应回来那一刻断言事件已到。
+  6. **截图 / e2e 要隔离的是内核的 HOME,不是 main 的。** 内核的 configDir 默认 `~/.yoma`,在界面里点一次「导入」写的就是
+     开发机真实的 `~/.yoma/license.json`。`YOMA_TEST_ONBOARDING=1` + `YOMA_TEST_KERNEL_HOME=<目录>` 只换内核子进程的
+     HOME(`main/kernel.ts`);给 main 假 HOME 会弹钥匙串对话框(见「会咬人的地方」)。隔离 HOME 里没有 `auth.json`,
+     会话的完整 open 会报 "No usable provider" —— 截图工装要放一个假 key。
+  7. **Electron e2e 里 `win.destroy()` 之后进程会在打汇总行之前 quit,退出码被抹成 0** —— 真挂了也读成通过。
+     `e2e-license-electron.ts` 靠 `app.on("window-all-closed", () => {})` 挡住;`e2e-renderer-kernel.ts` / `e2e-paint.ts`
+     今天没踩到只是因为它们从不 destroy 窗口。
+  8. 造"客户把到期日改了"的坏文件要改 **payload 解码后的字节**;改 base64url 末位字符拿到的是 `bad-payload`
+     (那一位是补齐位),验签那道门根本没走到,用例看着绿其实测的是另一件事。
+- **发布渠道还没决定**(`docs/licensing.md` 第三部分第 1 条):今天 tag 流水线出的是社区构建,自动更新也指向它 ——
+  私下交付商业包而公开 Release 仍是社区版的话,客户一次自动更新就被换成不检查授权的版本。给仓库设上那两个 repository
+  variable(官方 Release 即商业版),或商业版走独立更新源,二选一;代码没有替维护者选。
+
 ## 约定与规矩
 
 - **绝不重启 app 或内核进程**(`packages/app/AGENTS.md`)。优先级:稳定 > 简单 > 性能。
@@ -1215,6 +1273,11 @@ Windows 失败时这里超时变红,本来也不该有只含 mac 的 Release)。
   `getLogicalScrollOffset is not a function`。
 
 ## 已知的未完成项
+
+- **软件授权(2026-09-20)只在这台 Mac 上验过**:单测 + 真进程 e2e(`e2e:license`)+ 商业构建的产物检查 + 截图都过了,
+  但 Windows 一行没跑、没有打过正式安装包(`verify:commercial --app` 那条路只有单测)、两条 workflow 的变量透传没在
+  GitHub 上真跑、没接真探针、信箱的暂停 / 恢复没有双机真跑;调试台的暂停横幅与英文界面没看图。购买联系方式是
+  `configured: false`(界面显示"待配置"),正式签名密钥要维护者自己在仓库外生成。清单在 `docs/licensing.md` 第五部分。
 
 - **工具链自动安装只在 Windows 上真装过**(五个包都装过,见「工具链自动安装」一节);macOS / Linux 的
   tar 路径与可执行位处理没有真机验过。运行期镜像只有 `YOMA_TOOLCHAIN_MIRROR` 一个口子,维护者若要自建

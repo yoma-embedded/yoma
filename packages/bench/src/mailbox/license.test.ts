@@ -16,7 +16,7 @@
  */
 
 import { afterEach, describe, expect, test } from "vitest"
-import { existsSync, writeFileSync } from "node:fs"
+import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import path from "node:path"
 
@@ -25,6 +25,7 @@ import { LicenseService, type LicensePolicy } from "@yoma-desktop/kernel/host"
 import { generateSigningKey, issueLicense, loadPrivateKey } from "../../../../scripts/license/lib.ts"
 import { runGitReal } from "../git.ts"
 import type { TurnInput } from "../runner.ts"
+import type { TurnResult } from "../turn.ts"
 import { runMailboxHost, type MailboxHostEvent } from "./host.ts"
 import { initMailbox } from "./init.ts"
 import { motherStep, runMailboxMother, type MailboxMotherOptions, type MotherStepOutcome } from "./mother.ts"
@@ -364,6 +365,60 @@ describe("研发端:两个开轮位置各一道闸门", () => {
     const after = await remoteSnapshot(mailbox.bare)
     expect(after.state.kind).toBe("done")
     expect(after.rounds[0]?.decision?.decision).toBe("done")
+  })
+
+  test("重试轮才被内核拒:第一轮已经花掉的用量挂在本地,续费后记进那条 decision,不凭空消失", async () => {
+    const { mailbox } = await fixture()
+    const target = await makeTargetRepo(temp)
+    const configDir = temp.dir("license-config-")
+    await issue(mailbox.motherClone, 1, "复现")
+    await writeRoundResult(mailbox.motherClone, {
+      round: 1,
+      sessionID: "ses-runner",
+      turn: { text: "复现了", toolCounts: {}, toolErrors: [], usage: usage(1000, 200), errors: [], elapsedMs: 10 },
+      spentTokens: 1200,
+      at: iso(T0),
+      elapsedMs: 10,
+    })
+    await commitPush({ clone: mailbox.motherClone, author: { name: "t", email: "t@e.c" } }, "工位端回填第 1 轮")
+
+    // 守护这边的检查一直通过(有效授权);被拒的是轮次那一侧 —— 竞态:第一轮跑完、重试轮开跑前恰好到期。
+    importLicense(configDir, T0, { notBefore: iso(T0 - DAY), expiresAt: iso(T0 + 30 * DAY) })
+    const blocked = { _tag: "LicenseRequiredError", state: "expired", execution: "session.prompt" } as const
+    const script: TurnResult[] = [
+      fakeTurn({ text: "我分析完了,但忘了给 JSON", usage: usage(5000, 700) }),
+      fakeTurn({ text: "", usage: usage(0, 0), licenseBlocked: blocked }),
+      fakeTurn({
+        text: '```json\n{"decision":"done","analysis":"ORE 没清","reason":"复现不出 overrun"}\n```',
+        usage: usage(300, 40),
+      }),
+    ]
+    let calls = 0
+    const options = motherOptions(mailbox.motherClone, target, {
+      configDir,
+      license: licenseOf(configDir, () => T0),
+      runTurn: async () => script[calls++]!,
+    })
+
+    const before = await remoteSnapshot(mailbox.bare)
+    const paused = await motherStep(options)
+    expect(paused.kind).toBe("license-paused")
+    expect(calls).toBe(2)
+    // 信箱零写入;那 5700 token 记在本地 ignored 状态里。
+    expect(await remoteSnapshot(mailbox.bare)).toEqual(before)
+    const local = JSON.parse(readFileSync(path.join(mailbox.motherClone, ".mother", "state.json"), "utf8")) as {
+      pendingUsage?: { tokens: { input: number; output: number } }
+    }
+    expect(local.pendingUsage?.tokens).toMatchObject({ input: 5000, output: 700 })
+
+    const done = await motherStep(options)
+    expect(done.kind).toBe("done")
+    const after = await remoteSnapshot(mailbox.bare)
+    expect(after.rounds[0]?.decision?.usage?.tokens).toMatchObject({ input: 5300, output: 740 })
+    const cleared = JSON.parse(readFileSync(path.join(mailbox.motherClone, ".mother", "state.json"), "utf8")) as {
+      pendingUsage?: unknown
+    }
+    expect(cleared.pendingUsage).toBeUndefined()
   })
 })
 

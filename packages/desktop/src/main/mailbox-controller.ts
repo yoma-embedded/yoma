@@ -269,6 +269,15 @@ export class MailboxController {
   }
 
   stop(): { ok: true } | { ok: false; message: string } {
+    // paused:没有进程可杀(拒绝启动,或守护已经带着 license 自己收场了)。这时的"停止"是"这一单我不跑了":
+    // 把暂停态连同原因清掉、回到 idle。不给这条出口的话 paused 是个死胡同 —— 界面上露着停止按钮,
+    // 点下去却是一条"没有在跑的任务"的红字,横幅与原因永远挂着,直到成功 start 一次为止。
+    if (this.phase === "paused") {
+      this.task?.cancelRestart?.()
+      this.license = undefined
+      this.finishStopped()
+      return { ok: true }
+    }
     const task = this.task
     if (!task || (this.phase !== "running" && this.phase !== "stopping")) return { ok: false, message: "没有在跑的任务" }
     task.userStopped = true

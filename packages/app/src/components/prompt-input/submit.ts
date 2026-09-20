@@ -264,6 +264,10 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       return
     }
 
+    // 授权预检(体验,不是防线 —— 见 license-notice.ts):已知会被内核拒,就在**任何副作用之前**停下:
+    // 不建新会话、不清输入框、不插乐观消息(插了再摘会把时间线滚到一片空白上,历史看着像没了)。
+    if (await licenseNotice.blockedBeforeSend("session.prompt")) return
+
     input.addToHistory(currentPrompt)
     input.resetHistoryNavigation()
 

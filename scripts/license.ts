@@ -15,7 +15,7 @@
  * 3. 加密私钥的口令只从环境变量 `YOMA_LICENSE_KEY_PASSPHRASE` 读,不走命令行参数(参数会进 shell 历史)。
  */
 
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import path from "node:path"
 
 import { verifyLicenseFile, type TrustedLicenseKey } from "../packages/kernel/src/host/licensing/format.ts"
@@ -182,6 +182,7 @@ function commandIssue(parsed: Parsed): void {
   }
   const privateKey = loadPrivateKey(readFileSync(keyFile, "utf8"), process.env[PASSPHRASE_ENV])
   const trusted = trustedKeyOf(keyId, privateKey)
+  assertKeyIdMatchesKeyFile(keyFile, keyId, trusted.publicKey)
 
   const offset = parseTzOffset(optional(parsed, "tz") ?? formatTzOffset(localOffsetMinutes()))
   const months = monthsOf(parsed)
@@ -221,6 +222,38 @@ function commandIssue(parsed: Parsed): void {
   say(`  签名公钥:${keyId}  指纹 ${fingerprintOf(trusted.publicKey)}`)
   say()
   say("把这个 .yoma-license 文件发给客户即可。私钥、公钥文件、信任文件都不要发。")
+}
+
+/**
+ * `--key-id` 只是写进授权里的一个**名字**,工具没法从私钥本身知道它该叫什么。拼错了(或拿错了私钥)照样签得出来、
+ * 自检也过(自检用的正是从这把私钥推出来的公钥),而客户端按名字去可信名单里找公钥 —— 找不到就是"授权无效",
+ * 找到的是另一把就是"签名校验失败"。客户付了钱、拿到文件、导不进去。
+ *
+ * keygen 把 `<编号>.public.json` 写在私钥旁边,所以能核就核:同目录下这把私钥对应的公钥登记在哪个编号名下,
+ * 就只许用那个编号签。旁边没有任何 public.json(私钥被单独挪走了)时核不了,只能提醒人工对指纹。
+ */
+function assertKeyIdMatchesKeyFile(keyFile: string, keyId: string, publicKey: string): void {
+  const dir = path.dirname(keyFile)
+  const siblings = readdirSync(dir).filter((name) => name.endsWith(".public.json"))
+  const registered: Array<{ id: string; publicKey: string }> = []
+  for (const name of siblings) {
+    try {
+      registered.push(...readTrustEntries(path.join(dir, name)))
+    } catch {
+      // 不是公钥条目的 json:不归这里管。
+    }
+  }
+  const named = registered.find((entry) => entry.id === keyId)
+  if (named && named.publicKey !== publicKey) {
+    throw new RefusedError(`--key-id ${keyId} 登记的公钥与 --key 这把私钥对不上:拿错私钥了,或编号写错了`)
+  }
+  const owner = registered.find((entry) => entry.publicKey === publicKey)
+  if (owner && owner.id !== keyId) {
+    throw new RefusedError(`这把私钥登记的编号是 ${owner.id},不是 ${keyId}。客户端按编号找公钥,写错了客户那边就是"授权无效"`)
+  }
+  if (!named && !owner) {
+    say(`⚠ ${dir} 里没有这把私钥的 public.json,无法核对 --key-id;请人工核对下面打印的指纹与你登记的 ${keyId} 一致`)
+  }
 }
 
 function monthsOf(parsed: Parsed): number | undefined {

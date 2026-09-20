@@ -137,6 +137,12 @@ interface MotherLocalState {
   baseCommit?: string
   /** 终局收尾(交付 push)是否已做过。 */
   finalized?: boolean
+  /**
+   * 已经花掉、但还没能记进任何 decision 的用量。只有一种来路:第一轮分析跑完了(钱花了)、决定没读出来,
+   * 而**重试轮**被授权检查拦下 —— 这一步按"暂停"收场、什么都不写,那笔花费若不留在这里就凭空消失,
+   * 续费后重裁的 decision 会少算一轮。它住在本地 ignored 目录里,不碰信箱(暂停的"零写入"说的是信箱)。
+   */
+  pendingUsage?: TurnUsage
 }
 
 function localDir(clone: string): string {
@@ -798,7 +804,7 @@ async function analyse(
     })
 
   await ensureLocalDir(options.clone)
-  let usage = zeroUsage()
+  let usage = state.pendingUsage ?? zeroUsage()
   let sessionID = state.sessionID
   const book = async (turnUsage: TurnUsage) => {
     usage = addUsage(usage, turnUsage)
@@ -824,6 +830,9 @@ async function analyse(
   }
   sessionID = turn.sessionID
   await book(turn.usage)
+  // 上一次挂着的花费已经并进 usage,从这里起由本次的每一条返回路径交给调用方记账;挂账清零
+  // (重试轮若再被拦,下面会把累计值重新挂上)。
+  await clearPendingUsage(options.clone)
 
   // input 为空 = 开局轮,那一刻挂起没有地方落(见 parseMotherDecision 的 allowAwaitHuman)。
   const parseContext = { allowAwaitHuman: input !== undefined }
@@ -840,6 +849,8 @@ async function analyse(
       return { ok: false, error: `${parsed.error};重试轮执行失败:${(error as Error).message}`, usage, sessionID }
     }
     if (retry.licenseBlocked) {
+      // 第一轮的钱已经花了:留到本地状态里,续费后重裁时一并记进那条 decision。
+      await saveLocalState(options.clone, { ...(await readLocalState(options.clone)), sessionID, pendingUsage: usage })
       return { ok: false, error: "软件授权不满足,重试轮没有开始", usage, sessionID, licenseBlocked: retry.licenseBlocked }
     }
     await book(retry.usage)
@@ -847,6 +858,11 @@ async function analyse(
     if (!parsed.ok) return { ok: false, error: `重试后仍然:${parsed.error}`, usage, sessionID }
   }
   return { ok: true, payload: parsed.payload, usage, sessionID }
+}
+
+async function clearPendingUsage(clone: string): Promise<void> {
+  const current = await readLocalState(clone)
+  if (current.pendingUsage) await saveLocalState(clone, { ...current, pendingUsage: undefined })
 }
 
 function usageTokens(usage?: TurnUsage): number {

@@ -26,6 +26,7 @@
     "e2e:ipc": "tsx ./scripts/run-e2e.ts ipc",
     "e2e:renderer": "tsx ./scripts/run-e2e.ts renderer",
     "e2e:mailbox": "tsx ./scripts/run-e2e.ts mailbox",
+    "e2e:license": "tsx ./scripts/e2e-license.ts",
     "e2e:paint": "tsx ./scripts/e2e-paint.ts"
   },
   "main": "./out/main/index.js",

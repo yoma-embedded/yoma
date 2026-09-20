@@ -59,13 +59,17 @@ export function selectBenchLicensePause(input: BenchLicensePauseInput): BenchLic
         state: carried?.state ?? input.licenseState,
         instant: carried ? licenseRequiredInstant(carried) : undefined,
         note: "bench.license.note.restart",
-        detail: status?.done?.detail ?? status?.message,
+        // 只有**带 license 的** done 才是这次暂停的解释。start() 被拦时 task 没换,status.done 里躺着的
+        // 可能是上一单的收场白("终局 passed"),拿它当暂停原因就是张冠李戴。
+        detail: (status?.done?.license ? status.done.detail : undefined) ?? status?.message,
       }
     }
   }
 
+  // "它自己会接着跑"只对**还活着**的守护成立。守护已经被停掉 / 退出之后还挂着这句,用户就会对着一个
+  // 不存在的进程干等。
   const step = input.stepPause
-  if (step && !ready) {
+  if (step && !ready && running) {
     return {
       resolved: false,
       state: step.state,

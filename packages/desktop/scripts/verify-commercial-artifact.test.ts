@@ -234,9 +234,9 @@ test("产物里出现关掉授权的开关 → 抓住", () => {
 // 源码级:执行入口没有测试接缝
 // ---------------------------------------------------------------------------
 
-test("执行入口传了 licensePolicy / licenseNow → 抓住", () => {
+test("执行入口里出现任何一个授权注入口的名字(含 bench 侧的 LicenseService)→ 抓住", () => {
   expect(verifyEntrySources(CLEAN_ENTRIES).ok).toBe(true)
-  for (const seam of ["licensePolicy", "licenseNow"]) {
+  for (const seam of ["licensePolicy", "licenseNow", "LicenseService", "trustedKeys"]) {
     const dirty = [...CLEAN_ENTRIES.slice(1), { path: "kernel-entry.ts", text: `createKernelHost({ ${seam}: fromEnv() })` }]
     const check = verifyEntrySources(dirty)
     expect(check.ok, seam).toBe(false)
