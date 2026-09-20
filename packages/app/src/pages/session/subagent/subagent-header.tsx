@@ -5,15 +5,18 @@
  *
  * 状态来自任务视图(`task.updated` / `task.list`,会话页打开时种过):内核重启之后注册表是空的,
  * 这时只剩会话本身,状态那半边不出,停止键也不出 —— 没有东西可停。
+ *
+ * 外观与输入框上方那几个坞同解(`../composer/dock.css`,2026-09-20):状态是一颗点而不是仪器的 LED 片,
+ * 类型是一枚名牌 —— 从前它和父会话标题之间靠一个打上去的 `/` 隔着。
  */
 import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js"
 import { useData } from "@yoma-desktop/session-ui/context"
-import { Button } from "@yoma-desktop/ui/button"
 import { IconButton } from "@yoma-desktop/ui/icon-button"
 import { useLanguage } from "@/context/language"
 import { useSync } from "@/context/sync"
 import { sessionTitle } from "@/utils/session-title"
-import { TASK_LED, taskActive, taskElapsed, taskLook } from "./task-view"
+import { taskActive, taskElapsed, taskLook } from "./task-view"
+import "../composer/dock.css"
 
 /** 「← 主会话」与子 agent 的类型。 */
 export function SubagentBack(props: { parentID: string; agent?: string }) {
@@ -25,33 +28,29 @@ export function SubagentBack(props: { parentID: string; agent?: string }) {
   )
 
   return (
-    <div data-component="subagent-back" class="shrink-0 flex items-center gap-1 min-w-0 max-w-[45%]">
+    <div data-component="subagent-back" class="shrink-0 flex items-center gap-1.5 min-w-0 max-w-[45%]">
       <Show when={data.navigateToSession}>
         {(navigate) => (
-          <IconButton
-            icon="arrow-left"
-            size="normal"
-            variant="ghost"
-            aria-label={language.t("session.subagent.backTo", { title: parentTitle() })}
-            title={language.t("session.subagent.backTo", { title: parentTitle() })}
-            onClick={() => navigate()(props.parentID)}
-          />
+          <span data-tip={language.t("session.subagent.backTo", { title: parentTitle() })}>
+            <IconButton
+              icon="arrow-left"
+              size="small"
+              variant="ghost"
+              aria-label={language.t("session.subagent.backTo", { title: parentTitle() })}
+              onClick={() => navigate()(props.parentID)}
+            />
+          </span>
         )}
       </Show>
       <span class="min-w-0 truncate text-12-regular text-text-weak">{parentTitle()}</span>
-      <span class="shrink-0 text-12-regular text-text-weak" aria-hidden="true">
-        /
-      </span>
       <Show when={props.agent}>
-        <span class="shrink-0 rounded-[4px] px-1.5 py-0.5 font-mono text-12-regular text-text-base bg-v2-overlay-simple-overlay-hover">
-          {props.agent}
-        </span>
+        <span data-slot="dock-agent">{props.agent}</span>
       </Show>
     </div>
   )
 }
 
-/** 任务状态(灯 + 状态 · 轮数 · 工具调用 · 耗时)与「停止」。 */
+/** 任务状态(点 + 状态 · 轮数 · 工具调用 · 耗时)与「停止」。 */
 export function SubagentStatus(props: { sessionID: string }) {
   const language = useLanguage()
   const t = (key: string, params?: Record<string, string | number>) =>
@@ -72,27 +71,27 @@ export function SubagentStatus(props: { sessionID: string }) {
   return (
     <Show when={task()}>
       {(current) => (
-        <div data-component="subagent-status" class="ybench shrink-0 flex items-center gap-2">
-          <span
-            data-component="bench-chip"
-            data-state={TASK_LED[taskLook(current())]}
-            title={current().error ?? current().lastTool}
-          >
-            <span data-component="bench-led" data-state={TASK_LED[taskLook(current())]} />
-            <span data-slot="label">{t(`session.subagent.state.${taskLook(current())}`)}</span>
-            <span data-slot="value">
-              {[
-                t("session.subagent.turns", { count: current().turns }),
-                t("session.subagent.toolUses", { count: current().usage.toolUses }),
-                taskElapsed(current(), now()),
-              ].join(" · ")}
-            </span>
+        <div data-component="subagent-status" class="shrink-0 flex items-center gap-2">
+          <span data-component="dock-dot" data-state={taskLook(current())} aria-hidden="true" />
+          <span class="text-12-regular text-text-weak" title={current().error ?? current().lastTool}>
+            {[
+              t(`session.subagent.state.${taskLook(current())}`),
+              t("session.subagent.turns", { count: current().turns }),
+              t("session.subagent.toolUses", { count: current().usage.toolUses }),
+              taskElapsed(current(), now()),
+            ].join(" · ")}
           </span>
           <Show when={taskActive(current()) && data.stopTask}>
             {(stop) => (
-              <Button size="small" variant="ghost" onClick={() => stop()(props.sessionID)}>
-                {t("session.subagent.stop")}
-              </Button>
+              <span data-tip={t("session.subagent.stop")} data-tone="danger">
+                <IconButton
+                  icon="stop"
+                  size="small"
+                  variant="ghost"
+                  aria-label={t("session.subagent.stop")}
+                  onClick={() => stop()(props.sessionID)}
+                />
+              </span>
             )}
           </Show>
         </div>

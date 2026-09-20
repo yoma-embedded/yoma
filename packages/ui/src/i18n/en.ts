@@ -226,6 +226,7 @@ export const dict: Record<string, string> = {
   "ui.tool.agent.inBackground": "Running in the background. The result comes back to this session as a notification.",
   "ui.tool.agent.detached":
     "Running in the background (live progress sits in the agents bar above the composer). The result comes back to this session as a notification.",
+  "ui.tool.agent.facts": "Run stats",
   "ui.tool.agent.readout.agent": "Agent",
   "ui.tool.agent.readout.turns": "Turns",
   "ui.tool.agent.readout.tools": "Tool uses",

@@ -25,8 +25,12 @@ const LOAD_LIMIT = 64
 
 const ROW =
   "group flex h-8 w-full min-w-0 items-center gap-2 rounded-[7px] px-2 text-left text-[13px] transition-colors [font-weight:500]"
-const ROW_IDLE = "text-v2-text-text-muted hover:bg-v2-background-bg-layer-01 hover:text-v2-text-text-base"
-const ROW_ACTIVE = "bg-v2-background-bg-layer-03 text-v2-text-text-base"
+// 悬浮与选中都用**叠加层**而不是 bg-layer-*:浅色主题下 bg-layer-01 与侧栏自己的底色 bg-deep
+// 同为 grey-100(theme.css),拿它当 hover 等于什么都没画。叠加层在任何底色上都留得下痕迹,
+// 同一个文件里的 ProjectChoiceRow 本来就是这么写的。
+const ROW_IDLE =
+  "text-v2-text-text-muted hover:bg-v2-overlay-simple-overlay-hover hover:text-v2-text-text-base focus-visible:bg-v2-overlay-simple-overlay-hover focus-visible:text-v2-text-text-base focus-visible:outline-none"
+const ROW_ACTIVE = "bg-v2-overlay-simple-overlay-pressed text-v2-text-text-base"
 
 export function CodexSidebar() {
   const layout = useLayout()
@@ -214,7 +218,7 @@ function ProjectItem(props: {
 
   return (
     <div class="flex flex-col">
-      <div class="group relative flex h-8 min-w-0 items-center rounded-[7px] hover:bg-v2-background-bg-layer-01">
+      <div class="group relative flex h-8 min-w-0 items-center rounded-[7px] transition-colors hover:bg-v2-overlay-simple-overlay-hover">
         <button
           type="button"
           class="flex h-full min-w-0 flex-1 items-center gap-2 rounded-[7px] px-2 text-left"

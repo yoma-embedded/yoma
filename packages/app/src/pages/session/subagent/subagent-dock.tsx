@@ -7,6 +7,9 @@
  *
  * 一个都没有时整条不渲染(不占位)。行数封顶,多的折成"还有 N 个";整坞可以折叠成一行。
  * 状态栏那一格是另一件事:它管**这个会话总共派过几个**,点开是全量任务面板。
+ *
+ * 外观与另外三个坞共用 `../composer/dock.css`(2026-09-20):从前这块整个挂着 `.ybench` ——
+ * 那是右栏调试台的字号与文字色,灯也是仪器的 LED。坞是产品主交互,不该穿仪器的皮。
  */
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js"
 import { createStore } from "solid-js/store"
@@ -14,7 +17,8 @@ import { Button } from "@yoma-desktop/ui/button"
 import { DockTray } from "@yoma-desktop/ui/dock-surface"
 import { IconButton } from "@yoma-desktop/ui/icon-button"
 import { useLanguage } from "@/context/language"
-import { TASK_LED, taskElapsed, taskLook, type DockTask } from "./task-view"
+import { taskElapsed, taskLook, type DockTask } from "./task-view"
+import "../composer/dock.css"
 
 /** 最多画几行。再多就折成"还有 N 个" —— 并发闸缺省 10,十行会把输入框顶到屏幕外。 */
 export const DOCK_MAX_ROWS = 3
@@ -56,70 +60,86 @@ export function SubagentDock(props: {
   return (
     <DockTray
       data-component="subagent-dock"
-      style={
-        props.attached
-          ? { "margin-bottom": "-0.875rem", "border-bottom-left-radius": 0, "border-bottom-right-radius": 0 }
-          : { "margin-bottom": "0.5rem" }
-      }
+      attach={props.attached ? "bottom" : "none"}
+      class={props.attached ? undefined : "mb-2"}
     >
-      <div class="ybench px-3 pt-2 flex flex-col gap-1" classList={{ "pb-7": props.attached, "pb-2": !props.attached }}>
-        <div class="flex items-center gap-2 min-w-0">
-          <span class="shrink-0 text-12-medium text-text-strong">{t("session.subagentDock.title")}</span>
-          <span class="min-w-0 flex-1 truncate text-12-regular text-text-weak">{summary()}</span>
-          <Show when={active() > 1 && props.onStopAll}>
-            {(stopAll) => (
-              <Button size="small" variant="ghost" class="shrink-0" onClick={() => stopAll()()}>
-                {t("session.subagentDock.stopAll")}
-              </Button>
-            )}
-          </Show>
-          <IconButton
-            icon="chevron-down"
-            size="normal"
-            variant="ghost"
-            class="shrink-0"
-            style={{ transform: `rotate(${store.collapsed ? 180 : 0}deg)` }}
-            aria-label={t(store.collapsed ? "session.subagentDock.expand" : "session.subagentDock.collapse")}
-            onClick={toggle}
-          />
+      <div data-dock-body="" data-attached={props.attached ? "" : undefined}>
+        <div data-dock-head="">
+          <span data-slot="title">{t("session.subagentDock.title")}</span>
+          <span data-slot="summary">{summary()}</span>
+          <div data-slot="actions">
+            {/* 「全部停止」留文字:批量的破坏性操作,一颗图标说不清它停的是几个。 */}
+            <Show when={active() > 1 && props.onStopAll}>
+              {(stopAll) => (
+                <Button size="small" variant="ghost" class="shrink-0" onClick={() => stopAll()()}>
+                  {t("session.subagentDock.stopAll")}
+                </Button>
+              )}
+            </Show>
+            <IconButton
+              icon="chevron-down"
+              size="small"
+              variant="ghost"
+              class="shrink-0"
+              style={{ transform: `rotate(${store.collapsed ? 180 : 0}deg)` }}
+              aria-label={t(store.collapsed ? "session.subagentDock.expand" : "session.subagentDock.collapse")}
+              onClick={toggle}
+            />
+          </div>
         </div>
 
         <Show when={!store.collapsed}>
-          <div class="flex flex-col gap-1">
+          <div class="flex flex-col">
             <For each={rows()}>
               {(row) => (
-                <div data-slot="subagent-row" data-look={taskLook(row.task)} class="flex items-center gap-2 min-w-0">
-                  <span data-component="bench-led" data-state={row.reporting ? "ok" : TASK_LED[taskLook(row.task)]} />
-                  <span class="shrink-0 font-mono text-12-regular text-text-weak">{row.task.agent}</span>
-                  <span class="min-w-0 flex-1 truncate text-13-regular text-text-strong" title={row.task.description}>
+                <div data-dock-row="" data-slot="subagent-row" data-look={taskLook(row.task)}>
+                  <span
+                    data-component="dock-dot"
+                    data-state={row.reporting ? "completed" : taskLook(row.task)}
+                    aria-hidden="true"
+                  />
+                  <span data-slot="dock-agent">{row.task.agent}</span>
+                  <span data-slot="text" title={row.task.description}>
                     {row.task.description}
                   </span>
-                  <span
-                    data-slot="facts"
-                    class="shrink-0 font-mono text-12-regular text-text-weak"
-                    title={row.task.error ?? row.task.lastTool}
-                  >
+                  <span data-slot="facts" title={row.task.error ?? row.task.lastTool}>
                     {facts(t, row, now())}
                   </span>
-                  <Show when={props.onOpen}>
-                    {(open) => (
-                      <Button size="small" variant="ghost" class="shrink-0" onClick={() => open()(row.task.id)}>
-                        {t("session.subagent.open")}
-                      </Button>
-                    )}
-                  </Show>
-                  <Show when={!row.reporting && props.onStop}>
-                    {(stop) => (
-                      <Button size="small" variant="ghost" class="shrink-0" onClick={() => stop()(row.task.id)}>
-                        {t("session.subagent.stop")}
-                      </Button>
-                    )}
-                  </Show>
+                  <div data-slot="row-actions">
+                    <Show when={props.onOpen}>
+                      {(open) => (
+                        <span data-tip={t("session.subagent.open")}>
+                          <IconButton
+                            icon="square-arrow-top-right"
+                            size="small"
+                            variant="ghost"
+                            aria-label={t("session.subagent.open")}
+                            onClick={() => open()(row.task.id)}
+                          />
+                        </span>
+                      )}
+                    </Show>
+                    <Show when={!row.reporting && props.onStop}>
+                      {(stop) => (
+                        <span data-tip={t("session.subagent.stop")} data-tone="danger">
+                          <IconButton
+                            icon="stop"
+                            size="small"
+                            variant="ghost"
+                            aria-label={t("session.subagent.stop")}
+                            onClick={() => stop()(row.task.id)}
+                          />
+                        </span>
+                      )}
+                    </Show>
+                  </div>
                 </div>
               )}
             </For>
             <Show when={hidden() > 0}>
-              <span class="text-12-regular text-text-weak">{t("session.subagentDock.more", { count: hidden() })}</span>
+              <span class="pt-0.5 text-12-regular text-text-weak">
+                {t("session.subagentDock.more", { count: hidden() })}
+              </span>
             </Show>
           </div>
         </Show>

@@ -21,3 +21,11 @@
   border-top-left-radius: 0;
   border-top-right-radius: 0;
 }
+
+/* 紧贴输入框的那一个(下面没有别的坞):底边嵌进去,该侧不倒角。
+   四个坞从前各自 inline 写一遍这三条 —— 对称的一侧本来就该和 top 住在一起。 */
+[data-dock-surface="tray"][data-dock-attach="bottom"] {
+  margin-bottom: -0.875rem;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}

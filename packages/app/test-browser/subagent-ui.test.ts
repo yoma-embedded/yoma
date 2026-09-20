@@ -56,10 +56,15 @@ afterEach(() => {
   root.replaceChildren()
 })
 
+/**
+ * 按**可访问名**找按钮:文字按钮看正文,图标按钮看 `aria-label`。
+ * 2026-09-20 一批次要操作从文字改成了图标(打开 / 停止 / 撤回 / 转后台),
+ * 只看 textContent 的话那些按钮在测试眼里就消失了 —— 而它们对读屏用户一直都在。
+ */
 const button = (scope: ParentNode, text: string) =>
-  [...scope.querySelectorAll("button")].find((el) => (el.textContent ?? "").trim() === text) as
-    | HTMLButtonElement
-    | undefined
+  [...scope.querySelectorAll("button")].find(
+    (el) => (el.textContent ?? "").trim() === text || el.getAttribute("aria-label") === text,
+  ) as HTMLButtonElement | undefined
 
 describe("排队中一栏", () => {
   test("每条只画第一行正文与图片数;撤回按那一条的 entryId,正在撤的那条按钮锁住", () => {
@@ -76,9 +81,10 @@ describe("排队中一栏", () => {
     dispose = render(() => createComponent(SessionQueueDock, props), root)
 
     const rows = [...root.querySelectorAll('[data-slot="queue-item"]')]
+    // 撤回现在是图标按钮,不再往行里贡献文字 —— 行上剩下的就该只有正文与图片数。
     expect(rows.map((row) => row.textContent)).toEqual([
-      "先别烧录session.queueDock.retract",
-      'session.queueDock.imageOnlysession.queueDock.images{"count":2}session.queueDock.retract',
+      "先别烧录",
+      'session.queueDock.imageOnlysession.queueDock.images{"count":2}',
     ])
     button(rows[1]!, "session.queueDock.retract")!.click()
     expect(onRetract).toHaveBeenCalledWith("e2")

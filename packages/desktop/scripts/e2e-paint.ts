@@ -770,6 +770,41 @@ try {
   check("侧栏点得开工程组", expandProject)
   const parentRow = `document.querySelector('[data-component="codex-sidebar"] button[data-session-id=${json(seededSubagent.parentID)}]')`
   check("侧栏列出派子 agent 的主会话", await waitFor(`!!${parentRow}`, APPEAR_TIMEOUT_MS))
+
+  // 侧栏行的悬浮底框。**这一条只有真指针悬上去才验得到** —— 2026-09-20 之前它用 bg-layer-01 当 hover,
+  // 而浅色主题下 layer-01 与侧栏自己的底色 bg-deep 同为 grey-100(theme.css),于是鼠标划过去毫无反应,
+  // 而 DOM、类名、快照全是对的。谁要是再把它改回同色的一档,这里会红。
+  // 断言的是**合成之后看得见的颜色**,不是"backgroundColor 这个字符串变了没有" ——
+  // 那条弱断言对 bug 版本照样是绿的(透明 -> rgb(250,250,250),值确实变了,而 250 就是侧栏自己的底色)。
+  // 变异验证逮到的正是这一点。
+  {
+    const anyRow = `document.querySelector('[data-component="codex-sidebar"] button')`
+    const probe = `(() => {
+      const row = ${anyRow}
+      const side = document.querySelector('[data-component="codex-sidebar"]')
+      if (!row || !side) return null
+      const num = (c) => (c.match(/[\\d.]+/g) ?? []).map(Number)
+      const bg = num(getComputedStyle(side).backgroundColor)
+      const fg = num(getComputedStyle(row).backgroundColor)
+      const a = fg.length > 3 ? fg[3] : 1
+      // 行的底(可能半透明)合成到侧栏的底之上 = 眼睛真正看到的那个颜色。
+      const seen = [0, 1, 2].map((i) => fg[i] * a + bg[i] * (1 - a))
+      const delta = [0, 1, 2].reduce((sum, i) => sum + Math.abs(seen[i] - bg[i]), 0)
+      return { delta: Math.round(delta), seen: seen.map(Math.round).join(","), bg: bg.slice(0, 3).join(",") }
+    })()`
+    const spot = await evaluate<{ x: number; y: number } | null>(
+      `(() => { const r = ${anyRow}?.getBoundingClientRect(); return r ? { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) } : null })()`,
+    )
+    if (spot) await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: spot.x, y: spot.y })
+    const hover = await evaluate<{ delta: number; seen: string; bg: string } | null>(probe)
+    check(
+      "侧栏行悬浮时真的画出底框(合成后与侧栏底色可辨)",
+      !!hover && hover.delta >= 6,
+      hover ? `底 ${hover.bg} -> 悬浮 ${hover.seen}(差 ${hover.delta})` : "取不到侧栏",
+    )
+    // 指针挪开,别把悬浮态留给后面的检查与截图。
+    await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 5, y: 5 })
+  }
   check(
     "侧栏不列子 agent 的会话(前台、后台两个都不列)",
     await evaluate<boolean>(
@@ -777,13 +812,16 @@ try {
     ),
   )
   await evaluate(`${parentRow}?.click()`)
-  // 前台那张 agent 卡片:按折叠态的"类型 · 描述"认,之后的查询都收在这张卡里(同一页上还有后台那张与通知行)。
-  const agentCard = `[...document.querySelectorAll('[data-component="tool-part-wrapper"]')].find((el) => (el.querySelector('[data-component="hw-trigger"] [data-slot="action"]')?.textContent ?? "").includes(${json(`Explore · ${SUBAGENT_DESCRIPTION}`)}))`
-  check("主会话里画出 agent 卡片(Explore · 描述)", await waitFor(`!!${agentCard}`, MOUNT_TIMEOUT_MS))
+  // 前台那张 agent 卡片:按折叠态那一格任务描述认,之后的查询都收在这张卡里(同一页上还有后台那张与通知行)。
+  // 2026-09-20 起卡片不再穿硬件卡的仪器皮(hw-trigger / hw-body),类型与描述也不再靠一个打上去的 `·` 隔开 ——
+  // 类型是自己一枚名牌([data-slot="agent"]),所以这里按描述那一格认,不按拼出来的整串认。
+  const agentCard = `[...document.querySelectorAll('[data-component="tool-part-wrapper"]')].find((el) => (el.querySelector('[data-component="agent-trigger"] [data-slot="task"]')?.textContent ?? "").includes(${json(SUBAGENT_DESCRIPTION)}))`
+  check("主会话里画出 agent 卡片(类型名牌 + 描述)", await waitFor(`!!${agentCard}`, MOUNT_TIMEOUT_MS))
   check(
-    "agent 卡片折叠态带完成结论",
+    "agent 卡片折叠态:类型名牌与完成结论都在",
     await evaluate<boolean>(
-      `(${agentCard}?.querySelector('[data-component="hw-trigger"] [data-slot="conclusion"]')?.textContent ?? "").length > 0`,
+      `(${agentCard}?.querySelector('[data-component="agent-trigger"] [data-slot="agent"]')?.textContent ?? "").includes("Explore")
+        && (${agentCard}?.querySelector('[data-component="agent-trigger"] [data-slot="facts"]')?.textContent ?? "").length > 0`,
     ),
   )
   await evaluate(`${agentCard}?.querySelector('[data-component="tool-trigger"]')?.click()`)
@@ -812,6 +850,12 @@ try {
       APPEAR_TIMEOUT_MS,
     ),
   )
+  if (process.env.YOMA_PAINT_SCREENSHOT_SUBAGENT) {
+    // 两张卡都展开着,滚到前台那张上 —— 这一张是给人看子 agent 卡片长相的。
+    await evaluate(`${agentCard}?.scrollIntoView({ block: "center" })`)
+    const shot = await send("Page.captureScreenshot", { format: "png" })
+    writeFileSync(process.env.YOMA_PAINT_SCREENSHOT_SUBAGENT, Buffer.from(shot.result!.data as string, "base64"))
+  }
   drain("主会话(agent 卡片 + 通知行)")
   await evaluate(`${agentCard}?.querySelector('[data-component="agent-actions"] button')?.click()`)
   check(

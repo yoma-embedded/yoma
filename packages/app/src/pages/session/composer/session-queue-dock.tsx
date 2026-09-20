@@ -1,11 +1,12 @@
 import { For, Show } from "solid-js"
-import { Button } from "@yoma-desktop/ui/button"
 import { DockTray } from "@yoma-desktop/ui/dock-surface"
+import { IconButton } from "@yoma-desktop/ui/icon-button"
 import { useLanguage } from "@/context/language"
+import "./dock.css"
 
 /**
  * "排队中"一栏:会话在忙时发的消息(照 CC)。内核把它们排进收件箱,在当前这一批工具跑完、下一次请求之前
- * 送给模型;在那之前它们不在 transcript 里,画在这儿。每条可以撤回来改(按钮,或输入框里按 ↑ 一次撤回全部)。
+ * 送给模型;在那之前它们不在 transcript 里,画在这儿。每条可以撤回来改(行尾的图标,或输入框里按 ↑ 一次撤回全部)。
  *
  * 数据是内核的 `session.queue` 事件(收件箱现状,整份替换),不是前端自己记的 —— 被取走的那一刻它就从这里
  * 消失、出现在 transcript 里真实的位置。
@@ -28,37 +29,35 @@ export function SessionQueueDock(props: {
   return (
     <DockTray
       data-component="session-queue-dock"
-      style={
-        props.attached
-          ? { "margin-bottom": "-0.875rem", "border-bottom-left-radius": 0, "border-bottom-right-radius": 0 }
-          : { "margin-bottom": "0.5rem" }
-      }
+      attach={props.attached ? "bottom" : "none"}
+      class={props.attached ? undefined : "mb-2"}
     >
-      <div class="px-3 pt-2 flex flex-col gap-1" classList={{ "pb-7": props.attached, "pb-2": !props.attached }}>
-        <span class="text-12-medium text-text-weak">
-          {language.t("session.queueDock.title", { count: props.items.length })}
-        </span>
-        <div class="flex flex-col gap-1 max-h-42 overflow-y-auto no-scrollbar">
+      <div data-dock-body="" data-attached={props.attached ? "" : undefined}>
+        <div data-dock-head="">
+          <span data-slot="title">{language.t("session.queueDock.title", { count: props.items.length })}</span>
+        </div>
+        <div class="flex flex-col max-h-42 overflow-y-auto no-scrollbar">
           <For each={props.items}>
             {(item) => (
-              <div data-slot="queue-item" class="flex items-center gap-2 min-w-0 py-0.5">
-                <span class="min-w-0 flex-1 truncate text-13-regular text-text-strong">
+              <div data-dock-row="" data-slot="queue-item">
+                <span data-slot="text">
                   {firstLine(item.text) || language.t("session.queueDock.imageOnly")}
                 </span>
                 <Show when={item.images > 0}>
-                  <span class="shrink-0 text-12-regular text-text-weak">
-                    {language.t("session.queueDock.images", { count: item.images })}
-                  </span>
+                  <span data-slot="facts">{language.t("session.queueDock.images", { count: item.images })}</span>
                 </Show>
-                <Button
-                  size="small"
-                  variant="ghost"
-                  class="shrink-0"
-                  disabled={props.retracting.includes(item.entryId)}
-                  onClick={() => props.onRetract(item.entryId)}
-                >
-                  {language.t("session.queueDock.retract")}
-                </Button>
+                <div data-slot="row-actions">
+                  <span data-tip={language.t("session.queueDock.retract")}>
+                    <IconButton
+                      icon="arrow-undo-down"
+                      size="small"
+                      variant="ghost"
+                      disabled={props.retracting.includes(item.entryId)}
+                      aria-label={language.t("session.queueDock.retract")}
+                      onClick={() => props.onRetract(item.entryId)}
+                    />
+                  </span>
+                </div>
               </div>
             )}
           </For>

@@ -1,27 +1,284 @@
 /**
  * 子 agent 的两张卡(agent-tool.tsx):agent 工具卡片与完成通知行。
  *
- * 外壳与原语全部复用硬件卡(hw-tool.css / bench.css):折叠态那一行、读数行、等宽块都是同一套。
- * 这里只放它们没有的三样:按钮行、结果区的上限、以及通知所在的 synthetic 用户消息不画成右侧气泡。
+ * **不再穿硬件卡的仪器皮**(2026-09-20)。从前外壳与原语整套借 hw-tool.css / bench.css ——
+ * 那套是为真仪器设计的(LED、leader 点线读数、等宽数字满屏),示波器与逻辑分析仪穿着正合身,
+ * 子 agent 穿上就像一个内部调试工具:灰白、读数行中间拖着一条点线、状态是 `✓` `✗` 这种
+ * 打上去的字符。子 agent 是产品的主交互,给它自己一套皮。
+ *
+ * **bench.css 与 hw-tool.css 一个字节都没动** —— 右栏调试台与那五张硬件卡不受影响。
+ *
+ * 纪律同 session-ui 其余部分:属性驱动(data-component / data-slot / data-state)、
+ * 颜色一律走 app 主题 token(没有写死的明暗两套)、展开态每块都有上限。
  */
 
-/* 通知挂在一条 synthetic 的 user 消息上:它不是用户说的话,不靠右、不当气泡,跟工具卡片一样占满一行。 */
-[data-component="user-message"][data-synthetic] {
-  align-items: stretch;
+/* ---------------------------------------------------------------- 语义色 */
+
+/* 卡片不是任何"根",所以自带一份;`:where()` 优先级为 0,外层想覆盖照样覆盖得了。 */
+:where([data-component="agent-trigger"], [data-component="agent-body"]) {
+  --agent-ink: var(--text-base);
+  --agent-strong: var(--text-strong);
+  --agent-muted: var(--text-weak);
+  --agent-line: var(--border-weak-base, var(--border-base));
+  --agent-surface: var(--surface-base);
+
+  --agent-ok: var(--text-success-base, #2f9e6e);
+  --agent-run: var(--text-interactive-base, #37a8b6);
+  --agent-warn: var(--text-warning-base, #c08a2e);
+  --agent-fail: var(--text-danger-base, #d5544a);
+  --agent-idle: var(--text-weak);
 }
 
-/* 结果是 markdown,可能很长:卡片里内部滚动,不许把时间线撑出几千像素(同 HwMono 的规矩)。 */
+/* 状态色:一处定义,折叠行的图标与结论、展开体的分节标题都从这儿取。 */
+[data-state="running"],
+[data-state="launching"] {
+  --agent-accent: var(--agent-run);
+}
+[data-state="completed"] {
+  --agent-accent: var(--agent-ok);
+}
+[data-state="failed"] {
+  --agent-accent: var(--agent-fail);
+}
+[data-state="killed"] {
+  --agent-accent: var(--agent-warn);
+}
+[data-state="pending"],
+[data-state="background"] {
+  --agent-accent: var(--agent-idle);
+}
+
+/* ---------------------------------------------------------------- 折叠态那一行 */
+
+[data-component="agent-trigger"] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  /* 与通用卡的标题行同一量级,别在时间线里跳出来。 */
+  font-size: 14px;
+  line-height: var(--line-height-large, 1.5);
+}
+
+/* 状态灯:在跑的是一颗会呼吸的点,收场的是一枚真图标。
+   —— 从前这里是 `✓` / `✗` / `■` 三个字面字符拼在状态词前面。 */
+[data-component="agent-trigger"] [data-slot="dot"] {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--agent-accent, var(--agent-idle));
+  box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--agent-accent, var(--agent-idle)) 16%, transparent);
+}
+[data-component="agent-trigger"][data-state="running"] [data-slot="dot"],
+[data-component="agent-trigger"][data-state="launching"] [data-slot="dot"] {
+  animation: agent-pulse 1.8s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-component="agent-trigger"] [data-slot="dot"] {
+    animation: none !important;
+  }
+}
+@keyframes agent-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+[data-component="agent-trigger"] [data-slot="state-icon"] {
+  flex: none;
+  display: inline-flex;
+  color: var(--agent-accent, var(--agent-idle));
+}
+[data-component="agent-trigger"] [data-slot="state-icon"] [data-slot="icon-svg"] {
+  width: 14px;
+  height: 14px;
+}
+
+[data-component="agent-trigger"] [data-slot="label"] {
+  flex: none;
+  font-family: var(--font-family-sans);
+  font-weight: var(--font-weight-medium);
+  color: var(--agent-strong);
+  white-space: nowrap;
+}
+
+/* agent 类型是个名牌,不是一段文字 —— 从前它和描述之间靠一个 `·` 隔着。 */
+[data-component="agent-trigger"] [data-slot="agent"] {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--agent-surface);
+  color: var(--agent-muted);
+  font-family: var(--font-family-mono);
+  font-size: 11.5px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+/* 任务描述先被截:结论才是这张卡片存在的理由。 */
+[data-component="agent-trigger"] [data-slot="task"] {
+  flex: 0 1 auto;
+  flex-shrink: 999;
+  min-width: 2.5em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--agent-muted);
+}
+
+[data-component="agent-trigger"] [data-slot="facts"] {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--agent-muted);
+}
+[data-component="agent-trigger"][data-state="failed"] [data-slot="facts"],
+[data-component="agent-trigger"][data-state="killed"] [data-slot="facts"] {
+  color: var(--agent-accent);
+}
+
+/* ---------------------------------------------------------------- 展开态 */
+
+[data-component="agent-body"] {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  margin: 6px 0 20px;
+  padding: 12px 14px 14px;
+  border: 1px solid var(--agent-line);
+  border-radius: 10px;
+  background: var(--background-base);
+  font-size: 13px;
+  color: var(--agent-ink);
+  -webkit-user-select: text;
+  user-select: text;
+  /* 读数按**卡片自己的**宽度决定列数 —— 右栏开着时中间那一栏可以只有 450px。 */
+  container-type: inline-size;
+}
+
+/* 分节标题:小号大写的名牌。没有发丝线 —— 那条线在仪器面板里是刻度,在对话里是噪声。 */
+[data-component="agent-section"] {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+[data-component="agent-section"] > [data-slot="head"] {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--agent-muted);
+}
+
+/* 任务书:等宽,内部滚动。 */
+[data-component="agent-prompt"] {
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--agent-surface);
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--agent-ink);
+}
+
+/* 结果是 markdown,可能很长:卡片里内部滚动,不许把时间线撑出几千像素。 */
 [data-component="agent-result"] {
   max-height: 320px;
   overflow-y: auto;
   padding-right: 4px;
 }
 
+[data-component="agent-note"] {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--agent-surface);
+  color: var(--agent-muted);
+  font-size: 12.5px;
+}
+
+/* ---------------------------------------------------------------- 读数 */
+
+/**
+ * 键在上、值在下的小格子,**没有 leader 点线** —— 那条一路点过去的虚线是仪器面板的语言
+ * (读数要对齐刻度),搬进对话卡片就是"打字打上去的分割线"。
+ */
+[data-component="agent-facts"] {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 18px;
+  min-width: 0;
+}
+@container (min-width: 460px) {
+  [data-component="agent-facts"] {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+[data-component="agent-fact"] {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+[data-component="agent-fact"] [data-slot="k"] {
+  font-size: 11px;
+  color: var(--agent-muted);
+}
+[data-component="agent-fact"] [data-slot="v"] {
+  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--agent-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 长值(日志路径)占满整行:窄格子会把它从中间劈开。 */
+[data-component="agent-fact"][data-wide] {
+  grid-column: 1 / -1;
+}
+
+/* ---------------------------------------------------------------- 按钮 */
+
+/**
+ * 「打开子会话 / 转到后台 / 停止」。从前是三个并排的文字按钮,一行占掉半张卡。
+ * 现在是图标 + 悬停才出的说明气泡;含义要慎重的操作(确认条的允许 / 拒绝)仍然留文字,
+ * 那是另一个文件的事。
+ */
 [data-component="agent-actions"] {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding-top: 8px;
+  align-items: center;
+  gap: 2px;
+  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 1px solid var(--agent-line);
+}
+
+/* 说明气泡与危险色在 `icon-tip.css`(`data-tip`),四个坞与这里共用同一份。 */
+
+/* ---------------------------------------------------------------- 通知行 */
+
+/* 通知挂在一条 synthetic 的 user 消息上:它不是用户说的话,不靠右、不当气泡,跟工具卡片一样占满一行。 */
+[data-component="user-message"][data-synthetic] {
+  align-items: stretch;
 }
 
 /* 通知行与 agent 卡片同一个外壳;卡片外那一圈留白与工具卡片一致。 */

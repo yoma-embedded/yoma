@@ -261,6 +261,7 @@ export const dict = {
   "ui.tool.agent.noResult": "子 agent 跑完了,没有文字结果。",
   "ui.tool.agent.inBackground": "在后台运行,完成后结果会以通知回到这个会话。",
   "ui.tool.agent.detached": "在后台跑(进度在输入框上方那条子 agent 栏里);完成后结果会以通知回到这个会话。",
+  "ui.tool.agent.facts": "运行数据",
   "ui.tool.agent.readout.agent": "类型",
   "ui.tool.agent.readout.turns": "轮数",
   "ui.tool.agent.readout.tools": "工具调用",
