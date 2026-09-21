@@ -49,10 +49,12 @@ export function applyUpdate(
   return next
 }
 
-// Windows 上目标文件正被杀毒 / 索引服务打开时,rename 会短暂地 EPERM / EBUSY / EACCES。等一等再试。
-const RENAME_RETRY_MS = [10, 20, 40, 80]
+// Windows 上文件正被杀毒 / 索引服务打开时,读和 rename 都会短暂地 EPERM / EBUSY / EACCES。等一等再试。
+const RETRY_MS = [10, 20, 40, 80]
 const retryable = (error: unknown) =>
-  ["EPERM", "EBUSY", "EACCES"].includes((error as NodeJS.ErrnoException | undefined)?.code ?? "")
+  ["EPERM", "EBUSY", "EACCES", "EMFILE", "ENFILE", "EAGAIN"].includes(
+    (error as NodeJS.ErrnoException | undefined)?.code ?? "",
+  )
 const sleepSync = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
 
 export function writeFileAtomic(file: string, content: string) {
@@ -65,7 +67,7 @@ export function writeFileAtomic(file: string, content: string) {
   } finally {
     closeSync(fd)
   }
-  for (const wait of [...RENAME_RETRY_MS, undefined]) {
+  for (const wait of [...RETRY_MS, undefined]) {
     try {
       return renameSync(tmp, file)
     } catch (error) {
@@ -83,17 +85,36 @@ export function writeFileAtomic(file: string, content: string) {
   }
 }
 
-/** 没有文件 = 空。读不出来的文件挪到一边(`.corrupt`),不挡启动 —— electron-store 在这里是直接抛。 */
+/** 没有文件是 undefined。别的读错误退避重试,还不行就抛 —— 交给调用方,不在这里猜。 */
+function readText(file: string): string | undefined {
+  for (const wait of [...RETRY_MS, undefined]) {
+    try {
+      return readFileSync(file, "utf8")
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
+      if (wait === undefined || !retryable(error)) throw error
+      sleepSync(wait)
+    }
+  }
+}
+
+/**
+ * 没有文件 = 空。**读不了 ≠ 坏了**:I/O 错误(文件被占着、没权限)原样抛出去,这时候当成空的继续,下一次写就把
+ * 一份好好的文件盖成只剩几个键 —— 审查抓到的,头一版把它和 JSON 解析失败混在一个 catch 里了。
+ * 只有内容确实不是一个 JSON 对象时才挪到一边(`.corrupt`,已经有一份了就带上时间戳,不盖掉上一次的)、当作空的
+ * 继续,不挡启动 —— electron-store 在这里是直接抛。
+ */
 function read(file: string, onCorrupt?: (error: unknown) => void): Record<string, unknown> {
-  if (!existsSync(file)) return {}
+  const text = readText(file)
+  if (text === undefined) return {}
   try {
-    const parsed: unknown = JSON.parse(readFileSync(file, "utf8"))
+    const parsed: unknown = JSON.parse(text)
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, unknown>
     throw new TypeError("not a JSON object")
   } catch (error) {
     onCorrupt?.(error)
     try {
-      renameSync(file, `${file}.corrupt`)
+      renameSync(file, existsSync(`${file}.corrupt`) ? `${file}.corrupt-${Date.now()}` : `${file}.corrupt`)
     } catch {}
     return {}
   }

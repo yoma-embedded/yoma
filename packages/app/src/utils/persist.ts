@@ -292,6 +292,17 @@ async function removeAsync(storage: AsyncStorage, key: string) {
   } catch {}
 }
 
+/**
+ * 桌面端的 setItem 先落在内存里、攒一批才写盘(namespace-storage.ts)。搬家是跨名字空间的:新家那一批和旧家的
+ * 删除各走各的,新家那一批要是没写成而旧家的删除成了,这个值就哪儿都没有了。所以删旧的之前先等新的落盘;
+ * 没落成就不删 —— 旧的留着,下次启动再搬一次。
+ */
+async function settled(storage: AsyncStorage, key: string) {
+  const namespace = storage as AsyncStorage & { flush?: () => Promise<void>; pending?: (key: string) => boolean }
+  await namespace.flush?.()
+  return !namespace.pending?.(key)
+}
+
 async function migrateLegacyAsync(input: {
   current: AsyncStorage
   legacyStore?: AsyncStorage
@@ -311,7 +322,7 @@ async function migrateLegacyAsync(input: {
       continue
     }
     await input.current.setItem(input.key, next)
-    await store.removeItem(input.key)
+    if (await settled(input.current, input.key)) await store.removeItem(input.key)
     return next
   }
 
@@ -327,7 +338,7 @@ async function migrateLegacyAsync(input: {
       continue
     }
     await input.current.setItem(input.key, next)
-    await input.legacyStore.removeItem(key)
+    if (await settled(input.current, input.key)) await input.legacyStore.removeItem(key)
     return next
   }
 
@@ -464,6 +475,7 @@ export const PersistTesting = {
   localStorageDirect,
   localStorageWithPrefix,
   migrateLegacy,
+  migrateLegacyAsync,
   normalize,
   workspaceStorage,
 }

@@ -91,15 +91,15 @@ const createPlatform = (): Platform => {
   const storage = (() => {
     const namespaces = new Map<string, NamespaceStorage>()
     const driver = { items: window.api.storeItems, update: window.api.storeUpdate, clear: window.api.storeClear }
-    const flushAll = () => {
-      for (const namespace of namespaces.values()) void namespace.flush()
-    }
+    const flushAll = () => Promise.all([...namespaces.values()].map((namespace) => namespace.flush()))
     // 攒着的改动的落盘边界:窗口退到后台,以及页面要走(关窗、退出、reload)。flush 是同步把这一批交给 IPC 的,
     // 页面消失之前消息已经发出去了,主进程照常处理。
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "hidden") flushAll()
+      if (document.visibilityState === "hidden") void flushAll()
     })
-    window.addEventListener("pagehide", flushAll)
+    window.addEventListener("pagehide", () => void flushAll())
+    // relaunch 是 app.exit(0),页面收不到 pagehide:主进程走之前会来要一次(main/renderer-storage.ts)。
+    window.api.onStorageFlush(flushAll)
 
     return (name = "default.dat") => {
       const cached = namespaces.get(name)

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest"
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { applyUpdate, createJsonStore, writeFileAtomic } from "./json-store"
@@ -116,6 +116,34 @@ describe("createJsonStore", () => {
     expect(readFileSync(`${file}.corrupt`, "utf8")).toBe('{"a": 1,,, not json')
     store.set("b", 2)
     expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ b: 2 })
+  })
+
+  // 审查抓到的:头一版把读文件的 I/O 错误和 JSON 解析失败放在同一个 catch 里。Windows 上杀毒软件占着文件的那一下,
+  // 一份好好的文件会被当成"坏了"挪走,下一次写就只剩几个键。这里拿"路径是个目录"(EISDIR)代表读不了。
+  test("读不了 ≠ 坏了:I/O 错误原样抛,不挪文件、不当成空的;之后也不许在读不了的状态下写", () => {
+    const file = tempFile()
+    mkdirSync(file)
+    const seen: unknown[] = []
+    const store = createJsonStore(file, { onCorrupt: (error) => seen.push(error) })
+    expect(() => store.get("a")).toThrow()
+    expect(() => store.update({ a: "1" }, [])).toThrow()
+    expect(seen).toEqual([])
+    expect(existsSync(`${file}.corrupt`)).toBe(false)
+    // 能读了(这里是换成一个真文件)之后接着用,读到的是真内容
+    rmSync(file, { recursive: true })
+    writeFileSync(file, '{"kept": true}')
+    expect(store.get("kept")).toBe(true)
+  })
+
+  test("已经有一份 .corrupt 了:第二份带时间戳,不盖掉上一次留下的", () => {
+    const file = tempFile()
+    writeFileSync(`${file}.corrupt`, "first casualty")
+    writeFileSync(file, "second, also not json")
+    expect(createJsonStore(file).entries()).toEqual({})
+    expect(readFileSync(`${file}.corrupt`, "utf8")).toBe("first casualty")
+    const aside = readdirSync(join(file, "..")).filter((name) => name.includes(".corrupt-"))
+    expect(aside).toHaveLength(1)
+    expect(readFileSync(join(file, "..", aside[0]!), "utf8")).toBe("second, also not json")
   })
 
   test("文件是合法 JSON 但不是对象(数组、字符串):同样挪到一边", () => {

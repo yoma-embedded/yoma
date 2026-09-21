@@ -5,7 +5,7 @@ import { homedir, tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { getCACertificates, setDefaultCACertificates } from "node:tls"
-import { app, BrowserWindow, Notification } from "electron"
+import { app, BrowserWindow, ipcMain, Notification } from "electron"
 
 import { Effect } from "effect"
 import contextMenu from "electron-context-menu"
@@ -21,6 +21,7 @@ import { createMailboxMain, type MailboxMain } from "./mailbox"
 import type { MailboxSettings } from "./mailbox-controller"
 import { getStore } from "./store"
 import { exportDebugLogs, initCrashReporter, initLogging, startNetLog, write as writeLog } from "./logging"
+import { flushRendererStorage } from "./renderer-storage"
 import { createMenu } from "./menu"
 import { preferAppEnv } from "./app-env"
 import { disableInstallOnQuit, setupAutoUpdater, showUpdaterDialog, updaterAutoCheckPrefs } from "./updater"
@@ -172,7 +173,13 @@ const main = Effect.gen(function* () {
     // 下好的更新不在这次 exit 上装(见 disableInstallOnQuit):NSIS 换文件与 relaunch 拉起
     // 旧 exe 会撞在一起;留到下一次正常退出。
     disableInstallOnQuit()
-    void stopSidecars().finally(() => {
+    // app.exit 不触发 pagehide,渲染器攒着的持久化改动要在这里显式要回来(和停守护 / 内核并行,不多等)。
+    const windows = BrowserWindow.getAllWindows().map((win) => ({
+      alive: () => !win.isDestroyed() && !win.webContents.isDestroyed() && !win.webContents.isCrashed(),
+      send: (channel: "storage-flush") => win.webContents.send(channel),
+      owns: (sender: unknown) => sender === win.webContents,
+    }))
+    void Promise.allSettled([stopSidecars(), flushRendererStorage(windows, ipcMain)]).finally(() => {
       app.relaunch()
       app.exit(0)
     })

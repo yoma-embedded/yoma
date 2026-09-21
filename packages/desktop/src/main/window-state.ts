@@ -50,8 +50,12 @@ export function resolveWindowState(
   const fresh = { width: defaults.width, height: defaults.height }
   if (typeof saved !== "object" || saved === null) return fresh
   const state = saved as WindowState
-  // 没有位置、但记着"是最大化 / 全屏的":留着这两个标记,大小用缺省的。
-  if (!hasBounds(state)) return state.isMaximized || state.isFullScreen ? { ...state, ...fresh } : fresh
+  // 没有位置、但记着"是最大化 / 全屏的":留着这两个标记;记下的大小还像样就接着用(还原时回到它),否则用缺省的。
+  if (!hasBounds(state)) {
+    if (!state.isMaximized && !state.isFullScreen) return fresh
+    const sized = [state.width, state.height].every((value) => Number.isInteger(value) && value > 0)
+    return sized ? state : { ...state, ...fresh }
+  }
   if (!state.displayBounds) return state
   if (displays.all().some((bounds) => within(state, bounds))) return state
   return { ...fresh, x: 0, y: 0, displayBounds: displays.primary() }

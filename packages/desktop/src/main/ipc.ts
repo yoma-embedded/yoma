@@ -98,13 +98,8 @@ export function registerIpcHandlers(deps: Deps) {
   })
   // 渲染器的名字空间缓存走这两条:一个名字空间只读一次,一个窗口里攒的改动只写一次盘。
   // 单键的 store-get / store-set 留着 —— 渲染器的 i18n 在 platform 建好之前要读一个键,闸门脚本也直接用。
-  ipcMain.handle("store-items", (_event: IpcMainInvokeEvent, name: string) => {
-    try {
-      return stringItems(getStore(name).entries())
-    } catch {
-      return {}
-    }
-  })
+  // 读不了就让它失败,别回一个空对象:渲染器会把"空的"当真,拿缺省值去盖用户的数据。
+  ipcMain.handle("store-items", (_event: IpcMainInvokeEvent, name: string) => stringItems(getStore(name).entries()))
   ipcMain.handle(
     "store-update",
     (_event: IpcMainInvokeEvent, name: string, insert: Record<string, string>, remove: string[]) => {

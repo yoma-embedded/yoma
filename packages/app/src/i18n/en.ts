@@ -115,6 +115,8 @@ export const dict = {
   "prompt.toast.pasteUnsupported.title": "Unsupported attachment",
   "prompt.toast.pasteUnsupported.description":
     "Only images can be attached here. To reference a file, put it in the workspace and @-mention it.",
+  "prompt.toast.imageUnsupported.title": "Unsupported image format",
+  "prompt.toast.imageUnsupported.description": "The model can only see PNG, JPEG, GIF and WebP. Convert the image first, then add it again.",
   "prompt.toast.pdfUnsupported.title": "The browser cannot provide a local PDF path",
   "prompt.toast.pdfUnsupported.description":
     "Attach an Altium Smart PDF in the desktop app, or place it in the workspace and @-mention it. Continue to ingest datasheets on the Manuals page.",

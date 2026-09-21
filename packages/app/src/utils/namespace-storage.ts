@@ -23,8 +23,10 @@ export type NamespaceDriver = {
 }
 
 export type NamespaceStorage = AsyncStorage & {
-  /** 把攒着的改动现在就交出去。driver 收下之后才 resolve。 */
+  /** 把攒着的改动现在就交出去。driver 答复之后才 resolve —— 答复可能是"没写成",所以落没落盘要再问 pending。 */
   flush(): Promise<void>
+  /** 这个键还有没落盘的改动(在攒着,或者上一批没写成、等着重试)。 */
+  pending(key: string): boolean
 }
 
 export const NAMESPACE_FLUSH_DELAY = 100
@@ -44,17 +46,39 @@ export function createNamespaceStorage(
   const dirty = new Set<string>()
   const inflight = new Set<Promise<void>>()
   let loading: Promise<void> | undefined
+  // clear() 之后,还在路上的那次加载带回来的是清空之前的内容,不许再放进缓存。
+  let generation = 0
   let timer: ReturnType<typeof setTimeout> | undefined
+  let due = Infinity
 
-  const load = () =>
-    (loading ??= driver.items(name).then((items) => {
-      for (const [key, value] of Object.entries(items)) {
-        if (!written.has(key)) cache.set(key, value)
-      }
-    }))
+  const load = () => {
+    if (loading) return loading
+    const started = generation
+    const next: Promise<void> = driver.items(name).then(
+      (items) => {
+        if (started !== generation) return
+        for (const [key, value] of Object.entries(items)) {
+          if (!written.has(key)) cache.set(key, value)
+        }
+      },
+      (error: unknown) => {
+        // 主进程读不了这个文件(被占着、没权限):这一次按"没有"答,下一次读再去问,不把一次失败记一辈子。
+        // 主进程读不了的时候也不会写(update 要先读),所以这里拿缺省值继续不会盖掉磁盘上的东西。
+        if (loading === next) loading = undefined
+        console.error(`[persist] ${name} 读不出来,先按空的用`, error)
+      },
+    )
+    loading = next
+    return next
+  }
 
+  // 取更早的那个期限:失败重试排的是 2 秒,这中间来了新的写,不该跟着等 2 秒。
   const schedule = (ms: number) => {
-    timer ??= setTimeout(() => void flush(), ms)
+    const at = Date.now() + ms
+    if (timer !== undefined && at >= due) return
+    clearTimeout(timer)
+    due = at
+    timer = setTimeout(() => void flush(), ms)
   }
 
   const write = (key: string, value: string | null) => {
@@ -68,6 +92,7 @@ export function createNamespaceStorage(
   const flush = () => {
     clearTimeout(timer)
     timer = undefined
+    due = Infinity
     if (dirty.size > 0) {
       const batch = [...dirty]
       dirty.clear()
@@ -103,6 +128,8 @@ export function createNamespaceStorage(
     clear: async () => {
       clearTimeout(timer)
       timer = undefined
+      due = Infinity
+      generation += 1
       cache.clear()
       written.clear()
       dirty.clear()
@@ -122,6 +149,7 @@ export function createNamespaceStorage(
       return storage.getLength()
     },
     flush,
+    pending: (key) => dirty.has(key),
   }
   return storage
 }

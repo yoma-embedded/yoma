@@ -63,6 +63,11 @@ describe("resolveWindowState", () => {
     expect(resolveWindowState(SAVED, DEFAULTS, displays(small))).toMatchObject({ x: 0, y: 0, ...DEFAULTS })
   })
 
+  test("位置没了但大小还像样、记着是最大化的:大小接着用(还原时回到它)—— 和 electron-window-state 一样是存的赢", () => {
+    const saved = { isMaximized: true, width: 1000, height: 700 }
+    expect(resolveWindowState(saved, DEFAULTS, displays(LAPTOP))).toEqual(saved)
+  })
+
   test("位置坏了但记着是最大化的:留着最大化,大小用缺省的", () => {
     expect(resolveWindowState({ isMaximized: true, width: 0, height: 0 }, DEFAULTS, displays(LAPTOP))).toEqual({
       isMaximized: true,

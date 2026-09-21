@@ -85,6 +85,8 @@ export type ElectronAPI = {
   storeItems: (name: string) => Promise<Record<string, string>>
   /** 一批改动一次写盘。 */
   storeUpdate: (name: string, insert: Record<string, string>, remove: string[]) => Promise<void>
+  /** 主进程要走了(relaunch 不触发 pagehide):把攒着的改动交出来,交完自动回执。 */
+  onStorageFlush: (flush: () => Promise<unknown>) => void
   storeClear: (name: string) => Promise<void>
   storeKeys: (name: string) => Promise<string[]>
   storeLength: (name: string) => Promise<number>

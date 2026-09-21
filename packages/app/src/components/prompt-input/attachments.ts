@@ -5,7 +5,7 @@ import { type ContentPart, type ImageAttachmentPart, type usePrompt } from "@/co
 import { useLanguage } from "@/context/language"
 import { uuid } from "@/utils/uuid"
 import { getCursorPosition } from "./editor-dom"
-import { attachmentMime } from "./files"
+import { attachmentMime, unreadableImage } from "./files"
 import { normalizePaste, pasteMode } from "./paste"
 
 function dataUrl(file: File, mime: string) {
@@ -36,6 +36,8 @@ type PromptAttachmentsCoreInput = {
   warn?: () => void
   /** Web PDF 没有本机可读路径时的专用提示；与通用 warn 分开，话术不同。 */
   warnPdf?: () => void
+  /** 图片格式模型看不了(HEIC / AVIF / TIFF…):让人先转一下,而不是悄悄变成一颗没用的 @path。 */
+  warnImage?: () => void
   readClipboardImage?: () => Promise<File | null>
   getPathForFile?: (file: File) => string
 }
@@ -73,6 +75,10 @@ export function createPromptAttachmentsCore(input: PromptAttachmentsCoreInput) {
     //   - web 宿主只有内存 File,只能明确拒绝。
     const filePath = input.getPathForFile?.(file)
     if (!mime?.startsWith("image/")) {
+      if (unreadableImage(file)) {
+        if (toast) (input.warnImage ?? input.warn)?.()
+        return false
+      }
       if (filePath) {
         input.focusEditor?.()
         const inserted = input.addPart?.({ type: "file", path: filePath, content: "@" + filePath, start: 0, end: 0 })
@@ -103,15 +109,19 @@ export function createPromptAttachmentsCore(input: PromptAttachmentsCoreInput) {
   const addAttachments = async (files: File[], toast = true, target = capture()) => {
     let found = false
     let pathlessPdf = false
+    let unreadable = false
 
     for (const file of files) {
       const mime = await attachmentMime(file)
       const ok = await add(file, false, target, { mime })
       if (ok) found = true
       if (!ok && mime === "application/pdf" && !input.getPathForFile?.(file)) pathlessPdf = true
+      if (!ok && unreadableImage(file)) unreadable = true
     }
 
-    if (toast && pathlessPdf) input.warnPdf?.()
+    // 这两种是"别的文件进去了也得说一声"的:一批里混着一张 HEIC,其余的成功不该把它盖过去。
+    if (toast && unreadable) (input.warnImage ?? input.warn)?.()
+    else if (toast && pathlessPdf) input.warnPdf?.()
     else if (!found && files.length > 0 && toast) input.warn?.()
     return found
   }
@@ -201,6 +211,12 @@ export function createPromptAttachments(input: PromptAttachmentsInput) {
       showToast({
         title: language.t("prompt.toast.pdfUnsupported.title"),
         description: language.t("prompt.toast.pdfUnsupported.description"),
+      })
+    },
+    warnImage: () => {
+      showToast({
+        title: language.t("prompt.toast.imageUnsupported.title"),
+        description: language.t("prompt.toast.imageUnsupported.description"),
       })
     },
   })

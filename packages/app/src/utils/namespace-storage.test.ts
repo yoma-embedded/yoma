@@ -171,6 +171,63 @@ describe("createNamespaceStorage", () => {
     error.mockRestore()
   })
 
+  test("失败重试排的是 2 秒,这中间来了新的写照样 100 ms 就走,不跟着等", async () => {
+    const host = fakeDriver()
+    const storage = createNamespaceStorage(host.driver, "n", { retryDelay: 2000 })
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    await storage.setItem("a", "1")
+    host.failNextUpdate()
+    await storage.flush()
+    await storage.setItem("b", "2")
+    await vi.advanceTimersByTimeAsync(NAMESPACE_FLUSH_DELAY)
+    expect(Object.fromEntries(host.disk)).toEqual({ a: "1", b: "2" })
+    error.mockRestore()
+  })
+
+  test("pending:攒着的、没写成等重试的都算;落盘了才不算", async () => {
+    const host = fakeDriver()
+    const storage = createNamespaceStorage(host.driver, "n")
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    await storage.setItem("a", "1")
+    expect(storage.pending("a")).toBe(true)
+    host.failNextUpdate()
+    await storage.flush()
+    expect(storage.pending("a")).toBe(true)
+    await storage.flush()
+    expect(storage.pending("a")).toBe(false)
+    expect(storage.pending("never-written")).toBe(false)
+    error.mockRestore()
+  })
+
+  test("读不出来(主进程那头文件被占着):这一次按没有答,下一次读再去问,不把一次失败记一辈子", async () => {
+    const host = fakeDriver({ layout: "{}" })
+    const items = host.driver.items
+    let fail = true
+    host.driver.items = async (name) => {
+      if (fail) throw new Error("EBUSY")
+      return items(name)
+    }
+    const storage = createNamespaceStorage(host.driver, "n")
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    expect(await storage.getItem("layout")).toBeNull()
+    fail = false
+    expect(await storage.getItem("layout")).toBe("{}")
+    expect(error).toHaveBeenCalledTimes(1)
+    error.mockRestore()
+  })
+
+  test("clear 的时候加载还在路上:带回来的是清空之前的内容,不许复活", async () => {
+    const host = fakeDriver({ a: "1", b: "2" })
+    host.holdItems()
+    const storage = createNamespaceStorage(host.driver, "n")
+    const reading = storage.getItem("a")
+    await storage.clear()
+    host.releaseItems()
+    await reading
+    expect(await storage.getItem("a")).toBeNull()
+    expect(await storage.getLength()).toBe(0)
+  })
+
   test("clear 丢掉缓存和攒着的改动,之后不再去读旧内容", async () => {
     const host = fakeDriver({ a: "1" })
     const storage = createNamespaceStorage(host.driver, "n")

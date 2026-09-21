@@ -73,6 +73,20 @@ function textBytes(bytes: Uint8Array) {
   return count / bytes.length <= 0.3
 }
 
+// 模型收不了、内核的 read 也解不开的图片格式。BMP 不在里面:read 会先把它转成 PNG;SVG 是文本,也不在。
+const UNREADABLE_IMAGE_EXTS = new Set(["heic", "heif", "avif", "tif", "tiff", "ico", "psd", "raw", "cr2", "nef", "dng"])
+const READABLE_IMAGE_MIMES = new Set([...ACCEPTED_IMAGE_TYPES, "image/bmp", "image/svg+xml"])
+
+/**
+ * 这是一张图、但谁都看不了的那种(HEIC / AVIF / TIFF…)。有路径也不能转成 @path:那颗 pill 看着像成功了,
+ * 模型却什么都看不到,agent 去 read 它只会读出一屏乱码。这类要明说。
+ */
+export function unreadableImage(file: File) {
+  const type = kind(file.type)
+  if (type.startsWith("image/")) return !READABLE_IMAGE_MIMES.has(type)
+  return UNREADABLE_IMAGE_EXTS.has(ext(file.name))
+}
+
 export async function attachmentMime(file: File) {
   const type = kind(file.type)
   if (IMAGE_MIMES.has(type)) return type

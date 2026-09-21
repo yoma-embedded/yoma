@@ -113,6 +113,8 @@ export const dict = {
   "prompt.action.stop": "停止",
   "prompt.toast.pasteUnsupported.title": "不支持的附件",
   "prompt.toast.pasteUnsupported.description": "此处仅能附加图片;要引用文件,请把它放进工作目录后用 @ 提及。",
+  "prompt.toast.imageUnsupported.title": "不支持这种图片格式",
+  "prompt.toast.imageUnsupported.description": "模型看得了的只有 PNG、JPEG、GIF、WebP。先转换一下再拖进来。",
   "prompt.toast.pdfUnsupported.title": "浏览器无法提供 PDF 的本机路径",
   "prompt.toast.pdfUnsupported.description":
     "请在桌面端附加 Altium Smart PDF，或把文件放进工作目录后用 @ 提及；数据手册仍请在「手册库」入库。",
