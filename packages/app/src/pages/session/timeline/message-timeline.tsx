@@ -18,7 +18,6 @@ import { useMutation } from "@tanstack/solid-query"
 import { createVirtualizer, defaultRangeExtractor, elementScroll, type VirtualItem } from "@tanstack/solid-virtual"
 import { Accordion } from "@yoma-desktop/ui/accordion"
 import {
-  ContextToolGroup,
   groupRefs,
   Message,
   MessageDivider,
@@ -55,6 +54,7 @@ import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
 import { sessionTitle } from "@/utils/session-title"
 import { scheduleConnectedMeasure } from "./measure"
+import { ContextGroupRow } from "./context-group-row"
 import { createTimelineProjection } from "./projection"
 import { MessageComment, TimelineRow, TimelineRowMap } from "./rows"
 import { ModelRequestStatus } from "./model-request-status"
@@ -683,17 +683,20 @@ export function MessageTimeline(props: {
       }),
     )
 
-    // 一串「找东西」工具只有一个的时候照普通卡片画;第二个到了,这一行原地变成一组(key 不变,见 groupParts)。
+    // 组的类型跟着 key 走(`part:` / `context:`),同一行不会变;「找东西」的那一行只有一个工具时也走 ContextGroupRow。
     return (
-      <Show when={refs().length > 1} fallback={renderAssistantPart(row, () => refs()[0]!, onSizeChange)}>
-        <ContextToolGroup
+      <Show
+        when={row().group.type === "context"}
+        fallback={renderAssistantPart(row, () => refs()[0]!, onSizeChange)}
+      >
+        <ContextGroupRow
+          groupKey={row().group.key}
+          refs={refs()}
           parts={parts()}
-          open={toolOpen[row().group.key] ?? false}
-          onOpenChange={(open) => setToolOpen(row().group.key, open)}
-          defer
-        >
-          <Index each={refs()}>{(ref) => renderAssistantPart(row, ref, onSizeChange)}</Index>
-        </ContextToolGroup>
+          isOpen={(key) => toolOpen[key]}
+          onOpenChange={setToolOpen}
+          renderCard={(ref) => renderAssistantPart(row, ref, onSizeChange)}
+        />
       </Show>
     )
   }

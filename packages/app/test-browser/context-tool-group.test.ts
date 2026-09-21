@@ -27,12 +27,20 @@ const tool = (id: string, name: string, status: ToolPart["state"]["status"] = "c
     state: { status, input: {} },
   }) as ToolPart
 
-const mount = (props: { parts: ToolPart[]; open?: boolean; onOpenChange?: (open: boolean) => void }) => {
+const mount = (props: {
+  parts: ToolPart[]
+  grouped?: boolean
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+}) => {
   dispose = render(
     () =>
       createComponent(ContextToolGroup, {
         get parts() {
           return props.parts
+        },
+        get grouped() {
+          return props.grouped ?? props.parts.length > 1
         },
         get open() {
           return props.open
@@ -96,5 +104,24 @@ describe("ContextToolGroup", () => {
     expect(root.querySelector('[data-testid="cards"]')).toBeNull()
     setState("open", true)
     expect(root.querySelector('[data-slot="context-tool-group-list"] [data-testid="cards"]')).not.toBeNull()
+  })
+
+  test("只有一个的时候没有标题,里面那张卡片照常画,点不出开合", () => {
+    const onOpenChange = vi.fn()
+    mount({ parts: [tool("p1", "read", "error")], onOpenChange })
+    expect(root.querySelector('[data-slot="collapsible-trigger"]')).toBeNull()
+    expect(title()).toBeUndefined()
+    expect(group().dataset.grouped).toBeUndefined()
+    // 单张卡片自己会画成错误卡,外壳不该再染一遍。
+    expect(group().dataset.failed).toBeUndefined()
+    expect(root.querySelector('[data-slot="context-tool-group-list"] [data-testid="cards"]')).not.toBeNull()
+    expect(onOpenChange).not.toHaveBeenCalled()
+  })
+
+  test("没人管展开状态时自己记", () => {
+    mount({ parts: [tool("p1", "read"), tool("p2", "read")] })
+    expect(root.querySelector('[data-testid="cards"]')).toBeNull()
+    root.querySelector<HTMLElement>('[data-slot="collapsible-trigger"]')!.click()
+    expect(root.querySelector('[data-testid="cards"]')).not.toBeNull()
   })
 })

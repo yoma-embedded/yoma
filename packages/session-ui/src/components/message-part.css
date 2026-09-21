@@ -340,8 +340,8 @@
 [data-component="context-tool-group"] {
   width: 100%;
 
-  /* 展开后的逐张卡片:缩进一格、左边一条细线,看得出它们同属这一行。 */
-  [data-slot="context-tool-group-list"] {
+  /* 展开后的逐张卡片:缩进一格、左边一条细线,看得出它们同属这一行。只有一张的时候没有标题,也就不缩进。 */
+  &[data-grouped="true"] [data-slot="context-tool-group-list"] {
     display: flex;
     flex-direction: column;
     margin-left: 6px;

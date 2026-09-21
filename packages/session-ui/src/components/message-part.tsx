@@ -28,18 +28,20 @@ import { useData } from "../context"
 import { useDialog } from "@yoma-desktop/ui/context/dialog"
 import { useI18n } from "@yoma-desktop/ui/context/i18n"
 import { AgentTool, TaskNotificationDisplay } from "./agent-tool"
-import { BasicTool, GenericTool } from "./basic-tool"
+import { GenericTool } from "./basic-tool"
 import { FlashTool } from "./flash-tool"
 import { GdbTool } from "./gdb-tool"
 import { LaTool } from "./la-tool"
 import { LogTool } from "./log-tool"
 import { OpenInstrumentButton } from "./open-instrument"
 import { ScopeTool } from "./scope-tool"
+import { Collapsible } from "@yoma-desktop/ui/collapsible"
 import { FileIcon } from "@yoma-desktop/ui/file-icon"
 import { Icon } from "@yoma-desktop/ui/icon"
 import { ToolErrorCard } from "./tool-error-card"
 import { Markdown } from "./markdown"
 import { ImagePreview } from "@yoma-desktop/ui/image-preview"
+import { TextShimmer } from "@yoma-desktop/ui/text-shimmer"
 import { Tooltip } from "@yoma-desktop/ui/tooltip"
 import { IconButton } from "@yoma-desktop/ui/icon-button"
 import { IconButtonV2 } from "@yoma-desktop/ui/v2/icon-button-v2"
@@ -283,8 +285,8 @@ export function sameGroups(a: readonly PartGroup[] | undefined, b: readonly Part
 
 /**
  * 连着的「找东西」工具并成一组。**只有一个也成组**:key 取这一串的第一个 part,于是第二个 read 到的时候
- * 这一行是原地长大,而不是旧行删掉、新行插进来(虚拟列表按 key 记高度,用户刚展开的卡片也不会被换掉)。
- * 只有一个的组照普通卡片画,见 `message-timeline.tsx`。
+ * 这一行是原地长大,而不是旧行删掉、新行插进来(虚拟列表按 key 记高度)。行里的卡片换不换是另一回事,
+ * 由 `ContextToolGroup` 与 app 那边的 `context-group-row.tsx` 保证。
  */
 export function groupParts(parts: { messageID: string; part: PartType }[]): PartGroup[] {
   const result: PartGroup[] = []
@@ -750,18 +752,25 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
 }
 
 /**
- * 一串「找东西」工具并成的那一行(`groupParts`)。外壳就是一张普通的工具卡:折叠态一句「已探索 · 3 次读取 · 2 次搜索」,
- * 展开是逐张卡片(由调用方画,时间线要给每张卡接自己的展开状态)。还有没跑完的就按 running 画 —— 标题闪、
- * 计数先不出,与别的卡片一致。
+ * 一串「找东西」工具的那一行(`groupParts`)。**只有一个的时候也是它**:那时不画标题,里面那张卡片照常画;
+ * 第二个到了才长出标题「已探索 · 2 次读取 · 1 个列表」。卡片列表自始至终在同一个位置渲染,所以 1 → 2 的那一下
+ * 卡片实例不换 —— 用户刚点开的那张还开着、还在原地(早先用 `<Show>` 在「单张卡片 / 整组」之间切换,旧卡片会被
+ * 卸载、换成一个折叠着的组,内容当场从屏幕上消失)。
+ *
+ * 不套 `BasicTool`:它的 defer 会让内容空两帧,不 defer 又会把 children 求值两遍(两套卡片实例)。标题的
+ * 结构与 data-slot 照抄它的,样式共用。还有没跑完的就按进行时画 —— 标题闪、计数先不出,与别的卡片一致。
+ * 折叠着的时候卡片不挂载(`Collapsible.Content` 关着不渲染 children)。
  */
 export function ContextToolGroup(props: {
   parts: ToolPart[]
+  /** 两个以上才是「一组」。 */
+  grouped: boolean
   open?: boolean
   onOpenChange?: (open: boolean) => void
-  defer?: boolean
   children: JSX.Element
 }) {
   const i18n = useI18n()
+  const [state, setState] = createStore({ open: false })
   const summary = createMemo(() => contextToolSummary(props.parts))
   const counts = createMemo(() => {
     const value = summary()
@@ -769,33 +778,59 @@ export function ContextToolGroup(props: {
       n > 0 ? [i18n.t(`ui.messagePart.context.${key}.${n === 1 ? "one" : "other"}`, { count: n })] : []
     return [...count("read", value.read), ...count("search", value.search), ...count("list", value.list)].join(" · ")
   })
-  // 失败数单独一段(卡片标题的 args 位),样式只染它 —— 整句都红的话看着像全失败了。
-  const failed = createMemo(() =>
-    summary().failed > 0 ? [i18n.t("ui.messagePart.context.failed", { count: summary().failed })] : [],
-  )
+  const open = () => !props.grouped || (props.open ?? state.open)
+  const setOpen = (value: boolean) => {
+    if (!props.grouped) return
+    if (props.open === undefined) setState("open", value)
+    props.onOpenChange?.(value)
+  }
 
   return (
     <div
       data-component="context-tool-group"
-      data-failed={summary().failed > 0 ? "true" : undefined}
+      data-grouped={props.grouped ? "true" : undefined}
+      data-failed={props.grouped && summary().failed > 0 ? "true" : undefined}
       data-timeline-part-ids={props.parts.map((part) => part.id).join(",")}
     >
-      <BasicTool
-        icon="magnifying-glass"
-        status={summary().active ? "running" : "completed"}
-        trigger={{
-          title: i18n.t(
-            summary().active ? "ui.sessionTurn.status.gatheringContext" : "ui.sessionTurn.status.gatheredContext",
-          ),
-          subtitle: counts(),
-          args: failed(),
-        }}
-        open={props.open}
-        onOpenChange={props.onOpenChange}
-        defer={props.defer}
-      >
-        <div data-slot="context-tool-group-list">{props.children}</div>
-      </BasicTool>
+      <Collapsible open={open()} onOpenChange={setOpen} class="tool-collapsible">
+        <Show when={props.grouped}>
+          <Collapsible.Trigger>
+            <div data-component="tool-trigger">
+              <div data-slot="basic-tool-tool-trigger-content">
+                <div data-slot="basic-tool-tool-info">
+                  <div data-slot="basic-tool-tool-info-structured">
+                    <div data-slot="basic-tool-tool-info-main">
+                      <span data-slot="basic-tool-tool-title">
+                        <TextShimmer
+                          text={i18n.t(
+                            summary().active
+                              ? "ui.sessionTurn.status.gatheringContext"
+                              : "ui.sessionTurn.status.gatheredContext",
+                          )}
+                          active={summary().active}
+                        />
+                      </span>
+                      <Show when={!summary().active}>
+                        <span data-slot="basic-tool-tool-subtitle">{counts()}</span>
+                        {/* 失败数单独一段,样式只染它 —— 整句都红的话看着像全失败了。 */}
+                        <Show when={summary().failed > 0}>
+                          <span data-slot="basic-tool-tool-arg">
+                            {i18n.t("ui.messagePart.context.failed", { count: summary().failed })}
+                          </span>
+                        </Show>
+                      </Show>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <Collapsible.Arrow />
+            </div>
+          </Collapsible.Trigger>
+        </Show>
+        <Collapsible.Content>
+          <div data-slot="context-tool-group-list">{props.children}</div>
+        </Collapsible.Content>
+      </Collapsible>
     </div>
   )
 }

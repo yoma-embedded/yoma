@@ -624,7 +624,12 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
 2. **连着的只读「找东西」工具并成一行**(read / grep / find / ls,清单在 session-ui 的 `context-tool-group.ts`):
    一轮里它们常常一连十几次,逐张摆开会把烧录、调试器那几张挤到屏幕外。`groupParts` 出 `type: "context"` 的组,
    **只有一个也成组、key 取第一个 part** —— 第二个到的时候那一行是原地长大,不是旧行删掉新行插入(虚拟列表按 key
-   记高度)。只有一个的组照普通卡片画;两个以上画成 `ContextToolGroup`:折叠态「已探索 · 2 次读取 · 1 个列表」,
+   记高度)。**行里的卡片也不许换**:单个与成组都由同一个 `ContextToolGroup` 画,卡片列表始终在同一个位置渲染,
+   只有一个时不画标题,第二个到了才长出「已探索 · 2 次读取 · 1 个列表」;组成形的那一刻里面有卡片开着,组就接着
+   开着(`timeline/context-group-row.tsx`,只定一次,之后用户收起 / 展开过组以用户的为准)。头一版用 `<Show>` 在
+   「单张卡片 / 整组」之间切换,审查抓到:用户正开着的卡片在第二个 read 到的那一下被卸载、换成一个折叠着的组,
+   文件内容当场从屏幕上消失 —— 闸门是 `test-browser/context-group-row.test.ts`(断言是同一个 DOM 节点、没被拆过)。
+   它不套 `BasicTool`:defer 会让内容空两帧,不 defer 又会把 children 求值两遍。
    **失败数单独一段、折叠着也看得见**(一次 read 读不到往往就是模型接下来走偏的原因),展开是逐张卡片,
    各自的展开状态仍按 part id 记在 `toolOpen` 里,组的按组 key 记。会动硬件、会改文件、会起进程的工具不许进清单。
    这是 2026-09-10 卡片归零时连带删掉的 opencode `ContextToolGroup` 的重写版(上游后来的同类改动:ea582fc133)。
