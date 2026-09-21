@@ -32,6 +32,8 @@ import { VcsWatchers } from "./vcs-watch.ts"
 export { SessionProjection } from "./projector.ts"
 export { SessionManager } from "./session-manager.ts"
 export { StreamSink } from "./stream.ts"
+// 行为评测复用产品提示词,不复制一份会悄悄漂移的正文。
+export { buildSystemPrompt } from "./system-prompt.ts"
 // 全局配置目录的真源(凭据/技能/上下文)。导出它是为了让 bench 的 paths.ts 副本
 // 有个可断言的对手 —— 那份副本必须是叶子模块,不能反过来 import 这里。
 export { yomaConfigDir } from "./auth.ts"
