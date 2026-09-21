@@ -1204,6 +1204,8 @@ export default function Page() {
               }}
             >
               <div
+                // cmd+F 的归属按焦点分:焦点在这一栏里归会话内查找,否则归右栏的文件内查找(file-tabs.tsx)。
+                data-find-scope="session"
                 classList={{
                   "flex-1 min-h-0 flex flex-col bg-v2-background-bg-base rounded-[10px] overflow-hidden": true,
                   "shadow-[var(--v2-elevation-raised)]": !!params.id,
@@ -1245,6 +1247,8 @@ export default function Page() {
                             setRevealMessage={(fn) => {
                               revealMessage = fn
                             }}
+                            onPauseAutoScroll={autoScroll.pause}
+                            historyMore={historyMore()}
                             setScrollToEnd={(fn) => {
                               scrollToEnd = fn
                             }}

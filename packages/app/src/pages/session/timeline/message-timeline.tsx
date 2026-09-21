@@ -46,10 +46,12 @@ import { useDrafts } from "@/context/drafts"
 import { sessionHref } from "@/utils/session-href"
 import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
+import { useCommand } from "@/context/command"
 import { sessionTitle } from "@/utils/session-title"
 import { scheduleConnectedMeasure } from "./measure"
 import { ContextGroupRow } from "./context-group-row"
 import { TurnChangesRow } from "./turn-changes-row"
+import { TimelineSearch } from "./timeline-search"
 import { createTimelineProjection } from "./projection"
 import { MessageComment, TimelineRow, TimelineRowMap } from "./rows"
 import { ModelRequestStatus } from "./model-request-status"
@@ -128,6 +130,10 @@ export function MessageTimeline(props: {
   userMessages: UserMessage[]
   anchor: (id: string) => string
   setRevealMessage?: (fn: (id: string) => void) => void
+  /** 会话内搜索跳到一处时叫:不停掉跟随到底的话,流式输出会立刻把视口拽回底部。 */
+  onPauseAutoScroll?: () => void
+  /** 更早的消息还没加载:搜索条要说一声"只搜了已加载的"。 */
+  historyMore?: boolean
   setScrollToEnd?: (fn: () => void) => void
   setHistoryAnchor?: (handlers: { capture: () => void; restore: (done: boolean) => void }) => void
 }) {
@@ -322,6 +328,54 @@ export function MessageTimeline(props: {
     props.setScrollToEnd?.(() => virtualizer.scrollToEnd())
     props.setHistoryAnchor?.({ capture: capturePrependAnchor, restore: restorePrependAnchor })
   })
+
+  // ---- 会话内搜索(cmd+F)。条本身、索引、高亮都在 TimelineSearch 里,只在开着的时候挂载;这里只管开关、
+  // "可搜的 part 从上到下是哪些 / 各在第几行",以及跳到一处时要动时间线的那几下(滚动、展开卡片)。
+  const command = useCommand()
+  const [search, setSearch] = createStore({ open: false, focusTick: 0 })
+  command.register("session.search", () => [
+    {
+      id: "session.search",
+      title: language.t("session.search.placeholder"),
+      keybind: "mod+f",
+      hidden: true,
+      onSelect: () => setSearch({ open: true, focusTick: search.focusTick + 1 }),
+    },
+  ])
+  // 可搜的就是画得出来的:照着行收 part,所以顺序 = 屏幕上从上到下,每个 part 都有行号可滚。
+  const searchable = createMemo(() => {
+    const parts: PartType[] = []
+    const where = new Map<string, { row: number; groupKey?: string }>()
+    if (!search.open) return { parts, where }
+    timelineRows().forEach((row, index) => {
+      if (row._tag === "UserMessage") {
+        const shown = getMsgParts(row.userMessageID).find((part) =>
+          part.type === "task" ? true : part.type === "text" && !part.synthetic,
+        )
+        if (!shown) return
+        parts.push(shown)
+        where.set(shown.id, { row: index })
+        return
+      }
+      if (row._tag !== "AssistantPart") return
+      for (const ref of groupRefs(row.group)) {
+        const part = getMsgPart(ref.messageID, ref.partID)
+        if (!part) continue
+        parts.push(part)
+        where.set(part.id, { row: index, groupKey: row.group.type === "context" ? row.group.key : undefined })
+      }
+    })
+    return { parts, where }
+  })
+  const revealSearchMatch = (partID: string) => {
+    const at = searchable().where.get(partID)
+    if (!at) return
+    props.onPauseAutoScroll?.()
+    // 命中在收着的卡片里:把卡片(和它所在的「已探索」组)打开,字才画得出来、才圈得上。
+    if (at.groupKey) setToolOpen(at.groupKey, true)
+    if (searchable().parts.find((part) => part.id === partID)?.type === "tool") setToolOpen(partID, true)
+    virtualizer.scrollToIndex(at.row, { align: "center" })
+  }
 
   let overscanFrame: number | undefined
   onMount(() => {
@@ -963,6 +1017,21 @@ export function MessageTimeline(props: {
 
   return (
     <div class="relative w-full h-full min-w-0">
+      <Show when={search.open}>
+        <div class="contents" style={{ "--timeline-search-top": showHeader() ? "52px" : "8px" }}>
+          <TimelineSearch
+            parts={searchable().parts}
+            rowOf={(partID) => searchable().where.get(partID)?.row}
+            firstVisibleRow={() => virtualizer.range?.startIndex ?? 0}
+            showReasoning={settings.general.showReasoningSummaries()}
+            root={listRoot()}
+            partial={props.historyMore ?? false}
+            focusTick={search.focusTick}
+            onReveal={revealSearchMatch}
+            onClose={() => setSearch("open", false)}
+          />
+        </div>
+      </Show>
       <div
         class="absolute left-1/2 -translate-x-1/2 z-[60] pointer-events-none transition-all duration-200 ease-out"
         classList={{

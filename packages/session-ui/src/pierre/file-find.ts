@@ -31,6 +31,15 @@ function hostForNode(node: unknown) {
   }
 }
 
+/**
+ * 同一页上有两个「查找」:文件视图里的(这个文件)和会话内的(app 的 timeline-search)。归属按焦点分 ——
+ * 对话那一栏在 app 里打了 `data-find-scope="session"`,焦点在它里面、又不在某个文件视图里时,cmd+F 是会话内
+ * 查找的,这里不接。不加这一条的话,时间线里只要画着一个 diff(「本轮改动」点开的那种),cmd+F 就永远被它接走。
+ */
+export function inSessionFindScope(node: unknown) {
+  return node instanceof Element && !!node.closest('[data-find-scope="session"]')
+}
+
 function installShortcuts() {
   if (installed) return
   if (typeof window === "undefined") return
@@ -57,6 +66,9 @@ function installShortcuts() {
 
       if (key !== "f") return
 
+      const focused = hostForNode(document.activeElement) ?? hostForNode(event.target)
+      if (!focused && inSessionFindScope(event.target)) return
+
       const active = current
       if (active && active.isOpen()) {
         event.preventDefault()
@@ -65,7 +77,7 @@ function installShortcuts() {
         return
       }
 
-      const host = hostForNode(document.activeElement) ?? hostForNode(event.target) ?? target ?? Array.from(hosts)[0]
+      const host = focused ?? target ?? Array.from(hosts)[0]
       if (!host) return
 
       event.preventDefault()

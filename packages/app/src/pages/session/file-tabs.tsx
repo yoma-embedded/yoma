@@ -5,6 +5,7 @@ import { makeEventListener } from "@solid-primitives/event-listener"
 import type { FileSearchHandle } from "@yoma-desktop/session-ui/file"
 import { useFileComponent } from "@yoma-desktop/ui/context/file"
 import { cloneSelectedLineRange, previewSelectedLines } from "@yoma-desktop/session-ui/pierre/selection-bridge"
+import { inSessionFindScope } from "@yoma-desktop/session-ui/pierre/file-find"
 import { createLineCommentController } from "@yoma-desktop/session-ui/line-comment-annotations"
 import { sampledChecksum } from "@yoma-desktop/util/encode"
 import { DropdownMenu } from "@yoma-desktop/ui/dropdown-menu"
@@ -345,6 +346,9 @@ export function FileTabContent(props: { tab: string }) {
       if (activeFileTab() !== props.tab) return
       if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return
       if (event.key.toLowerCase() !== "f") return
+      // 同一页上有两个「查找」:焦点在对话那一栏(时间线、输入框)里时,cmd+F 是会话内查找的(timeline-search),
+      // 这里不抢;焦点在别处(这个文件页签里、或者哪儿都不在)照旧归文件内查找。
+      if (inSessionFindScope(event.target)) return
 
       event.preventDefault()
       event.stopPropagation()

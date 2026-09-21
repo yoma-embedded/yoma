@@ -505,7 +505,7 @@ kernel 接它 —— 从前那份自有 harness(`agent-legacy` / `@yoma/agent`)�
 | `npm run smoke -w packages/desktop` | 内核冒烟:对 **构建产物** 验证内核装配(工具清单与 `TOOL_NAMES` 逐字同序,今天 21 个)+ 引擎二进制 |
 | `npm run e2e:ipc -w packages/desktop` | 生产路径:真 utilityProcess + 真 MessagePort + 真协议帧(不开窗口) |
 | `npm run e2e:renderer -w packages/desktop` | 最后一跳:真窗口 + 真 preload + **真 contextBridge**(含 mailbox 桥三条) |
-| `npm run e2e:paint -w packages/desktop` | 真窗口首屏 + 点一遍:Electron 跑构建产物 + 接 CDP,首页 / 会话页(含逻辑分析仪面板)/ 子 agent 卡片、完成通知行、「本轮改动」那一行与子会话页(含连着的只读调用并成的那一行)/ 草稿页 / 手册库 / 调试台全点一遍,零 `exceptionThrown` 零 `console.error` / Log 错误(含资源 404)(窗口会在屏幕上闪几秒,别去点它) |
+| `npm run e2e:paint -w packages/desktop` | 真窗口首屏 + 点一遍:Electron 跑构建产物 + 接 CDP,首页 / 会话页(含逻辑分析仪面板)/ 子 agent 卡片、完成通知行、「本轮改动」那一行、会话内查找(cmd+F)与子会话页(含连着的只读调用并成的那一行)/ 草稿页 / 手册库 / 调试台全点一遍,零 `exceptionThrown` 零 `console.error` / Log 错误(含资源 404)(窗口会在屏幕上闪几秒,别去点它) |
 | `npm run smoke:mailbox -w packages/desktop` | 调试台冒烟:Electron RUN_AS_NODE 对打包产物跑完整**本机演练**(假模型,零 key 零硬件) |
 | `npm run e2e:mailbox -w packages/desktop` | main 托管端到端:真 kernel.js 的 `mailbox.setActive` 往返 + 假守护喂 `@@event` + 停止杀树 + 锁冲突人话 |
 | `tsx packages/bench/src/cli.ts check <job.json>` | 校验任务书 + 本机内核装配 |
@@ -649,6 +649,21 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
    留在 store 里、画出来才解析,跑着的时候读 part 状态等于每一步重建这一轮的行(规矩 1 的同一个坑)。展开状态记在
    时间线的 `toolOpen`(key = 行 key + 文件),不记在组件身上:虚拟列表滚出去就卸载。真窗口覆盖在 `e2e:paint`
    的主会话页:种子里主会话真的 `write` 一个新文件、`edit` 一个已有的,同时也就验了 write 那一层接上了。
+5. **会话内查找(cmd+F,`timeline/search.ts` + `timeline-search.tsx`)分两层,别合成一层。** 时间线是虚拟列表,
+   屏幕外的行不在 DOM 里,浏览器式的查找只看得见眼前几行。**数据层**说"哪个 part 里有几处"—— 计数、上一处 /
+   下一处、滚到哪一行都听它的(可搜的 = 画得出来的 part,照着行从上到下收:用户消息的正文、回复、打开了显示的
+   思考段、工具调用参数里的顶层标量 + 输出 / 报错、后台任务通知);**DOM 层**只给眼前画出来的字上色,用 CSS Custom
+   Highlight API(不改 DOM,不和 Solid / markdown 渲染打架),`MutationObserver` 盯着时间线,一帧最多重圈一次。
+   两层看的不是同一份字(markdown 源码 vs 渲染后的字、卡片标题是翻译过的),"第几处"只能近似对上:**一定落在
+   对的 part 上**,part 里可能差一处;DOM 里圈不到(命中在链接的 URL 里)就把那张卡摆到眼前。跳到一处时
+   `revealSearchMatch` 停掉跟随到底、把收着的工具卡(和它所在的「已探索」组)打开、让虚拟列表滚到那一行,然后
+   搜索条追着找最多 30 帧(行要先画出来,卡片展开后正文还要再等两帧)。索引按 part 各记一个 memo(规矩 1 的同
+   一个道理):流式增量只重数正在长的那一段;**整个组件只在搜索开着时挂载**,索引和观察器关掉就全部释放。
+   只搜已加载的消息,更早的历史没加载时搜索条上说一声。
+   **cmd+F 的归属按焦点分**:同一页上还有文件内查找(`file-tabs.tsx` 与 session-ui 的 `pierre/file-find.ts`,
+   两处都在 window 捕获阶段接 cmd+F,后者只要页面上挂着任何一个文件 / diff 视图就会接 —— 包括「本轮改动」里点开
+   的 diff)。对话那一栏在 `session.tsx` 打了 `data-find-scope="session"`,焦点在它里面、又不在某个文件视图里时
+   归会话内查找(`inSessionFindScope`),否则照旧归文件内查找。真窗口覆盖在 `e2e:paint`:按键走 CDP 的真按键。
 
 ### 内核事件只能用 `subscribe()`
 

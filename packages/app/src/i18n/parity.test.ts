@@ -21,6 +21,8 @@ const PARITY_PREFIXES = [
   "session.queueDock.",
   // 时间线的「本轮改动」那一行。
   "session.turnChanges.",
+  // 会话内查找(cmd+F)。
+  "session.search.",
 ] as const
 
 /**

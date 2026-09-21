@@ -966,6 +966,74 @@ try {
   check("主会话页没崩到错误页", (await evaluate<boolean>(CRASHED)) === false)
   drain("回到主会话")
 
+  // 会话内查找(cmd+F)。快捷键走 CDP 的真按键(不是往 DOM 上派事件)—— 同时也在验 Electron 的菜单没把它吞掉。
+  // 时间线是虚拟列表,计数来自数据层、高亮来自眼前的 DOM,两样都要看;命中在收着的卡片里时卡片得自己打开。
+  const MOD = process.platform === "darwin" ? 4 : 2
+  const pressKey = async (key: string, code: string, vk: number, modifiers = 0) => {
+    for (const type of ["keyDown", "keyUp"]) {
+      await send("Input.dispatchKeyEvent", { type, key, code, modifiers, windowsVirtualKeyCode: vk })
+    }
+  }
+  const searchInput = `document.querySelector('[data-component="timeline-search"] [data-slot="timeline-search-input"]')`
+  const searchCount = `(document.querySelector('[data-slot="timeline-search-count"]')?.textContent ?? "")`
+  const typeQuery = (value: string) =>
+    evaluate(`(() => { const input = ${searchInput}; input.focus(); input.select(); document.execCommand("insertText", false, ${json(value)}) })()`)
+  const painted = (name: string) =>
+    `[...(CSS.highlights.get(${json(name)}) ?? [])].map((range) => range.toString().toLowerCase())`
+  // 同一页上有两个「查找」:右栏开着文件页签时 cmd+F 原本归文件内查找(file-tabs.tsx 在 window 捕获阶段接),
+  // 焦点在对话这一栏里才归会话内查找。这里把焦点放到时间线上再按 —— 这条闸门头一次跑就是栽在这个归属上。
+  await evaluate(`document.querySelector('[data-find-scope="session"] .scroll-view__viewport')?.focus()`)
+  await pressKey("f", "KeyF", 70, MOD)
+  check(
+    "cmd+F 打开会话内查找,焦点在输入框里",
+    await waitFor(`!!${searchInput} && document.activeElement === ${searchInput}`, APPEAR_TIMEOUT_MS),
+  )
+  // write 卡片缺省收着。先记下这一点:后面的查找会跳进它里面,那时它得自己打开。
+  const writeCard = `[...document.querySelectorAll('[data-component="tool-part-wrapper"]')].find((el) => (el.querySelector('[data-slot="basic-tool-tool-subtitle"]')?.textContent ?? "").includes(${json(CHANGED_NEW_FILE)}))`
+  check("查找之前 write 卡片是收着的", await evaluate<boolean>(`!!${writeCard} && !${writeCard}.querySelector('[data-component="tool-output"]')`))
+  await typeQuery("STM32F405RGTX")
+  check(
+    "查找:计数来自整个会话(子 agent 的结果 + write 的内容 + 回复,共 3 处),眼前的命中上了色",
+    await waitFor(
+      `/^[1-3]\\/3$/.test(${searchCount}) && ${painted("timeline-search-hit-active")}.length === 1
+        && [...${painted("timeline-search-hit")}, ...${painted("timeline-search-hit-active")}].every((text) => text === "stm32f405rgtx")`,
+      APPEAR_TIMEOUT_MS,
+    ),
+    await evaluate<string>(searchCount),
+  )
+  const before = await evaluate<string>(searchCount)
+  await pressKey("Enter", "Enter", 13)
+  check(
+    "回车跳到下一处",
+    await waitFor(`${searchCount} !== ${json(before)} && /^[1-3]\\/3$/.test(${searchCount})`, APPEAR_TIMEOUT_MS),
+    `${before} → ${await evaluate<string>(searchCount)}`,
+  )
+  // 只在 write 卡片的输出里出现的词:跳过去时卡片得开着,字才画得出来、才圈得上。
+  await typeQuery("successfully wrote")
+  check(
+    "命中在收着的卡片里:卡片自己打开,当前那一处圈在它的输出上",
+    await waitFor(
+      `${searchCount} === "1/1" && !!${writeCard}?.querySelector('[data-component="tool-output"]')
+        && ${painted("timeline-search-hit-active")}[0] === "successfully wrote"`,
+      APPEAR_TIMEOUT_MS,
+    ),
+    await evaluate<string>(searchCount),
+  )
+  if (process.env.YOMA_PAINT_SCREENSHOT_SEARCH) {
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    const shot = await send("Page.captureScreenshot", { format: "png" })
+    writeFileSync(process.env.YOMA_PAINT_SCREENSHOT_SEARCH, Buffer.from(shot.result!.data as string, "base64"))
+  }
+  await pressKey("Escape", "Escape", 27)
+  check(
+    "Esc 关掉查找,高亮清干净",
+    await waitFor(
+      `!document.querySelector('[data-component="timeline-search"]') && !CSS.highlights.has("timeline-search-hit") && !CSS.highlights.has("timeline-search-hit-active")`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  drain("会话内查找")
+
   // ------------------------------------------------------------------ 5. 草稿页
   const clickedNew = await clickText(["新对话", "New chat"])
   check("点得到「新对话」", clickedNew !== false, String(clickedNew))
