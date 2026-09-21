@@ -221,11 +221,19 @@ describe("toolchain.familyStatus", () => {
     expect((await readLedger(configDir)).entries).toEqual({})
   })
 
-  it("env 档:IDF_PATH 指向存在的目录标记 configured,不冒充执行就绪", async () => {
+  it("env 档:IDF_PATH 指向 IDF 根(含 tools/idf.py)标记 configured,不冒充执行就绪", async () => {
+    mkdirSync(path.join(binDir, "tools"), { recursive: true })
+    writeFileSync(path.join(binDir, "tools", "idf.py"), "# fake\n")
     const view = await toolchainFamilyStatus({ ...familyOpts([], { IDF_PATH: binDir }), family: "esp32" })
     const idf = view.tools.find((tool) => tool.id === "idf")
     expect(idf?.status).toBe("configured")
     expect(idf?.source).toBe("env")
+  })
+
+  it("env 档:IDF_PATH 指着一个不是 IDF 根的目录(卸载后残留的变量)不算数", async () => {
+    // 2026-09-18 之前目录在就算 configured;现在预设带 marker,验不过的自动候选不算命中,接着找下一档。
+    const view = await toolchainFamilyStatus({ ...familyOpts([], { IDF_PATH: binDir }), family: "esp32" })
+    expect(view.tools.find((tool) => tool.id === "idf")?.status).toBe("missing")
   })
 
   it("fresh:true 把探到的结果写回机器账本(by:auto)", async () => {

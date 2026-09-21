@@ -3,6 +3,7 @@ import type { ToolConfirmView } from "@yoma-desktop/kernel"
 import { Button } from "@yoma-desktop/ui/button"
 import { DockTray } from "@yoma-desktop/ui/dock-surface"
 import { useLanguage } from "@/context/language"
+import "./dock.css"
 
 /**
  * 工具确认条:模型想跑一个契约说"要先问"的工具(烧录,以及 bash / PowerShell 里命令位站着
@@ -14,6 +15,12 @@ import { useLanguage } from "@/context/language"
  * **不截断命令**:一条 140 字的 openocd 命令用 truncate 只剩前 60 字,mass_erase 藏在省略号后面
  * 用户就点了允许(2026-09-13 猎漏确认),所以整段换行显示,超高时在框内滚动。
  * 多条未决时按提问顺序堆叠,最早的在最上面(内核给的顺序)。
+ *
+ * 第四个刻意的不做(2026-09-20):**「允许 / 拒绝」不图标化**。旁边几个坞的行内操作都改成了图标,
+ * 这两颗没跟着改 —— 按错的代价是往板子里写东西,而图标是要猜的。大厂在破坏性主操作上同样留字。
+ *
+ * 前台子 agent 的询问冒到主会话这里来(`item.agent`):写明是哪个子 agent 在问 —— 用户看着的是主会话,
+ * 不说的话这条烧录像是主 agent 自己要跑的。后台子 agent 不问,内核直接挡掉(没人看着它)。
  */
 export function SessionConfirmDock(props: {
   items: ToolConfirmView[]
@@ -34,43 +41,37 @@ export function SessionConfirmDock(props: {
   return (
     <DockTray
       data-component="session-confirm-dock"
-      style={
-        props.attached
-          ? { "margin-bottom": "-0.875rem", "border-bottom-left-radius": 0, "border-bottom-right-radius": 0 }
-          : { "margin-bottom": "0.5rem" }
-      }
+      attach={props.attached ? "bottom" : "none"}
+      class={props.attached ? undefined : "mb-2"}
     >
-      <div class="px-3 pt-2 flex flex-col gap-1.5" classList={{ "pb-7": props.attached, "pb-2": !props.attached }}>
+      <div data-dock-body="" data-attached={props.attached ? "" : undefined}>
         <For each={props.items}>
           {(item) => (
-            <div class="flex items-start gap-2 min-w-0 py-1">
-              <span class="shrink-0 pt-0.5 text-13-medium text-text-strong">
-                {language.t("session.confirmDock.wants", { tool: toolName(item) })}
+            <div data-dock-row="" data-align="start">
+              <span data-slot="label">
+                {item.agent
+                  ? language.t("session.confirmDock.agentWants", { agent: item.agent, tool: toolName(item) })
+                  : language.t("session.confirmDock.wants", { tool: toolName(item) })}
               </span>
-              <span
-                data-slot="confirm-summary"
-                class="min-w-0 flex-1 max-h-64 overflow-y-auto whitespace-pre-wrap break-all font-mono text-12-regular text-text-base"
-              >
-                {item.summary}
-              </span>
-              <Button
-                size="small"
-                variant="secondary"
-                class="shrink-0"
-                disabled={props.replying === item.id}
-                onClick={() => props.onReply(item.id, true)}
-              >
-                {language.t("session.confirmDock.allow")}
-              </Button>
-              <Button
-                size="small"
-                variant="ghost"
-                class="shrink-0"
-                disabled={props.replying === item.id}
-                onClick={() => props.onReply(item.id, false)}
-              >
-                {language.t("session.confirmDock.deny")}
-              </Button>
+              <span data-slot="confirm-summary">{item.summary}</span>
+              <div data-slot="row-buttons">
+                <Button
+                  size="small"
+                  variant="secondary"
+                  disabled={props.replying === item.id}
+                  onClick={() => props.onReply(item.id, true)}
+                >
+                  {language.t("session.confirmDock.allow")}
+                </Button>
+                <Button
+                  size="small"
+                  variant="ghost"
+                  disabled={props.replying === item.id}
+                  onClick={() => props.onReply(item.id, false)}
+                >
+                  {language.t("session.confirmDock.deny")}
+                </Button>
+              </div>
             </div>
           )}
         </For>

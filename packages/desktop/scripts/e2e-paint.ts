@@ -36,6 +36,15 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { resolveElectron } from "./electron-bin.ts"
+import {
+  BACKGROUND_ANSWER,
+  BACKGROUND_DESCRIPTION,
+  moveSeededSessions,
+  seedSubagentSession,
+  SUBAGENT_ANSWER,
+  SUBAGENT_DESCRIPTION,
+  SUBAGENT_PARENT_TITLE,
+} from "./e2e-seed-subagent.ts"
 
 const PAGE_TIMEOUT_MS = 60_000
 const MOUNT_TIMEOUT_MS = 30_000
@@ -213,6 +222,19 @@ writeFileSync(
     screenshot: { file: "screen.png", createdAt: 1789000000001 },
   }),
 )
+
+// 子 agent:Electron 起来之前,用 faux 模型 + 真内核宿主在暂存根里种一对主 / 子会话;窗口起来之后再原子地
+// 挪进 app 的会话根(理由见 e2e-seed-subagent.ts 文件头)。种不出来就别开窗口了。
+const seedStaging = join(tmpRoot, "seed-sessions")
+const seededSubagent = await seedSubagentSession({
+  stagingRoot: seedStaging,
+  workspace,
+  scratch: join(tmpRoot, "seed-scratch"),
+}).catch((error: unknown) => {
+  console.error(`FAIL 子 agent 种子:${(error as Error).message}`)
+  rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+  process.exit(1)
+})
 
 const logTail: string[] = []
 // 端口在我们探完之后才被占(另一个 Electron 刚好起来)的兜底:Chromium 会把 bind 失败
@@ -723,6 +745,146 @@ try {
   }
   check("会话页没崩到错误页", (await evaluate<boolean>(CRASHED)) === false)
   drain("会话页")
+
+  // ------------------------------------------------------------------ 4b. 子 agent
+  // 种好的主 / 子会话挪进 app 的会话根,reload 之后:侧栏只列主会话;主会话里有 agent 卡片,展开有结果与
+  // 「打开子会话」;子会话页有「← 主会话」、没有输入框;点回去又是主会话。卡片与子会话页的渲染只有这里跑真窗口。
+  const info = await evaluate<{ sessionsRoot?: string } | string>(
+    `window.api.kernel.request("app.info").catch((error) => "ERR " + error.message)`,
+  )
+  const sessionsRoot = typeof info === "object" ? info.sessionsRoot : undefined
+  check("app.info 回了会话根", !!sessionsRoot, typeof info === "string" ? info : String(sessionsRoot))
+  if (sessionsRoot) moveSeededSessions(seedStaging, sessionsRoot)
+  await send("Page.reload", { ignoreCache: false })
+  // 侧栏的工程组缺省收着,点开才列会话(列的是 session.list,子 agent 的会话内核就不给)。
+  const expandProject = await waitFor(
+    `(() => {
+    const button = [...document.querySelectorAll('[data-component="codex-sidebar"] button[aria-expanded]')]
+      .find((el) => (el.textContent ?? "").includes(${json(WORKSPACE_NAME)}))
+    if (!button) return false
+    if (button.getAttribute("aria-expanded") !== "true") button.click()
+    return true
+  })()`,
+    MOUNT_TIMEOUT_MS,
+  )
+  check("侧栏点得开工程组", expandProject)
+  const parentRow = `document.querySelector('[data-component="codex-sidebar"] button[data-session-id=${json(seededSubagent.parentID)}]')`
+  check("侧栏列出派子 agent 的主会话", await waitFor(`!!${parentRow}`, APPEAR_TIMEOUT_MS))
+
+  // 侧栏行的悬浮底框。**这一条只有真指针悬上去才验得到** —— 2026-09-20 之前它用 bg-layer-01 当 hover,
+  // 而浅色主题下 layer-01 与侧栏自己的底色 bg-deep 同为 grey-100(theme.css),于是鼠标划过去毫无反应,
+  // 而 DOM、类名、快照全是对的。谁要是再把它改回同色的一档,这里会红。
+  // 断言的是**合成之后看得见的颜色**,不是"backgroundColor 这个字符串变了没有" ——
+  // 那条弱断言对 bug 版本照样是绿的(透明 -> rgb(250,250,250),值确实变了,而 250 就是侧栏自己的底色)。
+  // 变异验证逮到的正是这一点。
+  {
+    const anyRow = `document.querySelector('[data-component="codex-sidebar"] button')`
+    const probe = `(() => {
+      const row = ${anyRow}
+      const side = document.querySelector('[data-component="codex-sidebar"]')
+      if (!row || !side) return null
+      const num = (c) => (c.match(/[\\d.]+/g) ?? []).map(Number)
+      const bg = num(getComputedStyle(side).backgroundColor)
+      const fg = num(getComputedStyle(row).backgroundColor)
+      const a = fg.length > 3 ? fg[3] : 1
+      // 行的底(可能半透明)合成到侧栏的底之上 = 眼睛真正看到的那个颜色。
+      const seen = [0, 1, 2].map((i) => fg[i] * a + bg[i] * (1 - a))
+      const delta = [0, 1, 2].reduce((sum, i) => sum + Math.abs(seen[i] - bg[i]), 0)
+      return { delta: Math.round(delta), seen: seen.map(Math.round).join(","), bg: bg.slice(0, 3).join(",") }
+    })()`
+    const spot = await evaluate<{ x: number; y: number } | null>(
+      `(() => { const r = ${anyRow}?.getBoundingClientRect(); return r ? { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) } : null })()`,
+    )
+    if (spot) await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: spot.x, y: spot.y })
+    const hover = await evaluate<{ delta: number; seen: string; bg: string } | null>(probe)
+    check(
+      "侧栏行悬浮时真的画出底框(合成后与侧栏底色可辨)",
+      !!hover && hover.delta >= 6,
+      hover ? `底 ${hover.bg} -> 悬浮 ${hover.seen}(差 ${hover.delta})` : "取不到侧栏",
+    )
+    // 指针挪开,别把悬浮态留给后面的检查与截图。
+    await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 5, y: 5 })
+  }
+  check(
+    "侧栏不列子 agent 的会话(前台、后台两个都不列)",
+    await evaluate<boolean>(
+      `![${json(seededSubagent.childID)}, ${json(seededSubagent.backgroundID)}].some((id) => document.querySelector('[data-component="codex-sidebar"] button[data-session-id="' + id + '"]'))`,
+    ),
+  )
+  await evaluate(`${parentRow}?.click()`)
+  // 前台那张 agent 卡片:按折叠态那一格任务描述认,之后的查询都收在这张卡里(同一页上还有后台那张与通知行)。
+  // 2026-09-20 起卡片不再穿硬件卡的仪器皮(hw-trigger / hw-body),类型与描述也不再靠一个打上去的 `·` 隔开 ——
+  // 类型是自己一枚名牌([data-slot="agent"]),所以这里按描述那一格认,不按拼出来的整串认。
+  const agentCard = `[...document.querySelectorAll('[data-component="tool-part-wrapper"]')].find((el) => (el.querySelector('[data-component="agent-trigger"] [data-slot="task"]')?.textContent ?? "").includes(${json(SUBAGENT_DESCRIPTION)}))`
+  check("主会话里画出 agent 卡片(类型名牌 + 描述)", await waitFor(`!!${agentCard}`, MOUNT_TIMEOUT_MS))
+  check(
+    "agent 卡片折叠态:类型名牌与完成结论都在",
+    await evaluate<boolean>(
+      `(${agentCard}?.querySelector('[data-component="agent-trigger"] [data-slot="agent"]')?.textContent ?? "").includes("Explore")
+        && (${agentCard}?.querySelector('[data-component="agent-trigger"] [data-slot="facts"]')?.textContent ?? "").length > 0`,
+    ),
+  )
+  await evaluate(`${agentCard}?.querySelector('[data-component="tool-trigger"]')?.click()`)
+  check(
+    "展开 agent 卡片:结果与「打开子会话」",
+    await waitFor(
+      `(${agentCard}?.querySelector('[data-component="agent-result"]')?.textContent ?? "").includes(${json(SUBAGENT_ANSWER)})
+        && !!${agentCard}?.querySelector('[data-component="agent-actions"] button')`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  // 后台那个的完成通知:挂在一条 synthetic 的用户消息上,画成通知行(不是用户气泡),展开是结果全文。
+  const notice = `[...document.querySelectorAll('[data-component="task-notification"]')].find((el) => (el.textContent ?? "").includes(${json(BACKGROUND_DESCRIPTION)}))`
+  check(
+    "后台子 agent 的完成通知画成通知行(不是用户气泡)",
+    await waitFor(
+      `!!${notice} && ${notice}.getAttribute("data-status") === "completed" && !!${notice}.closest('[data-component="user-message"][data-synthetic]')`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  await evaluate(`${notice}?.querySelector('[data-component="tool-trigger"]')?.click()`)
+  check(
+    "展开通知行:后台子 agent 的结果",
+    await waitFor(
+      `(${notice}?.querySelector('[data-component="agent-result"]')?.textContent ?? "").includes(${json(BACKGROUND_ANSWER)})`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  if (process.env.YOMA_PAINT_SCREENSHOT_SUBAGENT) {
+    // 两张卡都展开着,滚到前台那张上 —— 这一张是给人看子 agent 卡片长相的。
+    await evaluate(`${agentCard}?.scrollIntoView({ block: "center" })`)
+    const shot = await send("Page.captureScreenshot", { format: "png" })
+    writeFileSync(process.env.YOMA_PAINT_SCREENSHOT_SUBAGENT, Buffer.from(shot.result!.data as string, "base64"))
+  }
+  drain("主会话(agent 卡片 + 通知行)")
+  await evaluate(`${agentCard}?.querySelector('[data-component="agent-actions"] button')?.click()`)
+  check(
+    "子会话页:「← 主会话」在位、没有输入框",
+    await waitFor(
+      `!!document.querySelector('[data-component="subagent-back"]') && !document.querySelector('[data-component="session-prompt-dock"]')`,
+      MOUNT_TIMEOUT_MS,
+    ),
+  )
+  check(
+    "子会话页画出子 agent 的 transcript 与标题",
+    await waitFor(
+      `(document.querySelector('[data-session-title]')?.textContent ?? "").includes(${json(SUBAGENT_DESCRIPTION)})
+        && document.body.innerText.includes(${json(SUBAGENT_ANSWER)})`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  check("子会话页没崩到错误页", (await evaluate<boolean>(CRASHED)) === false)
+  drain("子会话页")
+  await evaluate(`document.querySelector('[data-component="subagent-back"] button')?.click()`)
+  check(
+    "「← 主会话」回得去(输入框回来了)",
+    await waitFor(
+      `!!document.querySelector('[data-component="session-prompt-dock"]') && (document.querySelector('[data-session-title]')?.textContent ?? "").includes(${json(SUBAGENT_PARENT_TITLE)})`,
+      MOUNT_TIMEOUT_MS,
+    ),
+  )
+  check("主会话页没崩到错误页", (await evaluate<boolean>(CRASHED)) === false)
+  drain("回到主会话")
 
   // ------------------------------------------------------------------ 5. 草稿页
   const clickedNew = await clickText(["新对话", "New chat"])

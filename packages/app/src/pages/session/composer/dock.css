@@ -1,0 +1,199 @@
+/**
+ * 输入框上方那一摞坞的共用排版 —— 确认条 / 子 agent / 排队中 / 追问,竖着叠在一起。
+ *
+ * 为什么要有这一份(2026-09-20):四个坞是**同时出现、上下紧贴**的,而它们的内边距、行高、
+ * 标题字号从前各写各的(`pt-2 gap-1.5` / `pt-2 gap-1` / `py-2`),字号还用了三个**并不存在**的
+ * 工具类(`text-13-medium` / `text-13-regular` —— utilities.css 里只有 12 / 14 / 16,
+ * 而且 `--font-size-small` 本身就是 13px,所以真正该写的一直是 `text-12-*`)。
+ * 四个坞长得不一样,叠起来就是"没设计过"。
+ *
+ * 纪律同 session-ui:属性驱动,颜色走 app 主题 token。说明气泡与危险色在 session-ui 的
+ * `icon-tip.css`(`data-tip`),这里不重复一份。
+ */
+
+/* ---------------------------------------------------------------- 坞体 */
+
+/** 一个坞的内容区。`data-attached` = 底边嵌进输入框,那时底部要留出输入框的圆角。 */
+[data-dock-body] {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 12px 9px;
+}
+[data-dock-body][data-attached] {
+  padding-bottom: 28px;
+}
+
+/** 坞头:标题 + 一句摘要 + 右侧操作。 */
+[data-dock-head] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 22px;
+}
+[data-dock-head] [data-slot="title"] {
+  flex: none;
+  font-family: var(--font-family-sans);
+  font-size: 12px;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-strong);
+}
+[data-dock-head] [data-slot="summary"] {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-weak);
+}
+/** 右侧那组操作贴边。 */
+[data-dock-head] [data-slot="actions"] {
+  flex: none;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/** 坞里的一行。行高定死,免得有没有按钮的行高矮不一。 */
+[data-dock-row] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 26px;
+}
+/** 内容可能是多行的那种行(确认条那段命令):顶对齐,不居中。 */
+[data-dock-row][data-align="start"] {
+  align-items: flex-start;
+  padding: 2px 0;
+}
+[data-dock-row][data-align="start"] > [data-slot="label"] {
+  flex: none;
+  padding-top: 4px;
+  font-size: 13px;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-strong);
+}
+/** 顶对齐那种行里的按钮组也贴顶,别吊在一段长命令的中间。 */
+[data-dock-row][data-align="start"] > [data-slot="row-buttons"] {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-top: 2px;
+}
+
+/** 行的主文本:占满、截断。 */
+[data-dock-row] [data-slot="text"] {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--text-strong);
+}
+/** 行右边的读数。 */
+[data-dock-row] [data-slot="facts"] {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--text-weak);
+}
+/** 行尾那组图标按钮:平时淡,悬停整行才实 —— 一排常亮的图标会把行文本压下去。 */
+[data-dock-row] [data-slot="row-actions"] {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0.65;
+  transition: opacity 0.12s ease;
+}
+[data-dock-row]:hover [data-slot="row-actions"],
+[data-dock-row]:focus-within [data-slot="row-actions"] {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-dock-row] [data-slot="row-actions"] {
+    transition: none;
+  }
+}
+
+/* ---------------------------------------------------------------- 状态点 */
+
+/**
+ * 子 agent 行左边那颗点。档位就是 `TaskLook`,不再经 bench 的 LED 档位翻一道 ——
+ * 坞从前整块挂着 `.ybench`(调试台的字号与文字色),那是右栏仪器的语言。
+ */
+[data-component="dock-dot"] {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--dock-dot, var(--text-weak));
+  box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--dock-dot, var(--text-weak)) 16%, transparent);
+}
+[data-component="dock-dot"][data-state="running"],
+[data-component="dock-dot"][data-state="background"] {
+  --dock-dot: var(--text-interactive-base, #37a8b6);
+  animation: dock-pulse 1.8s ease-in-out infinite;
+}
+[data-component="dock-dot"][data-state="completed"] {
+  --dock-dot: var(--text-success-base, #2f9e6e);
+}
+[data-component="dock-dot"][data-state="failed"] {
+  --dock-dot: var(--text-danger-base, #d5544a);
+}
+[data-component="dock-dot"][data-state="killed"] {
+  --dock-dot: var(--text-warning-base, #c08a2e);
+}
+
+@keyframes dock-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-component="dock-dot"] {
+    animation: none !important;
+  }
+}
+
+/* ---------------------------------------------------------------- 各坞自己的几样 */
+
+/** agent 类型的名牌,与 agent 卡片折叠行上那一枚同解。 */
+[data-slot="dock-agent"] {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--surface-base);
+  color: var(--text-weak);
+  font-family: var(--font-family-mono);
+  font-size: 11.5px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+/** 确认条那段命令:不截断(mass_erase 不许藏在省略号后面),超高时框内滚动。 */
+[data-slot="confirm-summary"] {
+  flex: 1;
+  min-width: 0;
+  max-height: 16rem;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--surface-base);
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-base);
+}

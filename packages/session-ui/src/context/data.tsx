@@ -1,4 +1,4 @@
-import type { Message, Session, Part, SessionStatus, ProviderInfo, ToolPart } from "@yoma-desktop/kernel"
+import type { Message, Session, Part, SessionStatus, ProviderInfo, TaskView, ToolPart } from "@yoma-desktop/kernel"
 import { createSimpleContext } from "@yoma-desktop/ui/context"
 
 export type NormalizedProviderListResponse = {
@@ -24,7 +24,17 @@ type Data = {
   part_text_accum_delta?: {
     [partID: string]: string
   }
+  /**
+   * 子 agent 任务的实时状态,按任务 id(= 子会话 id)。宿主从 `task.updated` 事件与 `task.list` 折出来;
+   * 没有这一份时 agent 卡片只剩工具交回那一刻的快照(后台派出的任务就只能说"已转到后台")。
+   */
+  task?: {
+    [taskID: string]: TaskView
+  }
 }
+
+/** 对一个子 agent 任务做点什么(停止 / 转后台)。 */
+export type TaskActionFn = (taskID: string) => void
 
 export type NavigateToSessionFn = (sessionID: string) => void
 
@@ -60,6 +70,10 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
     onSessionHref?: SessionHrefFn
     onOpenFile?: OpenFileFn
     onOpenInstrument?: OpenInstrumentFn
+    /** agent 卡片上的「停止」。不给就不渲染那个按钮。 */
+    onStopTask?: TaskActionFn
+    /** agent 卡片上的「转到后台」(只对前台在跑的任务)。不给就不渲染那个按钮。 */
+    onBackgroundTask?: TaskActionFn
   }) => {
     return {
       get store() {
@@ -74,6 +88,12 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
       // getter:宿主可以在挂载之后才把它接上,而卡片上的按钮要跟着出现/消失。
       get openInstrument() {
         return props.onOpenInstrument
+      },
+      get stopTask() {
+        return props.onStopTask
+      },
+      get backgroundTask() {
+        return props.onBackgroundTask
       },
     }
   },

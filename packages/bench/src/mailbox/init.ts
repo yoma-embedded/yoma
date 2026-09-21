@@ -12,8 +12,15 @@
  */
 
 import { scanMailbox, writeJson, JOB_FILE } from "./store.ts"
-import { commitPush, pullReset, type MailboxSyncContext } from "./sync.ts"
+import {
+  commitPush,
+  MAILBOX_ATTRIBUTES_FILE,
+  MAILBOX_ATTRIBUTES_TEXT,
+  pullReset,
+  type MailboxSyncContext,
+} from "./sync.ts"
 import type { MailboxJob } from "./spec.ts"
+import { writeFile } from "node:fs/promises"
 import path from "node:path"
 
 const INIT_AUTHOR = { name: "yoma-mailbox-init", email: "bench@yoma.local" }
@@ -51,6 +58,9 @@ export async function initMailbox(options: {
   // 远端连分支都没有时,本地的"非空"只能是上次 init push 失败留下的残骸(轮次结果
   // 必须经远端才可能出现)。照常覆盖重写 —— 拒绝会把信箱永远锁死在幽灵状态。
 
+  // 换行规则跟着仓走:对面那台机器可能还是没有 ensureByteTransparent 的旧版本(见 sync.ts 文件头)。
+  // 状态推断只看 job.json 与 rounds/,根上多这一个文件不影响 scanMailbox。
+  await writeFile(path.join(options.clone, MAILBOX_ATTRIBUTES_FILE), MAILBOX_ATTRIBUTES_TEXT)
   await writeJson(path.join(options.clone, JOB_FILE), serializeMailboxJob(options.mailboxJob))
   const pushed = await commitPush(sync, `init: ${options.mailboxJob.job.title}(${options.mailboxJob.job.id})`)
   if (!pushed.pushed) return { initialized: false, detail: pushed.detail ?? "初始化提交推不上去" }

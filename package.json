@@ -17,7 +17,7 @@
     "typecheck": "turbo typecheck && tsgo --noEmit -p tsconfig.json",
     "lint": "oxlint",
     "check:ci": "npm run upstream:check && turbo typecheck --force && tsgo --noEmit -p tsconfig.json && npm run engines:rg && npm test",
-    "test:windows": "vitest run --project agent --project kernel --project kernel-domain --project desktop",
+    "test:windows": "vitest run --project agent --project kernel --project kernel-domain --project desktop --project bench --project scripts --project app --project app-browser --project ui --project session-ui",
     "test": "vitest run",
     "license": "tsx scripts/license.ts",
     "upstream:check": "tsx scripts/check-upstream.ts",

@@ -2,7 +2,15 @@ import { afterEach, expect, test } from "vitest"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { createModels, fauxAssistantMessage, fauxProvider, fauxText, type Model } from "@earendil-works/pi-ai"
+import {
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxText,
+  getCurrentSystemPrompt,
+  getCurrentTools,
+  type Model,
+} from "@earendil-works/pi-ai"
 import type { KernelEvent } from "../protocol.ts"
 import { createAgentTools, SessionManager, type SessionManagerOptions } from "./session-manager.ts"
 import { patient } from "../../test/patience.ts"
@@ -35,7 +43,10 @@ function makeManager(inspect: NonNullable<SessionManagerOptions["inspectStm32Ava
   models.setProvider(faux.provider)
   faux.setResponses(
     Array.from({ length: 5 }, () => (context) => {
-      observed.push({ tools: (context.tools ?? []).map((tool) => tool.name), prompt: context.systemPrompt ?? "" })
+      observed.push({
+        tools: getCurrentTools(context.messages).map((tool) => tool.name),
+        prompt: getCurrentSystemPrompt(context.messages),
+      })
       return fauxAssistantMessage([fauxText("done")])
     }),
   )

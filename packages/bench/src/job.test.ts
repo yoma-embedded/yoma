@@ -1,3 +1,4 @@
+import path from "node:path"
 import { describe, expect, test } from "vitest"
 
 import { DEFAULT_THINKING_LEVEL } from "@yoma-desktop/kernel"
@@ -45,7 +46,8 @@ describe("parseJob · 必填", () => {
     expect(job.repo.name).toBe("j-1")
     // 但真要用工作树时必须有人给,报错要说清去哪配。
     expect(() => resolveWorkspace(job)).toThrow(/工程目录/)
-    expect(resolveWorkspace(job, "/tmp/ws")).toBe("/tmp/ws")
+    // 过 path.resolve 再比:resolveWorkspace 返回的是本机的绝对路径,Windows 上 "/tmp/ws" 是 "D:\tmp\ws"。
+    expect(resolveWorkspace(job, "/tmp/ws")).toBe(path.resolve("/tmp/ws"))
   })
 })
 

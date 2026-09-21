@@ -5,7 +5,10 @@
  *   session_diff  yoma 没有文件快照,也就没有"这一轮改了哪些文件"的差异
  *   todo          没有 todo 工具
  *   question      没有 ask/question 工具
- *   lineage       会话没有 parentID —— yoma 里会话是平的,分支是会话内部的树,不是会话之间的
+ *   lineage       不做谱系树:唯一的父子关系是子 agent 的会话(`Session.parentID`),只有一层,
+ *                 任务状态另走 `task`(`task.updated` 事件),不从会话树上推
+ *
+ * 另有两块子 agent 的状态(docs/子agent-设计方案-v0.4-20260918.md §7):`task`(任务视图)与 `queue`(收件箱现状)。
  *
  * 其余的结构(乐观插入的对账、分页加载期间的 touched/removed 标记、delta 前缀保护)
  * 一律原样保留 —— 它们解决的是"流式事件和分页请求交错"的时序问题,和后端换不换无关。
@@ -13,7 +16,7 @@
 
 import { Binary } from "@yoma-desktop/util/binary"
 import { retry } from "@yoma-desktop/util/retry"
-import type { KernelEvent, Message, Part, Session, SessionStatus } from "@yoma-desktop/kernel"
+import type { KernelEvent, Message, Part, QueuedItemView, Session, SessionStatus, TaskView } from "@yoma-desktop/kernel"
 import { batch } from "solid-js"
 import { createStore, produce, reconcile } from "solid-js/store"
 import type { Sdk } from "@/utils/kernel"
@@ -25,6 +28,19 @@ const initialMessagePageSize = 2
 const historyMessagePageSize = 200
 const sessionInfoLimit = 2_048
 const emptyIDs: ReadonlySet<string> = new Set()
+
+const TASK_STAGE: Record<TaskView["status"], number> = { pending: 0, running: 1, completed: 2, failed: 2, killed: 2 }
+
+/**
+ * 同一个任务的两份视图,`a` 是否比 `b` 走得更远。视图没有版本号,但有三样只往前走的东西:续跑会把 `startedAt`
+ * 重置成更晚的时刻;同一次运行里状态只从 pending → running → 终态;轮数与工具调用数只增不减。
+ */
+export function taskAhead(a: TaskView, b: TaskView) {
+  const left = [a.startedAt, TASK_STAGE[a.status], a.turns, a.usage.toolUses]
+  const right = [b.startedAt, TASK_STAGE[b.status], b.turns, b.usage.toolUses]
+  for (let i = 0; i < left.length; i++) if (left[i] !== right[i]) return left[i]! > right[i]!
+  return false
+}
 
 type OptimisticItem = {
   message: Message
@@ -141,6 +157,10 @@ export function createServerSession(client: Sdk, options?: { retry?: typeof retr
     message: {} as Record<string, Message[]>,
     part: {} as Record<string, Part[]>,
     part_text_accum_delta: {} as Record<string, string>,
+    /** 子 agent 任务,按任务 id(= 子会话 id)。`task.updated` 推变化,会话页打开时用 `task.list` 补齐现状。 */
+    task: {} as Record<string, TaskView>,
+    /** 会话收件箱里排着的(`session.queue`,整份替换):忙时发的消息与还没被取走的子 agent 通知。 */
+    queue: {} as Record<string, QueuedItemView[]>,
     session_working(id: string) {
       return (this.session_status[id]?.type ?? "idle") !== "idle"
     },
@@ -593,6 +613,7 @@ export function createServerSession(client: Sdk, options?: { retry?: typeof retr
         return event.session.id
       case "session.deleted":
       case "session.status":
+      case "session.queue":
       case "message.removed":
       case "message.part.removed":
       case "message.part.delta":
@@ -602,6 +623,30 @@ export function createServerSession(client: Sdk, options?: { retry?: typeof retr
       case "message.part.updated":
         return event.part.sessionID
     }
+  }
+
+  /**
+   * 一个会话的 `task.list` 结果并进来(它派出去的任务;它自己是子会话时还有它自己那条)。三条:
+   * - store 里没有的补上;
+   * - 两边都有的取走得更远的那份(`taskAhead`):请求在路上时到的事件比列表新,漏掉的事件则是列表新 ——
+   *   只认一边的话,前者会把刚完成的任务倒回"在跑",后者会让它永远停在"在跑";
+   * - store 里属于这个会话、还"在跑"、列表里却没有的删掉 —— 内核重启过,注册表是空的,它们不会再有事件了。
+   */
+  const seedTasks = (sessionID: string, tasks: readonly TaskView[]) => {
+    const listed = new Set(tasks.map((task) => task.id))
+    setData(
+      "task",
+      produce((draft) => {
+        for (const [id, task] of Object.entries(draft)) {
+          if ((task.parentID !== sessionID && id !== sessionID) || listed.has(id)) continue
+          if (task.status === "pending" || task.status === "running") delete draft[id]
+        }
+        for (const task of tasks) {
+          const known = draft[task.id]
+          if (!known || taskAhead(task, known)) draft[task.id] = task
+        }
+      }),
+    )
   }
 
   const apply = (event: KernelEvent) => {
@@ -633,11 +678,27 @@ export function createServerSession(client: Sdk, options?: { retry?: typeof retr
           "info",
           produce((draft) => void delete draft[sessionID]),
         )
+        // 删主会话会级联删它的子会话(各自一条 session.deleted);任务与排队表跟着清。
+        setData(
+          produce((draft) => {
+            delete draft.queue[sessionID]
+            delete draft.task[sessionID]
+            for (const [id, task] of Object.entries(draft.task)) if (task.parentID === sessionID) delete draft.task[id]
+          }),
+        )
         evict([sessionID])
         return
       }
       case "session.status": {
         setData("session_status", event.sessionID, reconcile(event.status))
+        return
+      }
+      case "task.updated": {
+        setData("task", event.task.id, reconcile(event.task))
+        return
+      }
+      case "session.queue": {
+        setData("queue", event.sessionID, reconcile(event.items))
         return
       }
       case "message.updated": {
@@ -859,7 +920,7 @@ export function createServerSession(client: Sdk, options?: { retry?: typeof retr
     peek: (sessionID: string) => data.info[sessionID],
     remember,
     resolve,
-    // 删掉的 lineage:yoma 的会话没有 parentID,会话之间是平的(分支是会话**内部**的树)。
+    seedTasks,
     sync,
     prefetch,
     shouldPrefetch(sessionID: string, limit: number) {

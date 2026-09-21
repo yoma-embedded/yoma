@@ -413,7 +413,7 @@ describe("到期不回头查已接受的轮次", () => {
     }
   }, 60_000)
 
-  test("没授权的新请求打不断在飞的轮次:检查排在 stop() 之前", async () => {
+  test("没授权的新请求进不了在飞的轮次:不打断它,也不排进它的收件箱(检查排在分岔之前)", async () => {
     const rig = makeHost([slowFlashCall(2000), fauxAssistantMessage([fauxText("烧完了")])], {
       licensePolicy: COMMERCIAL,
     })
@@ -424,10 +424,17 @@ describe("到期不回头查已接受的轮次", () => {
       await waitFor(() => toolParts(rig.events).some((part) => part.state.status === "running"), 20_000)
 
       rig.clock.now = EXPIRY + HOUR
-      // 这一句如果排在 prompt() 的 stop() 之后,它就会先把上面那一轮中断掉,再报授权不足 ——
-      // 也就是"没付费的请求有本事打断一次正在烧录的执行"。
+      // 忙时发的消息不打断这一轮,而是排进收件箱、在下一个工具边界被它取走(子 agent 那一版起)——
+      // 也就是给一轮已接受的执行**续上一句新的用户输入**。检查如果排在那个分岔之后,没付费的人就能
+      // 借着到期前起的那一轮一直聊下去;排在 admitPrompt 里的 stop() 之后,则是"没付费的请求有本事打断
+      // 一次正在烧录的执行"。两样都不许。
       const error = await rejection(() => rig.host.handle("session.prompt", { sessionID, input: { text: "插一句" } }))
       expect(error.data).toMatchObject({ _tag: "LicenseRequiredError", state: "expired" })
+      // 收件箱里没有它:一条非空的 session.queue 事件都不该有。
+      const queueEvents = rig.events.filter(
+        (event): event is Extract<KernelEvent, { type: "session.queue" }> => event.type === "session.queue",
+      )
+      expect(queueEvents.flatMap((event) => event.items)).toEqual([])
 
       await waitFor(() => statusesOf(rig.events).at(-1) === "idle", 30_000)
       const flash = toolParts(rig.events).filter((part) => part.tool === "flash")

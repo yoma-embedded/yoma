@@ -19,11 +19,13 @@ import type {
   PromptInput,
 } from "./protocol.ts"
 import type {
+  AgentInfo,
   FileDiff,
   FileEntry,
   ProviderInfo,
   Session,
   SessionStatus,
+  TaskView,
   ToolConfirmView,
   ToolchainFamiliesView,
   ToolchainInstallResultView,
@@ -67,8 +69,12 @@ export interface KernelClient {
     rename(sessionID: string, title: string): Promise<Session>
     status(sessionID: string): Promise<SessionStatus>
     messages(params: { sessionID: string; cursor?: string; limit?: number }): Promise<MessagePage>
-    prompt(sessionID: string, input: PromptInput): Promise<{ messageID: string }>
-    abort(sessionID: string): Promise<void>
+    /** 会话正忙时内核排队而不打断(`queued: true`):调用方别做乐观插入,排队项看 `session.queue` 事件。 */
+    prompt(sessionID: string, input: PromptInput): Promise<KernelResult<"session.prompt">>
+    /** 中断这一轮。排队的用户消息在 `returned` 里交回来(退回输入框);子 agent 的通知内核自己留着。 */
+    abort(sessionID: string): Promise<KernelResult<"session.abort">>
+    /** 撤回一条还没被取走的排队消息,原文与图片交回。 */
+    cancelQueued(params: { sessionID: string; entryId: string }): Promise<KernelResult<"session.cancelQueued">>
     compact(sessionID: string): Promise<void>
     navigate(sessionID: string, messageID: string): Promise<{ editorText: string }>
     setModel(params: {
@@ -77,6 +83,15 @@ export interface KernelClient {
       modelID: string
       thinking?: string
     }): Promise<Session>
+  }
+  /** 子 agent 的任务(docs/子agent-设计方案-v0.4-20260918.md §7)。 */
+  task: {
+    list(params: { sessionID: string }): Promise<TaskView[]>
+    stop(params: { taskID: string }): Promise<KernelResult<"task.stop">>
+    background(params: { taskID: string }): Promise<KernelResult<"task.background">>
+  }
+  agent: {
+    list(params: { directory: string }): Promise<AgentInfo[]>
   }
   model: {
     list(): Promise<ProviderInfo[]>
@@ -163,9 +178,18 @@ export function createKernelClient(transport: KernelTransport): KernelClient {
       messages: (params) => call("session.messages", params),
       prompt: (sessionID, input) => call("session.prompt", { sessionID, input }),
       abort: (sessionID) => call("session.abort", { sessionID }),
+      cancelQueued: (params) => call("session.cancelQueued", params),
       compact: (sessionID) => call("session.compact", { sessionID }),
       navigate: (sessionID, messageID) => call("session.navigate", { sessionID, messageID }),
       setModel: (params) => call("session.setModel", params),
+    },
+    task: {
+      list: (params) => call("task.list", params),
+      stop: (params) => call("task.stop", params),
+      background: (params) => call("task.background", params),
+    },
+    agent: {
+      list: (params) => call("agent.list", params),
     },
     model: {
       list: () => call("model.list", undefined),

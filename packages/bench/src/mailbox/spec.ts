@@ -33,7 +33,7 @@ export interface MailboxMotherConfig {
   /**
    * 母 agent 用的模型。要么 providerID+modelID 齐,要么整个不填 —— 不填就跟着
    * `job.model` 走。任务书也可以不钉模型,运行时各端从本机已有凭据的目录里挑
-   * (优先 DeepSeek V4 Flash,否则第一个能用的)。要两端用同一家,在任务书里写死。
+   * (优先 DeepSeek Flash,否则第一个能用的)。要两端用同一家,在任务书里写死。
    *
    * `thinking` 是个例外:它**单独生效**,不受"要么齐要么不填"的约束(见
    * mother.ts 的 motherJob)。研发端那侧才是做根因分析、写指令的,让它在同一个模型上

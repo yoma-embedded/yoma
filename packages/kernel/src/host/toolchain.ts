@@ -66,16 +66,10 @@ export async function toolchainStatus(opts: ToolchainRpcOptions & { fresh?: bool
 export async function toolchainSet(
   opts: ToolchainRpcOptions & { id: string; path: string },
 ): Promise<ToolchainStatusView> {
-  // bins 让"贴整个安装目录"的输入直接可用(在目录及其 bin/ 里解析声明的可执行名);
-  // 清单读不出来就退化为原样记录 —— 查询本身尽力而为,见 declaredToolBins。
+  // spec 让"贴整个安装目录"的输入直接可用:exe 型在目录及其 bin/ 里解析声明的可执行名,dir 型按
+  // marker 归位到安装根。清单里没有这个 id 时回落到平台预设,再没有才退化为原样记录(declaredToolSpec)。
   const spec = await declaredToolSpec({ id: opts.id, projectDir: opts.directory })
-  await recordToolchainPath({
-    id: opts.id,
-    path: opts.path,
-    configDir: opts.configDir,
-    bins: spec?.bin,
-    probe: spec?.pathKind === "dir" ? "exists" : "version",
-  })
+  await recordToolchainPath({ id: opts.id, path: opts.path, configDir: opts.configDir, spec })
   // 记完再核一遍账:UI 拿到的是落账后的真实状态,而不是"大概成功了"。注意 local
   // 覆盖(toolchain.local.json)仍然压过刚写的账本条目 —— 那是解析顺序的既有语义,
   // 结果里的 source 字段会如实说明是谁赢了。
@@ -155,17 +149,11 @@ export async function toolchainFamilySet(
   if (!family) throw new Error(`未知芯片平台 "${opts.family}"`)
   const tool = family.tools.find((entry) => entry.id === opts.id)
   if (!tool) throw new Error(`平台 ${family.name} 的预设里没有工具 "${opts.id}"`)
-  // dir 型(STM32CubeMX 安装目录 / ESP-IDF 根目录 / Zephyr SDK)只验存在、原样记录
-  // 目录本身,不传 bins —— 它们的可执行文件(如果有)埋在更深的子目录里,解析注定
-  // 落空,而"根目录在哪"正是要记的答案。exe 型传预设声明的可执行名,贴目录时在
-  // 里面解析;版本探得到就记,探不到留空(不再是闸门)。
-  await recordToolchainPath({
-    id: opts.id,
-    path: opts.path,
-    configDir: opts.configDir,
-    probe: tool.pathKind === "dir" ? "exists" : "version",
-    bins: tool.pathKind === "dir" ? undefined : tool.bin,
-  })
+  // dir 型(STM32CubeMX 安装目录 / ESP-IDF 根目录 / Zephyr SDK)只验存在、记安装根:有 marker 的
+  // 贴深了(`<根>\tools`)会归位到根,"根目录在哪"正是要记的答案。exe 型按预设声明的可执行名在
+  // 贴进来的目录里解析;版本探得到就记,探不到留空(不再是闸门)。分档在 recordToolchainPath 里按
+  // spec.pathKind 定 —— 与 agent 的 set、项目级 set 同一处,三个入口不可能分叉。
+  await recordToolchainPath({ id: opts.id, path: opts.path, configDir: opts.configDir, spec: tool })
   return toolchainFamilyStatus(opts)
 }
 

@@ -27,6 +27,7 @@ import {
 import { useData } from "../context"
 import { useDialog } from "@yoma-desktop/ui/context/dialog"
 import { useI18n } from "@yoma-desktop/ui/context/i18n"
+import { AgentTool, TaskNotificationDisplay } from "./agent-tool"
 import { GenericTool } from "./basic-tool"
 import { FlashTool } from "./flash-tool"
 import { GdbTool } from "./gdb-tool"
@@ -434,6 +435,19 @@ export function UserMessageDisplay(props: {
   parts: PartType[]
   useV2Actions?: boolean
 }) {
+  // 不是用户打的字(后台子 agent 的完成通知):画成通知行,不画成用户气泡,也没有复制 / 时间那一行。
+  return (
+    <Show when={props.message.synthetic} fallback={<UserBubble {...props} />}>
+      <div data-component="user-message" data-synthetic="">
+        <For each={props.parts.filter((part) => renderable(part))}>
+          {(part) => <Part part={part} message={props.message} />}
+        </For>
+      </div>
+    </Show>
+  )
+}
+
+function UserBubble(props: { message: UserMessage; parts: PartType[]; useV2Actions?: boolean }) {
   const data = useData()
   const dialog = useDialog()
   const i18n = useI18n()
@@ -627,6 +641,8 @@ const state: Record<
   gdb: { name: "gdb", render: GdbTool },
   la: { name: "la", render: LaTool },
   scope: { name: "scope", render: ScopeTool },
+  // 派子 agent:灯跟着实时任务走(Data 上下文的 store.task),见 agent-tool.tsx。
+  agent: { name: "agent", render: AgentTool },
 }
 
 export function registerTool(input: { name: string; render?: ToolComponent }) {
@@ -718,6 +734,9 @@ export function MessageDivider(props: { label: string }) {
     </div>
   )
 }
+
+// 后台子 agent 的完成通知(挂在 synthetic 的 user 消息上,见 UserMessageDisplay)。
+PART_MAPPING["task"] = TaskNotificationDisplay
 
 PART_MAPPING["compaction"] = function CompactionPartDisplay() {
   const i18n = useI18n()

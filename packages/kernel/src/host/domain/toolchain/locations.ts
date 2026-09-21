@@ -306,16 +306,27 @@ export const WELL_KNOWN_LOCATIONS: LocationTable = {
 		darwin: ["/Applications/STMicroelectronics/STM32Cube/STM32CubeProgrammer/STM32CubeProgrammer.app/Contents/MacOs/bin"],
 		linux: [`${HOME}/STMicroelectronics/STM32Cube/STM32CubeProgrammer/bin`, "/usr/local/STMicroelectronics/STM32Cube/STM32CubeProgrammer/bin"],
 	},
-	// idf.py 住在 esp-idf 检出的 tools/ 子目录(仓根没有可执行文件),pattern 直接指进去。
+	// dir 型工具的 pattern 指向**安装根**,不指进子目录:根是不是真的根由预设的 marker 验
+	// (idf 是 tools/idf.py,zephyr-sdk 是 sdk_version),见 entries.ts 的 directoryRoot。
+	// 2026-09-18 之前这两条指进 `tools\` 与 `arm-zephyr-eabi\bin`,解析出来的是文件,而 dir 型
+	// 只认目录 —— 装在默认位置也永远 RECORDED。Zephyr SDK 1.0 起 gcc 搬进了 `gnu\`,旧 pattern
+	// 连目录都对不上了。
+	// 这张表对 idf 只是兜底:官方安装器的准信在 installers.ts(读安装器自己的登记文件)。
+	// 盘符可选同 jlink(实机:D:\Espressif、D:\zephyr-sdk-1.0.1);`esp\<版本>\esp-idf` 是 EIM 的缺省布局。
 	idf: {
-		win32: ["C:\\Espressif\\frameworks\\esp-idf-v*\\tools", `${HOME}\\esp\\esp-idf\\tools`],
-		darwin: [`${HOME}/esp/esp-idf/tools`],
-		linux: [`${HOME}/esp/esp-idf/tools`],
+		win32: [
+			...winDriveVariants("Espressif\\frameworks\\esp-idf*"),
+			...winDriveVariants("esp\\*\\esp-idf"),
+			`${HOME}\\esp\\esp-idf`,
+			`${HOME}\\esp\\*\\esp-idf`,
+		],
+		darwin: [`${HOME}/esp/esp-idf`, `${HOME}/esp/*/esp-idf`, `${HOME}/.espressif/*/esp-idf`],
+		linux: [`${HOME}/esp/esp-idf`, `${HOME}/esp/*/esp-idf`, `${HOME}/.espressif/*/esp-idf`],
 	},
 	"zephyr-sdk": {
-		win32: [`${HOME}\\zephyr-sdk-*\\arm-zephyr-eabi\\bin`, "C:\\zephyr-sdk-*\\arm-zephyr-eabi\\bin"],
-		darwin: [`${HOME}/zephyr-sdk-*/arm-zephyr-eabi/bin`, "/opt/zephyr-sdk-*/arm-zephyr-eabi/bin"],
-		linux: [`${HOME}/zephyr-sdk-*/arm-zephyr-eabi/bin`, "/opt/zephyr-sdk-*/arm-zephyr-eabi/bin"],
+		win32: [`${HOME}\\zephyr-sdk-*`, ...winDriveVariants("zephyr-sdk-*")],
+		darwin: [`${HOME}/zephyr-sdk-*`, "/opt/zephyr-sdk-*"],
+		linux: [`${HOME}/zephyr-sdk-*`, "/opt/zephyr-sdk-*"],
 	},
 	// Keil 只有 Windows;探测的是编译器(armclang/armcc)而不是 UV4 —— 见 families.ts
 	// KEIL 条目的注释(对 GUI spawn --version 会真的弹起 IDE)。装盘符可选,同 jlink;

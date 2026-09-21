@@ -284,7 +284,8 @@ function createServerNotificationState(input: {
     void lookup(directory, sessionID).then((session) => {
       if (meta.disposed) return
       if (!session) return
-      // 原来这里跳过子会话(避免子代理完成也响铃)。内核里 session 之间没有父子。
+      // 子 agent 的会话跑完不响铃:它的结果回到主会话,主 agent 接着那一轮收工时才该提醒(CC 同款)。
+      if (session.parentID) return
 
       if (settings.sounds.agentEnabled()) {
         void playSoundById(settings.sounds.agent())

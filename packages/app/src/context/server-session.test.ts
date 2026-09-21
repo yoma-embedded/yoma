@@ -1,8 +1,8 @@
 import { describe, expect, test } from "vitest"
 import type { retry } from "@yoma-desktop/util/retry"
-import type { MessagePage, Message, Part, Session } from "@yoma-desktop/kernel"
+import type { MessagePage, Message, Part, Session, TaskView } from "@yoma-desktop/kernel"
 import type { Sdk } from "@/utils/kernel"
-import { createServerSession } from "./server-session"
+import { createServerSession, taskAhead } from "./server-session"
 
 const session = (id: string): Session => ({
   id,
@@ -1215,5 +1215,109 @@ describe("server session", () => {
 
     expect(ctx.store.data.message.active?.map((message) => message.id)).toEqual(["message"])
     expect(ctx.store.data.session_status["session-0"]).toBeUndefined()
+  })
+})
+
+const task = (id: string, input: Partial<TaskView> = {}): TaskView => ({
+  id,
+  parentID: "main",
+  agent: "Explore",
+  description: "find the linker script",
+  status: "running",
+  background: false,
+  startedAt: 100,
+  turns: 1,
+  usage: { totalTokens: 0, toolUses: 0, durationMs: 0 },
+  outputFile: `/tmp/${id}.log`,
+  ...input,
+})
+
+describe("子 agent 的任务与收件箱", () => {
+  test("task.updated 按任务 id 落进 task,session.queue 按会话落进 queue", () => {
+    const ctx = setup({})
+    ctx.store.apply({ type: "task.updated", task: task("child-1") })
+    ctx.store.apply({ type: "task.updated", task: task("child-1", { status: "completed", turns: 3 }) })
+    ctx.store.apply({
+      type: "session.queue",
+      sessionID: "main",
+      items: [{ kind: "prompt", entryId: "e1", text: "also check the map file", images: 0 }],
+    })
+
+    expect(ctx.store.data.task["child-1"]?.status).toBe("completed")
+    expect(ctx.store.data.queue.main).toEqual([
+      { kind: "prompt", entryId: "e1", text: "also check the map file", images: 0 },
+    ])
+
+    ctx.store.apply({ type: "session.queue", sessionID: "main", items: [] })
+    expect(ctx.store.data.queue.main).toEqual([])
+  })
+
+  test("种子:补上没见过的;内核重启后列表里没有的'在跑'任务删掉,终态的与别的主会话的留着", () => {
+    const ctx = setup({})
+    ctx.store.apply({ type: "task.updated", task: task("orphan") })
+    ctx.store.apply({ type: "task.updated", task: task("done", { status: "completed" }) })
+    ctx.store.apply({ type: "task.updated", task: task("other", { parentID: "another-main" }) })
+
+    ctx.store.seedTasks("main", [task("fresh")])
+
+    expect(Object.keys(ctx.store.data.task).sort()).toEqual(["done", "fresh", "other"])
+  })
+
+  test("子会话页的种子:列表里是它自己那条;内核重启后没了就删,不停在'在跑'", () => {
+    const ctx = setup({})
+    ctx.store.apply({ type: "task.updated", task: task("child-1") })
+    ctx.store.apply({ type: "task.updated", task: task("child-2") })
+
+    ctx.store.seedTasks("child-1", [])
+    ctx.store.seedTasks("child-2", [task("child-2", { status: "completed", turns: 2 })])
+
+    expect(ctx.store.data.task["child-1"]).toBeUndefined()
+    expect(ctx.store.data.task["child-2"]?.status).toBe("completed")
+  })
+
+  test("种子与事件赛跑:取走得更远的那份", () => {
+    const ctx = setup({})
+    // 请求在路上时到了完成事件:列表里那份"在跑"是旧的,不能把它倒回去。
+    ctx.store.apply({ type: "task.updated", task: task("raced", { status: "completed", turns: 4 }) })
+    // 漏掉了事件(store 停在第 1 轮):列表更新,以列表为准。
+    ctx.store.apply({ type: "task.updated", task: task("missed", { turns: 1 }) })
+    // 续跑:startedAt 更晚的那次运行比上一次的终态新。
+    ctx.store.apply({ type: "task.updated", task: task("resumed", { status: "completed", turns: 9 }) })
+
+    ctx.store.seedTasks("main", [
+      task("raced", { status: "running", turns: 2 }),
+      task("missed", { status: "completed", turns: 5 }),
+      task("resumed", { status: "running", startedAt: 200, turns: 0 }),
+    ])
+
+    expect(ctx.store.data.task.raced?.status).toBe("completed")
+    expect(ctx.store.data.task.missed?.status).toBe("completed")
+    expect(ctx.store.data.task.resumed).toMatchObject({ status: "running", startedAt: 200 })
+  })
+
+  test("taskAhead 的比较次序:startedAt → 阶段 → 轮数 → 工具数;完全相同不算更新", () => {
+    const base = task("t", { turns: 2, usage: { totalTokens: 0, toolUses: 3, durationMs: 0 } })
+    expect(taskAhead(task("t", { startedAt: 101, status: "pending", turns: 0 }), base)).toBe(true)
+    expect(taskAhead(task("t", { status: "killed", turns: 0 }), base)).toBe(true)
+    expect(taskAhead(task("t", { turns: 3, usage: { totalTokens: 0, toolUses: 0, durationMs: 0 } }), base)).toBe(true)
+    expect(taskAhead(task("t", { turns: 2, usage: { totalTokens: 0, toolUses: 4, durationMs: 0 } }), base)).toBe(true)
+    expect(taskAhead(base, task("t", { turns: 2, usage: { totalTokens: 0, toolUses: 3, durationMs: 0 } }))).toBe(false)
+    expect(taskAhead(task("t", { status: "pending" }), base)).toBe(false)
+  })
+
+  test("删主会话:它的任务与收件箱一起清,别的主会话的不动", () => {
+    const ctx = setup({})
+    ctx.store.apply({ type: "task.updated", task: task("child-1") })
+    ctx.store.apply({ type: "task.updated", task: task("child-2", { parentID: "another-main" }) })
+    ctx.store.apply({
+      type: "session.queue",
+      sessionID: "main",
+      items: [{ kind: "notification", entryId: "n1", taskID: "child-1" }],
+    })
+
+    ctx.store.apply({ type: "session.deleted", sessionID: "main" })
+
+    expect(Object.keys(ctx.store.data.task)).toEqual(["child-2"])
+    expect(ctx.store.data.queue.main).toBeUndefined()
   })
 })

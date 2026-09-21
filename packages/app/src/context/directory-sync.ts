@@ -7,9 +7,17 @@ import type { createServerSyncContextInner } from "./server-sync"
 import type { State } from "./global-sync/types"
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
-// 会话内容住在服务器级的 session store 里,目录 store 只持有会话列表。
+// 会话内容住在服务器级的 session store 里,目录 store 只持有会话列表。子 agent 的任务与收件箱同理。
 // 删掉的 session_diff / todo / question:内核没有文件快照、没有 todo 工具、没有问答请求。
-const sessionFields = new Set(["session_status", "session_working", "message", "part", "part_text_accum_delta"])
+const sessionFields = new Set([
+  "session_status",
+  "session_working",
+  "message",
+  "part",
+  "part_text_accum_delta",
+  "task",
+  "queue",
+])
 
 export const createDirSyncContext = (
   directory: string,
@@ -37,7 +45,8 @@ export const createDirSyncContext = (
 
   const index = (sessionID: string) => {
     const session = serverSync.session.get(sessionID)
-    if (!session || session.directory !== directory) return
+    // 子 agent 的会话不进目录的会话列表(与事件归约同一条规矩):打开它只动服务器级的 store。
+    if (!session || session.directory !== directory || session.parentID) return
     const [store, setStore] = current()
     const result = Binary.search(store.session, session.id, (item) => item.id)
     if (result.found) {

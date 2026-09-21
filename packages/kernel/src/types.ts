@@ -9,7 +9,8 @@
  * 相对 opencode 删掉的 Part 变体,以及原因:
  *   step-start / step-finish  yoma 的每轮状态是 turn_start/turn_end 事件,不落 transcript
  *   snapshot / patch          没有文件快照 —— "回滚"只是 navigateTree() 把会话树的 tip 挪回去
- *   subtask                   没有子代理
+ *   subtask                   子 agent 另有形状:派生是 `agent` 工具的 ToolPart,后台完成的通知是 `task` part
+ *                             (TaskNotificationPart,挂在一条 synthetic 的 user 消息上)
  *   agent                     只有一个系统提示词,没有 persona,也没有 @agent 提及的偏移量
  *   retry                     重试在内核里(retry_* 事件),不落 transcript —— 失败仍是一条带 error 的 assistant 消息
  *
@@ -40,7 +41,64 @@ export interface Session {
   }
   cost?: number
   tokens?: Tokens
+  /** 子 agent 的会话:派它的主会话。侧边栏与首页只列没有它的(子会话从卡片与任务面板打开)。 */
+  parentID?: string
+  /** 子 agent 的类型(subagent_type)。重开进程后在会话真正打开之前可能还不知道。 */
+  agent?: string
 }
+
+// ---------------------------------------------------------------------------
+// 子 agent 任务(docs/子agent-设计方案-v0.4-20260918.md §6、§7)
+// ---------------------------------------------------------------------------
+
+export type TaskViewStatus = "pending" | "running" | "completed" | "failed" | "killed"
+
+/**
+ * 一个子 agent 任务此刻的样子:`task.updated` 事件、任务面板、卡片都用它。
+ * 子会话的 busy / idle 与任务的 pending / killed 不是一回事,所以任务状态单走这一条,不复用 session.status。
+ */
+export interface TaskView {
+  /** = 子会话 id(CC 的 agentId)。 */
+  id: string
+  parentID: string
+  agent: string
+  description: string
+  status: TaskViewStatus
+  /** 结果走通知而不是工具结果。 */
+  background: boolean
+  /** 这一次运行开始的时刻(续跑会重置)。 */
+  startedAt: number
+  endedAt?: number
+  /** 已经开始的 assistant 轮数。 */
+  turns: number
+  lastTool?: string
+  usage: { totalTokens: number; toolUses: number; durationMs: number }
+  /** 宿主写的可读进度日志。 */
+  outputFile: string
+  maxTurnsReached?: boolean
+  error?: string
+}
+
+/** 一个能派的 agent(`agent.list`):内建、用户级(`~/.yoma/agents`)或项目级(`.yoma/agents`)。 */
+export interface AgentInfo {
+  name: string
+  description: string
+  source: "built-in" | "user" | "project"
+  /** 工具的一句话说明(与 agent 工具描述里那一行同算法):"All tools" / "All tools except …" / 白名单。 */
+  tools: string
+  /** 定义里钉的模型("provider/modelId");不写 = 跟随主会话。 */
+  model?: string
+  /** 定义要求每次都在后台跑。 */
+  background?: boolean
+}
+
+/**
+ * 会话收件箱里排着的一条(`session.queue` 事件)。`prompt` 是用户在忙的时候发的,界面画在输入框上方,
+ * 点它可以撤回来改;`notification` 是子 agent 的完成通知,只是让界面知道有东西在等,不给撤回。
+ */
+export type QueuedItemView =
+  | { kind: "prompt"; entryId: string; text: string; images: number }
+  | { kind: "notification"; entryId: string; taskID?: string }
 
 export interface Tokens {
   input: number
@@ -88,6 +146,11 @@ export interface UserMessage {
     providerID: string
     modelID: string
   }
+  /**
+   * 不是用户打的字:宿主替后台子 agent 送回来的完成通知(身上是一个 `task` part)。界面画成一行通知而不是用户气泡;
+   * 它仍然是一轮的起点 —— 被它叫醒的那一轮回复挂在它下面(对模型它本来就是 user 角色)。
+   */
+  synthetic?: boolean
 }
 
 export interface AssistantMessage {
@@ -162,7 +225,25 @@ export interface ToolPart extends PartBase {
   state: ToolState
 }
 
-export type Part = TextPart | ReasoningPart | FilePart | ToolPart | CompactionPart
+/**
+ * 后台子 agent 落定后送回主会话的那条通知(`<task-notification>`,docs/子agent-设计方案-v0.4-20260918.md §6.4)。
+ * 模型看到的是 XML;界面从这里拿结构化字段画一行状态 + 可展开的结果。
+ */
+export interface TaskNotificationPart extends PartBase {
+  type: "task"
+  /** = 子会话 id:点开就是那个子会话。 */
+  taskID: string
+  agent: string
+  description: string
+  status: "completed" | "failed" | "killed"
+  /** CC 的那句话:Agent "…" completed / failed: … / was stopped。 */
+  summary: string
+  /** 最终文字;被停时是部分结果。 */
+  result?: string
+  usage?: { totalTokens: number; toolUses: number; durationMs: number }
+}
+
+export type Part = TextPart | ReasoningPart | FilePart | ToolPart | CompactionPart | TaskNotificationPart
 
 export type PartType = Part["type"]
 
@@ -235,6 +316,12 @@ export interface ToolConfirmView {
   input: Record<string, unknown>
   askedAt: number
   status: ToolConfirmStatus
+  /**
+   * 前台子 agent 冒上来的询问:`sessionID` 是显示它的**主会话**,这两个字段说是哪个子 agent 在问
+   * (确认条写"子 agent「…」想运行 …")。主会话自己的询问没有它们。
+   */
+  agent?: string
+  taskID?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -250,7 +337,8 @@ export interface ToolConfirmView {
  * 嵌入式那一套(flash/gdb/la/scope/…)2026-09-10 归零;2026-09-11 起按样板
  * host/tools/<名字>/{contract.ts,session.ts} 逐个重写,首个是 flash;2026-09-12 从 pi 移植了
  * grep / find / ls / powershell;2026-09-14 回来的是 log、toolchain、la 与 gdb
- * (四件套之后先放文件工具,再是这台机器本身,硬件最后)。
+ * (四件套之后先放文件工具,再是这台机器本身,硬件最后)。2026-09-18 末尾加子 agent 四件
+ * (agent / task_output / task_stop / send_message,docs/子agent-设计方案-v0.4-20260918.md §5)。
  * 退役的名字**不必**留在这里:界面按任意工具名走万能卡,旧会话重放照样画得出来。
  */
 export const TOOL_NAMES = [
@@ -271,6 +359,10 @@ export const TOOL_NAMES = [
   "datasheet",
   "netlist",
   "stm32config",
+  "agent",
+  "task_output",
+  "task_stop",
+  "send_message",
 ] as const
 
 export type ToolName = (typeof TOOL_NAMES)[number]
@@ -306,12 +398,17 @@ export interface ToolchainResolvedTool {
   version?: string
   wanted?: string
   candidates?: string[]
-  /** "managed" = Yoma 自己装进 ~/.yoma/toolchains 的(domain/toolchain/install.ts)。 */
-  source?: "local" | "ledger" | "managed" | "env" | "path" | "well-known" | "registry"
+  /**
+   * "managed" = Yoma 自己装进 ~/.yoma/toolchains 的(domain/toolchain/install.ts);
+   * "installer" = 厂商安装器自己的登记文件(domain/toolchain/installers.ts)。
+   */
+  source?: "local" | "ledger" | "managed" | "env" | "installer" | "path" | "well-known" | "registry"
   hint?: string
   why?: string
   /** 非 ok 且目录(catalog.ts)对这台机器有包时给出 —— 设置页的"安装"按钮看它。 */
   installable?: ToolchainInstallableView
+  /** 安装器登记文件顺带说的事实("python: …")。 */
+  notes?: string[]
 }
 
 /** domain/toolchain `Installable` 的结构化复制:能自动装什么、多大。 */
@@ -470,6 +567,24 @@ export interface SessionNotFoundError {
 export function sessionNotFound(sessionID: string): Error & { data: SessionNotFoundError } {
   const error = new Error(`未知会话 ${sessionID}`) as Error & { data: SessionNotFoundError }
   error.data = { _tag: "SessionNotFoundError", sessionID, message: error.message }
+  return error
+}
+
+/**
+ * 往子 agent 的会话里直接发消息。子 agent 只听主 agent 的(续跑走 send_message),永远看不到用户的输入流 ——
+ * CC 同款。结构化同 SessionNotFoundError:前端据此把子会话页的输入框收起来,而不是弹错误页。
+ */
+export interface SubagentSessionError {
+  _tag: "SubagentSessionError"
+  sessionID: string
+  message: string
+}
+
+export function subagentSession(sessionID: string): Error & { data: SubagentSessionError } {
+  const error = new Error("这是子 agent 的会话,只能由主 agent 经 send_message 续跑") as Error & {
+    data: SubagentSessionError
+  }
+  error.data = { _tag: "SubagentSessionError", sessionID, message: error.message }
   return error
 }
 

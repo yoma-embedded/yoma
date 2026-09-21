@@ -23,6 +23,17 @@ export interface ToolSpec {
 	binMode?: "all" | "any";
 	/** dir 仅记录资源位置,不启动程序、不宣称可执行。默认 exe。 */
 	pathKind?: "exe" | "dir";
+	/**
+	 * dir 型专用:相对安装根的标志文件("tools/idf.py"、"sdk_version"),正斜杠、不带扩展名
+	 * (PATHEXT 展开同 bin)。它回答两件事:**这个目录是不是安装根**(用户贴了个不相干的目录
+	 * 时明说,而不是照样 CONFIGURED),以及**贴深了怎么归位**(贴的是 `<根>\tools` 或
+	 * `<根>\tools\idf.py` 时往上找回根)。有它,dir 型工具才参与自动发现 —— 没有标志文件的目录
+	 * 无从确认,只认显式记录。dir 型的 `bin` 不参与解析(2026-09-18 之前 IDF 预设同时写了
+	 * dir + bin,自动发现与 set 都按 bin 记下一个**文件**,而解析器只认目录,永远 RECORDED)。
+	 */
+	marker?: string;
+	/** 版本探针的参数,缺省 `["--version"]`。esptool 只认子命令 `version`,对它跑 --version 是打印 usage 后失败。 */
+	versionArgs?: string[];
 	/** 版本范围,如 ">=3.22"、"^3.11"、"12"。语法由 version.ts 的 satisfies() 认。 */
 	version?: string;
 	/** 缺省 "mother"。 */
@@ -222,6 +233,22 @@ export function parseManifest(text: string): ParseManifestResult {
 		}
 		if (tool.bin !== undefined && (!Array.isArray(tool.bin) || tool.bin.some((name) => typeof name !== "string" || !name.trim()))) {
 			return { ok: false, error: `${MANIFEST_RELATIVE}: tools[${i}].bin must be an array of non-empty names` };
+		}
+		if (
+			tool.versionArgs !== undefined &&
+			(!Array.isArray(tool.versionArgs) || tool.versionArgs.some((arg) => typeof arg !== "string" || !arg.trim()))
+		) {
+			return { ok: false, error: `${MANIFEST_RELATIVE}: tools[${i}].versionArgs must be an array of non-empty strings` };
+		}
+		// 绝对路径已被上面的全文档扫描拦下;这里只剩"往上爬"要拦 —— 标志文件必须在安装根之内。
+		if (
+			tool.marker !== undefined &&
+			(typeof tool.marker !== "string" || !tool.marker.trim() || tool.marker.split(/[\\/]/).includes(".."))
+		) {
+			return {
+				ok: false,
+				error: `${MANIFEST_RELATIVE}: tools[${i}].marker must be a relative path inside the install directory (e.g. "tools/idf.py")`,
+			};
 		}
 	}
 

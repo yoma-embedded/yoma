@@ -7,6 +7,7 @@ import {
   errorMessage,
   homeProjectDirectories,
   latestRootSession,
+  sortedRootSessions,
   toggleHomeProjectSelection,
 } from "./helpers"
 import { pathKey } from "@/utils/path-key"
@@ -58,6 +59,23 @@ describe("layout workspace helpers", () => {
     )
 
     expect(result?.id).toBe("workspace")
+  })
+
+  test("子 agent 的会话(带 parentID)不算根会话:侧栏、首页、最近会话都不列", () => {
+    const store = {
+      path: { directory: "/workspace" },
+      session: [
+        session({ id: "main", directory: "/workspace", time: { created: 1, updated: 1, archived: undefined } }),
+        session({
+          id: "child",
+          directory: "/workspace",
+          parentID: "main",
+          time: { created: 9, updated: 9, archived: undefined },
+        }),
+      ],
+    }
+    expect(sortedRootSessions(store, 120_000).map((item) => item.id)).toEqual(["main"])
+    expect(latestRootSession([store], 120_000)?.id).toBe("main")
   })
 
   test("ignores archived sessions when finding latest root session", () => {

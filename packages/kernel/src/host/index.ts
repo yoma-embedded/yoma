@@ -74,7 +74,12 @@ export interface KernelHostOptions {
    */
   confirmTools?: SessionManagerOptions["confirmTools"]
   /**
-   * 授权策略(版本 + 可信公钥)。**生产一律不传** —— 不传就是这个构建编译期注入的那一份
+   * 子 agent 的宿主选项。**bench 与信箱工位端传 `{ background: false }`**(无人值守,按 idle 判一轮结束,
+   * 后台子 agent 会让 idle 说谎)。详见 SessionManagerOptions。
+   */
+  subagents?: SessionManagerOptions["subagents"]
+  /**
+   * 授权策略(强不强制 + 可信公钥)。**生产一律不传** —— 不传就是这个构建编译期注入的那一份
    * (`licensing/policy.ts`),正式包因此没有任何运行时入口能换掉它。传它的只有测试:
    * 这是代码级的函数参数,不从 StartCommand、配置文件、环境变量取值。
    */
@@ -116,6 +121,7 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     toolchainSide: options.toolchainSide,
     toolchainManifestText: options.toolchainManifestText,
     confirmTools: options.confirmTools,
+    subagents: options.subagents,
     installRegistry: installs,
     license,
     emit: (events) => sink.push(events),
@@ -141,7 +147,8 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
         enginesDir: options.enginesDir,
       }),
 
-    "session.list": ({ directory }) => sessions.list(directory),
+    // 只列主会话:子 agent 的会话不进侧边栏与首页(CC 同款),从卡片与任务面板打开;列进来还会占掉目录列表的配额。
+    "session.list": async ({ directory }) => (await sessions.list(directory)).filter((session) => !session.parentID),
     "session.get": ({ sessionID }) => sessions.get(sessionID),
     "session.create": ({ directory, title }) => sessions.create(directory, title),
     "session.delete": ({ sessionID }) => sessions.delete(sessionID),
@@ -150,10 +157,22 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     "session.messages": async ({ sessionID }) => sessions.messages(sessionID),
     "session.prompt": ({ sessionID, input }) => sessions.prompt(sessionID, input),
     "session.abort": ({ sessionID }) => sessions.abort(sessionID),
+    "session.cancelQueued": ({ sessionID, entryId }) => sessions.cancelQueued(sessionID, entryId),
     "session.compact": ({ sessionID }) => sessions.compact(sessionID),
     "session.navigate": ({ sessionID, messageID }) => sessions.navigate(sessionID, messageID),
     "session.setModel": ({ sessionID, providerID, modelID, thinking }) =>
       sessions.setModel(sessionID, providerID, modelID, thinking),
+
+    // 子 agent(docs/子agent-设计方案-v0.4-20260918.md §7)。
+    "agent.list": ({ directory }) => sessions.agents(directory),
+    "task.list": async ({ sessionID }) => sessions.tasks(sessionID),
+    "task.stop": async ({ taskID }) => {
+      const outcome = await sessions.stopTask(taskID)
+      return outcome.ok
+        ? { stopped: true, status: outcome.task.status }
+        : { stopped: false, ...(outcome.reason === "not_running" ? { status: outcome.status } : {}) }
+    },
+    "task.background": async ({ taskID }) => ({ moved: sessions.backgroundTask(taskID) }),
 
     "model.list": () => sessions.providers(),
     // 唯一一条主动碰模型目录网络的 RPC(开会话只恢复磁盘缓存)。设置页的"刷新模型列表"走它。

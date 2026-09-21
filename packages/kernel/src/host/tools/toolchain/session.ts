@@ -21,18 +21,23 @@ import { executionEnvSnapshot } from "../../domain/execution-env.ts"
 import {
   catalogPackageFor,
   declaredToolSpec,
+  directoryDetail,
   installKey,
   installToolchain,
+  isSettled,
+  presetToolIds,
   recordToolchainPath,
   rememberFreshResults,
   resolveToolchain,
   satisfies,
+  surveyManifestText,
   type InstallProgress,
   type InstallRegistry,
   type ResolvedTool,
   type ToolchainResolution,
 } from "../../domain/toolchain/index.ts"
 import {
+  MANIFEST_FORMAT_HELP,
   MANIFEST_PATH,
   TOOLCHAIN_CONTRACT,
   type ToolchainAction,
@@ -68,6 +73,11 @@ export interface ToolchainToolOptions {
   installRegistry?: InstallRegistry
   /** 测试注入:替代真实的 installToolchain(它会真的联网下载几百 MB)。 */
   installer?: typeof installToolchain
+  /**
+   * 测试注入:项目没有清单时拿来普查机器的那份虚拟清单,缺省是全部预设工具(families.ts 的
+   * surveyManifestText)。真的那份会去碰开发机的已知安装位置与注册表,断言就看跑测试的机器的脸色了。
+   */
+  surveyManifestText?: string
 }
 
 // ─── 渲染:ResolvedTool → 人话一行 ────────────────────────────────────────────
@@ -96,9 +106,16 @@ export function renderToolLine(tool: ResolvedTool): string {
   const need = tool.wanted ? ` (needs ${tool.wanted})` : ""
   switch (tool.status) {
     case "configured":
-      return `- ${label}: CONFIGURED — ${Object.values(tool.bin).join(", ")}; directory recorded, capability validation belongs to its resource provider`
-    case "recorded":
-      return `- ${label}: RECORDED — ${(tool.candidates ?? Object.values(tool.bin)).join(", ")}; no declared executable entry located`
+      // 终态:目录资源不跑 --version,到不了 OK。话要说成"就是它、照着用",不是"还差一步"。
+      return `- ${label}: CONFIGURED — ${directoryDetail(tool)}; a directory, not a program — not on PATH, nothing was executed to check it`
+    case "recorded": {
+      const where = (tool.candidates ?? Object.values(tool.bin)).join(", ")
+      // dir 型 + 声明了标志文件:点名缺哪个文件,模型才知道该换哪个目录,而不是原地重试。
+      if (tool.checks?.execution === "not-applicable" && tool.missingBins?.length) {
+        return `- ${label}: RECORDED — ${where}; that directory does not contain ${tool.missingBins.join(", ")}, so it is not this tool's install directory — set the directory that does`
+      }
+      return `- ${label}: RECORDED — ${where}; no declared executable entry located`
+    }
     case "unverified":
       return `- ${label}: UNVERIFIED${need} — ${Object.values(tool.bin).join(", ")}; ${tool.missingBins?.length ? `missing required entries: ${tool.missingBins.join(", ")}` : "execution/version probe did not pass; the explicit entry remains available, readiness is not confirmed"}`
     case "ok": {
@@ -128,19 +145,57 @@ function toolSummaries(resolution: ToolchainResolution): ToolchainDetails["tools
   return resolution.tools.map((tool) => ({ id: tool.id, status: tool.status, optional: tool.optional }))
 }
 
+/**
+ * 项目没有清单时的回复:**这台机器上有什么** + 清单怎么写。
+ *
+ * 从前这里只有一句"没有清单",关于机器一个字不说 —— 而绝大多数项目没有清单,空工程刚开局尤其。
+ * 2026-09-18 的会话:模型照守则先跑 check,得到那一句,只好 `command -v idf.py`,而 IDF 不在 PATH 上,
+ * 于是断言"这台机器上没有任何 ESP32 工具链"并开始 pip 装 esptool;IDF 就装在 D 盘。工具链是电脑的
+ * 属性(families.ts 的文件头),设置页按电脑查、查得到,agent 这个入口却被项目文件挡在门外。
+ *
+ * 只列找到的,没找到的折成一行:二十个 MISSING 连同各自的安装提示会把真正有用的那几行淹掉。
+ * 普查里的工具一律 optional(没有"必须有"),渲染时把这个标记摘掉,否则每行都拖着 "(optional)"。
+ */
+function renderSurvey(
+  survey: ToolchainResolution,
+  action: ToolchainAction,
+): { text: string; details: ToolchainDetails } {
+  const found = survey.tools.filter((tool) => tool.status !== "missing")
+  const missing = survey.tools.filter((tool) => tool.status === "missing")
+  const installable = missing.filter((tool) => tool.installable).map((tool) => tool.id)
+  const freshNote = action === "resolve" ? " — freshly probed, saved for later sessions on this machine" : ""
+  const machine = [
+    `Tools Yoma knows about, as found on this machine${freshNote} (ledger, environment variables, vendor installer records, PATH, usual install locations):`,
+    found.length > 0
+      ? found.map((tool) => renderToolLine({ ...tool, optional: false })).join("\n")
+      : "(none of the known tools were found)",
+  ]
+  if (missing.length > 0) machine.push(`Not found here: ${missing.map((tool) => tool.id).join(", ")}.`)
+  if (installable.length > 0) {
+    machine.push(`Yoma can install these itself when one is needed (toolchain install): ${installable.join(", ")}.`)
+  }
+  machine.push(
+    "If something the user says is installed is not listed, ask where it is and record it with set — do not go searching the disks.",
+  )
+  const text = [
+    `No toolchain manifest found (expected ${MANIFEST_PATH}) — this project hasn't declared its host tools yet.`,
+    "",
+    ...machine,
+    "",
+    "Want a manifest so every later session (and any other machine) checks the same list? Offer to draft one from the build files — ask the user first, never generate it unprompted.",
+    MANIFEST_FORMAT_HELP,
+    `Known ids: ${presetToolIds().join(", ")}.`,
+  ].join("\n")
+  return {
+    text,
+    details: { action, ok: true, declared: false, side: survey.side, tools: toolSummaries({ ...survey, tools: found }) },
+  }
+}
+
 function renderResolution(
   resolution: ToolchainResolution,
   action: ToolchainAction,
 ): { text: string; details: ToolchainDetails } {
-  if (!resolution.manifest) {
-    const text = [
-      `No toolchain manifest found (expected ${MANIFEST_PATH}) — this project hasn't declared any host toolchain requirements.`,
-      "",
-      "Want me to draft one from the build files (CMakeLists.txt, Makefile, ...)? Ask the user first — don't generate it unprompted.",
-    ].join("\n")
-    return { text, details: { action, ok: true, declared: false, side: resolution.side } }
-  }
-
   const freshNote = action === "resolve" ? " — freshly probed, saved for later sessions on this machine" : ""
   const header = `Toolchain requirements from ${resolution.manifestPath ?? MANIFEST_PATH} (side: ${resolution.side})${freshNote}:`
   const body =
@@ -197,11 +252,24 @@ export function createToolchainTool(
         env: invocationOptions.env,
         manifestText: options.manifestText,
       })
+      // 没有清单:拿全部预设工具普查这台机器(见 renderSurvey)。只在工具调用里做,不进会话开启那条
+      // 关键路径 —— 注册表那一档是同步的,装了很多软件的机器上要几百毫秒到一两秒。
+      const survey = resolution.manifest
+        ? undefined
+        : await resolveToolchain({
+            projectDir: cwd,
+            configDir: options.configDir,
+            skipLedger: action === "resolve",
+            side: options.side,
+            platform: options.platform,
+            env: invocationOptions.env,
+            manifestText: options.surveyManifestText ?? surveyManifestText(),
+          })
       if (action === "resolve") {
-        await rememberFreshResults(resolution, options.configDir)
+        await rememberFreshResults(survey ?? resolution, options.configDir)
         await options.onInstalled?.()
       }
-      const rendered = renderResolution(resolution, action)
+      const rendered = survey ? renderSurvey(survey, action) : renderResolution(resolution, action)
       return { content: [{ type: "text", text: rendered.text }], details: rendered.details }
     },
   }
@@ -223,18 +291,34 @@ async function runSet(
   const given = params.path?.trim()
   if (!given) throw new Error('toolchain set requires "path" (the absolute path the user gave you)')
 
+  // 清单条目并上预设;清单里没有这个 id(或压根没有清单)时就是预设本身 —— 模型常常先 set 后写清单。
   const spec = await declaredToolSpec({ id, projectDir: cwd, manifestText: options.manifestText })
-  const recorded = await recordToolchainPath({
-    id,
-    path: given,
-    configDir: options.configDir,
-    bins: spec?.bin,
-    env: options.env,
-    probe: spec?.pathKind === "dir" ? "exists" : "version",
-  })
+  const recorded = await recordToolchainPath({ id, path: given, configDir: options.configDir, env: options.env, spec })
   await options.onInstalled?.()
+
+  // 记完当场核这一个工具,把状态写进回复。从前只说"Recorded … finds it automatically",而那条路径
+  // 核出来可能是 RECORDED(没落定)—— 模型拿到一句成功的话,要再跑一次 check 才发现没成,然后原地重试。
+  // 单工具的临时清单:from 摘掉(它指向的 provider 不在这份清单里,过不了 parseManifest;预设会补回来),
+  // side 钉 both(别被这一侧的筛选滤掉)。local 覆盖仍然压过账本,结果里的来源会如实说。
+  const status = await resolveToolchain({
+    projectDir: cwd,
+    configDir: options.configDir,
+    side: options.side,
+    platform: options.platform,
+    env: options.env,
+    manifestText: JSON.stringify({ schema: "yoma/toolchain@1", tools: [{ ...spec, id, from: undefined, side: "both" }] }),
+  }).then(
+    (resolution) => resolution.tools[0],
+    () => undefined,
+  )
   const versionNote = recorded.version ? ` (version ${recorded.version})` : ""
-  const text = `Recorded ${recorded.id} -> ${recorded.binPath}${versionNote}. Every later session on this machine finds it automatically — no need to ask again.`
+  const head = `Recorded ${recorded.id} -> ${recorded.binPath}${versionNote}.`
+  const text =
+    status === undefined
+      ? `${head} Every later session on this machine finds it automatically — no need to ask again.`
+      : isSettled(status.status)
+        ? `${head} Every later session on this machine finds it automatically — no need to ask again.\nStatus now:\n${renderToolLine(status)}`
+        : `${head} The path is saved, but the tool is NOT ready yet:\n${renderToolLine(status)}`
   return { content: [{ type: "text", text }], details: { action: "set", ok: true, id } }
 }
 

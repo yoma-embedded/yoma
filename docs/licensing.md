@@ -253,7 +253,7 @@ npm run license -- issue \
 | `packages/app/src/components/settings-v2/` | 设置 → 授权 页;`packages/app/src/licensing/purchase.ts` 购买信息集中配置 |
 | `scripts/license.ts` + `scripts/license/lib.ts` | 签发工具(不在任何产物入口的依赖图上) |
 | `packages/desktop/scripts/e2e-license*.ts` | 授权闭环的真进程 e2e(`npm run e2e:license -w packages/desktop`) |
-| `packages/kernel/src/host/license-entrypoints.test.ts` | 守门:会话间里碰 `lane.accept / drive / compact` 的方法必须先过检查且排在 `stop()` 之前;三个产物入口不许出现授权的测试接缝 |
+| `packages/kernel/src/host/license-entrypoints.test.ts` | 守门:碰 `lane.accept / drive / compact` 的只有 `runOperation`(私有)与 `compact`;`runOperation` 的调用者恰好是 `admitPrompt`(只有 `prompt()` 能到,检查排在分岔、`stop()`、`ensureOpen()` 之前)、`wake`(空 prompt)、`runChild`(只经 `taskPort()`);`lane.steer` 的调用者是一张固定的表;会话间之外没有人驱动 lane;三个产物入口不许出现授权的测试接缝 |
 
 ### 能启动付费执行的入口,以及各自经过哪道检查
 
@@ -263,8 +263,11 @@ npm run license -- issue \
 | 入口 | 路径 | 检查 |
 |---|---|---|
 | 桌面端发送 / 改上一条重发 | renderer → MessagePort → `session.prompt` | `SessionManager.prompt()` |
+| 忙时发的消息(排进收件箱,下一个工具边界被正在跑的那一轮取走) | 同上,`prompt()` → `admitPrompt()` → `lane.steer` | `SessionManager.prompt()` —— 检查排在"起一轮 / 排队"的分岔**之前**:给一轮已接受的执行续一句新的用户输入,也是一次新的付费执行 |
 | 桌面端手动压缩 | `session.compact` | `SessionManager.compact()` |
 | 轮内自动压缩、provider 重试 | 已接受轮次的一部分 | 不再检查(刻意) |
+| 子 agent 的每一轮(首轮、`send_message` 续跑) | 已接受轮次里的 `agent` / `send_message` 工具 → TaskManager → `runChild()` | 不再检查(刻意):它是那一轮派出去的活。没有任何 RPC 能直接起子 agent;子会话也不接用户的话 |
+| 子 agent 完成通知叫醒主会话(`wake()`),含重开会话时取走上个进程留下的收件箱 | `runOperation({ prompt: [] })`,空 prompt | 不再检查(刻意):只取走收件箱里**已有**的东西(完成通知、过了检查才排进来的用户消息),带不进新的用户输入。到期后这条路最多把已接受的工作汇报完 |
 | 调试台 / 信箱:启动、崩溃重启 | main 的 `MailboxController.start()` → 守护 `mailbox-host.mjs` | main 护栏 + 守护启动检查(退出码 4)|
 | 调试台 / 信箱:后续每一轮 | 守护 `runnerStep` / `motherStep` | 轮次边界检查 → `license-paused`;turn 子进程内还有 `SessionManager.prompt()` 兜底 |
 | 打包的 turn 子进程 `mailbox-turn-entry.mjs` | `runTurn` → `createKernelHost` → `session.prompt` | `SessionManager.prompt()` |
@@ -276,7 +279,8 @@ npm run license -- issue \
 
 ### 生命周期
 
-- 检查只发生在**开始一次新的付费执行**的那一刻。通过之后,这一轮(含工具调用、轮内压缩、重试)跑到自然结束。
+- 检查只发生在**开始一次新的付费执行**的那一刻(用户的每一句新话:空闲时起一轮的、忙时排队的都算)。通过之后,这一轮
+  (含工具调用、轮内压缩、重试、它派出去的子 agent、子 agent 完成通知叫醒的续轮)跑到自然结束。
 - `LicenseService` 不缓存:每次检查重新读盘 + 验签 + 对钟。于是桌面内核导入续费授权之后,**另一个进程**里暂停着的
   调试台守护下一次轮询就看得见,不需要任何进程间通知,也不需要重启。
 - 调试台的暂停是一种独立的步结果(`license-paused`)与控制器状态(`paused`),不写 result / decision / verdict,

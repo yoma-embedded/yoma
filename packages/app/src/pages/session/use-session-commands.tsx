@@ -70,7 +70,10 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     if (!id) return []
     return sync().data.message[id] ?? []
   }
-  const userMessages = () => messages().filter((m) => m.role === "user") as UserMessage[]
+  // 只算用户真打的字:子 agent 的完成通知也是 user 角色(synthetic),"改上一条重发"不该退到它前面。
+  const userMessages = () => messages().filter((m) => m.role === "user" && !m.synthetic) as UserMessage[]
+  // 子 agent 的会话:没有输入框,"改上一条重发"与手动压缩都不归用户(它的对话是主 agent 在驱动)。
+  const subagent = () => !!params.id && !!sync().session.get(params.id)?.parentID
 
   const showAllFiles = () => {
     if (layout.fileTree.tab() !== "changes") return
@@ -201,7 +204,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       title: language.t("command.session.undo"),
       description: language.t("command.session.undo.description"),
       slash: "undo",
-      disabled: !params.id || userMessages().length === 0,
+      disabled: !params.id || subagent() || userMessages().length === 0,
       onSelect: rewind,
     }),
     sessionCommand({
@@ -209,7 +212,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       title: language.t("command.session.compact"),
       description: language.t("command.session.compact.description"),
       slash: "compact",
-      disabled: !params.id || userMessages().length === 0,
+      disabled: !params.id || subagent() || userMessages().length === 0,
       onSelect: compact,
     }),
   ]

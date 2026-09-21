@@ -5,9 +5,17 @@
  * 流式文本先截断再长回来看起来像"网络抖动"。所以必须在这一层钉死。
  */
 import { describe, expect, test } from "vitest"
-import type { AssistantMessage, AssistantMessageEvent, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai"
+import type {
+  AssistantMessage,
+  AssistantMessageEvent,
+  JsonValue,
+  ToolResultMessage,
+  UserMessage,
+} from "@earendil-works/pi-ai"
+import { createCustomMessage } from "@earendil-works/pi-agent-core"
 import type { AgentMessage, BranchSummaryEntry, CompactionEntry, CustomEntry } from "@earendil-works/pi-agent-core"
 
+import { formatTaskNotification, TASK_NOTIFICATION_TYPE } from "./domain/agents/notification.ts"
 import { removalEvents, SessionProjection } from "./projector.ts"
 import type { KernelEvent } from "../protocol.ts"
 import { sortKeyOf } from "../ids.ts"
@@ -53,7 +61,7 @@ function assistant(
   }
 }
 
-function toolResult(toolCallId: string, text: string, details?: unknown, timestamp = T0 + 5): ToolResultMessage {
+function toolResult(toolCallId: string, text: string, details?: JsonValue, timestamp = T0 + 5): ToolResultMessage {
   return {
     role: "toolResult",
     toolCallId,
@@ -568,5 +576,73 @@ describe("removalEvents", () => {
   test("什么都没变就一条事件都不发", () => {
     const same = [snap("msg_a", "prt_a0")]
     expect(removalEvents("ses_1", same, same)).toEqual([])
+  })
+})
+
+describe("子 agent 的完成通知", () => {
+  /** 宿主投递的那条 custom 消息(host/tasks.ts 的 notify 同形)。 */
+  function notification(result: string, timestamp = T0 + 20): AgentMessage {
+    const usage = { totalTokens: 1234, toolUses: 3, durationMs: 4567 }
+    return createCustomMessage(
+      TASK_NOTIFICATION_TYPE,
+      formatTaskNotification({
+        taskID: "task-1",
+        toolCallID: "call-1",
+        outputFile: "/tmp/yoma/ses/tasks/task-1.output",
+        status: "completed",
+        description: "查时钟树",
+        result,
+        usage,
+      }),
+      true,
+      { taskID: "task-1", agent: "Explore", description: "查时钟树", status: "completed", usage },
+      timestamp,
+    )
+  }
+
+  test("投成 synthetic 的 user 消息 + task part,字段取 details 与 XML 原文", () => {
+    const events = replay([user("派个子 agent"), notification("HSE 8 MHz → PLL 168 MHz")])
+    const message = events.flatMap((e) => (e.type === "message.updated" ? [e.message] : [])).at(-1)!
+    expect(message).toMatchObject({ role: "user", synthetic: true })
+    const [part] = partsOf(events).filter((p) => p.messageID === message.id)
+    expect(part).toEqual({
+      id: expect.any(String),
+      sessionID: "ses_test",
+      messageID: message.id,
+      type: "task",
+      taskID: "task-1",
+      agent: "Explore",
+      description: "查时钟树",
+      status: "completed",
+      summary: 'Agent "查时钟树" completed',
+      result: "HSE 8 MHz → PLL 168 MHz",
+      usage: { totalTokens: 1234, toolUses: 3, durationMs: 4567 },
+    })
+  })
+
+  test("它是一轮的起点:被它叫醒的回复挂在它下面,不挂到上一个用户轮", () => {
+    const p = projection()
+    const events = [
+      user("派个子 agent"),
+      assistant([{ type: "text", text: "派出去了" }]),
+      notification("结果"),
+      assistant([{ type: "text", text: "收到结果" }], {}, T0 + 21),
+    ].flatMap((m) => p.applyMessage(m))
+    const messages = events.flatMap((e) => (e.type === "message.updated" ? [e.message] : []))
+    const [firstUser, firstReply, note, wokenReply] = messages
+    expect(firstReply).toMatchObject({ role: "assistant", parentID: firstUser!.id })
+    expect(note).toMatchObject({ role: "user", synthetic: true })
+    expect(wokenReply).toMatchObject({ role: "assistant", parentID: note!.id })
+  })
+
+  test("result 里碰巧带着 </result> 与 usage 标签也不串:取到最后一个 </result>", () => {
+    const tricky = "先看 <result>内层</result>,再说 <total_tokens>99</total_tokens>"
+    const [part] = partsOf(replay([notification(tricky)])).filter((p) => p.type === "task")
+    expect(part).toMatchObject({ result: tricky, usage: { totalTokens: 1234 } })
+  })
+
+  test("live 与重放同一条路:逐字节相同", () => {
+    const history = [user("派个子 agent"), notification("结果")]
+    expect(JSON.stringify(replay(history))).toBe(JSON.stringify(replay(history)))
   })
 })

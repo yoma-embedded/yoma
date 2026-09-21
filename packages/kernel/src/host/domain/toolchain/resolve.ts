@@ -6,8 +6,9 @@
  * "版本不对要不要继续找"这些判断全在这一个文件里。
  *
  * 探测顺序(每一档能被更早的档覆盖,来源见 ResolveSource):
- *   local(项目级手动覆盖) > ledger(这台机器上次确认过的) > env(清单点名的环境变量)
- *   > path(PATH 扫描) > well-known(平台已知安装位置) > registry(Windows 注册表)
+ *   local(项目级手动覆盖) > ledger(这台机器上次确认过的) > managed(Yoma 自己装的)
+ *   > env(清单点名的环境变量) > installer(厂商安装器的登记文件) > path(PATH 扫描)
+ *   > well-known(平台已知安装位置) > registry(Windows 注册表)
  * 项目 local 与用户账本记录是明确选择:失效或版本不符也原样报告,不静默换版本。
  * 自动发现的候选不满足时才继续后续档位。
  * local/ledger/env/path 四档天然只产出一个候选;well-known/registry 可能在同一档
@@ -31,13 +32,15 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { type HostKey, hostKey, type Installable, installableFor } from "./catalog.ts";
+import { applyPresetDefaults } from "./families.ts";
 import { listManagedInstalls } from "./install.ts";
+import { installerFacts, installerRecords } from "./installers.ts";
 import { readLedger, readLocalOverrides } from "./ledger.ts";
 import type { Ledger, LedgerEntry } from "./ledger.ts";
-import { findEnvKey, findOnPath, registryCandidates, wellKnownCandidates, withPath } from "./locations.ts";
+import { findEnvKey, findOnPath, type LocationTable, registryCandidates, wellKnownCandidates, withPath } from "./locations.ts";
 import { installHint, manifestForSide, MANIFEST_RELATIVE, parseManifest } from "./schema.ts";
 import type { ToolchainManifest, ToolSpec } from "./schema.ts";
-import { executableEntries, pathType } from "./entries.ts";
+import { directoryRoot, executableEntries } from "./entries.ts";
 import { probeExecutable, satisfies } from "./version.ts";
 
 export type ToolStatus = "ok" | "configured" | "recorded" | "unverified" | "version-mismatch" | "ambiguous" | "missing";
@@ -50,8 +53,21 @@ export interface ToolChecks {
  * "managed" = Yoma 自己装进 `<configDir>/toolchains/` 的(install.ts),排在账本之后、
  * 环境变量之前:skipLedger 的新鲜探测也必须找得到它,否则设置页"重新探测"一按,
  * 刚装好的工具就报 MISSING。
+ *
+ * "installer" = 厂商安装器自己的登记文件(installers.ts),排在环境变量之后、PATH 之前:它说的是
+ * 这台机器上的事实,装在哪个盘都对;well-known 只是"大概率"。
  */
-export type ResolveSource = "local" | "ledger" | "managed" | "env" | "path" | "well-known" | "registry";
+export type ResolveSource = "local" | "ledger" | "managed" | "env" | "installer" | "path" | "well-known" | "registry";
+
+/**
+ * 这个状态不需要任何人再做什么。`configured` 是 dir 型工具的**终态**(目录资源不跑 --version,
+ * 永远到不了 ok)—— 2026-09-16 引入它时汇总仍只认 ok,于是 IDF 配好了也永远挂在
+ * "needing attention" 里,而没有任何动作能把它摘下来(2026-09-18 会话里模型为此多转了一轮)。
+ * 它仍然不是 ok:不进 PATH、不宣称可执行(hasExecutableEntries 不认它)。
+ */
+export function isSettled(status: ToolStatus): boolean {
+	return status === "ok" || status === "configured";
+}
 
 export interface ResolvedTool {
 	id: string;
@@ -70,6 +86,8 @@ export interface ResolvedTool {
 	why?: string;
 	/** 非 ok 且 catalog.ts 对这台机器(平台-架构)有包时给出:UI 的"安装"按钮与提示词的自助安装建议都看它。 */
 	installable?: Installable;
+	/** 安装器登记文件顺带说的事实("python: …"、"activation script: …"),与来源档位无关,见 installers.ts。 */
+	notes?: string[];
 }
 
 export interface ToolchainResolution {
@@ -77,8 +95,9 @@ export interface ToolchainResolution {
 	manifest?: ToolchainManifest;
 	side: "mother" | "runner";
 	tools: ResolvedTool[];
-	/** 所有非 optional 的都 status==="ok"。 */
+	/** 所有非 optional 的都已落定(isSettled:ok,或 dir 型的 configured)。 */
 	ok: boolean;
+	/** 还没落定的(含 optional 的)。 */
 	needsAttention: ResolvedTool[];
 }
 
@@ -145,6 +164,10 @@ function dedupe(items: string[]): string[] {
 	return [...new Set(items)];
 }
 
+function nonEmpty<T>(items: T[]): T[] | undefined {
+	return items.length > 0 ? items : undefined;
+}
+
 // ─── 七档里的前四档:local / ledger / env / path,天然只产出一个候选 ─────────────
 
 /**
@@ -169,7 +192,25 @@ function envHits(tool: ToolSpec, env: NodeJS.ProcessEnv): Hit[] {
 	return [];
 }
 
+/**
+ * 厂商安装器登记的位置(installers.ts)。dir 型(idf)登记的是安装根,原样递下去由 directoryRoot 验;
+ * exe 型(esptool:IDF 的 Python 环境里那一份)登记的是可执行文件所在目录,在里面解析声明的入口名 ——
+ * 别把目录当入口递下去。
+ */
+function installerHits(tool: ToolSpec, platform: string, env: NodeJS.ProcessEnv): Hit[] {
+	const records = installerRecords(tool.id, platform, env);
+	if (tool.pathKind === "dir") return records.map((record) => ({ [tool.id]: record.dir }));
+	const names = tool.bin ?? [];
+	if (names.length === 0) return [];
+	return records.flatMap((record) => {
+		const bin = resolveNamesInDirs(names, [record.dir], env);
+		return bin ? [bin] : [];
+	});
+}
+
 function pathHits(tool: ToolSpec, env: NodeJS.ProcessEnv): Hit[] {
+	// dir 型记的是安装根,PATH 上没有这种东西(export 之后 `<根>\tools` 会在 PATH 上,但那时 IDF_PATH 也在,env 档先到)。
+	if (tool.pathKind === "dir") return [];
 	const bin: Record<string, string> = {};
 	for (const name of tool.bin ?? []) {
 		const found = findOnPath(name, env);
@@ -191,16 +232,21 @@ function resolveNamesInDirs(names: string[], dirs: string[], env: NodeJS.Process
 	return Object.keys(bin).length > 0 ? bin : undefined;
 }
 
-function wellKnownHits(tool: ToolSpec, platform: string, env: NodeJS.ProcessEnv): Hit[] {
+function wellKnownHits(tool: ToolSpec, platform: string, env: NodeJS.ProcessEnv, table?: LocationTable): Hit[] {
+	// dir 型:表里的 pattern 指向安装根,是不是真的根由 marker 验(resolveTool 里过 directoryRoot,
+	// 验不过的自动候选不算命中)。没有 marker 的目录(stm32cubemx)无从确认,只认显式记录。
+	if (tool.pathKind === "dir") {
+		if (!tool.marker) return [];
+		return wellKnownCandidates(tool.id, platform, { from: tool.from, table }).map((dir) => ({ [tool.id]: dir }));
+	}
 	const names = tool.bin ?? [];
-	// 没有声明可执行名字的工具(比如清单里的 stm32cubemx,一个装完自己用的 GUI)
-	// 没法靠"在这个目录里找这个名字"确认存在,只能靠 local/ledger 的显式记录 ——
-	// 见 stm32cubemx 那条 why 字段自己写的"不走 PATH 探测"。
+	// 没有声明可执行名字的工具没法靠"在这个目录里找这个名字"确认存在,只能靠
+	// local/ledger 的显式记录。
 	if (names.length === 0) return [];
 	const hits: Hit[] = [];
 	// from 是键回落(见 locations.ts 的 tableLookup):清单常给工具起项目内短名
 	// (id "arm-gcc"),厂商身份在 from("arm-gnu-toolchain"),而表键是厂商名。
-	for (const dir of wellKnownCandidates(tool.id, platform, { from: tool.from })) {
+	for (const dir of wellKnownCandidates(tool.id, platform, { from: tool.from, table })) {
 		const bin = resolveNamesInDirs(names, [dir], env);
 		if (bin) hits.push(bin);
 	}
@@ -209,7 +255,9 @@ function wellKnownHits(tool: ToolSpec, platform: string, env: NodeJS.ProcessEnv)
 
 function registryHits(tool: ToolSpec, platform: string, env: NodeJS.ProcessEnv): Hit[] {
 	const names = tool.bin ?? [];
-	if (names.length === 0) return [];
+	// dir 型不走这一档:Uninstall 键的搜索词是厂商名,"STMicroelectronics" 同时命中 CubeMX 与
+	// CubeProgrammer,拿 InstallLocation 直接当某个目录资源的根会张冠李戴。
+	if (tool.pathKind === "dir" || names.length === 0) return [];
 	const hits: Hit[] = [];
 	for (const dir of registryCandidates(tool.id, platform as NodeJS.Platform, { from: tool.from })) {
 		// InstallLocation 有的厂商就是可执行文件所在目录(SEGGER 的 J-Link),有的是
@@ -229,7 +277,7 @@ function registryHits(tool: ToolSpec, platform: string, env: NodeJS.ProcessEnv):
  */
 function managedHits(tool: ToolSpec, configDir: string | undefined, env: NodeJS.ProcessEnv): Hit[] {
 	const names = tool.bin ?? [];
-	if (names.length === 0) return [];
+	if (tool.pathKind === "dir" || names.length === 0) return [];
 	const hits: Hit[] = [];
 	for (const install of listManagedInstalls(configDir)) {
 		if (!install.provides.includes(tool.id)) continue;
@@ -250,6 +298,8 @@ interface ResolveCtx {
 	configDir?: string;
 	/** 平台-架构,决定 catalog 里有没有这台机器能装的包;认不出来就没有 installable。 */
 	host: HostKey | undefined;
+	/** 测试注入的已知位置表;生产不传(用 locations.ts 的真表)。 */
+	locations?: LocationTable;
 }
 
 async function resolveTool(tool: ToolSpec, ctx: ResolveCtx): Promise<ResolvedTool> {
@@ -264,27 +314,39 @@ async function resolveTool(tool: ToolSpec, ctx: ResolveCtx): Promise<ResolvedToo
 		["ledger", () => entryHits(ctx.ledger.entries[tool.id])],
 		["managed", () => managedHits(tool, ctx.configDir, ctx.env)],
 		["env", () => envHits(tool, ctx.env)],
+		["installer", () => installerHits(tool, ctx.platform, ctx.env)],
 		["path", () => pathHits(tool, ctx.env)],
-		["well-known", () => wellKnownHits(tool, ctx.platform, ctx.env)],
+		["well-known", () => wellKnownHits(tool, ctx.platform, ctx.env, ctx.locations)],
 		["registry", () => registryHits(tool, ctx.platform, ctx.env)],
 	];
 	let firstFailure: ResolvedTool | undefined;
 	const seen: string[] = [];
 	for (const [source, getHits] of tiers) {
 		const hits = getHits();
-		const probed = await Promise.all(
-			hits.map(async (hit): Promise<ResolvedTool> => {
+		const attempts = await Promise.all(
+			hits.map(async (hit): Promise<ResolvedTool | undefined> => {
 				const recorded = Object.values(hit);
 				if (tool.pathKind === "dir") {
-					const directory = recorded.find((value) => pathType(value) === "dir");
+					// 所有来源过同一个归位函数(entries.ts):记录值是根、是根下的子目录、还是标志文件本身,
+					// 落到同一个答案。声明了 marker 就必须验得过;没声明的(stm32cubemx)目录在就算数。
+					const roots = recorded.map((value) => directoryRoot(tool, value, ctx.env));
+					const chosen = roots.find((r) => r.verified) ?? roots.find((r) => r.root !== undefined);
+					const settled = chosen?.root !== undefined && (chosen.verified || !tool.marker);
+					// 验不过时:用户明确记过的路径如实报(RECORDED,点名缺哪个文件);自动发现的候选不算命中,
+					// 接着找下一档 —— 一个过期的 IDF_PATH 不该挡住安装器登记的那一份。
+					const explicit = source === "local" || source === "ledger";
+					if (!settled && !explicit) return undefined;
+					const root = settled ? chosen!.root! : undefined;
 					return {
 						...base,
 						source,
-						bin: hit,
-						status: directory ? "configured" : "recorded",
+						bin: root !== undefined ? { [Object.keys(hit)[0] ?? tool.id]: root } : hit,
+						status: root !== undefined ? "configured" : "recorded",
+						missingBins: root === undefined && tool.marker ? [tool.marker] : undefined,
 						hint,
+						notes: root !== undefined ? nonEmpty(installerFacts(tool.id, root, ctx.platform, ctx.env)) : undefined,
 						checks: {
-							entry: directory ? "directory" : "missing",
+							entry: root !== undefined ? "directory" : "missing",
 							execution: "not-applicable",
 							version: "not-required",
 						},
@@ -310,7 +372,7 @@ async function resolveTool(tool: ToolSpec, ctx: ResolveCtx): Promise<ResolvedToo
 				const results = await Promise.all(
 					ordered.map(async (name) => ({
 						name,
-						...(await probeExecutable(bin[name]!, probeEnv(tool, all ? bin : { [name]: bin[name]! }, ctx.env))),
+						...(await probeExecutable(bin[name]!, probeEnv(tool, all ? bin : { [name]: bin[name]! }, ctx.env), tool.versionArgs)),
 					})),
 				);
 				// all 的版本范围指向主入口(如 gcc),而非 objcopy 等使用独立版本号的伴随工具。
@@ -356,7 +418,8 @@ async function resolveTool(tool: ToolSpec, ctx: ResolveCtx): Promise<ResolvedToo
 				};
 			}),
 		);
-		const good = probed.filter((p) => p.status === "ok" || p.status === "configured");
+		const probed = attempts.filter((attempt): attempt is ResolvedTool => attempt !== undefined);
+		const good = probed.filter((p) => isSettled(p.status));
 		// 明确选过的路径属于用户意图。失效/版本错误也必须如实返回,不从全局找一套掩盖它。
 		if (probed.length && (source === "local" || (source === "ledger" && ctx.ledger.entries[tool.id]?.by === "user")))
 			return probed[0]!;
@@ -404,6 +467,8 @@ export async function resolveToolchain(opts: {
 	env?: NodeJS.ProcessEnv;
 	/** 注入用,给测试和工位端(它没有项目检出,清单是当附件送过去的)。 */
 	manifestText?: string;
+	/** 测试注入:已知位置表。真表里全是系统路径,没法在 CI 上稳定命中(同 wellKnownCandidates 的 table)。 */
+	locations?: LocationTable;
 }): Promise<ToolchainResolution> {
 	const side = opts.side ?? "mother";
 	const platform = opts.platform ?? process.platform;
@@ -426,7 +491,8 @@ export async function resolveToolchain(opts: {
 		throw new Error(parsed.error);
 	}
 
-	const manifest = manifestForSide(parsed.manifest, side);
+	// 先补预设再按 side 筛:清单只写 {"id":"idf"} 也拿得到"它是什么"(families.ts 的 applyPresetDefaults)。
+	const manifest = manifestForSide(applyPresetDefaults(parsed.manifest), side);
 	const [localOverrides, ledger] = await Promise.all([
 		readLocalOverrides(opts.projectDir),
 		readLedger(opts.configDir),
@@ -440,7 +506,7 @@ export async function resolveToolchain(opts: {
 	// 实际仍是串行 —— 别以为工具数一乘就线性变快。
 	// 这条路挂在用户等待上:kernel 的 session-manager 在 ensureOpen 里就 await 它,而
 	// 即使全部命中账本也照样每个工具起一次 --version。
-	const ctx: ResolveCtx = { manifest, localOverrides, ledger, platform, env, configDir: opts.configDir, host };
+	const ctx: ResolveCtx = { manifest, localOverrides, ledger, platform, env, configDir: opts.configDir, host, locations: opts.locations };
 	const tools = await Promise.all(manifest.tools.map((tool) => resolveTool(tool, ctx)));
 
 	return {
@@ -448,8 +514,8 @@ export async function resolveToolchain(opts: {
 		manifest,
 		side,
 		tools,
-		ok: tools.every((t) => t.optional || t.status === "ok"),
-		needsAttention: tools.filter((t) => t.status !== "ok"),
+		ok: tools.every((t) => t.optional || isSettled(t.status)),
+		needsAttention: tools.filter((t) => !isSettled(t.status)),
 	};
 }
 
@@ -508,6 +574,20 @@ export function shellEnvFor(r: ToolchainResolution, base: NodeJS.ProcessEnv): No
 
 // ─── 系统提示词片段 ─────────────────────────────────────────────────────────────
 
+/**
+ * CONFIGURED 那一行的正文:目录、来源、安装器顺带说的事实、同一档里的其它安装。系统提示词与
+ * toolchain 工具的输出共用 —— "配套的 Python 在哪""另一份 IDF 在哪"正是模型手工满盘找的东西,
+ * 两处各拼一遍迟早有一处漏掉。
+ */
+export function directoryDetail(t: ResolvedTool): string {
+	const chosen = Object.values(t.bin)[0] ?? "(unknown path)";
+	const parts = [`${chosen} (via ${t.source ?? "unknown"})`];
+	if (t.notes?.length) parts.push(t.notes.join("; "));
+	const others = (t.candidates ?? []).filter((candidate) => candidate !== chosen);
+	if (others.length) parts.push(`also installed: ${others.join(", ")} — to use one of those instead, record it with toolchain set`);
+	return parts.join("; ");
+}
+
 function lineFor(t: ResolvedTool): string {
 	const label = t.optional ? `${t.id} (optional)` : t.id;
 	const need = t.wanted ? ` needs ${t.wanted}` : "";
@@ -518,7 +598,9 @@ function lineFor(t: ResolvedTool): string {
 		return `- ${label}: OK —${need}, resolved to ${primary} (${versionPart}, source: ${t.source ?? "unknown"}).`;
 	}
 
-	if (t.status === "configured") return `- ${label}: CONFIGURED — ${Object.values(t.bin)[0]}. Resource directory recorded; its contents and consuming capability are checked by the resource provider, not by an executable probe.`;
+	if (t.status === "configured") return `- ${label}: CONFIGURED — ${directoryDetail(t)}. This is a directory, not a program: it is not on PATH and nothing was executed to check it — use the path as given.`;
+	if (t.status === "recorded" && t.checks?.execution === "not-applicable" && t.missingBins?.length)
+		return `- ${label}: RECORDED — ${(t.candidates ?? Object.values(t.bin)).join(", ")}. That directory does not contain ${t.missingBins.join(", ")}, so it is not this tool's install directory; record the directory that does (toolchain set).`;
 	if (t.status === "recorded") return `- ${label}: RECORDED — ${(t.candidates ?? Object.values(t.bin)).join(", ")}. No declared executable entry was located; saving a path does not make this tool ready.`;
 	if (t.status === "unverified") return `- ${label}: UNVERIFIED — ${Object.values(t.bin).join(", ")}. ${t.missingBins?.length ? `Missing required entries: ${t.missingBins.join(", ")}.` : "Entry located, but execution/version verification did not pass. The explicit selection remains available; do not claim it is ready."}`;
 
@@ -562,9 +644,13 @@ function lineFor(t: ResolvedTool): string {
  * 进系统提示词的那一段。没有清单、或全部 ok 且无 optional 缺失(needsAttention 为
  * 空)时返回 undefined —— 别白占上下文:大多数会话里工具链要么没声明、要么这台
  * 机器上一切正常,这两种情况都不该往系统提示词里塞一个字。
+ *
+ * 例外是目录资源(configured):它已经落定、不算 needsAttention,但**不在 PATH 上** ——
+ * 可执行工具 ok 了模型直接敲名字就行,IDF 根目录在哪却只有这一段会告诉它。
  */
 export function promptSectionFor(r: ToolchainResolution): string | undefined {
-	if (!r.manifest || r.needsAttention.length === 0) return undefined;
+	if (!r.manifest) return undefined;
+	if (r.needsAttention.length === 0 && !r.tools.some((t) => t.status === "configured")) return undefined;
 	const header = `Project toolchain requirements (declared in ${MANIFEST_RELATIVE}):`;
 	return [header, ...r.tools.map(lineFor)].join("\n");
 }

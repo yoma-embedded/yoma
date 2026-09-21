@@ -34,19 +34,28 @@ function say(message: string): void {
 
 const seenStatus = new Map<string, string>()
 
+/** 进度行上的工具名。派子 agent 那一行带上类型与描述,不然十几行 "→ agent" 分不出谁是谁。 */
+function toolLabel(tool: string, input: Record<string, unknown>): string {
+  if (tool !== "agent") return tool
+  const kind = typeof input.subagent_type === "string" ? input.subagent_type : "general-purpose"
+  return typeof input.description === "string" ? `agent ${kind} · ${input.description}` : `agent ${kind}`
+}
+
 const result: TurnResult = await runTurn({
   ...input,
   // 假模型脚本以数据形态穿进来(本机演练/打包冒烟)—— 不联网、不要 key,其余全真。
   resolveModels: input.faux ? fauxResolveModels(input.faux) : undefined,
-  onEvent: (event) => {
+  onEvent: (event, origin) => {
     if (event.type === "message.part.updated" && event.part.type === "tool") {
       const part = event.part
       // 只在状态**变化**时打一行:running 态现在每 100ms 带着进度快照重发一次(工具进度链路),
       // 不去重的话一条 60s 的烧录会刷 600 行 "→ flash",把面板的 200 行环形日志全挤掉。
       if (seenStatus.get(part.id) === part.state.status) return
       seenStatus.set(part.id, part.state.status)
-      if (part.state.status === "running") say(`  → ${part.tool}`)
-      if (part.state.status === "error") say(`  ✗ ${part.tool}:${part.state.error}`)
+      // 子 agent 的工具调用夹在主会话那次 agent 调用中间:缩进一级,别让人以为是主 agent 在调。
+      const lead = origin.subagent ? "      ↳ " : "  → "
+      if (part.state.status === "running") say(`${lead}${toolLabel(part.tool, part.state.input)}`)
+      if (part.state.status === "error") say(`${origin.subagent ? "      ✗ " : "  ✗ "}${part.tool}:${part.state.error}`)
     }
   },
 })

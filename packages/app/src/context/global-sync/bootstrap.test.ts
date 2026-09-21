@@ -32,6 +32,8 @@ describe("bootstrapDirectory", () => {
       message: {},
       part: {},
       part_text_accum_delta: {},
+      task: {},
+      queue: {},
     })
 
     await bootstrapDirectory({

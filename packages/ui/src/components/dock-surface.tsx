@@ -1,7 +1,8 @@
 import { type ComponentProps, splitProps } from "solid-js"
 
 export interface DockTrayProps extends ComponentProps<"div"> {
-  attach?: "none" | "top"
+  /** 把哪一边嵌进相邻的面(`bottom` = 底边嵌进输入框:负边距 + 该侧不倒角)。 */
+  attach?: "none" | "top" | "bottom"
 }
 
 export function DockShell(props: ComponentProps<"div">) {

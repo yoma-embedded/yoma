@@ -69,7 +69,7 @@ function defaultEnginesDir(): string | undefined {
   return path.join(path.resolve(import.meta.dirname, "..", "..", ".."), "engines")
 }
 
-/** `deepseek/deepseek-v4-flash(思考 max)`。没钉模型时是「内核默认」。 */
+/** `deepseek/deepseek-flash(思考 max)`。没钉模型时是「内核默认」。 */
 function modelLabel(model?: JobModel): string {
   if (!model?.providerID || !model.modelID) return "内核默认"
   return `${model.providerID}/${model.modelID}(思考 ${model.thinking ?? "默认"})`

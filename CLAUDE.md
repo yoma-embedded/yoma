@@ -21,7 +21,7 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
 
 **内核与上游 pi 的关系**(2026-08-21 核实;嵌入式应用层的细节在 `packages/kernel/UPSTREAM.md`):
 应用层与当年那份 `agent` 分叉自上游 **2026-07-13 的快照 `f8f75544b`**(不是 `v0.80.6`)。
-`pi-ai` 现在是仓内上游包(`packages/ai`,0.85.1,哈希锁定);从前那份自有 harness
+`pi-ai` 现在是仓内上游包(`packages/ai`,0.86.0,哈希锁定);从前那份自有 harness
 建在上游的 v1 `AgentHarness` 上 —— **上游自己的 CLI 从没用过它**(生产路径是 `Agent` +
 上游 coding-agent 的 `AgentSession`),2026-08-04 上游把它掏空成 v2 空壳、8-11 又定了 v3 规格。
 那份自有分叉(`agent-legacy`)已于 2026-09-10 删除,`agent` 现在是**哈希锁定的上游拷贝**;
@@ -46,7 +46,7 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
 
 四个盒子(`boundary.test.ts` 的说法):**餐厅** = app / session-ui / ui / util / desktop,只认**菜单**
 (kernel 的门 `.`,浏览器安全);**厨房** = kernel 的门 `./host` + bench;**工具间** =
-`kernel/src/host/domain/` 与 `host/tools/<名字>/{contract.ts,session.ts}`(住户:grep、find、ls、powershell、toolchain、flash、log、la、gdb、datasheet、netlist、stm32config);
+`kernel/src/host/domain/` 与 `host/tools/<名字>/{contract.ts,session.ts}`(住户:grep、find、ls、powershell、toolchain、flash、log、la、scope、gdb、datasheet、netlist、stm32config,以及子 agent 四件 agent、task_output、task_stop、send_message —— 清单的真源是 `TOOL_NAMES`,今天 21 个);
 **发动机** = `packages/{agent,ai,chord,telemetry}`(哈希锁定)。
 
 门就是 `packages/kernel/package.json` 的 `exports`,八道(外加 `./package.json`):
@@ -183,6 +183,52 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
   `undefined`**(solid 的 translator 对缺键返回 undefined,组件里那句 `text === key` 的兜底永远不成立):
   以后每加一个会问的工具,两份 i18n 都要跟着加一条。
 
+- **工具链寻找:一次真会话撞出来的结构问题**(2026-09-18;回归用例 `test/toolchain-dir-tools.test.ts`)。
+  会话是 `D:\toy\funny_pen\f_pen`(XIAO ESP32S3,ESP-IDF 装在 D 盘):模型开局照守则跑了 `toolchain check`,得到一句
+  "没有清单",只好 `command -v idf.py`,于是断言"这台机器上没有 ESP32 工具链"(用户当场发火);后来写清单,
+  没有任何地方说格式,它全盘 find 样例两分钟、再翻安装目录里打包后的 `mailbox-host.mjs` 反推字段,写出来又试错四轮。
+  模型没做错什么,每一步撞的都是这边的缺口:
+  1. **入口放错了层。** "这台电脑装了什么"是电脑的属性(`families.ts` 文件头自己写的),设置页按电脑查、查得到;
+     agent 的工具却必须先有项目清单才开口,而绝大多数项目没有清单,空工程刚开局尤其。现在没有清单时 check / resolve
+     拿全部预设工具普查这台机器(`surveyManifestText`):找到的逐条列、没找到的折成一行,并附清单格式与已知 id。
+     **普查只在工具调用里做,不进会话开启那条路** —— 注册表那一档是同步的 spawnSync。
+  2. **同一个 id 在账本 / 位置表 / 安装目录里都共用,唯独"它是什么"不共用。** 清单写 `{"id":"idf"}` 拿不到
+     dir / IDF_PATH / 安装提示,而没有 `bin` 的条目连位置表都不查 —— IDF 装在默认位置也 MISSING,从外面看不出只生效
+     了一半。`applyPresetDefaults`(families.ts)按 id 补缺的字段,条目写了的一律听条目的;`optional` / `version` /
+     `side` 不继承(那是"这个项目怎么要它",不是"它是什么");继承 `from` 时把 provider 一并带进来。
+     `declaredToolSpec` 在清单缺席或没点这个 id 时回落到预设 —— 模型常常先 `set` 后写清单。
+  3. **v0.2.5 加 dir 型时只改了解析器。** "记录值是目录才算 configured",而位置表指进 `tools\`、`set` 按 `bin` 名解析,
+     两处产出的都是 `tools\idf.py` 这个**文件**:自动发现对所有人都是 RECORDED(含设置页的 ESP32 面板),zephyr-sdk 同形。
+     现在 dir 型声明 `marker`(相对安装根的标志文件:idf 是 `tools/idf.py`,zephyr-sdk 是根上的 `sdk_version` —— 1.0 起
+     gcc 搬进了 `gnu\`,拿 gcc 当标志两代 SDK 对不上),**所有来源过同一个 `directoryRoot`**(entries.ts):贴根、贴
+     `<根>\tools`、贴 `idf.py` 落到同一个根,旧账本里已经记成文件的读出来照样归位;验不过时显式记录如实报 RECORDED
+     并点名缺哪个文件,自动候选不算命中(过期的 `IDF_PATH` 不该挡住真的那一份)。dir 型的 `bin` 不再参与解析;
+     位置表对 dir 型指向安装根。没有 marker 的目录(stm32cubemx)行为不变,也不参与自动发现。
+  4. **`configured` 是终态却永远挂在"需要处理"里**:目录资源不跑 `--version`,到不了 ok,而汇总只认 ok。
+     `isSettled`(ok | configured)现在管 `resolution.ok` / `needsAttention` / 档内择优三处;它仍然不进 PATH、
+     不宣称可执行(`hasExecutableEntries` 不认它)。代价一并写在这:configured 不再触发提示词那一段,而目录不在 PATH 上、
+     只有那一段会告诉模型它在哪 —— 所以 `promptSectionFor` 对 configured 单开了一条。
+  5. **找工具先问安装器,再猜路径**(`domain/toolchain/installers.ts`,新的一档 `installer`,排在 env 之后、path 之前)。
+     位置表写死 `C:\Espressif`,而安装器让用户自己选盘 —— J-Link 补过盘符、Keil 补过,IDF 是第三次,补不完。Espressif
+     两代安装器各留一份登记文件:旧的 `%IDF_TOOLS_PATH%\esp_idf.json`(`idfInstalled` 是**对象**,路径带尾斜杠),EIM 的
+     `<工具根>\tools\eim_idf.json`(是**数组**);同一台机器上可以并存(实机:5.4.3 + 6.0.2)。里面还写着**配套的 Python**
+     —— 同一次会话里 export.ps1 按 PATH 上的 3.12 去找 `idf5.4_py3.12_env`、实际只装了 3.11 那个坑,答案就在这。
+     这些事实挂在 `ResolvedTool.notes` 上,**与来源档位无关**(账本记住根之后来源是 ledger,那句话照样要说)。
+     esptool 也走这一档:它随 IDF 装在那个 Python 环境的 Scripts 里、不在 PATH 上,不接的话装了 IDF 的机器照样报
+     MISSING 并建议 `pip install esptool`,模型就真去装一份(那次会话的开头正是这样)。
+     它只从注入的 env 取根目录(IDF_TOOLS_PATH / SystemDrive / HOME),不读 `os.homedir()`、不写死盘符:这台开发机上
+     `C:\Espressif\tools\eim_idf.json` 真的存在,写死的话 idf 的用例全看开发机脸色。
+  6. **失败的输出不是版本。** `esptool --version` 打印 usage 后失败,而 usage 里有一段 "1.8"(flash 电压选项),
+     账本里于是记着 `version: "1.8"`(真实 4.10.0)—— 清单一写版本范围就是一条假的 VERSION MISMATCH。退出码非 0 时
+     不取版本;问法按工具来(`versionArgs`,esptool 是子命令 `version`)。
+  7. **`set` 的回复带记完之后的状态。** 从前恒为 "Recorded … finds it automatically",而核出来可能是 RECORDED ——
+     一句必然成功的话让模型多跑一次 check 才发现没成,然后原地重试。三个 set 入口(agent、设置页项目级、设置页平台级)
+     现在都把 `spec` 递给 `recordToolchainPath`,分档在那一处按 `pathKind` 定,不可能再分叉。
+  8. **清单格式写在模型看得见的地方**(`contract.ts` 的 `MANIFEST_FORMAT_HELP`,描述与"没有清单"的回复共用);已知 id
+     不抄进契约(契约不许 import families.ts,字面量迟早漂移),由 check 现算现列。
+  还没做的:两份 IDF 并存时工具只列出来、不替用户选(选中的那份在前,另一份在 `candidates`);`idf` 的版本范围
+  仍然不核(dir 型 version 恒为 not-required);真机只在这台 Windows 上对过,macOS / Linux 的 `~/.espressif` 布局是照文档写的。
+
 - **la 工具**(2026-09-14,第 6 步第 6 刀,从 attic/tools/la.ts 重写):`host/tools/la/{contract,stats,session}.ts`,
   13 个动作。语义(事务聚合、期望差分、时序统计)早在 `host/domain/la` 里 —— 界面的波形图一直在用它,
   这一刀只是把**同一份厨房**也开给 agent。
@@ -238,6 +284,14 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
   `host/model-startup.test.ts` 覆盖这些时序,app 的 browser 回归钉住更新事件后旧响应不能盖回列表。
   教训的形状:**"我的清单比别人少"先问"别人那一条是从哪来的",别默认是同步落后。** 这次如果直接去补同步,
   再同步一百次也补不出那个模型。
+  **2026-09-20 补一条相反方向的**:内建快照**可以**刷,但那是一次显式的、与源码同步分开的动作。
+  同步 0.86.0 时上游新增了 `providers/radius.models.ts`,它 import 的 `providers/data/radius.json`
+  在我们的快照里根本没有(那个目录被上游的版本库忽略,同步工具按设计不碰它)—— 于是这次整份 `data/`
+  取自**已发布的 npm 包** `@earendil-works/pi-ai@0.86.0` 的 `dist/providers/data`(逐字节等于该版本的
+  src 数据:没变的那几份与仓里原有的一字不差,可以自己 cmp),`upstream-lock.json` 的
+  `generatedSnapshot.provenance` 写明了这个来源。副作用是内建目录跟着新了一轮(`deepseek-flash`
+  从此**内建就有**,不再只靠 `withRemoteCatalog` 拉;radius 也因此有了基线目录)。别拿 pi 检出的
+  工作树去凑这份数据:那台机器的 data/ 是它自己上次生成的,既不对应任何提交,也不一定比仓里的新。
 
 - **gdb 第一刀:纯函数层**(2026-09-14,第 6 步第 7 刀,从 attic/tools/gdb-mi.ts + gdb.ts 的纯函数部分移植):
   `host/domain/gdb/{mi,cortex-m,render,elf,eval-policy,index}.ts` —— MI3 分帧与解析、Cortex-M 故障解码、帧渲染、
@@ -449,10 +503,10 @@ kernel 接它 —— 从前那份自有 harness(`agent-legacy` / `@yoma/agent`)�
 | `npm run typecheck` | turbo 跑全部 11 个包,再加根 `tsconfig.json` —— **必须常绿 11/11 + 根**(`packages/kernel` 自己那份 include 的是 `src` + `test`;从前只有被 kernel 的 paths 拉到的内核源码受检,test 目录没人查) |
 | `npm run lint` | oxlint |
 | `npm test` | 全量单测:`vitest run`,项目清单在根 `vitest.config.ts`(每个包一份 `vitest.config.ts`,app 另有 browser / perf 两份)|
-| `npm run smoke -w packages/desktop` | 内核冒烟:对 **构建产物** 验证内核装配(内核自带的 4 个工具)+ 4 个引擎二进制 |
+| `npm run smoke -w packages/desktop` | 内核冒烟:对 **构建产物** 验证内核装配(工具清单与 `TOOL_NAMES` 逐字同序,今天 21 个)+ 引擎二进制 |
 | `npm run e2e:ipc -w packages/desktop` | 生产路径:真 utilityProcess + 真 MessagePort + 真协议帧(不开窗口) |
 | `npm run e2e:renderer -w packages/desktop` | 最后一跳:真窗口 + 真 preload + **真 contextBridge**(含 mailbox 桥三条) |
-| `npm run e2e:paint -w packages/desktop` | 真窗口首屏 + 点一遍:Electron 跑构建产物 + 接 CDP,首页 / 会话页(含逻辑分析仪面板)/ 草稿页 / 手册库 / 调试台全点一遍,零 `exceptionThrown` 零 `console.error` / Log 错误(含资源 404)(窗口会在屏幕上闪几秒,别去点它) |
+| `npm run e2e:paint -w packages/desktop` | 真窗口首屏 + 点一遍:Electron 跑构建产物 + 接 CDP,首页 / 会话页(含逻辑分析仪面板)/ 子 agent 卡片、完成通知行与子会话页 / 草稿页 / 手册库 / 调试台全点一遍,零 `exceptionThrown` 零 `console.error` / Log 错误(含资源 404)(窗口会在屏幕上闪几秒,别去点它) |
 | `npm run smoke:mailbox -w packages/desktop` | 调试台冒烟:Electron RUN_AS_NODE 对打包产物跑完整**本机演练**(假模型,零 key 零硬件) |
 | `npm run e2e:mailbox -w packages/desktop` | main 托管端到端:真 kernel.js 的 `mailbox.setActive` 往返 + 假守护喂 `@@event` + 停止杀树 + 锁冲突人话 |
 | `npm run e2e:license -w packages/desktop` | 授权闭环的真进程验证:现场生成临时密钥 → 往临时目录打一份注入了临时公钥的产物 → 真 utilityProcess / 真 contextBridge / 真守护 + 真 turn 子进程(假模型、**真的短有效期授权**)跑「导入 → 执行 → 到期暂停 → 续费恢复」。`-- --out <desktop 目录> --key <私钥> --key-id <id>` 对现成的、注入了公钥的 `out/` 跑 |
@@ -478,7 +532,19 @@ typecheck 全绿、单测全绿、`e2e:ipc` 全绿,照样可以在这一跳把�
 - `packages/kernel` 有**两个**项目:`kernel`(`src/**/*.test.ts` —— 投影器不变式、事件流、
   边界闸门、端到端 host)与 `kernel-domain`(并包搬来的 `test/**`,25 个文件 546 个用例,
   配置在 `vitest.domain.config.ts`,`fileParallelism: false` **串行**跑 —— 它们碰真实文件系统与子进程)。
-  根 `vitest.config.ts` 里显式列了第二份;CI 的 Windows 岗跑的就是 `--project kernel-domain`。
+  根 `vitest.config.ts` 里显式列了第二份。
+- **CI 的 Windows 岗跑 `npm run test:windows`**:agent / kernel / kernel-domain / desktop,2026-09-18 起加上 bench /
+  scripts / app / app-browser / ui / session-ui。那之前后六个从没在 Windows 上跑过,第一次在 Windows 开发机上跑全量
+  就是 6 条红 + 22 个文件加载不了,全是平台问题、烂了多久没人知道 —— 其中一条还是产品 bug(信箱改换行,见「信箱闭环」)。
+  新写用例时别在 Windows 上坏的四条规矩:
+  1. vitest 配置里 solid 插件一律 `solid({ hot: false })`:开着热更新,Windows 上凡是 import 到 `.tsx` 的用例文件
+     整个加载不了(`file:///@solid-refresh` 不是合法的 file URL)。
+  2. file URL 用 `pathToFileURL(p).href`,不手拼 `` `file://${p}` ``(Windows 上拼出来是 `file://C:\…`)。
+  3. 断言里的路径过 `path.resolve` 再比(`"/tmp/ws"` 在 Windows 上是 `D:\tmp\ws`)。
+  4. 真跑 git / 起子进程的用例别吃缺省 5 秒:Windows 上起进程贵一个数量级,bench 与 scripts 的期限在各自
+     `vitest.config.ts` 里按平台定(CI 60 秒 / Windows 本机 20 秒 / 其余 5 秒)。v0.3.1 的 ci 里 scripts 的
+     python 冷启动 13 秒、三条 git 用例卡在 5.0 秒,缺省期限把活活的用例判死。这与 `patience.ts` 不矛盾 ——
+     那条管的是"等",这条是活就有这么多。
 - **会真跑 flash / gdb 的用例文件必须隔离探针锁**(2026-09-17):`beforeAll` 里把 `YOMA_PROBE_LOCK` 指到
   `tmpdir()/yoma-probe-test-<pid>.lock`。探针租约除了进程内那份还落一把**跨进程**的锁(`~/.yoma/probe.lock`),
   而 vitest 把用例文件分给不同的 worker **进程**:不隔离的两个文件共用机器上同一把锁,flash 一重叠,后到的拿不到
@@ -493,7 +559,9 @@ typecheck 全绿、单测全绿、`e2e:ipc` 全绿,照样可以在这一跳把�
   设成 10 次 × 200 ms(名义上最多 11 秒)之后,整个用例文件仍然 7.2 秒就报了 EPERM —— 上一版"多重试几次"因此是空转,
   这条在 ci 上又挂了一次并挡住了 v0.2.9 的发版(发版脚本见 ci 红就不打 tag,是对的)。`removeTempDir` 每次失败让出
   事件循环、真睡 100 ms,只重试 EPERM / EBUSY / ENOTEMPTY,到期限把原错误抛出来。今天只有 `tools-stm32config` 接了它;
-  别的用例文件在 afterEach 里清"刚 abort 过子进程"的目录时照着接。与上面探针锁那条是同一个教训的第二次:
+  别的用例文件在 afterEach 里清"刚 abort 过子进程"的目录时照着接。agent 的上游用例不能改 `session-test-utils.ts`
+  (哈希锁定),Windows 上走 `scripts/upstream-test-portability.ts` 把 afterEach 改成真等再删 —— v0.3.1 的 ci 就是
+  timeout/abort 三条在 afterEach 里 EPERM 挂的。与上面探针锁那条是同一个教训的第二次:
   **"等不到"和"等得慢"要分开,先看那个东西到底有没有在等。**
 - **CI 上的等待是放大过的**(2026-09-17,`packages/kernel/test/patience.ts`)。那之前 develop 的 `ci` 时红时绿,
   每次挂的用例都不一样、全是超时,真回归会被淹在里面。用例自己的期限大多已给到 20–30 秒,先到期的是**里面**
@@ -599,8 +667,10 @@ v3 规格(`pi/packages/agent/docs/harness.md` §5.5/§5.6)的形状 —— hooks
   `resolveModel()` 的不变式是**注册 == 已配置**:全部注册、逐个 `checkAuth()`、没凭据的删掉,
   所以注册表里的一律 `authenticated`。连接对话框列的是 `configurableProviders()`:运行时
   用假交互跑一遍各家的 `apiKey.login`,只问一个 secret 的才算"一个 key 就能用";
-  bedrock / vertex / cloudflare(还要账号 id、区域、项目)、openai-codex(只有 OAuth)、
-  radius(目录要联网拉)由此自动排除 —— 这些家填了 key 也永远亮不起"已连接"。
+  bedrock / vertex / cloudflare(还要账号 id、区域、项目)、openai-codex(只有 OAuth)
+  由此自动排除 —— 这些家填了 key 也永远亮不起"已连接"。radius 从前也在这张排除表里
+  (目录要联网拉),pi-ai 0.86.0 起它随包带一份基线目录,一个 key 就能用,于是自己回到了列表里
+  —— 这张表是**算出来的**,别去手写。
   `thinkingLevels` 必须走 pi-ai 的 `getSupportedThinkingLevels(model)` 去问,编错的后果是
   档位能选但发不出去。
 - **默认思考档位**(`src/thinking.ts` + `KernelHostOptions.defaultThinkingLevel`)。
@@ -619,7 +689,10 @@ v3 规格(`pi/packages/agent/docs/harness.md` §5.5/§5.6)的形状 —— hooks
   另:`setModel` 换模型之后**必须重钳当前档位** —— 构造期那次是按 `ensureModels()`
   的默认模型算的,而调用方紧接着要换成任务书钉的那个。
 - **调试台的默认模型**(`bench/src/job.ts` 的 `DEFAULT_MODEL`,`parseJob` 里落定)。
-  任务书不写模型时,两端都跑 `deepseek/deepseek-v4-flash`,档位 `max`
+  任务书不写模型时,两端都跑 `deepseek/deepseek-flash`,档位 `max`
+  (2026-09-20 随 pi-ai 0.86.0 的目录改名:DeepSeek 把 `deepseek-v4-flash` 与
+  `deepseek-v4-flash-vision-exp` 并成了 `deepseek-flash` = V4.1 Flash,自带视觉、1M 上下文,
+  单价 0.3/1.2;旧 id 已不在目录里,写它就是第一轮"未知模型")
   (`DEFAULT_THINKING_LEVEL` 因此从 `high` 提到 `max`:Flash 的单价只有 V4 Pro 的
   三分之一,省下的换成想得更狠;想得不够的代价是多跑一轮,比 token 贵得多)。
   **不落定的话它是看不见的**:两侧各自回落到内核的"本机第一个有凭据的 provider 的
@@ -692,13 +765,87 @@ v3 规格(`pi/packages/agent/docs/harness.md` §5.5/§5.6)的形状 —— hooks
 `NO_AMBIENT_AUTH`**。目录有 40 家,开发机上一个 `ANTHROPIC_API_KEY` 或一份
 `~/.aws/credentials` 就会让"首跑无凭据"的测试说谎,逐个删环境变量列不全。生产不传。
 
+### 子 agent(`host/tasks.ts` + `host/domain/agents/` + 四个工具,2026-09-19;2026-09-20 改缺省后台)
+
+照 Claude Code 做,设计与逐期结果在 `docs/子agent-设计方案-v0.4-20260918.md`(§15 是偏离 CC 的那两条)。主 agent 用
+`agent` 工具派一个子 agent:它是一个**独立的子会话**(会话文件头带 `parentSessionId`,视图上是 `Session.parentID`),
+有自己的 harness、系统提示词和按 profile 裁过的工具池。另外三件:`task_output`(等 / 读后台任务的结果)、
+`task_stop`、`send_message`(给跑着的子 agent 插话,或让结束了的接着跑)。
+
+**缺省后台**(用户 2026-09-20 定,**偏离 CC**):不写 `run_in_background` 就是后台 —— 那次调用立刻交回一个 agentId,
+主 agent 继续对话 / 继续调工具,结论稍后以通知回到收件箱;只有"拿不到结果就一步都走不下去"才显式
+`run_in_background: false`(那会把主 agent 这一轮堵到子 agent 跑完)。理由:桌面端有人看着屏幕,主 agent 卡在一次
+子 agent 调用里的那几分钟,用户只能看着一个转圈的"思考中"。改这个缺省值时最容易忘的一处是测试 ——
+**所有测前台语义的场景都要显式写 `run_in_background: false`**,不写就是后台,那些"结果回到工具调用"的断言会
+全部落空(P1–P4 的 9 个场景当时就是这么红的)。bench 与信箱不受影响(`background: false` = 一律前台)。
+
+- **定义**(`host/domain/agents/`):内建 `general-purpose` / `Explore`(只读、一次性)/ `datasheet`;md 定义
+  (frontmatter 的 tools / disallowedTools / model / maxTurns / background / skills …)从 `~/.yoma/agents` 与沿 cwd
+  往上、到 home 为止的 `.yoma/agents` 读,同名后者覆盖前者。工具结果、完成通知(`<task-notification>`)与提示词
+  里的说明照 CC 原文。**子 agent 拿不到**:子 agent 四件(不许套娃)与硬件五件(flash / log / la / scope / gdb ——
+  模块级的探针租约与采集器是按一个会话设计的)。思考档缺省 off(照 CC)。
+- **宿主**(`host/tasks.ts` 的 TaskManager,文件头是每任务副作用登记表):派生、并发闸(缺省 10,
+  `YOMA_MAX_CONCURRENT_AGENTS`,超出排 pending)、前台等结果与转后台(卡片按钮;`YOMA_AUTO_BACKGROUND_MS` 自动转,
+  缺省关)、完成通知**原子去重、逐父串行**地 steer 进主会话收件箱:主会话忙就在下一个工具边界插进去,空闲就
+  起一轮把它取走(accept 空 prompt)。模型:`YOMA_SUBAGENT_MODEL` > 调用参数 > profile > 跟随主会话。
+  `output_file` 是给模型读的进度日志,落 `<系统临时目录>/yoma/<主会话>/tasks/`。
+- **session-manager 的子会话分支**:按 profile 装配(工具只减不加,筛掉的实例当场收掉)、maxTurns 钩子、运行中与
+  排队中的子会话 **LRU 钉住**(关掉 harness 不等于中止,下次打开它会躺在 `open` 里)、删主会话级联删子会话、
+  `disposeAll` 先关主会话再关子会话(反过来的话主会话拿着"子 agent 被停"的结果会再请求一次模型)、子会话拒收
+  用户消息(`SubagentSessionError`)。确认门:前台子 agent 的询问冒到主会话的确认条上(写明是哪个子 agent),
+  后台的直接拒 —— 没人看着它。**缺省后台之后这条的含义变了**:子 agent 实际上干不了装工具链与探针类命令,它
+  报回主 agent,由主 agent 自己跑(该问时确认条弹一次、命令看得见)或先问用户 —— 与"板子操作留在主 agent 的
+  轮次里"一致。**不做派生时预授权**(用户 2026-09-20 定):派生那一刻没人知道它后面会跑哪条命令,而确认条的
+  规矩正是"整段显示真正要跑的那条,不截断"。
+- **所有会话的行为都改了:忙时发消息排队,不打断**(照 CC)。`session.prompt` 回 `queued: true`,消息 steer 进
+  收件箱、在下一个工具边界送给模型;排队期间在 `session.queue` 事件里,界面画在输入框上方,可以撤回
+  (`session.cancelQueued`,原文与图片交回输入框;空输入框按 ↑ 一次撤回全部)。想打断要按停止。
+  **按停止时收件箱不丢**(2026-09-20 补,缺省后台之后这条是主路径):`requestAbort` 摘下来的东西宿主接住 ——
+  通知重新 steer 回收件箱并叫醒(子 agent 已经跑完的结论,丢了就是白跑一趟,而且界面上看不出少了什么),
+  用户排着的那句话经 `session.abort` 的 `returned` 交回界面、退回输入框(排队的原文在前、正在打的在后)。
+  手动压缩 / 关会话 / LRU 淘汰没有人接,两样都原样放回收件箱。
+- **界面**:**输入框正上方一条固定的「子 agent」坞**(`pages/session/subagent/subagent-dock.tsx`,2026-09-20;
+  竖向顺序 确认条 → 子 agent 坞 → 排队中 → 输入框):缺省后台之后"谁在跑"必须有个不随对话滚动的位置。坞只画
+  **还没完事的** —— 排队中 / 在跑 / 跑完但通知还在收件箱里排着(`task-view.ts` 的 `dockTasks`);汇报完就去掉,
+  结论在对话里那条通知行上。封顶 3 行、多的折成"还有 N 个"、可折叠、全空不渲染。停止**各停各的**:会话的停止
+  只中断主 agent 这一轮,后台子 agent 继续跑完并汇报;要停某一个在坞里点它(在跑的 ≥2 个时坞头有「全部停止」),
+  从坞里停掉的照样发"已停止"通知(带部分结果)—— 不告诉主 agent,它会一直等或者编一个结果出来。
+  agent 卡片与完成通知行(`session-ui/src/components/agent-tool.tsx`);子会话不进侧栏与首页
+  (`session.list` 就不给,事件归约与 `isRootVisibleSession` 各再挡一道),从卡片与状态栏的「子 agent」任务面板
+  打开;子会话页没有输入框,标题行是「← 主会话 / 类型」与任务状态、停止。任务状态走 `task.updated` 事件 +
+  `task.list` 种子,两者按"谁走得更远"合并(`server-session.ts` 的 `taskAhead`)。
+- **无人值守宿主**:见「调试台」第 3 条。
+
+付过学费的(都有测试钉着):
+
+1. **上游 `JsonlSessionRepo` 的 create / list / delete 在同一进程里并发不安全**:create 先列目录查 id 有没有被占,
+   新会话先写 `.jsonl.tmp` 再改名;另一个 create / list 恰好列到那个 tmp、再去 lstat 时它已经改名 → ENOENT。
+   一条消息并行派 12 个子 agent 几乎必现。宿主把这三个操作串成一条队(`repoLocked`)。**跨进程**同理:e2e 的种子
+   因此先在暂存根里种好,再整目录 rename 进 app 的会话根(`desktop/scripts/e2e-seed-subagent.ts`)。
+2. **失败收场的一轮不取收件箱**(上游失败提交只动 tip),而且之后不会再有 `queue_update`:`run_end` 时"收件箱
+   非空就叫醒"不是冗余。叫醒一共三处(投递时、收件箱变非空时、`run_end` / 压缩结束时),前两处互为兜底。
+3. **accept 会把收件箱里排着的消息收在本次 prompt 之前**:乐观插入的消息 id 按原文认领(`pendingUser`),
+   不能按"下一条 user 消息"认领 —— 会被排队的那条抢走。
+4. **列表里的会话是懒的**:`repo.list` 只读文件头,标题是占位;而只读查看(`session.messages`)从来不读会话名 ——
+   从磁盘加载的会话看完了标题仍是占位。`fillListed` 在只读与装配两条路上补名字与子会话类型,有变化推
+   `session.updated`。
+5. **事件流不分会话**:子会话的 `session.status`、消息、工具调用与主会话的走同一条流,凡是按事件判断"这一轮"
+   的地方都要先看 sessionID(bench 那次就是这么漏的,见「调试台」第 3 条)。
+6. **上游哨兵**:`host/subagent-v2.test.ts` 钉着本方案依赖的 v2 行为(steer 在工具边界插入、空闲时 accept 空
+   prompt 取收件箱、`requestAbort` 传到工具的 abortSignal、maxTurns 钩子……)。升级 `packages/agent` 之后它先红,
+   能直接指出是哪条前提变了。
+
+测试:`host/subagents.test.ts`(场景 22 例)、`host/subagent-v2.test.ts`、`test/agents-domain.test.ts`、
+`test/tools-agent.test.ts`、`host/projector.test.ts` 的通知一组、`bench/src/turn.test.ts` 的子 agent 一组、
+app 的 `test-browser/subagent-ui.test.ts`,以及 `e2e:paint` 的子 agent 一段。
+
 ### 调试台(`packages/bench`)
 
 host 的**第二个宿主**:`createKernelHost()` 是纯 Node 装配(零 Electron 依赖),
 bench 直接 import 它跑无人值守任务,于是投影器、自动压缩、工具装配、会话协议全部白得。
 `sessionsRoot` 默认指向 desktop 的 userData —— 跑完在桌面端直接回放。
 
-两条不变式,动这个包之前先读:
+三条不变式,动这个包之前先读:
 
 1. **一轮一个子进程**(`turn-entry.ts`)。yoma 的探针租约/gdb 会话表/log 采集器都是
    模块级全局,进程边界 = 免费且可靠的清理,下一轮不会撞上"探针被占着"。
@@ -706,6 +853,11 @@ bench 直接 import 它跑无人值守任务,于是投影器、自动压缩、�
 2. **代码不裁决任何东西**。跑几轮、花多少、算不算做完,全归模型 —— 没有轮数/token/
    墙钟上限。代码只在"决定 JSON 连着两次读不出来"时终局(记 `by:"policy"`),
    那不是裁决,是没法把它的话变成动作。要提前收工就在桌面端按停止。
+3. **子 agent 一律前台,收工只认本轮的根会话**(`turn.ts` 文件头「子 agent」一节)。`runTurn` 传
+   `subagents: { background: false }`:后台子 agent 在跑时主会话是 idle,"idle 静默"这个判据就说谎了,
+   而且一轮一个子进程,后台任务活不过这一轮。子会话的事件与主会话走同一条流 —— 只看 `session.status`
+   不看 sessionID 的话,前台子 agent 一收工(它的 idle)这一轮就被判完,而主会话正要拿着结果发下一次
+   请求。正文(`result.text`)与工具清单只收根会话的,用量连子 agent 一起算。信箱两端都经 `runTurn`。
 
 **yoma 在用户项目里只有一个落脚点:`<工程>/.yoma/`**(2026-08-11 起;从前是 `.bench/`
 与 `.yoma/` 两个目录、两份 .gitignore、两套相反策略):
@@ -807,6 +959,15 @@ text part,不过滤的话提示词会原样出现在终报的"根因分析"里)�
   `serializeMailboxJob` 会主动摘掉 `repo.directory`。工位端根本不需要这个配置。
 - 附件落在工位端工作目录的**根**,`result.incoming` 里是纯文件名。
   **不清空**:某轮没带附件不代表旧固件失效,板上跑的还是它。
+- **信箱必须逐字节透明**(2026-09-18,`sync.ts` 的 `ensureByteTransparent`)。Git for Windows 的安装器缺省把
+  `core.autocrlf=true` 写进系统级配置,而工位机正是 Windows:下行的文本附件落地时 LF 变 CRLF(Git Bash 脚本跑不了、
+  文件哈希两边对不上),上行的串口日志(本来是 CRLF)提交时被规整成 LF —— **证据被悄悄改写**,两头都不报错。
+  两道防线:每个克隆的 `.git/info/attributes` 写 `* -text`(属性里优先级最高,不进提交,旧信箱下一次同步就生效;
+  克隆那一下另带 `-c core.autocrlf=false`,因为首次检出早于它),init 再往信箱根提交一份 `.gitattributes`(对面可能是
+  没有这个修复的旧版本)。用例自己把 autocrlf 钉成 true(`GIT_CONFIG_GLOBAL` 指到临时文件;**不能用
+  `GIT_CONFIG_COUNT`**,那是命令档,会连修复一起盖掉),否则在 macOS / Ubuntu 岗上永远是绿的;断言看**仓里的字节**
+  (`cat-file`),不看工作树 —— 提交时规整、检出时换回,往返一趟正好把改写藏住。已经检出过的旧文件不会被回头改写,
+  新一轮的附件是新文件,不受影响。
 - **工位端自述进提示词时头尾都留**(头 6000 + 尾 14000 字,`prompts.ts` 的 `clipEnds`):
   汇总行、RESULT、结论永远在末尾,只截头部正好砍掉最该看的那半(实测一次五轮任务里
   每一轮都超过当时 4000 字的上限,首轮丢掉 44%)。全文另存 `bench-report.md` 并落到
@@ -1114,10 +1275,13 @@ Windows 失败时这里超时变红,本来也不该有只含 mac 的 Release)。
   没注入 = **开发态**不强制(tsx、vitest、`dev:desktop`、没给公钥的 `build` —— CI 的冒烟与 e2e 跑的就是它),它不是产品:
   `package:*` 无条件先跑 `verify:commercial`,没注入公钥的 `out/` 在那里非零退出;两条发版流水线第一步就查
   `vars.YOMA_LICENSE_TRUST_JSON`。产物里没有任何环境变量或配置能关检查、加公钥。
-- **检查只有一处,而且排在一切副作用之前**:`SessionManager.prompt()` / `compact()` 的第一行,**在 `stop()` 之前** ——
-  没授权的请求不该有本事打断一轮已经被接受的执行(它可能正在烧录)。通过之后这一轮(含轮内压缩与重试)不再回头查。
+- **检查只有一处,而且排在一切副作用之前**:`SessionManager.prompt()` / `compact()` 的第一行,**在 `stop()` 与"起一轮 / 排队"的
+  分岔之前** —— 没授权的请求不该有本事打断一轮已经被接受的执行(它可能正在烧录),也不该能借着忙时排队给它续一句新的用户输入。
+  通过之后这一轮(含轮内压缩与重试、它派出去的子 agent、子 agent 完成通知经 `wake()` 叫醒的续轮)不再回头查:
+  `runChild` / `wake` 是已接受工作的延续,刻意不查 —— 没有 RPC 能直接起子 agent,`wake` 是空 prompt、带不进新的用户输入。
   bench 的每一轮经 `createKernelHost` 进来,走的是同一道;`license-entrypoints.test.ts` 按源码扫
-  `lane.accept / drive / compact`,明天加第三个入口忘了挂检查就是一条红的用例。界面禁用按钮不算防线,协议里也没有
+  `lane.accept / drive / compact / steer` 与 `runOperation` 的调用者表,明天加第三个入口忘了挂检查就是一条红的用例
+  (方法切分要认跨行的方法头:第一版不认,`admitPrompt` 整个并进了 `prompt()` 的体里,断言就空了)。界面禁用按钮不算防线,协议里也没有
   "renderer 声明已付费"的参数。
 - **`LicenseService` 不缓存**:每次检查重新读盘 + 验签 + 对钟(不到 1 KB、几十微秒)。换来的是"续费不用重启":桌面内核导入,
   **另一个进程**里暂停着的守护下一次轮询就看得见,不需要任何进程间通知。
@@ -1265,6 +1429,10 @@ Windows 失败时这里超时变红,本来也不该有只含 mac 的 Release)。
   结果是数据落真实位置、钥匙串却"找不到",Chromium 初始化 safeStorage 时弹系统级
   "找不到钥匙串"对话框,app 几秒后安静退出。两边语义相反,假 HOME 两头都不干净。
   验证打包产物就用真实 HOME;无 key 首跑路径由 `host/auth.test.ts` 的子进程 e2e 覆盖。
+- **`npm install` 之后 `package-lock.json` 少了一批 `"libc"` 行 = 这台机器的 npm 低于 11,别提交。** 根
+  `package.json` 钉的是 `npm@11.19.0`(`engines.npm >=11`),旧 npm 不认这个字段、顺手抹掉,而 Linux 上靠它挑
+  glibc / musl 的预编译包。`git checkout -- package-lock.json` 还原(`node_modules` 已经装好,不受影响),再
+  `npm i -g npm@11`。实测(2026-09-18):Windows 开发机上是 npm 10.9。
 - **内核没有 HMR。** 改了 yoma 之后必须重启 `npm run dev:desktop`。
 - **这是一个 fork**:2026-08 起运行时身份已统一为 Yoma(`app.setName("Yoma")`、
   运行时 appId = bundle id = `com.yoma.desktop`、深链 `yoma://`),旧的
@@ -1283,6 +1451,9 @@ Windows 失败时这里超时变红,本来也不该有只含 mac 的 Release)。
   GitHub 上真跑、没接真探针、信箱的暂停 / 恢复没有双机真跑;调试台的暂停横幅与英文界面没看图。购买联系方式是
   `configured: false`(界面显示"待配置"),正式签名密钥要维护者自己在仓库外生成。清单在 `docs/licensing.md` 第五部分。
 
+- **子 agent**(见「子 agent」一节):子 agent 坞、状态栏任务面板、子会话页的状态与停止、"排队中"一栏都只有组件
+  渲染测试,**没在真窗口里跑过**(`e2e:paint` 里的内核没有模型,种进去的任务不在它的注册表里);fork 型子 agent、
+  worktree 隔离、硬件子 agent、重启后重新挂接前台调用等见设计稿 P5。
 - **工具链自动安装只在 Windows 上真装过**(五个包都装过,见「工具链自动安装」一节);macOS / Linux 的
   tar 路径与可执行位处理没有真机验过。运行期镜像只有 `YOMA_TOOLCHAIN_MIRROR` 一个口子,维护者若要自建
   镜像,把包放到 `<镜像>/<文件名>` 即可。内核 utilityProcess 里的 `fetch` 不认系统代理设置(main 进程的

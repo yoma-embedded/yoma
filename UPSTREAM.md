@@ -89,6 +89,16 @@ npm run upstream:update -- --packages-reviewed <同一个完整SHA>
 
 如果上游 `models.generated.ts` 或 provider 的 `.models.ts` 结构变化，工具要求先验证现有快照兼容，或另行生成匹配的数据。确实刷新快照时，应在独立目录使用上游生成和校验流程，审阅数据差异后，更新本工程数据文件及 `generatedSnapshot` 的哈希；保留原 Git commit 与 Git 文件哈希，重新预览。
 
+2026-09-20（同步到 `d1230ea20` / 0.86.0）走的是"另行准备匹配数据"这条路，来源是**已发布的 npm 包**：新增的
+`providers/radius.models.ts` import `./data/radius.json`，而这个文件在旧快照里不存在（生成数据不进上游 Git，
+同步工具按设计不产生它），留着就是 typecheck 与运行期双双缺文件。`npm pack @earendil-works/pi-ai@0.86.0` 的
+`dist/providers/data/` 是该版本 src 数据的逐字节副本（未变的文件与仓里原有的 `cmp` 一致，可自证），40 份数据
+加一份 `.manifest.json` 整体替换，`generatedSnapshot.provenance` 写明来源，哈希按替换后的文件重算。
+副作用要一并审阅：这等于把内建模型目录推进到 2026-09-19 那次生成——本次 27 份数据有变，DeepSeek 的
+`deepseek-v4-flash` / `deepseek-v4-flash-vision-exp` 合并为 `deepseek-flash`（V4.1 Flash，自带视觉、1M 上下文，
+单价由 0.14/0.28 涨到 0.3/1.2），`deepseek-v4-pro` 单价由 0.435/0.87 改为 1.32/3.96，radius 第一次有了基线目录。
+不要用手边 pi 检出的工作树凑这份数据：那是那台机器上次生成的结果，不对应任何提交。
+
 完成数据兼容性检查后，用精确目标 SHA 标记该次审阅：
 
 ```sh
@@ -108,6 +118,36 @@ npm run upstream:update -- --model-data-reviewed <同一个完整SHA>
 
 ## 这次验证
 
+2026-09-20 从 `ceea48f5d` 同步到 `d1230ea20`（0.85.1 → 0.86.0，97 个上游提交，范围内 97 个文件：
+50 新增 / 46 修改 / 1 删除）。上游包配置只改了版本号与 agent 新增的 `./experimental/pico3` 导出，
+没有新依赖；本地四个包的 version 跟着抬到 0.86.0，agent 的 exports 补了同一个入口。
+生成数据整份换成 npm 包 0.86.0 的快照（见上一节）。
+
+范围内的行为变化，消费端已适配：
+
+- `Context` 现在要经 `normalizeContext()` 折成 `TranscriptContext` 才进 provider——系统提示词与工具
+  声明住在转录的 system 消息里。`AgentHarness` 这条路不变（仍收 `systemPrompt` 选项，自己拼
+  `AiContext`），但 faux provider 的响应回调收到的是 `TranscriptContext`，读提示词/工具要用
+  `getCurrentSystemPrompt()` / `getCurrentTools()`；kernel 与 bench 的相关用例照此改。
+- `Message` 多了 `SystemMessage`；harness 的转录不会自己长出这种消息（只有低层 `Agent` 循环会），
+  投影器不受影响。
+- `ToolResultMessage<TDetails>` / `AgentToolResult<T>` 现在要求 details 能 JSON 往返，
+  `ToolCall.arguments` 收紧成 `JsonObject`——本仓 16 个工具的 details 全部通过，只有 bench 的
+  faux 脚本类型跟着从 `Record<string, unknown>` 改成 `JsonObject`。
+- `addedToolNames` / 延迟工具（`utils/deferred-tools.ts`）整套删除，本仓没有使用者。
+- 目录刷新带来的两处连锁：bench 的 `DEFAULT_MODEL` 改成 `deepseek/deepseek-flash`（旧 id 已不在目录里），
+  radius 现在能被 `configurableProviders()` 算进去（从前因为"目录要联网拉"被排除）。
+
+验证范围:全量 3422 条测试(3368 通过 / 50 跳过)、11 个包 + 根 typecheck、lint(98 warnings / 0 errors,
+多出来的那些全在新同步进来的 pico3 与 chord/delta 源码里),以及 desktop 的七道闸门
+(build / smoke / e2e:ipc / e2e:renderer / smoke:mailbox / e2e:mailbox / e2e:paint)全绿。
+唯一的红是 `toolchain.test.ts` 的「IDF_PATH 指着一个不是 IDF 根的目录不算数」,与本次同步无关:
+那条用例没有隔离 well-known 档,开发机上真装了 ESP-IDF(`~/esp/esp-idf` 带 `tools/idf.py`)时
+env 档如期落空之后 well-known 档会如实命中它,于是 status 是 configured。CI 上没有 IDF,所以是绿的。
+真实 provider 调用、Windows、硬件副作用不在范围内。
+
+## 上一次验证
+
 2026-09-14 从 `b2602be77` 同步到 `ceea48f5d`(21 个范围内提交,47 个文件,7 新增 / 40 修改 / 0 删除)。
 同一次改了同步工具本身:默认来源从"工程旁的 `../pi`"改成"按锁里的 repository 自建镜像"(见上文),
 新增 5 条工具用例。依赖跟着上游走:typebox 1.3.7→1.3.27、@google/genai 1.52→2.21、http(s)-proxy-agent 7→9、
@@ -116,8 +156,6 @@ esbuild 0.28.1→0.28.2、ignore 7.0.5→7.0.8(typebox 与 esbuild 在本仓自�
 
 验证范围:全量 2217 条测试、根 typecheck、lint,以及 desktop 的七道闸门(build / smoke / e2e:ipc /
 e2e:renderer / smoke:mailbox / e2e:mailbox / e2e:paint)全绿。真实 provider 调用、Windows、硬件副作用不在范围内。
-
-## 上一次验证
 
 
 2026-09-09 从独立仓 yoma-core 搬入 yoma monorepo:`packages/agent/{src,test}`、同步脚本、锁文件原样迁入,`npm run upstream:check` 在 yoma 内全部通过;yoma 原有的 ai/chord/telemetry 已与 `b2602be77` 逐字节一致,无需再同步。
@@ -128,4 +166,4 @@ e2e:renderer / smoke:mailbox / e2e:mailbox / e2e:paint)全绿。真实 provider 
 
 ## Windows 测试夹具适配
 
-`packages/agent/vitest.config.ts` 加载 `scripts/upstream-test-portability.ts`，仅在 Windows 对四个指定的上游测试模块转换夹具：JSONL 的 `/workspace` 及其编码目录换成带盘符的路径，Git Bash 的 `$PWD` 经 `cygpath` 输出原生路径。源码和测试的磁盘文件仍按上游哈希锁定，断言不删、不跳过，生产模块不转换。上游改变夹具写法后须复核该适配；`scripts/test/upstream-test-portability.test.ts` 检查当前夹具与适配一致。
+`packages/agent/vitest.config.ts` 加载 `scripts/upstream-test-portability.ts`，仅在 Windows 对指定的上游测试模块做转换：JSONL 的 `/workspace` 及其编码目录换成带盘符的路径，Git Bash 的 `$PWD` 经 `cygpath` 输出原生路径，`session-test-utils` 的 afterEach 在 EPERM / EBUSY / ENOTEMPTY 时让出事件循环再删（timeout/abort 留下的 bash/sleep 还攥着目录；Node 的 `rmSync` retryDelay 并不真的等，与 `packages/kernel/test/cleanup.ts` 同一条）。源码和测试的磁盘文件仍按上游哈希锁定，断言不删、不跳过，生产模块不转换。上游改变夹具写法后须复核该适配；`scripts/test/upstream-test-portability.test.ts` 检查当前夹具与适配一致。

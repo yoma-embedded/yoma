@@ -122,11 +122,29 @@ export interface ExecutableProbe {
 	version?: string;
 }
 
-export async function probeVersion(bin: string, env: NodeJS.ProcessEnv = process.env): Promise<string | undefined> {
-	return (await probeExecutable(bin, env)).version;
+export const DEFAULT_VERSION_ARGS: readonly string[] = ["--version"];
+
+export async function probeVersion(
+	bin: string,
+	env: NodeJS.ProcessEnv = process.env,
+	args: readonly string[] = DEFAULT_VERSION_ARGS,
+): Promise<string | undefined> {
+	return (await probeExecutable(bin, env, args)).version;
 }
 
-export function probeExecutable(bin: string, env: NodeJS.ProcessEnv = process.env): Promise<ExecutableProbe> {
+/**
+ * args 缺省 `--version`;清单 / 预设的 `versionArgs` 覆盖它(esptool 只认子命令 `version`)。
+ *
+ * **退出码非 0 时不取版本号**(2026-09-18):那时的输出是用法说明或报错,不是版本。实测
+ * `esptool.exe --version` 打印 usage 后失败,而 usage 里恰好有一段 "1.8"(flash 电压选项),
+ * 于是账本里记下了 `version: "1.8"` —— 真实版本是 4.10.0。清单要是写了版本范围,这个假版本号
+ * 会变成一条假的 VERSION MISMATCH。
+ */
+export function probeExecutable(
+	bin: string,
+	env: NodeJS.ProcessEnv = process.env,
+	args: readonly string[] = DEFAULT_VERSION_ARGS,
+): Promise<ExecutableProbe> {
 	return new Promise((resolve) => {
 		let settled = false;
 		const settle = (value: ExecutableProbe = { executable: false }) => {
@@ -137,7 +155,7 @@ export function probeExecutable(bin: string, env: NodeJS.ProcessEnv = process.en
 
 		let child: ChildProcess;
 		try {
-			child = spawn(bin, ["--version"], {
+			child = spawn(bin, [...args], {
 				stdio: ["ignore", "pipe", "pipe"],
 				// env 必须显式传:bun 的 spawn 省略 env 时按进程启动那一刻的环境解析
 				// argv[0],运行时改过的 PATH 对它无效(根 CLAUDE.md「会咬人的地方」
@@ -207,7 +225,9 @@ export function probeExecutable(bin: string, env: NodeJS.ProcessEnv = process.en
 		});
 		child.on("close", (code) => {
 			clearAll();
-			settle(timedOut ? undefined : { executable: code === 0, version: parseVersion(stdout) ?? parseVersion(stderr) });
+			if (timedOut) return settle(undefined);
+			const executable = code === 0;
+			settle({ executable, version: executable ? (parseVersion(stdout) ?? parseVersion(stderr)) : undefined });
 		});
 	});
 }

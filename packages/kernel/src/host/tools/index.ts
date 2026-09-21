@@ -9,6 +9,8 @@
 
 import type { AgentHarnessTool, ExecutionToolContext } from "@earendil-works/pi-agent-core"
 
+import type { TaskHost } from "../domain/agents/task-host.ts"
+import { createAgentTool } from "./agent/session.ts"
 import { withFriendlyArguments } from "./arguments.ts"
 import { createDatasheetTool, type DatasheetToolOptions } from "./datasheet/session.ts"
 import { createFindTool } from "./find/session.ts"
@@ -21,7 +23,10 @@ import { createLsTool } from "./ls/session.ts"
 import { createNetlistTool } from "./netlist/session.ts"
 import { createPowerShellTool } from "./powershell/session.ts"
 import { createScopeTool } from "./scope/session.ts"
+import { createSendMessageTool } from "./send_message/session.ts"
 import { createStm32ConfigTool } from "./stm32config/session.ts"
+import { createTaskOutputTool } from "./task_output/session.ts"
+import { createTaskStopTool } from "./task_stop/session.ts"
 import { createToolchainTool, type ToolchainToolOptions } from "./toolchain/session.ts"
 
 export interface RegisteredToolOptions {
@@ -39,6 +44,12 @@ export interface RegisteredToolOptions {
    * 规矩:自检那条路不传也能装配。
    */
   datasheet?: DatasheetToolOptions
+  /**
+   * 子 agent 四件(agent / task_output / task_stop / send_message)的宿主接口。**不传也照常登记**(工具清单平台无关,
+   * 同 powershell),execute 时报"这个宿主不支持子 agent";没有它的会话,宿主也不会激活这四件
+   * (docs/子agent-设计方案-v0.4-20260918.md §5)。
+   */
+  agents?: { host?: TaskHost; canReadOutputFile?: boolean }
 }
 
 /**
@@ -65,6 +76,10 @@ export function createRegisteredTools(options: RegisteredToolOptions = {}): Regi
     createDatasheetTool(options.datasheet),
     createNetlistTool(stm32),
     createStm32ConfigTool(stm32),
+    createAgentTool(options.agents),
+    createTaskOutputTool(options.agents),
+    createTaskStopTool(options.agents),
+    createSendMessageTool(options.agents),
   ]
   return tools.map(withFriendlyArguments)
 }

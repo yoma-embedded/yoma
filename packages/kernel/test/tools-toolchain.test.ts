@@ -110,12 +110,54 @@ function textOf(result: AgentToolResult<ToolchainDetails>): string {
 // ─── check / resolve ─────────────────────────────────────────────────────────
 
 describe("check / resolve", () => {
+  /** 普查用的虚拟清单换成两个假工具:真的那份会去碰开发机的已知安装位置与注册表(见 surveyManifestText 选项)。 */
+  const SURVEY = JSON.stringify({
+    schema: "yoma/toolchain@1",
+    tools: [
+      { id: "widget", bin: ["widget"], optional: true, side: "both" },
+      { id: "gadget", bin: ["gadget"], optional: true, side: "both" },
+    ],
+  })
+
   it("没有清单时不报错,而是说明情况并提出草拟一份(details.declared=false)", async () => {
-    const result = await makeTool().run({ action: "check" })
+    const result = await makeTool({ surveyManifestText: SURVEY }).run({ action: "check" })
     expect(textOf(result)).toContain("No toolchain manifest found")
     expect(textOf(result)).toContain(MANIFEST_PATH)
     expect(result.details?.declared).toBe(false)
     expect(result.details?.ok).toBe(true)
+  })
+
+  it("没有清单时照样回答「这台机器上有什么」:找到的逐条列,没找到的折成一行", async () => {
+    // 2026-09-18 会话的开局:空工程里 check 只回了一句"没有清单",模型只好 command -v,得出"这台机器上没有
+    // ESP32 工具链"—— 而 IDF 就装在 D 盘。工具链是电脑的属性,不该被项目文件挡在门外。
+    writeFakeExe(binDir, "widget", "1.2.3")
+    const result = await makeTool({ surveyManifestText: SURVEY, env: baseEnv({ PATH: binDir }) }).run({ action: "check" })
+    const text = textOf(result)
+    expect(text).toContain("widget: OK")
+    expect(text).toContain("1.2.3")
+    // 普查里没有"必须有",每行拖着 (optional) 只是噪声。
+    expect(text).not.toContain("(optional)")
+    expect(text).toContain("Not found here: gadget.")
+    expect(text).not.toContain("gadget: MISSING")
+    expect(result.details?.tools).toEqual([{ id: "widget", status: "ok", optional: true }])
+    // 纯读:普查也不写账本。
+    expect(Object.keys((await readLedger(configDir)).entries)).toEqual([])
+  })
+
+  it("没有清单时把清单格式与已知 id 一并给出 —— 模型不该靠翻安装包源码来反推怎么写", async () => {
+    const text = textOf(await makeTool({ surveyManifestText: SURVEY }).run({ action: "check" }))
+    expect(text).toContain('"schema":"yoma/toolchain@1"')
+    expect(text).toContain("Never an absolute path")
+    expect(text).toMatch(/Known ids: .*\bidf\b.*\besptool\b/)
+    expect(text).toContain("ask the user first")
+    // 同一份格式说明也在工具描述里(每个会话开局就看得到)。
+    expect(TOOLCHAIN_CONTRACT.description).toContain('"schema":"yoma/toolchain@1"')
+  })
+
+  it("没有清单时 resolve 把普查到的记进账本", async () => {
+    writeFakeExe(binDir, "widget", "1.2.3")
+    await makeTool({ surveyManifestText: SURVEY, env: baseEnv({ PATH: binDir }) }).run({ action: "resolve" })
+    expect((await readLedger(configDir)).entries.widget?.by).toBe("auto")
   })
 
   it("契约里的清单路径字面量与 domain 的 MANIFEST_RELATIVE 同值", () => {
@@ -216,6 +258,54 @@ describe("set", () => {
     expect(textOf(result)).toContain("no need to ask again")
     expect(result.details).toMatchObject({ action: "set", ok: true, id: "widget" })
     expect((await readLedger(configDir)).entries.widget?.by).toBe("user")
+  })
+
+  it("回复里带着记完之后的状态:没落定就明说 NOT ready,不再是一句必然成功的话", async () => {
+    // 贴了个没有入口的目录:从前回的是 "Recorded … finds it automatically",模型要再 check 一次才知道没成。
+    writeManifest([{ id: "widget", bin: ["widget"] }])
+    const text = textOf(await makeTool().run({ action: "set", id: "widget", path: binDir }))
+    expect(text).toContain("NOT ready")
+    expect(text).toContain("widget: RECORDED")
+    expect(text).not.toContain("no need to ask again")
+  })
+
+  describe("目录型工具(idf)", () => {
+    function makeIdfRoot(): string {
+      const idfRoot = join(binDir, "esp-idf-v5.4.3")
+      mkdirSync(join(idfRoot, "tools"), { recursive: true })
+      writeFileSync(join(idfRoot, "tools", "idf.py"), "# fake\n")
+      return idfRoot
+    }
+
+    it("清单只写 id、用户报的是 <根>\\tools:记下根目录,回复当场就是 CONFIGURED,check 汇总全部就绪", async () => {
+      // 会话里这一步走了四轮:{"id":"idf"} 拿不到定义 → 补了 bin 记成文件 → 删掉 bin 才 CONFIGURED → 汇总仍喊需要处理。
+      const idfRoot = makeIdfRoot()
+      writeManifest([{ id: "idf" }])
+      const tool = makeTool()
+      const text = textOf(await tool.run({ action: "set", id: "idf", path: join(idfRoot, "tools") }))
+      expect(text).toContain(`Recorded idf -> ${idfRoot}.`)
+      expect(text).toContain("idf: CONFIGURED")
+      expect(Object.values((await readLedger(configDir)).entries.idf!.bin)).toEqual([idfRoot])
+
+      const check = await tool.run({ action: "check" })
+      expect(textOf(check)).toContain("idf: CONFIGURED")
+      expect(textOf(check)).toContain("All required tools resolved.")
+      expect(check.details?.ok).toBe(true)
+    })
+
+    it("还没有清单时也认得 idf 是个目录(模型常常先 set 后写清单)", async () => {
+      const idfRoot = makeIdfRoot()
+      const text = textOf(await makeTool().run({ action: "set", id: "idf", path: join(idfRoot, "tools", "idf.py") }))
+      expect(text).toContain(`Recorded idf -> ${idfRoot}.`)
+      expect(text).toContain("idf: CONFIGURED")
+    })
+
+    it("报了个不是 IDF 根的目录:保存,但点名缺哪个文件", async () => {
+      writeManifest([{ id: "idf" }])
+      const text = textOf(await makeTool().run({ action: "set", id: "idf", path: binDir }))
+      expect(text).toContain("NOT ready")
+      expect(text).toContain("tools/idf.py")
+    })
   })
 
   it("缺 id 或缺 path 时抛错,而且话术直接说要补什么", async () => {

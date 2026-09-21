@@ -1,0 +1,58 @@
+/**
+ * 图标按钮的说明气泡 —— 纯 CSS,不跑 JS、不引组件。
+ *
+ * 为什么要有:界面上一批次要操作从文字按钮改成了图标(子 agent 卡的「打开子会话 / 转到后台 / 停止」、
+ * 输入框上方四个坞里的行内操作)。图标省地方,但**没有说明的图标是猜谜**,所以图标化和这颗气泡是一件事,
+ * 不是两件。含义要慎重的主操作(确认条的「允许 / 拒绝」)不图标化,也就用不上它。
+ *
+ * 用法:把 `data-tip="说明"` 放在包着 IconButton 的 <span> 上,按钮自己照常带 `aria-label`
+ * (气泡是给眼睛的,`aria-label` 是给读屏的,两者都要)。
+ *
+ * 配色照抄 ui 的 `tooltip.css` —— 同一个产品里两种说明气泡是说不过去的。
+ * 它只在同一张样式表里存在一份,session-ui 与 app 共用(app 的 index.css 引了 session-ui/styles)。
+ */
+
+[data-tip] {
+  position: relative;
+  display: inline-flex;
+}
+
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  padding: 2px 8px;
+  border: 1px solid var(--border-weak-base, rgba(0, 0, 0, 0.07));
+  border-radius: var(--radius-sm);
+  background: var(--surface-float-base);
+  color: var(--text-invert-strong);
+  box-shadow: var(--shadow-md);
+  font-family: var(--font-family-sans);
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-large);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  /* 延迟 0.25s 才浮出来:划过一排图标时不该一路炸开一串气泡。 */
+  transition: opacity 0.12s ease 0.25s;
+}
+
+[data-tip]:hover::after,
+[data-tip]:focus-within::after {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-tip]::after {
+    transition: none;
+  }
+}
+
+/* 破坏性操作(停止、撤回)的图标给危险色。 */
+[data-tip][data-tone="danger"] [data-slot="icon-svg"] {
+  color: var(--text-danger-base, #d5544a);
+}

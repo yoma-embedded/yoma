@@ -1,6 +1,6 @@
 {
   "name": "@earendil-works/chord",
-  "version": "0.85.1",
+  "version": "0.86.0",
   "private": true,
   "description": "Application composition runtime for services, replicated state, RPC, and plugins",
   "type": "module",
