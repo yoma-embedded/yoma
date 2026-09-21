@@ -192,3 +192,62 @@ describe("压缩上下文的那段时间", () => {
     expect(tags("idle", false)).not.toContain("Compacting")
   })
 })
+
+describe("本轮改动那一行", () => {
+  const change = (id: string, messageID: string, tool: string, status = "completed"): Part =>
+    ({
+      id,
+      sessionID: "session",
+      messageID,
+      callID: `call_${id}`,
+      type: "tool",
+      tool,
+      state:
+        status === "completed"
+          ? { status, input: { path: "src/main.c" }, output: "", title: tool, metadata: {}, time: { start: 1, end: 2 } }
+          : { status, input: { path: "src/main.c" }, error: "boom", metadata: {}, time: { start: 1, end: 2 } },
+    }) as Part
+  const build = (
+    parts: Record<string, Part[]>,
+    messages: AssistantMessage[],
+    status: "busy" | "idle" | "compacting" = "idle",
+    active = false,
+  ) => Timeline.constructMessageRows(user, (id) => parts[id] ?? [], messages, 0, true, status, active)
+  const changes = (rows: ReturnType<typeof build>) => rows.flatMap((row) => (row._tag === "TurnChanges" ? [row] : []))
+
+  test("跨多条 assistant 消息收齐这一轮的 edit / write,排在工具卡之后", () => {
+    const built = build(
+      { a: [change("p1", "a", "edit"), change("p2", "a", "read")], b: [change("p3", "b", "write")] },
+      [assistant("a"), assistant("b")],
+    )
+    expect(built.map((row) => row._tag)).toEqual([
+      "UserMessage",
+      "AssistantPart",
+      "AssistantPart",
+      "AssistantPart",
+      "TurnChanges",
+    ])
+    expect(changes(built)[0]!.refs).toEqual([
+      { messageID: "a", partID: "p1" },
+      { messageID: "b", partID: "p3" },
+    ])
+  })
+
+  test("没动过文件的轮次没有这一行;失败的 edit 不算", () => {
+    expect(changes(build({ a: [change("p1", "a", "read")] }, [assistant("a")]))).toEqual([])
+    expect(changes(build({ a: [change("p1", "a", "edit", "error")] }, [assistant("a")]))).toEqual([])
+  })
+
+  test("跑着的那一轮不出,跑完(idle)才出;已经不是当前轮的照出", () => {
+    const parts = { a: [change("p1", "a", "edit")] }
+    expect(changes(build(parts, [assistant("a")], "busy", true))).toEqual([])
+    expect(changes(build(parts, [assistant("a")], "compacting", true))).toEqual([])
+    expect(changes(build(parts, [assistant("a")], "idle", true))).toHaveLength(1)
+    expect(changes(build(parts, [assistant("a")], "busy", false))).toHaveLength(1)
+  })
+
+  test("被打断的轮次照样出 —— 文件确实改了", () => {
+    const aborted = assistant("a", { error: { name: "MessageAbortedError", data: { message: "aborted" } } })
+    expect(changes(build({ a: [change("p1", "a", "edit")] }, [aborted]))).toHaveLength(1)
+  })
+})

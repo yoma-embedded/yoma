@@ -72,6 +72,7 @@ import { ToolProgressThrottle } from "./tool-progress.ts"
 import { confirmNeeded } from "./tools/contracts.ts"
 import { processImage } from "./domain/image/process.ts"
 import { createRegisteredTools, type RegisteredTool, type RegisteredToolOptions } from "./tools/index.ts"
+import { withOverwrittenContent } from "./write-before.ts"
 import { configurableProviders, resolveModel } from "./models.ts"
 import { discoverSkills, loadContextFiles } from "./resources.ts"
 import { projectContext } from "./domain/project/context.ts"
@@ -204,7 +205,8 @@ export function createAgentTools(
       },
     }),
     createEditTool(),
-    createWriteTool(),
+    // 上游的 write 不交代它覆盖掉了什么;时间线的「本轮改动」靠这一层把旧内容记进 details。
+    withOverwrittenContent(createWriteTool()),
     ...createRegisteredTools(options),
   ]
   if (!options.invocationEnv) return tools

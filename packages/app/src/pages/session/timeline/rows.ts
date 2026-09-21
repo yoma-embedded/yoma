@@ -1,6 +1,7 @@
 import { parseCommentNote, readCommentMetadata } from "@/utils/comment-note"
 import { AssistantMessage, ModelRetry, Part, SessionStatus, UserMessage } from "@yoma-desktop/kernel"
 import { groupParts, PartGroup, renderable } from "@yoma-desktop/session-ui/message-part"
+import { isFileChange } from "@yoma-desktop/session-ui/turn-changes"
 import { Data, Equal } from "effect"
 
 export type TimelineRowMap = {
@@ -23,6 +24,7 @@ export type TimelineRowMap = {
   }
   Thinking: { userMessageID: string; reasoningHeading?: string }
   Compacting: { userMessageID: string }
+  TurnChanges: { userMessageID: string; refs: TurnChangeRef[] }
   ModelRequest: {
     userMessageID: string
     state: "retrying" | "recovered" | "failed"
@@ -32,6 +34,9 @@ export type TimelineRowMap = {
     maxAttempts?: number
   }
 }
+
+/** 指向一次 edit / write。行里只放指针:patch 和文件内容留在 store 里,行画出来时才去读、去解析。 */
+export type TurnChangeRef = { messageID: string; partID: string }
 
 export namespace TimelineRow {
   export class TurnGap extends Data.TaggedClass("TurnGap")<{
@@ -61,6 +66,11 @@ export namespace TimelineRow {
   export class Compacting extends Data.TaggedClass("Compacting")<{
     userMessageID: string
   }> {}
+  /** 这一轮里 edit / write 改了哪些文件(turn-changes.ts)。轮次跑完才出,跑着的时候看逐张工具卡。 */
+  export class TurnChanges extends Data.TaggedClass("TurnChanges")<{
+    userMessageID: string
+    refs: TurnChangeRef[]
+  }> {}
   export class ModelRequest extends Data.TaggedClass("ModelRequest")<TimelineRowMap["ModelRequest"]> {}
 
   export type TimelineRow =
@@ -71,6 +81,7 @@ export namespace TimelineRow {
     | AssistantPart
     | Thinking
     | Compacting
+    | TurnChanges
     | ModelRequest
 
   export const key = (row: TimelineRow) => {
@@ -89,6 +100,8 @@ export namespace TimelineRow {
         return `thinking:${row.userMessageID}`
       case "Compacting":
         return `compacting:${row.userMessageID}`
+      case "TurnChanges":
+        return `turn-changes:${row.userMessageID}`
       case "ModelRequest":
         return `model-request:${row.userMessageID}`
     }
@@ -235,9 +248,17 @@ export namespace Timeline {
     // compacting 而不是 busy,上面那行「思考中」不出 —— 不补这一行的话,屏幕上什么都不动,像卡死了。
     if (isActive && status === "compacting") rows.push(new TimelineRow.Compacting({ userMessageID: userMessage.id }))
 
-    // 每轮的 diff 汇总原来来自 UserMessage.summary.diffs,而那是 opencode 的文件快照
-    // 产物。内核没有快照,这一行随之消失;真要显示的话得从 edit/write 工具的
-    // details.patch 重新合成,那是独立一件事。
+    // 每轮的改动汇总。opencode 的这一行读 UserMessage.summary.diffs(文件快照的产物),内核没有快照,
+    // 这里从 edit / write 的工具结果合成。只在这一轮不再跑的时候出:跑着的时候 part 的状态一直在变,
+    // 在行的 memo 里读它们等于每一步都重建这一轮的行;被打断、失败的轮次照样出 —— 文件确实改了。
+    if (!isActive || status === "idle") {
+      const refs = assistantMessages.flatMap((message) =>
+        getMessageParts(message.id)
+          .filter(isFileChange)
+          .map((part) => ({ messageID: message.id, partID: part.id })),
+      )
+      if (refs.length > 0) rows.push(new TimelineRow.TurnChanges({ userMessageID: userMessage.id, refs }))
+    }
 
     // Replayed history contains the failed attempts too. A later completed model response
     // proves recovery; merely starting a stream (or executing a tool) does not.

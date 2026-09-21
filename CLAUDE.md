@@ -505,7 +505,7 @@ kernel 接它 —— 从前那份自有 harness(`agent-legacy` / `@yoma/agent`)�
 | `npm run smoke -w packages/desktop` | 内核冒烟:对 **构建产物** 验证内核装配(工具清单与 `TOOL_NAMES` 逐字同序,今天 21 个)+ 引擎二进制 |
 | `npm run e2e:ipc -w packages/desktop` | 生产路径:真 utilityProcess + 真 MessagePort + 真协议帧(不开窗口) |
 | `npm run e2e:renderer -w packages/desktop` | 最后一跳:真窗口 + 真 preload + **真 contextBridge**(含 mailbox 桥三条) |
-| `npm run e2e:paint -w packages/desktop` | 真窗口首屏 + 点一遍:Electron 跑构建产物 + 接 CDP,首页 / 会话页(含逻辑分析仪面板)/ 子 agent 卡片、完成通知行与子会话页(含连着的只读调用并成的那一行)/ 草稿页 / 手册库 / 调试台全点一遍,零 `exceptionThrown` 零 `console.error` / Log 错误(含资源 404)(窗口会在屏幕上闪几秒,别去点它) |
+| `npm run e2e:paint -w packages/desktop` | 真窗口首屏 + 点一遍:Electron 跑构建产物 + 接 CDP,首页 / 会话页(含逻辑分析仪面板)/ 子 agent 卡片、完成通知行、「本轮改动」那一行与子会话页(含连着的只读调用并成的那一行)/ 草稿页 / 手册库 / 调试台全点一遍,零 `exceptionThrown` 零 `console.error` / Log 错误(含资源 404)(窗口会在屏幕上闪几秒,别去点它) |
 | `npm run smoke:mailbox -w packages/desktop` | 调试台冒烟:Electron RUN_AS_NODE 对打包产物跑完整**本机演练**(假模型,零 key 零硬件) |
 | `npm run e2e:mailbox -w packages/desktop` | main 托管端到端:真 kernel.js 的 `mailbox.setActive` 往返 + 假守护喂 `@@event` + 停止杀树 + 锁冲突人话 |
 | `tsx packages/bench/src/cli.ts check <job.json>` | 校验任务书 + 本机内核装配 |
@@ -613,7 +613,7 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
 
 ### 时间线的行(`packages/app/src/pages/session/timeline`,2026-09-21)
 
-`rows.ts` 把一轮(一条 user 消息 + 它名下的 assistant 消息)摊成行,`projection.ts` 按轮各记一个 memo。两条规矩:
+`rows.ts` 把一轮(一条 user 消息 + 它名下的 assistant 消息)摊成行,`projection.ts` 按轮各记一个 memo。几条规矩:
 
 1. **行的 memo 不许直接读 `part.text`。** 行的结构只取决于一段文本「空 / 非空」(思考行另看标题),这两样由
    `projection.ts` 的 `createPartReader` 按 part 各记一个 memo,经 `Timeline.PartReader` 交给 `constructMessageRows`。
@@ -637,6 +637,18 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
 3. **压缩上下文的那段时间有一行「正在压缩上下文」**(`TimelineRow.Compacting`)。内核一直在发 `compacting` 状态
    (手动 /compact,或一轮里撞到阈值 / 溢出),而「思考中」只认 `busy` —— 不补这一行,模型写摘要的那几秒到几十秒里
    屏幕上什么都不动。只挂在正在跑的那一轮底下;压完内核补的 compaction part 才是「会话已压缩」的分隔线。
+4. **每轮底下有一行「本轮改动」**(`TimelineRow.TurnChanges`,`timeline/turn-changes-row.tsx`):这一轮里 `edit` /
+   `write` 改过的文件,一行一个带 +/− 行数,点开是 diff。opencode 的这一行读文件快照(`UserMessage.summary.diffs`),
+   内核没有快照,数据从工具结果的 details 合成(session-ui 的 `turn-changes.ts`):`edit` 的 `details.patch` 是上游
+   自带的;**`write` 上游什么都不给,旧内容是宿主补的** —— `kernel/src/host/write-before.ts` 在写之前把被覆盖的内容读
+   进 `details.before`(新建记 `null`;超过 256 KB 或是二进制就不记,前端只列文件名、标「未记录内容」)。记旧内容而
+   不记 patch:write 多半是整份重写,patch ≈ 旧 + 新,而新内容在调用参数里已经落过一次盘,内核也不必背 diff 依赖。
+   三条边界别越:(a) **只管这两个工具** —— bash 里的 sed、代码生成器、git checkout 改的文件不在里面,那是审查面板
+   (VCS diff)的事;(b) **同一个文件一轮里改多次,逐次的 diff 叠着放、行数相加,不合成一份** —— edit 的 patch 只有
+   4 行上下文,没有全文合不出对的;(c) **行里只放指向 part 的指针,只在这一轮不再跑的时候出** —— patch 和文件内容
+   留在 store 里、画出来才解析,跑着的时候读 part 状态等于每一步重建这一轮的行(规矩 1 的同一个坑)。展开状态记在
+   时间线的 `toolOpen`(key = 行 key + 文件),不记在组件身上:虚拟列表滚出去就卸载。真窗口覆盖在 `e2e:paint`
+   的主会话页:种子里主会话真的 `write` 一个新文件、`edit` 一个已有的,同时也就验了 write 那一层接上了。
 
 ### 内核事件只能用 `subscribe()`
 

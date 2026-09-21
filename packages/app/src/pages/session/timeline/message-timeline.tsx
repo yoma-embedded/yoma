@@ -12,11 +12,9 @@ import {
   type JSX,
 } from "solid-js"
 import { createStore, produce } from "solid-js/store"
-import { Dynamic } from "solid-js/web"
 import { useNavigate } from "@solidjs/router"
 import { useMutation } from "@tanstack/solid-query"
 import { createVirtualizer, defaultRangeExtractor, elementScroll, type VirtualItem } from "@tanstack/solid-virtual"
-import { Accordion } from "@yoma-desktop/ui/accordion"
 import {
   groupRefs,
   Message,
@@ -25,7 +23,6 @@ import {
   partDefaultOpen,
   type PartRef,
 } from "@yoma-desktop/session-ui/message-part"
-import { DiffChanges } from "@yoma-desktop/ui/diff-changes"
 import { FileIcon } from "@yoma-desktop/ui/file-icon"
 import { Icon as IconV2 } from "@yoma-desktop/ui/v2/icon"
 import { IconButtonV2 } from "@yoma-desktop/ui/v2/icon-button-v2"
@@ -34,14 +31,11 @@ import { DialogFooter, DialogHeader, DialogTitleGroup, DialogV2 } from "@yoma-de
 import { InlineInput } from "@yoma-desktop/ui/inline-input"
 import { ButtonV2 } from "@yoma-desktop/ui/v2/button-v2"
 import { ScrollView } from "@yoma-desktop/ui/scroll-view"
-import { StickyAccordionHeader } from "@yoma-desktop/ui/sticky-accordion-header"
 import { TextReveal } from "@yoma-desktop/ui/text-reveal"
 import { TextShimmer } from "@yoma-desktop/ui/text-shimmer"
 import type { AssistantMessage, Message as MessageType, Part as PartType, UserMessage } from "@yoma-desktop/kernel"
 import { showToast } from "@/utils/toast"
-import { getDirectory, getFilename } from "@yoma-desktop/util/path"
-import { normalize } from "@yoma-desktop/session-ui/session-diff"
-import { useFileComponent } from "@yoma-desktop/ui/context/file"
+import { getFilename } from "@yoma-desktop/util/path"
 import { shouldMarkBoundaryGesture, normalizeWheelDelta } from "@/pages/session/message-gesture"
 import { SessionContextUsage } from "@/components/session-context-usage"
 import { useDialog } from "@yoma-desktop/ui/context/dialog"
@@ -55,6 +49,7 @@ import { useSync } from "@/context/sync"
 import { sessionTitle } from "@/utils/session-title"
 import { scheduleConnectedMeasure } from "./measure"
 import { ContextGroupRow } from "./context-group-row"
+import { TurnChangesRow } from "./turn-changes-row"
 import { createTimelineProjection } from "./projection"
 import { MessageComment, TimelineRow, TimelineRowMap } from "./rows"
 import { ModelRequestStatus } from "./model-request-status"
@@ -852,6 +847,28 @@ export function MessageTimeline(props: {
               <div data-slot="session-turn-thinking" data-compacting>
                 <TextShimmer text={language.t("ui.sessionTurn.status.compacting")} />
               </div>
+            </div>
+          </TimelineRowFrame>
+        )
+      }
+      case "TurnChanges": {
+        const changesRow = row as Accessor<TimelineRowByTag<"TurnChanges">>
+        const parts = createMemo(() =>
+          changesRow().refs.flatMap((ref) => {
+            const part = getMsgPart(ref.messageID, ref.partID)
+            return part ? [part] : []
+          }),
+        )
+        return (
+          <TimelineRowFrame row={changesRow}>
+            <div data-slot="session-turn-message-container" class="w-full px-4 md:px-5">
+              <TurnChangesRow
+                rowKey={TimelineRow.key(changesRow())}
+                parts={parts()}
+                directory={sdk().directory}
+                isOpen={(key) => toolOpen[key]}
+                onOpenChange={setToolOpen}
+              />
             </div>
           </TimelineRowFrame>
         )

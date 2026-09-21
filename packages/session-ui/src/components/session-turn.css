@@ -200,6 +200,22 @@
     gap: 10px;
   }
 
+  [data-slot="session-turn-diff-note"] {
+    color: var(--text-weak);
+    font-family: var(--font-family-sans);
+    font-size: var(--font-size-small);
+    line-height: var(--line-height-large);
+  }
+
+  /* 同一个文件一轮里改了多次:逐次的 diff 叠着放,每份上面一行小字说是第几次。 */
+  [data-slot="session-turn-diff-step"] {
+    padding: 6px 12px 4px;
+    color: var(--text-weak);
+    font-family: var(--font-family-sans);
+    font-size: var(--font-size-small);
+    line-height: var(--line-height-large);
+  }
+
   [data-slot="session-turn-diff-chevron"] {
     display: inline-flex;
     color: var(--icon-weaker);

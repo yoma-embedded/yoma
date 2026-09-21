@@ -19,6 +19,8 @@ const PARITY_PREFIXES = [
   "session.subagent.",
   "session.subagentDock.",
   "session.queueDock.",
+  // 时间线的「本轮改动」那一行。
+  "session.turnChanges.",
 ] as const
 
 /**

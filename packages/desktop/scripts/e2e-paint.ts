@@ -42,6 +42,7 @@ import {
   EXPLORE_FILE,
   moveSeededSessions,
   seedSubagentSession,
+  CHANGED_NEW_FILE,
   SUBAGENT_ANSWER,
   SUBAGENT_DESCRIPTION,
   SUBAGENT_PARENT_TITLE,
@@ -851,6 +852,44 @@ try {
       APPEAR_TIMEOUT_MS,
     ),
   )
+  // 「本轮改动」:主会话那一轮里 write 新建了一个文件、edit 改了一个。数据是从工具结果的 details 合成的
+  // (edit 的 patch、write 的 before),所以这两条同时也在验内核给 write 补的那一层真的接上了。
+  const changesRow = `document.querySelector('[data-component="session-turn-diffs-group"]')`
+  const changedFile = (file: string) =>
+    `${changesRow}?.querySelector('[data-slot="accordion-item"][data-file=' + JSON.stringify(${json(file)}) + ']')`
+  check(
+    "主会话那一轮底下有「本轮改动」:新建的文件 +3,改过的文件 +2",
+    await waitFor(
+      `(() => {
+        const counts = (item) => [...(item?.querySelectorAll('[data-component="diff-changes"] span') ?? [])].map((el) => el.textContent).join(" ")
+        const created = ${changedFile(CHANGED_NEW_FILE)}
+        const edited = ${changedFile(EXPLORE_FILE)}
+        return ${changesRow}?.querySelectorAll('[data-slot="accordion-item"]').length === 2
+          && counts(created) === "+3 -0" && !!created.querySelector('[data-slot="session-turn-diff-note"]')
+          && counts(edited) === "+2 -0" && !edited.querySelector('[data-slot="session-turn-diff-note"]')
+          && !${changesRow}.querySelector('[data-slot="session-turn-diff-view"]')
+      })()`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  await evaluate(`${changedFile(EXPLORE_FILE)}?.querySelector('[data-slot="accordion-trigger"]')?.click()`)
+  check(
+    "点开改过的文件:diff 画出来了(有高度),另一个文件仍收着",
+    await waitFor(
+      `(() => {
+        const views = [...(${changesRow}?.querySelectorAll('[data-slot="session-turn-diff-view"]') ?? [])]
+        return views.length === 1 && views[0].getBoundingClientRect().height > 20
+          && !!${changedFile(EXPLORE_FILE)}?.contains(views[0])
+      })()`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  if (process.env.YOMA_PAINT_SCREENSHOT_CHANGES) {
+    await evaluate(`${changesRow}?.scrollIntoView({ block: "center" })`)
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    const shot = await send("Page.captureScreenshot", { format: "png" })
+    writeFileSync(process.env.YOMA_PAINT_SCREENSHOT_CHANGES, Buffer.from(shot.result!.data as string, "base64"))
+  }
   if (process.env.YOMA_PAINT_SCREENSHOT_SUBAGENT) {
     // 两张卡都展开着,滚到前台那张上 —— 这一张是给人看子 agent 卡片长相的。
     await evaluate(`${agentCard}?.scrollIntoView({ block: "center" })`)
