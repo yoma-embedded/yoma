@@ -85,6 +85,20 @@ export namespace TimelineRow {
 }
 
 export namespace Timeline {
+  /**
+   * 行的结构要从 part 上读的两样东西。缺省直接读 part;投影层换成按 part 记忆过的版本
+   * (`projection.ts`)—— 直接读 `part.text` 的话,每一批流式增量都会把这一轮的行整个重建一遍。
+   */
+  export type PartReader = {
+    renderable(part: Part, showReasoning: boolean): boolean
+    reasoningHeading(part: Part): string | undefined
+  }
+
+  export const directPartReader: PartReader = {
+    renderable,
+    reasoningHeading: (part) => (part.type === "reasoning" && part.text ? reasoningHeading(part.text) : undefined),
+  }
+
   export function constructMessageRows(
     userMessage: UserMessage,
     getMessageParts: (messageID: string) => Part[],
@@ -94,6 +108,7 @@ export namespace Timeline {
     status: SessionStatus["type"],
     isActive: boolean,
     retry?: ModelRetry,
+    read: PartReader = directPartReader,
   ) {
     const rows: TimelineRow.TimelineRow[] = []
 
@@ -119,7 +134,7 @@ export namespace Timeline {
 
     const assistantPartRefs = assistantMessages.flatMap((message, messageIndex) =>
       getMessageParts(message.id)
-        .filter((part) => renderable(part, showReasoning))
+        .filter((part) => read.renderable(part, showReasoning))
         .map((part) => ({ messageID: message.id, messageIndex, part })),
     )
     const assistantItems =
@@ -190,7 +205,7 @@ export namespace Timeline {
     if (isActive && status === "busy" && !activeRetry && (showReasoning ? assistantPartRefs.length === 0 : true)) {
       const heading = assistantMessages
         .flatMap((message) => getMessageParts(message.id))
-        .map((part) => (part.type === "reasoning" && part.text ? reasoningHeading(part.text) : undefined))
+        .map((part) => read.reasoningHeading(part))
         .find((value): value is string => !!value)
 
       rows.push(
