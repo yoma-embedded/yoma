@@ -247,11 +247,11 @@ const main = Effect.gen(function* () {
   }
 
   yield* Effect.promise(() => app.whenReady())
+  const readyAt = process.uptime()
 
   // tauri→electron 的 .dat 迁移已随运行时身份换成 Yoma 一起摘除:Yoma 从未发过 tauri 版,
   // 那套迁移只会把 opencode 时代的陈年草稿灌进全新的 userData(实测旧目录里真有 .dat)。
   registerRendererProtocol()
-  setDockIcon()
   const updater = setupAutoUpdater(stopSidecars)
   // 信箱调试台:main 托管守护进程,renderer 走 window.api.mailbox。
   mailboxMain = createMailboxMain({
@@ -335,7 +335,22 @@ const main = Effect.gen(function* () {
   })
 
   mainWindow = createMainWindow()
+  const windowAt = process.uptime()
   if (mainWindow) {
+    // 启动耗时(自进程起来的毫秒数):Electron 就绪 → 窗口建好 → 首帧画完、窗口亮出来。
+    // 动启动顺序之前先看这一行,改完再看一遍。
+    mainWindow.once("ready-to-show", () => {
+      writeLog("main", "startup", {
+        readyMs: Math.round(readyAt * 1000),
+        windowMs: Math.round(windowAt * 1000),
+        shownMs: Math.round(process.uptime() * 1000),
+      })
+      // Dock 图标等窗口亮出来再设:它要同步解一张 1024×1024 的 PNG,实测约 55 ms —— 就绪到窗口建好一共才
+      // 120 ms,别的(协议、更新器、信箱、IPC、netlog、起内核)加起来不到 10 ms。只挪到建窗口之后还不够:
+      // 那时 main 正忙着给渲染器喂首批资源,解码照样挡路(实测就绪 → 亮出来 266 ms,那样只回来约 25 ms,挪到这里约 45 ms)。
+      // 打包后的 Dock 图标本来就来自 bundle,这里晚一步没人看得见;开发态会先闪一下 Electron 的缺省图标。
+      setDockIcon()
+    })
     attachKernelToWindow(mainWindow)
     createMenu({
       trigger: (id) => {

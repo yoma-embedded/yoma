@@ -1290,6 +1290,11 @@ Windows 失败时这里超时变红,本来也不该有只含 mac 的 Release)。
 - turbo 的 `typecheck` 有 `dependsOn: ["^typecheck"]` —— 没有它,改了 kernel 的类型,
   依赖它的包会拿到过期缓存命中,typecheck 变成 **假绿**。验证时用 `--force`。
 - Prettier 配置内联在根 `package.json`(`semi:false, printWidth:120`)。
+- **动 main 的启动顺序之前先量。** main 日志里每次启动有一行 `startup {readyMs, windowMs, shownMs}`(自进程起来的毫秒数:
+  Electron 就绪 / 窗口建好 / 首帧画完亮出来)。2026-09-21 实测(M 系列 Mac,开发态构建,热启动中位数):就绪 164 →
+  建好 284 → 亮出来 430;就绪到建窗口之间,协议 + 更新器 + 信箱 + IPC + netlog + 起内核**加起来不到 10 ms**,
+  大头是 `setDockIcon()` 同步解一张 1024×1024 的 PNG(约 55 ms)—— 已挪到 `ready-to-show` 之后。所以
+  opencode 那套"先亮窗口、其余全部后置"的重排在我们这边没有收益,别照搬。
 
 ## 会咬人的地方
 
