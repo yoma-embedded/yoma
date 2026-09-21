@@ -37,6 +37,7 @@ import type {
   VcsInfo,
 } from "./types.ts"
 import type { ScopeCaptureInfo, ScopeViewParams, ScopeViewResult } from "./scope-view.ts"
+import type { MemoryInput, ProjectContextView, ProjectProfile } from "./project-view.ts"
 
 // ---------------------------------------------------------------------------
 // 请求
@@ -80,6 +81,12 @@ export interface PreflightReport {
 }
 
 export interface KernelMethods {
+  "project.context": { params: { directory: string }; result: ProjectContextView }
+  "project.configure": { params: { directory: string; revision: string; profile: ProjectProfile }; result: ProjectContextView }
+  "project.remember": { params: { directory: string; revision: string; memory: MemoryInput }; result: ProjectContextView }
+  "project.forget": { params: { directory: string; revision: string; id: string }; result: ProjectContextView }
+  "project.check": { params: { directory: string; revision: string }; result: ProjectContextView }
+  "project.cancelCheck": { params: { directory: string }; result: void }
   "app.info": {
     params: void
     result: { version: string; enginesDir: string | null; sessionsRoot: string; node: string }

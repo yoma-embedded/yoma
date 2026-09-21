@@ -95,7 +95,7 @@ export const BUILTIN_AGENTS: readonly AgentProfile[] = [
     prompt: EXPLORE_PROMPT,
     // CC 的 Explore 只禁 Edit / Write / NotebookEdit(别的写入都走 Bash,由提示词挡住)。toolchain(install / set 改机器)
     // 与 stm32config(generate 往工程里写代码)的写入不走 bash,提示词挡不住,所以一并禁掉。
-    disallowedTools: ["edit", "write", "toolchain", "stm32config"],
+    disallowedTools: ["edit", "write", "toolchain", "stm32config", "project"],
     omitContextFiles: true,
     oneShot: true,
     source: "built-in",

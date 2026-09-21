@@ -28,6 +28,8 @@ import {
   toolchainStatus,
 } from "./toolchain.ts"
 import { VcsWatchers } from "./vcs-watch.ts"
+import { forgetMemory, inspectProject, projectRoot, saveMemory, saveProfile } from "./domain/project/store.ts"
+import { checkProjectBuild } from "./domain/project/build.ts"
 
 export { SessionProjection } from "./projector.ts"
 export { SessionManager } from "./session-manager.ts"
@@ -88,6 +90,7 @@ export interface KernelHost {
 }
 
 export function createKernelHost(options: KernelHostOptions): KernelHost {
+  const projectBuilds = new Map<string, { controller: AbortController; done: Promise<unknown> }>()
   const sink = new StreamSink({ flush: options.onEvents })
   // 一个包同时只装一次;取消走这里的 AbortController。设置页的 RPC 与 agent 的 toolchain 工具
   // 共用这一个 —— 两边同时装同一个包会往同一棵目录树里解压,所以它必须在 SessionManager 之前建好。
@@ -253,6 +256,22 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     "session.confirmReply": async ({ id, allow }) => ({ accepted: sessions.replyConfirm(id, allow) }),
     "session.confirms": async ({ sessionID }) => sessions.pendingConfirms(sessionID),
 
+    "project.context": ({ directory }) => inspectProject(directory),
+    "project.configure": ({ directory, revision, profile }) => saveProfile(directory, revision, profile),
+    "project.remember": ({ directory, revision, memory }) => saveMemory(directory, revision, memory, "user"),
+    "project.forget": ({ directory, revision, id }) => forgetMemory(directory, revision, id),
+    "project.check": async ({ directory, revision }) => {
+      const root = await projectRoot(directory)
+      if (projectBuilds.has(root)) throw new Error("该工程已有构建检查正在运行")
+      const controller = new AbortController()
+      const done = Promise.resolve().then(async () => checkProjectBuild(root, revision,
+        await sessions.projectBuildEnvironment(root), controller.signal))
+      projectBuilds.set(root, { controller, done })
+      try { return await done } finally { projectBuilds.delete(root) }
+    },
+    "project.cancelCheck": async ({ directory }) => {
+      projectBuilds.get(await projectRoot(directory))?.controller.abort()
+    },
     "project.list": async () => projects.list(),
     "project.add": ({ directory }) => projects.add(directory),
     "project.remove": ({ directory }) => projects.remove(directory),
@@ -275,6 +294,8 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
       sink.flushNow()
     },
     async dispose() {
+      for (const build of projectBuilds.values()) build.controller.abort()
+      await Promise.allSettled([...projectBuilds.values()].map(build => build.done))
       vcsWatchers.dispose()
       // 先关 sink:disposeAll 会中断在飞轮次,那一串收尾事件是故意丢掉的 ——
       // 进程正在退,renderer 的通道也在拆,推过去没人收。

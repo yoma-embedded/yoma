@@ -351,6 +351,7 @@ export const TOOL_NAMES = [
   "ls",
   "powershell",
   "toolchain",
+  "project",
   "flash",
   "log",
   "la",

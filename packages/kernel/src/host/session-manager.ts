@@ -74,6 +74,7 @@ import { processImage } from "./domain/image/process.ts"
 import { createRegisteredTools, type RegisteredTool, type RegisteredToolOptions } from "./tools/index.ts"
 import { configurableProviders, resolveModel } from "./models.ts"
 import { discoverSkills, loadContextFiles } from "./resources.ts"
+import { projectContext } from "./domain/project/context.ts"
 import {
   clampThinkingLevel,
   getSupportedThinkingLevels,
@@ -929,6 +930,7 @@ export class SessionManager {
       // 东西,系统提示词字节不变。
 
       const allTools = createAgentTools({
+        project: { sessionID: entry.id },
         enginesDir: this.options.enginesDir,
         configDir: this.configDir,
         invocationEnv: () => this.toolEnv(entry),
@@ -978,7 +980,10 @@ export class SessionManager {
           // 函数形态:每轮重新解析一次,于是 refreshMachineEnv 换掉 shellEnv 之后
           // 下一条 bash 命令就看得见新 PATH,不用重开会话。
           toolContext: () => ({ env: this.toolEnv(entry) }),
-          systemPrompt: () => {
+          systemPrompt: async () => {
+            const projectFiles = profile?.omitContextFiles ? [] : [
+              { path: "<project-memory>", content: await projectContext(entry.cwd) },
+            ]
             const toolchainSection = promptSectionFor(entry.toolchain ?? toolchain)
             const stm32Note = entry.stm32Availability?.available
               ? undefined
@@ -991,7 +996,7 @@ export class SessionManager {
                 agentPrompt: profile.prompt,
                 selectedTools: entry.activeToolNames,
                 contextFiles: [
-                  ...(profile.omitContextFiles ? [] : contextFiles),
+                  ...(profile.omitContextFiles ? [] : [...contextFiles, ...projectFiles]),
                   ...(toolchainSection ? [{ path: "<toolchain>", content: toolchainSection }] : []),
                 ],
                 skills: discovered.skills,
@@ -1010,8 +1015,8 @@ export class SessionManager {
               cwd: entry.cwd,
               selectedTools: entry.activeToolNames,
               contextFiles: toolchainSection
-                ? [...contextFiles, { path: "<toolchain>", content: toolchainSection }]
-                : contextFiles,
+                ? [...contextFiles, ...projectFiles, { path: "<toolchain>", content: toolchainSection }]
+                : [...contextFiles, ...projectFiles],
               skills: discovered.skills,
               appendSystemPrompt: stm32Note,
             })
@@ -1299,6 +1304,16 @@ export class SessionManager {
   private async machineDirs(): Promise<string[]> {
     const ledger = await readLedger(this.configDir)
     return machinePathDirs({ configDir: this.configDir, ledger })
+  }
+
+  /** Settings build checks use the same machine/project PATH as agent sessions. */
+  async projectBuildEnvironment(directory: string): Promise<NodeJS.ProcessEnv> {
+    const base = this.baseShellEnv(await this.machineDirs())
+    const resolution = await resolveToolchain({
+      projectDir: directory, configDir: this.configDir, side: this.options.toolchainSide ?? "mother", env: base,
+      manifestText: this.options.toolchainManifestText,
+    })
+    return this.sessionShellEnv(resolution, base)
   }
 
   /**

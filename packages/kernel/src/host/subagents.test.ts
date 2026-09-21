@@ -586,6 +586,7 @@ describe("子 agent 宿主(P2)", () => {
         "ls",
         "powershell",
         "toolchain",
+        "project",
         "datasheet",
         "netlist",
       ])

@@ -109,7 +109,7 @@ describe("agent 工具:描述与 schema", () => {
     expect(description).toContain(
       "- general-purpose: General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks.",
     )
-    expect(description).toContain("(Tools: All tools except edit, write, toolchain, stm32config)")
+    expect(description).toContain("(Tools: All tools except edit, write, toolchain, stm32config, project)")
     expect(description).toContain("(Tools: datasheet, read, grep, find, ls)")
     expect(description).toContain("If omitted, the general-purpose agent is used.")
     expect(description).toContain("do NOT sleep, poll, or proactively check on its progress")
