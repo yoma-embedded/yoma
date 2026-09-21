@@ -33,6 +33,8 @@ protocol.registerSchemesAsPrivileged([
       secure: true,
       standard: true,
       supportFetchAPI: true,
+      // 让 Chromium 把渲染器 bundle 的 V8 字节码留到下次启动(要求 standard: true)。
+      codeCache: true,
     },
   },
 ])

@@ -22,7 +22,6 @@ import { Icon as IconV2 } from "@yoma-desktop/ui/v2/icon"
 import { IconButtonV2 } from "@yoma-desktop/ui/v2/icon-button-v2"
 import { useLayout, type HomeProjectSelection, type LocalProject } from "@/context/layout"
 import { usePlatform } from "@/context/platform"
-import { DateTime } from "luxon"
 import { useSettingsCommand } from "@/components/settings-dialog"
 import { useDrafts } from "@/context/drafts"
 import { useServerSync, type ServerSync } from "@/context/server-sync"
@@ -32,6 +31,7 @@ import { SessionTabAvatar } from "@/pages/layout/session-tab-avatar"
 import { sessionTitle } from "@/utils/session-title"
 import { sessionHref } from "@/utils/session-href"
 import { pathKey } from "@/utils/path-key"
+import { dayBucket } from "@/utils/time"
 import { useGlobal } from "@/context/global"
 import { useCommand } from "@/context/command"
 import { useMarked } from "@yoma-desktop/ui/context/marked"
@@ -821,18 +821,12 @@ function HomeSessionSkeleton(props: { label: string }) {
 }
 
 function groupSessions(records: HomeSessionRecord[], language: ReturnType<typeof useLanguage>): HomeSessionGroup[] {
-  const now = DateTime.local()
-  const yesterday = now.minus({ days: 1 })
-  const todaySessions = records.filter((record) =>
-    DateTime.fromMillis(record.session.time.updated ?? record.session.time.created).hasSame(now, "day"),
-  )
-  const yesterdaySessions = records.filter((record) =>
-    DateTime.fromMillis(record.session.time.updated ?? record.session.time.created).hasSame(yesterday, "day"),
-  )
-  const olderSessions = records.filter((record) => {
-    const time = DateTime.fromMillis(record.session.time.updated ?? record.session.time.created)
-    return !time.hasSame(now, "day") && !time.hasSame(yesterday, "day")
-  })
+  const now = new Date()
+  const bucket = (record: HomeSessionRecord) =>
+    dayBucket(record.session.time.updated ?? record.session.time.created, now)
+  const todaySessions = records.filter((record) => bucket(record) === "today")
+  const yesterdaySessions = records.filter((record) => bucket(record) === "yesterday")
+  const olderSessions = records.filter((record) => bucket(record) === "older")
   const olderTitle =
     todaySessions.length === 0 && yesterdaySessions.length === 0
       ? language.t("sidebar.project.recentSessions")
