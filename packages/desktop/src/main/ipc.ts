@@ -8,7 +8,7 @@ import type { FatalRendererError, TitlebarTheme } from "../preload/types"
 import { runDesktopMenuAction } from "./desktop-menu-actions"
 import { assertAttachmentBudget, createPickedFileAuthorizations, inlineAttachment } from "./attachment-picker"
 import { getStore } from "./store"
-import { applyUpdate, stringItems } from "./store-batch"
+import { stringItems } from "./store-batch"
 import { getPinchZoomEnabled, setPinchZoomEnabled, setTitlebar, updateTitlebar } from "./windows"
 import type { UpdaterController } from "./updater-controller"
 import { createUpdaterSubscriptions } from "./updater-subscriptions"
@@ -100,7 +100,7 @@ export function registerIpcHandlers(deps: Deps) {
   // 单键的 store-get / store-set 留着 —— 渲染器的 i18n 在 platform 建好之前要读一个键,闸门脚本也直接用。
   ipcMain.handle("store-items", (_event: IpcMainInvokeEvent, name: string) => {
     try {
-      return stringItems(getStore(name).store as Record<string, unknown>)
+      return stringItems(getStore(name).entries())
     } catch {
       return {}
     }
@@ -108,8 +108,7 @@ export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle(
     "store-update",
     (_event: IpcMainInvokeEvent, name: string, insert: Record<string, string>, remove: string[]) => {
-      const store = getStore(name)
-      store.store = applyUpdate(store.store as Record<string, unknown>, insert, remove)
+      getStore(name).update(insert, remove)
     },
   )
   ipcMain.handle("store-delete", (_event: IpcMainInvokeEvent, name: string, key: string) => {
@@ -119,12 +118,10 @@ export function registerIpcHandlers(deps: Deps) {
     getStore(name).clear()
   })
   ipcMain.handle("store-keys", (_event: IpcMainInvokeEvent, name: string) => {
-    const store = getStore(name)
-    return Object.keys(store.store)
+    return Object.keys(getStore(name).entries())
   })
   ipcMain.handle("store-length", (_event: IpcMainInvokeEvent, name: string) => {
-    const store = getStore(name)
-    return Object.keys(store.store).length
+    return Object.keys(getStore(name).entries()).length
   })
 
   ipcMain.handle(

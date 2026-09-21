@@ -1330,8 +1330,8 @@ Windows 失败时这里超时变红,本来也不该有只含 mac 的 Release)。
 - **渲染器的持久化(`persisted()` → `platform.storage(name)`)在桌面端不是"写一个键发一次 IPC"。** 每个名字空间
   (`yoma.global.dat`、`yoma.workspace.….dat`、`yoma.draft.….dat`)在渲染器里有一份内存副本(app 的
   `utils/namespace-storage.ts`):只从主进程读一次(`store-items`),之后的读是 Map 查找;写先落内存、攒 100 ms
-  合成一次 `store-update`,主进程一次写盘。为什么:主进程每写一个键都要把整个文件读、解析、序列化、原子写回
-  (带 fsync,小文件也要 4–6 ms;2026-09-21 实测 dev 档的 global 文件 241 KB,`prompt-history` 一个键就 164 KB),
+  合成一次 `store-update`,主进程一次写盘。为什么:主进程每写一次都是整份序列化 + 带 fsync 的原子写,同步的,
+  小文件也要 4–6 ms(2026-09-21 实测 dev 档的 global 文件 241 KB,`prompt-history` 一个键就 164 KB),
   拖面板、打字、连着几次 setState 就是一串这样的同步写。闸门那一趟流程实测:store IPC 182 次 → 37 次,主进程花在
   上面的时间 168 ms → 101 ms(那趟流程是一下一下点的,攒不出多少;连续写入的场景差得更多)。
   **落盘边界是 `pagehide` 和窗口退到后台**:`flush()` 同步地把这一批交给 IPC,页面消失之前消息已经发出去了。
@@ -1339,6 +1339,17 @@ Windows 失败时这里超时变红,本来也不该有只含 mac 的 Release)。
   (把 pagehide 那一行去掉它就红)。单键的 `store-get` / `store-set` 留着:渲染器的 i18n 在 platform 建好之前
   要读一个键,闸门脚本也直接用;**别在页面活着的时候用它们去改一个已经被缓存的名字空间**,副本不会知道。
   多窗口的修订号那一套(opencode dc46ecfc55)没搬:我们只有一个窗口,主进程自己也不碰这些 `.dat`。
+- **主进程的存储是自己的 `main/json-store.ts`,窗口位置是 `main/window-state.ts`,不是 electron-store /
+  electron-window-state。** 2026-09-21 换掉的,理由是量出来的:electron-store 背后的 conf 光 import 就约 23 ms
+  (背着 ajv 一家子,而我们不用 schema),在启动关键路径上;它每次 get 都重读整个文件,每次 set 是读 + 解析 +
+  序列化 + 写。同机同脚本 7 次中位数:就绪 165 → 150、亮出来 392 → 378 ms;lockfile 少 16 个包,另有 9 个
+  (ajv、jsonfile、mkdirp…)降成只在开发时用,不再进安装包。**文件格式原样不动** —— 制表符缩进的一个 JSON 对象、
+  文件名不带扩展名;`window-state.json` 的字段也原样。换之前拿真的 conf 做过差分:8 步操作逐字节一致、双向互读
+  数据一致,老档案直接读,退回旧版本也读得了。写仍然是同步的带 fsync 的原子写(临时文件 + rename;Windows 上
+  rename 撞 EPERM / EBUSY 会退避重试,实在换不进去就直接写,不丢这次改动),先写成再认内存里的新值。和
+  electron-store 不一样的一处:**读不出来的文件挪成 `.corrupt`、当作空的继续**,它在这里是直接抛、挡住启动。
+  前提是一个文件只有主进程在写;窗口位置照旧只在关窗时写盘(闸门是先算账再关 Electron 的,所以这一条没进
+  `e2e:paint`,换的时候用一次性脚本在真窗口里验过:写出来的文件和旧库逐字节相同,第二次启动摆回了记下的位置)。
 
 ## 会咬人的地方
 

@@ -1,8 +1,7 @@
-import windowState from "electron-window-state"
 import { resolveThemeVariant } from "@yoma-desktop/ui/theme/resolve"
 import type { DesktopTheme } from "@yoma-desktop/ui/theme/types"
 import oc2ThemeJson from "../../../ui/src/theme/themes/oc-2.json"
-import { app, BrowserWindow, dialog, net, nativeImage, nativeTheme, protocol } from "electron"
+import { app, BrowserWindow, dialog, net, nativeImage, nativeTheme, protocol, screen } from "electron"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import type { TitlebarTheme } from "../preload/types"
@@ -10,6 +9,7 @@ import { exportDebugLogs, write as writeLog } from "./logging"
 import { getStore } from "./store"
 import { PINCH_ZOOM_ENABLED_KEY } from "./store-keys"
 import { createUnresponsiveSampler } from "./unresponsive"
+import { manageWindowState, readWindowState, resolveWindowState, type Displays } from "./window-state"
 
 const root = dirname(fileURLToPath(import.meta.url))
 const rendererRoot = join(root, "../renderer")
@@ -120,10 +120,13 @@ export function setDockIcon() {
 }
 
 export function createMainWindow() {
-  const state = windowState({
-    defaultWidth: 1280,
-    defaultHeight: 800,
-  })
+  const displays: Displays = {
+    all: () => screen.getAllDisplays().map((display) => display.bounds),
+    primary: () => screen.getPrimaryDisplay().bounds,
+    matching: (bounds) => screen.getDisplayMatching(bounds).bounds,
+  }
+  const stateFile = join(app.getPath("userData"), "window-state.json")
+  const state = resolveWindowState(readWindowState(stateFile), { width: 1280, height: 800 }, displays)
 
   const mode = tone()
   const win = new BrowserWindow({
@@ -172,7 +175,7 @@ export function createMainWindow() {
     callback({ responseHeaders })
   })
 
-  state.manage(win)
+  manageWindowState(win, stateFile, state, displays)
   loadWindow(win, "index.html")
   wireZoom(win)
 

@@ -1,9 +1,9 @@
 /**
  * 桌面端一个存储名字空间(`yoma.global.dat`、`yoma.workspace.….dat` 这种文件)在渲染器里的内存副本。
  *
- * 以前 `platform.storage(name)` 的每个 getItem / setItem 都是一次 IPC,而主进程那头每写一个键就把整个文件
- * 同步地读一遍、解析、改、序列化、原子写回(electron-store 就是这么干的;实测 241 KB 的 global 文件一次约 6 ms)。
- * 拖面板、切页签、连着几次 setState,就是一串这样的写。现在:
+ * 以前 `platform.storage(name)` 的每个 getItem / setItem 都是一次 IPC,而主进程那头每写一个键都是一次整份
+ * 序列化 + 带 fsync 的原子写(desktop 的 json-store.ts;同步的,小文件也要 4–6 ms,实测 dev 档的 global 文件有
+ * 241 KB)。拖面板、切页签、连着几次 setState,就是一串这样的写。现在:
  *   - 名字空间只从主进程读一次,之后的读是 Map 查找;
  *   - 写先落在内存里(读立刻看得见),攒一个窗口(`NAMESPACE_FLUSH_DELAY`)合成一次 IPC、主进程一次写盘;
  *   - `flush()` 把这一批**同步地**交给 driver —— 页面要走了(pagehide)时调它,消息在页面消失之前就已经发出去了。
