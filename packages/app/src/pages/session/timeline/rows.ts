@@ -22,6 +22,7 @@ export type TimelineRowMap = {
     previousAssistantPart: boolean
   }
   Thinking: { userMessageID: string; reasoningHeading?: string }
+  Compacting: { userMessageID: string }
   ModelRequest: {
     userMessageID: string
     state: "retrying" | "recovered" | "failed"
@@ -56,9 +57,21 @@ export namespace TimelineRow {
     userMessageID: string
     reasoningHeading?: string
   }> {}
+  /** 正在压缩上下文。压完内核补一条 compaction part,那是「会话已压缩」的分隔线;这一行只管压的那一段时间。 */
+  export class Compacting extends Data.TaggedClass("Compacting")<{
+    userMessageID: string
+  }> {}
   export class ModelRequest extends Data.TaggedClass("ModelRequest")<TimelineRowMap["ModelRequest"]> {}
 
-  export type TimelineRow = TurnGap | CommentStrip | UserMessage | TurnDivider | AssistantPart | Thinking | ModelRequest
+  export type TimelineRow =
+    | TurnGap
+    | CommentStrip
+    | UserMessage
+    | TurnDivider
+    | AssistantPart
+    | Thinking
+    | Compacting
+    | ModelRequest
 
   export const key = (row: TimelineRow) => {
     switch (row._tag) {
@@ -74,6 +87,8 @@ export namespace TimelineRow {
         return `assistant-part:${row.userMessageID}:${row.group.key}`
       case "Thinking":
         return `thinking:${row.userMessageID}`
+      case "Compacting":
+        return `compacting:${row.userMessageID}`
       case "ModelRequest":
         return `model-request:${row.userMessageID}`
     }
@@ -215,6 +230,10 @@ export namespace Timeline {
         }),
       )
     }
+
+    // 压缩(手动 /compact,或一轮里撞到阈值 / 溢出)要让模型写一段摘要,几秒到几十秒。这段时间状态是
+    // compacting 而不是 busy,上面那行「思考中」不出 —— 不补这一行的话,屏幕上什么都不动,像卡死了。
+    if (isActive && status === "compacting") rows.push(new TimelineRow.Compacting({ userMessageID: userMessage.id }))
 
     // 每轮的 diff 汇总原来来自 UserMessage.summary.diffs,而那是 opencode 的文件快照
     // 产物。内核没有快照,这一行随之消失;真要显示的话得从 edit/write 工具的

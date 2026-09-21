@@ -177,3 +177,18 @@ describe("连着的「找东西」工具并成一行", () => {
     expect(groups).toEqual(["UserMessage", ["p1"], "TurnDivider", ["p2"]])
   })
 })
+
+describe("压缩上下文的那段时间", () => {
+  const tags = (status: "busy" | "idle" | "compacting", active: boolean) =>
+    rows([assistant("a")], status, active).map((row) => row._tag)
+
+  test("正在压缩的那一轮底下有一行「压缩中」,而不是「思考中」", () => {
+    expect(tags("compacting", true)).toEqual(["UserMessage", "Compacting"])
+  })
+
+  test("别的轮次、别的状态都没有这一行", () => {
+    expect(tags("compacting", false)).toEqual(["UserMessage"])
+    expect(tags("busy", true)).not.toContain("Compacting")
+    expect(tags("idle", false)).not.toContain("Compacting")
+  })
+})

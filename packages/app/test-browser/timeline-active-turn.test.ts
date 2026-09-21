@@ -55,12 +55,17 @@ function setup(showReasoning: boolean) {
       .rows()
       .filter((row) => row._tag === "Thinking")
       .map((row) => row.userMessageID)
+  const compacting = () =>
+    timeline
+      .rows()
+      .filter((row) => row._tag === "Compacting")
+      .map((row) => row.userMessageID)
   const send = () =>
     batch(() => {
       status({ type: "busy" })
       store.optimistic.add({ sessionID: "s", message: user("msg_3"), parts: [] })
     })
-  return { store, status, message, timeline, thinking, send }
+  return { store, status, message, timeline, thinking, compacting, send }
 }
 
 describe("timeline active turn", () => {
@@ -111,7 +116,7 @@ describe("timeline active turn", () => {
   test("late updates from an older turn cannot take ownership of current retry or thinking status", () => {
     createRoot((dispose) => {
       try {
-        const { timeline, thinking, send, message, status } = setup(false)
+        const { timeline, thinking, compacting, send, message, status } = setup(false)
         send()
         message(assistant("msg_1", "msg_0"))
         expect(thinking()).toEqual(["msg_3"])
@@ -137,8 +142,32 @@ describe("timeline active turn", () => {
         status({ type: "compacting" })
         expect(timeline.activeMessageID()).toBe("msg_3")
         expect(thinking()).toEqual([])
+        expect(compacting()).toEqual(["msg_3"])
+        // 轮内压缩压完回到 busy:「压缩中」收掉,「思考中」回来。
+        status({ type: "busy" })
+        expect(compacting()).toEqual([])
+        expect(thinking()).toEqual(["msg_3"])
         status({ type: "idle" })
+        expect(compacting()).toEqual([])
         expect(timeline.activeMessageID()).toBeUndefined()
+      } finally {
+        dispose()
+      }
+    })
+  })
+
+  // 手动 /compact:会话本来是空闲的,没有哪一轮在跑。「压缩中」挂在最后一轮底下,只此一行。
+  test("manual compaction of an idle session shows one compacting row under the last turn", () => {
+    createRoot((dispose) => {
+      try {
+        const { timeline, thinking, compacting, status } = setup(true)
+        expect(compacting()).toEqual([])
+        status({ type: "compacting" })
+        expect(compacting()).toEqual(["msg_0"])
+        expect(thinking()).toEqual([])
+        expect(timeline.rows().at(-1)?._tag).toBe("Compacting")
+        status({ type: "idle" })
+        expect(compacting()).toEqual([])
       } finally {
         dispose()
       }

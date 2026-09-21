@@ -629,6 +629,9 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
    各自的展开状态仍按 part id 记在 `toolOpen` 里,组的按组 key 记。会动硬件、会改文件、会起进程的工具不许进清单。
    这是 2026-09-10 卡片归零时连带删掉的 opencode `ContextToolGroup` 的重写版(上游后来的同类改动:ea582fc133)。
    真窗口覆盖在 `e2e:paint` 的子会话页:种子里 Explore 先 `ls` + 读一个在的文件 + 读一个不在的文件。
+3. **压缩上下文的那段时间有一行「正在压缩上下文」**(`TimelineRow.Compacting`)。内核一直在发 `compacting` 状态
+   (手动 /compact,或一轮里撞到阈值 / 溢出),而「思考中」只认 `busy` —— 不补这一行,模型写摘要的那几秒到几十秒里
+   屏幕上什么都不动。只挂在正在跑的那一轮底下;压完内核补的 compaction part 才是「会话已压缩」的分隔线。
 
 ### 内核事件只能用 `subscribe()`
 

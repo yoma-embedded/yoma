@@ -841,6 +841,18 @@ export function MessageTimeline(props: {
           </TimelineRowFrame>
         )
       }
+      case "Compacting": {
+        const compactingRow = row as Accessor<TimelineRowByTag<"Compacting">>
+        return (
+          <TimelineRowFrame row={compactingRow}>
+            <div data-slot="session-turn-message-container" class="w-full px-4 md:px-5">
+              <div data-slot="session-turn-thinking" data-compacting>
+                <TextShimmer text={language.t("ui.sessionTurn.status.compacting")} />
+              </div>
+            </div>
+          </TimelineRowFrame>
+        )
+      }
       case "ModelRequest": {
         const requestRow = row as Accessor<TimelineRowByTag<"ModelRequest">>
         return (
