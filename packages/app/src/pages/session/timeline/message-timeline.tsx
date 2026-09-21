@@ -373,7 +373,9 @@ export function MessageTimeline(props: {
     props.onPauseAutoScroll?.()
     // 命中在收着的卡片里:把卡片(和它所在的「已探索」组)打开,字才画得出来、才圈得上。
     if (at.groupKey) setToolOpen(at.groupKey, true)
-    if (searchable().parts.find((part) => part.id === partID)?.type === "tool") setToolOpen(partID, true)
+    // 工具卡和后台任务的通知行都是收着的:正文(输出 / 结果全文)要打开才画得出来。
+    const type = searchable().parts.find((part) => part.id === partID)?.type
+    if (type === "tool" || type === "task") setToolOpen(partID, true)
     virtualizer.scrollToIndex(at.row, { align: "center" })
   }
 
@@ -841,6 +843,8 @@ export function MessageTimeline(props: {
                       message={message()}
                       parts={getMsgParts(userMessageRow().userMessageID)}
                       useV2Actions
+                      partOpen={(partID) => toolOpen[partID]}
+                      onPartOpenChange={setToolOpen}
                     />
                   </div>
                 </div>

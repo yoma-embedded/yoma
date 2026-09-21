@@ -136,6 +136,16 @@ describe("TurnChangesRow", () => {
     ])
   })
 
+  test("同一个文件有的改动记下了、有的没有:照样能点开,但标明另有几次没记 —— 行数和 diff 都不含它们", () => {
+    const h = setup([
+      tool("write", { path: "big.c", content: "v1\n" }),
+      tool("write", { path: "big.c", content: "v2\n" }, { before: "v1\n" }),
+    ])
+    expect(h.item("big.c")!.textContent).toContain('session.turnChanges.partial{"count":1}')
+    h.trigger("big.c").click()
+    expect(h.diffs("big.c")).toBe(1)
+  })
+
   test("没记下内容的 write(旧会话):文件照列,标明未记录,点不开", () => {
     const h = setup([tool("write", { path: "legacy.c", content: "x\n" })])
     expect(h.item("legacy.c")!.textContent).toContain("session.turnChanges.opaque")

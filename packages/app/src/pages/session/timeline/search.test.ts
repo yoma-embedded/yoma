@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest"
 import type { Part } from "@yoma-desktop/kernel"
-import { collectRanges, countOccurrences, locateMatch, rangesIn, searchableText, startIndex } from "./search"
+import { collectRanges, countOccurrences, foldCase, locateMatch, rangesIn, searchableText, startIndex } from "./search"
 
 const base = { sessionID: "s", messageID: "m" }
 const toolPart = (id: string, state: Record<string, unknown>): Part =>
@@ -16,7 +16,8 @@ describe("searchableText", () => {
       metadata: {},
       time: { start: 1, end: 2 },
     })
-    expect(searchableText(done, true)).toBe("st-flash write fw.bin 0x08000000\n30\nFlash written and verified\n")
+    // 工具名在最前:卡片标题那一行第一个词就是它
+    expect(searchableText(done, true)).toBe("bash\nst-flash write fw.bin 0x08000000\n30\nFlash written and verified\n")
     const failed = toolPart("t2", {
       status: "error",
       input: { path: "missing.ld" },
@@ -33,13 +34,28 @@ describe("searchableText", () => {
       output: "erasing sector 3",
       time: { start: 1 },
     })
-    expect(searchableText(running, true)).toBe("config.h\nerasing sector 3\n")
+    expect(searchableText(running, true)).toBe("bash\nconfig.h\nerasing sector 3\n")
   })
 
   test("思考段只在设置里打开显示时才搜得到 —— 画不出来的东西不该算进计数", () => {
     const part = { ...base, id: "r1", type: "reasoning", text: "检查 HardFault", time: { start: 1 } } as Part
     expect(searchableText(part, true)).toBe("检查 HardFault")
     expect(searchableText(part, false)).toBe("")
+  })
+
+  test("后台任务的通知:类型、描述、结果全文;界面上不画的那句 summary 不算", () => {
+    const part = {
+      ...base,
+      id: "n1",
+      type: "task",
+      taskID: "t",
+      agent: "general-purpose",
+      description: "后台查手册",
+      status: "completed",
+      summary: 'Agent "后台查手册" completed',
+      result: "SPI1 时钟上限 42 MHz",
+    } as Part
+    expect(searchableText(part, true)).toBe("general-purpose\n后台查手册\nSPI1 时钟上限 42 MHz")
   })
 
   test("附件搜文件名,不搜 data-URL", () => {
@@ -52,6 +68,15 @@ describe("searchableText", () => {
       url: "data:image/png;base64,AAAA",
     } as Part
     expect(searchableText(part, true)).toBe("scope.png")
+  })
+})
+
+describe("foldCase", () => {
+  test("和原文等长:toLowerCase 会变长的字符(İ)保持原样,别的照常折", () => {
+    expect(foldCase("HardFault")).toBe("hardfault")
+    const folded = foldCase("İSR Handler")
+    expect(folded).toHaveLength("İSR Handler".length)
+    expect(folded).toBe("İsr handler")
   })
 })
 
@@ -140,6 +165,23 @@ describe("DOM 里的高亮范围", () => {
     expect(found.active?.startOffset).toBe("spi one, ".length)
     expect(found.exact).toBe(true)
     expect(found.activeElement?.getAttribute("data-timeline-part-id")).toBe("p2")
+    root.remove()
+  })
+
+  // 审查抓到的:DOM 里多出来的字(翻译过的卡片标题、界面标签)要是也圈,计数写着"无结果"屏幕上却一片高亮。
+  test("只圈数据层数到了命中的 part;别的 part 里 DOM 碰巧有这个词也不圈", () => {
+    const root = mount(
+      `<div data-timeline-part-id="counted">called write</div><div data-timeline-part-id="label-only">write</div>`,
+    )
+    const found = collectRanges(root, "write", undefined, (partID) => partID === "counted")
+    expect(found.hits.map((range) => range.startContainer.parentElement?.dataset.timelinePartId)).toEqual(["counted"])
+    expect(collectRanges(root, "write", undefined, () => false).hits).toEqual([])
+    root.remove()
+  })
+
+  test("一个会让 toLowerCase 变长的字符不再让整段不圈", () => {
+    const root = mount(`<div data-timeline-part-id="p1">İSR fault, then another FAULT</div>`)
+    expect(rangesIn(root.firstElementChild!, "fault").map((range) => range.toString())).toEqual(["fault", "FAULT"])
     root.remove()
   })
 

@@ -176,6 +176,30 @@ describe("TimelineSearch", () => {
     expect(h.hits()).toEqual(["dma", "dma"])
   })
 
+  // 审查抓到的:DOM 层自己圈,会出现计数写着"无结果"、屏幕上却有高亮(卡片标题是翻译过的字,数据层里没有)。
+  test("数据层没数到的就不圈:DOM 里碰巧有这个词也不上色", async () => {
+    const h = setup([text("p1", "flash ok")])
+    const label = document.createElement("div")
+    label.dataset.timelinePartId = "ui-only"
+    label.textContent = "zzz label rendered by the card, not in the part"
+    timeline.append(label)
+    h.type("zzz")
+    await settle()
+    expect(h.count()).toBe("session.search.noResults")
+    expect(h.hits()).toEqual([])
+    expect(h.active()).toEqual([])
+  })
+
+  test("cmd+G / cmd+shift+G 在搜索条里也是下一处 / 上一处", async () => {
+    const h = setup([text("p1", "adc adc adc")])
+    h.type("adc")
+    await settle()
+    h.key("g", { metaKey: true })
+    expect(h.count()).toBe("2/3")
+    h.key("G", { metaKey: true, shiftKey: true })
+    expect(h.count()).toBe("1/3")
+  })
+
   test("没有结果说没有结果,上一处 / 下一处按不动", async () => {
     const h = setup([text("p1", "nothing")])
     h.type("zzz")

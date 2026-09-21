@@ -1037,6 +1037,31 @@ try {
     const shot = await send("Page.captureScreenshot", { format: "png" })
     writeFileSync(process.env.YOMA_PAINT_SCREENSHOT_SEARCH, Buffer.from(shot.result!.data as string, "base64"))
   }
+  // 后台任务的通知行也是收着的,结果全文在里面:跳到那儿的命中时它得自己打开(展开状态现在和工具卡一样记在时间线上)。
+  await evaluate(`(() => { const n = ${notice}; if (n?.querySelector('[data-component="agent-result"]')) n.querySelector('[data-component="tool-trigger"]')?.click() })()`)
+  check("查找之前通知行是收着的", await waitFor(`!!${notice} && !${notice}.querySelector('[data-component="agent-result"]')`, APPEAR_TIMEOUT_MS))
+  await typeQuery("RM0090")
+  const inNotice = `(() => {
+    const range = [...(CSS.highlights.get("timeline-search-hit-active") ?? [])][0]
+    return !!range && !!${notice}?.querySelector('[data-component="agent-result"]')?.contains(range.startContainer)
+  })()`
+  await waitFor(`/^\\d+\\/\\d+$/.test(${searchCount})`, APPEAR_TIMEOUT_MS)
+  for (let i = 0; i < 3 && !(await evaluate<boolean>(inNotice)); i++) {
+    await pressKey("Enter", "Enter", 13)
+    await waitFor(inNotice, 1_500)
+  }
+  check("命中在收着的通知行里:通知行自己打开,当前那一处圈在结果全文上", await evaluate<boolean>(inNotice), await evaluate<string>(searchCount))
+  // 计数和高亮是同一个口径:界面上有、数据层没有的字(卡片标题里翻译过的那句「调用了」)搜不到,也不上色 ——
+  // 头一版 DOM 层自己圈,会出现计数写着"无结果"、屏幕上却一片高亮。
+  await typeQuery("调用了")
+  check(
+    "只在界面标签里出现的词:计数说没有,屏幕上也不圈",
+    await waitFor(
+      `${searchCount}.length > 0 && !/\\d/.test(${searchCount}) && ${painted("timeline-search-hit")}.length === 0 && ${painted("timeline-search-hit-active")}.length === 0`,
+      APPEAR_TIMEOUT_MS,
+    ),
+    await evaluate<string>(searchCount),
+  )
   await pressKey("Escape", "Escape", 27)
   check(
     "Esc 关掉查找,高亮清干净",

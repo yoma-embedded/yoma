@@ -47,13 +47,18 @@ describe("isFileChange", () => {
 })
 
 describe("resolveChangePath", () => {
-  test("相对路径补会话目录;绝对路径、盘符、UNC 原样", () => {
+  test("相对路径补会话目录;绝对路径不补", () => {
     expect(resolveChangePath(DIR, "src/main.c")).toBe("/work/fw/src/main.c")
     expect(resolveChangePath(DIR + "/", "./src/main.c")).toBe("/work/fw/src/main.c")
     expect(resolveChangePath(DIR, "@src/main.c")).toBe("/work/fw/src/main.c")
     expect(resolveChangePath(DIR, "/etc/hosts")).toBe("/etc/hosts")
-    expect(resolveChangePath("C:\\fw", "C:\\fw\\main.c")).toBe("C:\\fw\\main.c")
-    expect(resolveChangePath(DIR, "\\\\nas\\share\\a.c")).toBe("\\\\nas\\share\\a.c")
+  })
+
+  test("Windows:分隔符归成 /、盘符小写,同一个文件的几种写法是同一个键;UNC 的开头两杠留着", () => {
+    const dir = "C:\\fw"
+    const spellings = ["C:\\fw\\src\\main.c", "c:/fw/src/main.c", "src\\main.c", ".\\src\\main.c", "src/main.c"]
+    expect(new Set(spellings.map((path) => resolveChangePath(dir, path)))).toEqual(new Set(["c:/fw/src/main.c"]))
+    expect(resolveChangePath(DIR, "\\\\nas\\share\\a.c")).toBe("//nas/share/a.c")
   })
 })
 
@@ -71,6 +76,17 @@ describe("turnFileChanges", () => {
       ["src/main.c", 2, false],
       ["README.md", 1, true],
     ])
+  })
+
+  test("Windows 上绝对写法和相对写法并成一行,显示相对路径", () => {
+    const changes = turnFileChanges(
+      [
+        tool("edit", { path: "C:\\fw\\src\\main.c" }, { patch: EDIT_PATCH }),
+        tool("edit", { path: "src/main.c" }, { patch: EDIT_PATCH }),
+      ],
+      "C:\\fw",
+    )
+    expect(changes.map((item) => [item.display, item.sources.length])).toEqual([["src/main.c", 2]])
   })
 
   test("会话目录之外的文件显示绝对路径;目录名只是前缀相同的不算在里面", () => {

@@ -116,6 +116,12 @@ function TurnChangeItem(props: { change: FileChange; view: ReturnType<typeof fil
               <Show when={props.change.created}>
                 <span data-slot="session-turn-diff-note">{language.t("session.turnChanges.created")}</span>
               </Show>
+              {/* 有几次改动没记下内容(被覆盖的文件过大 / 二进制 / 旧会话):行数和 diff 都不含它们,得说一声。 */}
+              <Show when={!opaque() && props.change.opaque > 0}>
+                <span data-slot="session-turn-diff-note">
+                  {language.t("session.turnChanges.partial", { count: props.change.opaque })}
+                </span>
+              </Show>
               <Show
                 when={!opaque()}
                 fallback={<span data-slot="session-turn-diff-note">{language.t("session.turnChanges.opaque")}</span>}

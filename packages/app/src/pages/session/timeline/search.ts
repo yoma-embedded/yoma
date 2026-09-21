@@ -32,16 +32,33 @@ export function searchableText(part: Part, showReasoning: boolean): string {
     case "file":
       return part.filename ?? ""
     case "task":
-      return [part.description, part.summary, part.result ?? ""].join("\n")
+      // 通知行上画的是类型 + 描述,展开是结果全文;summary 那句话(给模型看的)界面上不画,不算。
+      return [part.agent, part.description, part.result ?? ""].join("\n")
     case "tool": {
       const state = part.state
       const tail = state.status === "completed" || state.status === "running" ? state.output : undefined
       const error = state.status === "error" ? state.error : undefined
-      return [...scalarValues(state.input), tail ?? "", error ?? ""].join("\n")
+      // 工具名在最前:卡片标题那一行第一个词就是它("调用了 `write`")。
+      return [part.tool, ...scalarValues(state.input), tail ?? "", error ?? ""].join("\n")
     }
     default:
       return ""
   }
+}
+
+/**
+ * 和原文**等长**的小写:偏移要能直接映射回文本节点。`toLowerCase()` 对极少数字符会改变长度(İ → i̇),
+ * 碰到这种字符就逐个折、折完变长的那个字符保持原样 —— 好过整段不圈,也好过圈错地方。
+ */
+export function foldCase(text: string): string {
+  const lower = text.toLowerCase()
+  if (lower.length === text.length) return lower
+  let out = ""
+  for (const char of text) {
+    const folded = char.toLowerCase()
+    out += folded.length === char.length ? folded : char
+  }
+  return out
 }
 
 /** 不重叠地数。两边都得先转成小写。 */
@@ -104,9 +121,7 @@ export function rangesIn(element: Element, needle: string): Range[] {
     starts.push(text.length)
     text += value
   }
-  // toLowerCase 对极少数字符会改变长度(İ → i̇),那样偏移就对不上原文了;这种文本不圈,好过圈错地方。
-  const lower = text.toLowerCase()
-  if (lower.length !== text.length) return []
+  const lower = foldCase(text)
 
   const locate = (offset: number, end: boolean) => {
     let low = 0
@@ -142,17 +157,28 @@ export type CollectedRanges = {
 }
 
 /**
- * 眼前所有画出来的 part 里的范围。当前那一处 = 当前 part 的第 occurrence 个,DOM 里没那么多就取最后一个
+ * 眼前画出来的 part 里的范围。当前那一处 = 当前 part 的第 occurrence 个,DOM 里没那么多就取最后一个
  * (两层的字不完全一样,见文件头);当前 part 画出来了却一处都圈不到时,`activeElement` 让调用方至少能滚到那张卡。
+ *
+ * `counted` 说数据层在哪些 part 里数到了命中,**只圈这些**:DOM 里多出来的字(翻译过的卡片标题、界面上的标签)
+ * 要是也圈,就会出现计数写着"无结果"、屏幕上却一片高亮,回车还跳不过去。顺带省掉绝大多数 part 的遍历 ——
+ * 流式输出时这个函数每帧都跑。
  */
-export function collectRanges(root: Element, needle: string, target: SearchTarget | undefined): CollectedRanges {
+export function collectRanges(
+  root: Element,
+  needle: string,
+  target: SearchTarget | undefined,
+  counted?: (partID: string) => boolean,
+): CollectedRanges {
   const hits: Range[] = []
   let active: Range | undefined
   let activeElement: Element | undefined
   let exact = false
   for (const element of root.querySelectorAll("[data-timeline-part-id]")) {
+    const partID = element.getAttribute("data-timeline-part-id") ?? ""
+    if (counted && !counted(partID)) continue
     const ranges = rangesIn(element, needle)
-    if (target && element.getAttribute("data-timeline-part-id") === target.partID) {
+    if (target && partID === target.partID) {
       activeElement = element
       exact = ranges.length > target.occurrence
       const at = Math.min(target.occurrence, ranges.length - 1)

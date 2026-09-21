@@ -290,6 +290,7 @@ export const dict = {
   "session.turnChanges.showLess": "Show less",
   "session.turnChanges.more": "+{{count}} more files",
   "session.turnChanges.created": "new",
+  "session.turnChanges.partial": "{{count}} more not recorded",
   "session.turnChanges.opaque": "content not recorded",
   "session.turnChanges.step": "Change {{index}} of {{total}}",
   "session.queueDock.title": "{{count}} queued — sent to the model after the current tool step",

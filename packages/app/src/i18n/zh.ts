@@ -281,6 +281,7 @@ export const dict = {
   "session.turnChanges.showLess": "收起",
   "session.turnChanges.more": "还有 {{count}} 个文件",
   "session.turnChanges.created": "新建",
+  "session.turnChanges.partial": "另有 {{count}} 次未记录",
   "session.turnChanges.opaque": "未记录内容",
   "session.turnChanges.step": "第 {{index}} 次修改,共 {{total}} 次",
   "session.queueDock.title": "{{count}} 条排队中 —— 当前这步工具跑完就送给模型",

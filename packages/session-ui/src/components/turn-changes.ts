@@ -37,25 +37,32 @@ export function isFileChange(part: Part): part is ToolPart {
   return typeof part.state.input?.path === "string"
 }
 
-const isAbsolute = (path: string) =>
-  path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\") || path.startsWith("//")
+const isAbsolute = (path: string) => path.startsWith("/") || /^[A-Za-z]:\//.test(path)
 
-const trimEnd = (directory: string) => directory.replace(/[\\/]+$/, "")
+/**
+ * 分隔符一律换成 `/`,盘符小写。Windows 上模型这一次写 `C:\fw\main.c`、下一次写 `src/main.c`,不归一的话同一个
+ * 文件会拆成两行(审查抓到的)。UNC 的开头两杠留着,中间重复的杠并掉。
+ */
+const slashes = (path: string) => {
+  const value = path.replace(/\\/g, "/")
+  const unc = value.startsWith("//")
+  const merged = value.replace(/\/{2,}/g, "/")
+  return (unc ? "/" + merged : merged).replace(/^[A-Z]:/, (drive) => drive.toLowerCase())
+}
+
+const trimEnd = (directory: string) => slashes(directory).replace(/\/+$/, "")
 
 /** 与工具自己的解析同向:`@` 前缀是提及写法,相对路径相对会话目录。不碰文件系统,`..` 之类原样留着。 */
 export function resolveChangePath(directory: string, path: string) {
-  const value = (path.startsWith("@") ? path.slice(1) : path).replace(/^\.[\\/]+/, "")
+  const value = slashes(path.startsWith("@") ? path.slice(1) : path).replace(/^(\.\/)+/, "")
   if (isAbsolute(value) || !directory) return value
   return `${trimEnd(directory)}/${value}`
 }
 
 function displayPath(directory: string, file: string) {
   const root = trimEnd(directory)
-  if (!root) return file
-  const head = file.slice(0, root.length)
-  const rest = file.slice(root.length)
-  if (head !== root || !/^[\\/]/.test(rest)) return file
-  return rest.replace(/^[\\/]+/, "")
+  if (!root || !file.startsWith(root + "/")) return file
+  return file.slice(root.length + 1)
 }
 
 function sourceOf(part: ToolPart, file: string): { source?: DiffSource; created: boolean } {

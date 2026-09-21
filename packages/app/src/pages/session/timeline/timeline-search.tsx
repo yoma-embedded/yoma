@@ -71,6 +71,7 @@ export function TimelineSearch(props: {
     },
   )
   const entries = createMemo(() => index().map((item) => ({ partID: item.partID, count: item.count() })))
+  const counted = createMemo(() => new Set(entries().flatMap((entry) => (entry.count > 0 ? [entry.partID] : []))))
   const total = createMemo(() => entries().reduce((sum, entry) => sum + entry.count, 0))
   const active = createMemo(() => (total() === 0 ? 0 : Math.min(state.active, total() - 1)))
   const target = createMemo<SearchTarget | undefined>(() => locateMatch(entries(), active()), undefined, {
@@ -92,7 +93,7 @@ export function TimelineSearch(props: {
       seekFrame = undefined
       const root = props.root
       if (!root) return
-      const found = collectRanges(root, state.needle, next)
+      const found = collectRanges(root, state.needle, next, (partID) => partID === next.partID)
       const last = frames >= SEEK_FRAMES
       if (found.active && (found.exact || last)) return centerRange(found.active, root)
       // 数据层有、DOM 里圈不到(命中在链接的 URL 里、卡片把输出排成了别的样子):至少把那张卡摆到眼前。
@@ -126,11 +127,12 @@ export function TimelineSearch(props: {
     const root = props.root
     const needle = state.needle
     const current = target()
-    if (!root || !needle || !supportsHighlights()) return clearPaint()
+    const only = counted()
+    if (!root || !needle || only.size === 0 || !supportsHighlights()) return clearPaint()
     let frame: number | undefined
     const apply = () => {
       frame = undefined
-      const found = collectRanges(root, needle, current)
+      const found = collectRanges(root, needle, current, (partID) => only.has(partID))
       paint(SEARCH_HIT, found.hits)
       paint(SEARCH_ACTIVE, found.active ? [found.active] : [])
     }
@@ -186,6 +188,13 @@ export function TimelineSearch(props: {
               event.preventDefault()
               event.stopPropagation()
               props.onClose()
+              return
+            }
+            // cmd+G / cmd+shift+G:和浏览器、文件内查找同一个手感。
+            if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "g") {
+              event.preventDefault()
+              event.stopPropagation()
+              move(event.shiftKey ? -1 : 1)
               return
             }
             if (event.isComposing || event.altKey || event.metaKey || event.ctrlKey) return

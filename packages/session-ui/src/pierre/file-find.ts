@@ -55,6 +55,13 @@ function installShortcuts() {
       if (!mod) return
 
       const key = event.key.toLowerCase()
+      if (key !== "g" && key !== "f") return
+
+      // 归属按焦点分(见 inSessionFindScope):cmd+F 和 cmd+G 同一条规矩,不然会话内查找开着、焦点在时间线上时,
+      // cmd+G 还在驱动另一栏里那个文件内查找。
+      const focused = hostForNode(document.activeElement) ?? hostForNode(event.target)
+      if (!focused && inSessionFindScope(event.target)) return
+
       if (key === "g") {
         const host = current
         if (!host || !host.isOpen()) return
@@ -63,11 +70,6 @@ function installShortcuts() {
         host.next(event.shiftKey ? -1 : 1)
         return
       }
-
-      if (key !== "f") return
-
-      const focused = hostForNode(document.activeElement) ?? hostForNode(event.target)
-      if (!focused && inSessionFindScope(event.target)) return
 
       const active = current
       if (active && active.isOpen()) {

@@ -80,6 +80,9 @@ export interface MessageProps {
   showAssistantCopyPartID?: string | null
   showReasoningSummaries?: boolean
   useV2Actions?: boolean
+  /** 用户消息里可展开的 part(后台任务的完成通知)的展开状态,交给调用方记 —— 时间线是虚拟列表,记在组件身上会丢。 */
+  partOpen?: (partID: string) => boolean | undefined
+  onPartOpenChange?: (partID: string, open: boolean) => void
 }
 
 export interface MessagePartProps {
@@ -400,6 +403,8 @@ export function Message(props: MessageProps) {
             message={userMessage() as UserMessage}
             parts={props.parts}
             useV2Actions={props.useV2Actions}
+            partOpen={props.partOpen}
+            onPartOpenChange={props.onPartOpenChange}
           />
         )}
       </Match>
@@ -464,13 +469,22 @@ export function UserMessageDisplay(props: {
   message: UserMessage
   parts: PartType[]
   useV2Actions?: boolean
+  partOpen?: (partID: string) => boolean | undefined
+  onPartOpenChange?: (partID: string, open: boolean) => void
 }) {
   // 不是用户打的字(后台子 agent 的完成通知):画成通知行,不画成用户气泡,也没有复制 / 时间那一行。
   return (
     <Show when={props.message.synthetic} fallback={<UserBubble {...props} />}>
       <div data-component="user-message" data-synthetic="">
         <For each={props.parts.filter((part) => renderable(part))}>
-          {(part) => <Part part={part} message={props.message} />}
+          {(part) => (
+            <Part
+              part={part}
+              message={props.message}
+              toolOpen={props.partOpen?.(part.id)}
+              onToolOpenChange={props.onPartOpenChange ? (open) => props.onPartOpenChange!(part.id, open) : undefined}
+            />
+          )}
         </For>
       </div>
     </Show>
