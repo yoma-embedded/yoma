@@ -39,6 +39,7 @@ import { resolveElectron } from "./electron-bin.ts"
 import {
   BACKGROUND_ANSWER,
   BACKGROUND_DESCRIPTION,
+  EXPLORE_FILE,
   moveSeededSessions,
   seedSubagentSession,
   SUBAGENT_ANSWER,
@@ -873,6 +874,46 @@ try {
       APPEAR_TIMEOUT_MS,
     ),
   )
+  // 子 agent 回答之前连着做了三次只读调用(ls + 两次 read,其中一次读不到):时间线上并成一行,折叠着就说得出
+  // 「几次读取、几个列表、几次失败」,点开才是逐张卡片。文字跟语言走,这里只认数字与结构。
+  const contextGroup = `document.querySelector('[data-component="context-tool-group"]')`
+  check(
+    "连着的只读调用并成一行,失败的折叠着也看得见",
+    await waitFor(
+      `(() => {
+        const group = ${contextGroup}
+        if (!group) return false
+        const subtitle = group.querySelector('[data-slot="basic-tool-tool-subtitle"]')?.textContent ?? ""
+        const failed = group.querySelector('[data-slot="basic-tool-tool-arg"]')?.textContent ?? ""
+        return group.dataset.timelinePartIds?.split(",").length === 3
+          && group.dataset.failed === "true"
+          && /^2 .+ · 1 /.test(subtitle)
+          && /^1 /.test(failed)
+          && !group.querySelector('[data-slot="context-tool-group-list"]')
+          && document.querySelectorAll('[data-component="tool-part-wrapper"]').length === 0
+      })()`,
+      APPEAR_TIMEOUT_MS,
+    ),
+    await evaluate<string>(`${contextGroup}?.textContent ?? "(没有这一行)"`),
+  )
+  await evaluate(`${contextGroup}?.querySelector('[data-component="tool-trigger"]')?.click()`)
+  check(
+    "点开是逐张卡片(三张,读不到的那张是错误卡)",
+    await waitFor(
+      `(() => {
+        const list = ${contextGroup}?.querySelector('[data-slot="context-tool-group-list"]')
+        return list?.querySelectorAll('[data-component="tool-part-wrapper"]').length === 3
+          && (list?.textContent ?? "").includes(${json(EXPLORE_FILE)})
+      })()`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  if (process.env.YOMA_PAINT_SCREENSHOT_CONTEXT) {
+    await evaluate(`${contextGroup}?.scrollIntoView({ block: "center" })`)
+    await sleep(300)
+    const shot = await send("Page.captureScreenshot", { format: "png" })
+    writeFileSync(process.env.YOMA_PAINT_SCREENSHOT_CONTEXT, Buffer.from(shot.result!.data as string, "base64"))
+  }
   check("子会话页没崩到错误页", (await evaluate<boolean>(CRASHED)) === false)
   drain("子会话页")
   await evaluate(`document.querySelector('[data-component="subagent-back"] button')?.click()`)

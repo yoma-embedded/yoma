@@ -28,7 +28,7 @@ import { useData } from "../context"
 import { useDialog } from "@yoma-desktop/ui/context/dialog"
 import { useI18n } from "@yoma-desktop/ui/context/i18n"
 import { AgentTool, TaskNotificationDisplay } from "./agent-tool"
-import { GenericTool } from "./basic-tool"
+import { BasicTool, GenericTool } from "./basic-tool"
 import { FlashTool } from "./flash-tool"
 import { GdbTool } from "./gdb-tool"
 import { LaTool } from "./la-tool"
@@ -45,6 +45,7 @@ import { IconButton } from "@yoma-desktop/ui/icon-button"
 import { IconButtonV2 } from "@yoma-desktop/ui/v2/icon-button-v2"
 import { TooltipV2 } from "@yoma-desktop/ui/v2/tooltip-v2"
 import { attached, kind } from "./message-file"
+import { contextToolSummary, isContextGroupTool } from "./context-tool-group"
 import { readPartText } from "./message-part-text"
 
 async function writeClipboard(text: string): Promise<boolean> {
@@ -244,9 +245,21 @@ export type PartRef = {
   partID: string
 }
 
-export type PartGroup = {
-  key: string
-  ref: PartRef
+/** 时间线上的一行:一个 part,或者一串连着的「找东西」工具(`context-tool-group.ts`)。 */
+export type PartGroup =
+  | {
+      key: string
+      type: "part"
+      ref: PartRef
+    }
+  | {
+      key: string
+      type: "context"
+      refs: PartRef[]
+    }
+
+export function groupRefs(group: PartGroup): PartRef[] {
+  return group.type === "context" ? group.refs : [group.ref]
 }
 
 function sameRef(a: PartRef, b: PartRef) {
@@ -255,8 +268,10 @@ function sameRef(a: PartRef, b: PartRef) {
 
 function sameGroup(a: PartGroup, b: PartGroup) {
   if (a === b) return true
-  if (a.key !== b.key) return false
-  return sameRef(a.ref, b.ref)
+  if (a.key !== b.key || a.type !== b.type) return false
+  const left = groupRefs(a)
+  const right = groupRefs(b)
+  return left.length === right.length && left.every((ref, index) => sameRef(ref, right[index]!))
 }
 
 export function sameGroups(a: readonly PartGroup[] | undefined, b: readonly PartGroup[] | undefined) {
@@ -266,14 +281,27 @@ export function sameGroups(a: readonly PartGroup[] | undefined, b: readonly Part
   return a.every((item, i) => sameGroup(item, b[i]!))
 }
 
+/**
+ * 连着的「找东西」工具并成一组。**只有一个也成组**:key 取这一串的第一个 part,于是第二个 read 到的时候
+ * 这一行是原地长大,而不是旧行删掉、新行插进来(虚拟列表按 key 记高度,用户刚展开的卡片也不会被换掉)。
+ * 只有一个的组照普通卡片画,见 `message-timeline.tsx`。
+ */
 export function groupParts(parts: { messageID: string; part: PartType }[]): PartGroup[] {
-  return parts.map((item) => ({
-    key: `part:${item.messageID}:${item.part.id}`,
-    ref: {
-      messageID: item.messageID,
-      partID: item.part.id,
-    },
-  }))
+  const result: PartGroup[] = []
+  for (const item of parts) {
+    const ref = { messageID: item.messageID, partID: item.part.id }
+    if (!isContextGroupTool(item.part)) {
+      result.push({ key: `part:${item.messageID}:${item.part.id}`, type: "part", ref })
+      continue
+    }
+    const last = result.at(-1)
+    if (last?.type === "context") {
+      last.refs.push(ref)
+      continue
+    }
+    result.push({ key: `context:${item.messageID}:${item.part.id}`, type: "context", refs: [ref] })
+  }
+  return result
 }
 
 function index<T extends { id: string }>(items: readonly T[]) {
@@ -333,10 +361,10 @@ export function AssistantParts(props: {
   )
 
   return (
-    <Index each={grouped()}>
+    <Index each={grouped().flatMap(groupRefs)}>
       {(entryAccessor) => {
-        const message = createMemo(() => msgs().get(entryAccessor().ref.messageID))
-        const item = createMemo(() => part().get(entryAccessor().ref.messageID)?.get(entryAccessor().ref.partID))
+        const message = createMemo(() => msgs().get(entryAccessor().messageID))
+        const item = createMemo(() => part().get(entryAccessor().messageID)?.get(entryAccessor().partID))
 
         return (
           <Show when={message()}>
@@ -411,9 +439,9 @@ export function AssistantMessageDisplay(props: {
   )
 
   return (
-    <Index each={grouped()}>
+    <Index each={grouped().flatMap(groupRefs)}>
       {(entryAccessor) => {
-        const item = createMemo(() => part().get(entryAccessor().ref.partID))
+        const item = createMemo(() => part().get(entryAccessor().partID))
 
         return (
           <Show when={item()}>
@@ -718,6 +746,57 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
         </Switch>
       </div>
     </Show>
+  )
+}
+
+/**
+ * 一串「找东西」工具并成的那一行(`groupParts`)。外壳就是一张普通的工具卡:折叠态一句「已探索 · 3 次读取 · 2 次搜索」,
+ * 展开是逐张卡片(由调用方画,时间线要给每张卡接自己的展开状态)。还有没跑完的就按 running 画 —— 标题闪、
+ * 计数先不出,与别的卡片一致。
+ */
+export function ContextToolGroup(props: {
+  parts: ToolPart[]
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+  defer?: boolean
+  children: JSX.Element
+}) {
+  const i18n = useI18n()
+  const summary = createMemo(() => contextToolSummary(props.parts))
+  const counts = createMemo(() => {
+    const value = summary()
+    const count = (key: "read" | "search" | "list", n: number) =>
+      n > 0 ? [i18n.t(`ui.messagePart.context.${key}.${n === 1 ? "one" : "other"}`, { count: n })] : []
+    return [...count("read", value.read), ...count("search", value.search), ...count("list", value.list)].join(" · ")
+  })
+  // 失败数单独一段(卡片标题的 args 位),样式只染它 —— 整句都红的话看着像全失败了。
+  const failed = createMemo(() =>
+    summary().failed > 0 ? [i18n.t("ui.messagePart.context.failed", { count: summary().failed })] : [],
+  )
+
+  return (
+    <div
+      data-component="context-tool-group"
+      data-failed={summary().failed > 0 ? "true" : undefined}
+      data-timeline-part-ids={props.parts.map((part) => part.id).join(",")}
+    >
+      <BasicTool
+        icon="magnifying-glass"
+        status={summary().active ? "running" : "completed"}
+        trigger={{
+          title: i18n.t(
+            summary().active ? "ui.sessionTurn.status.gatheringContext" : "ui.sessionTurn.status.gatheredContext",
+          ),
+          subtitle: counts(),
+          args: failed(),
+        }}
+        open={props.open}
+        onOpenChange={props.onOpenChange}
+        defer={props.defer}
+      >
+        <div data-slot="context-tool-group-list">{props.children}</div>
+      </BasicTool>
+    </div>
   )
 }
 

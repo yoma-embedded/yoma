@@ -17,7 +17,15 @@ import { useNavigate } from "@solidjs/router"
 import { useMutation } from "@tanstack/solid-query"
 import { createVirtualizer, defaultRangeExtractor, elementScroll, type VirtualItem } from "@tanstack/solid-virtual"
 import { Accordion } from "@yoma-desktop/ui/accordion"
-import { Message, MessageDivider, Part as MessagePart, partDefaultOpen } from "@yoma-desktop/session-ui/message-part"
+import {
+  ContextToolGroup,
+  groupRefs,
+  Message,
+  MessageDivider,
+  Part as MessagePart,
+  partDefaultOpen,
+  type PartRef,
+} from "@yoma-desktop/session-ui/message-part"
 import { DiffChanges } from "@yoma-desktop/ui/diff-changes"
 import { FileIcon } from "@yoma-desktop/ui/file-icon"
 import { Icon as IconV2 } from "@yoma-desktop/ui/v2/icon"
@@ -628,9 +636,13 @@ export function MessageTimeline(props: {
     }
   }
 
-  const renderAssistantPartGroup = (row: Accessor<TimelineRowMap["AssistantPart"]>, onSizeChange?: () => void) => {
-    const message = createMemo(() => messageByID().get(row().group.ref.messageID))
-    const part = createMemo(() => getMsgPart(row().group.ref.messageID, row().group.ref.partID))
+  const renderAssistantPart = (
+    row: Accessor<TimelineRowMap["AssistantPart"]>,
+    ref: Accessor<PartRef>,
+    onSizeChange?: () => void,
+  ) => {
+    const message = createMemo(() => messageByID().get(ref().messageID))
+    const part = createMemo(() => getMsgPart(ref().messageID, ref().partID))
     const defaultOpen = createMemo(() => {
       const item = part()
       if (!item) return
@@ -658,6 +670,30 @@ export function MessageTimeline(props: {
             )}
           </Show>
         )}
+      </Show>
+    )
+  }
+
+  const renderAssistantPartGroup = (row: Accessor<TimelineRowMap["AssistantPart"]>, onSizeChange?: () => void) => {
+    const refs = createMemo(() => groupRefs(row().group))
+    const parts = createMemo(() =>
+      refs().flatMap((ref) => {
+        const part = getMsgPart(ref.messageID, ref.partID)
+        return part?.type === "tool" ? [part] : []
+      }),
+    )
+
+    // 一串「找东西」工具只有一个的时候照普通卡片画;第二个到了,这一行原地变成一组(key 不变,见 groupParts)。
+    return (
+      <Show when={refs().length > 1} fallback={renderAssistantPart(row, () => refs()[0]!, onSizeChange)}>
+        <ContextToolGroup
+          parts={parts()}
+          open={toolOpen[row().group.key] ?? false}
+          onOpenChange={(open) => setToolOpen(row().group.key, open)}
+          defer
+        >
+          <Index each={refs()}>{(ref) => renderAssistantPart(row, ref, onSizeChange)}</Index>
+        </ContextToolGroup>
       </Show>
     )
   }
@@ -838,6 +874,7 @@ export function MessageTimeline(props: {
     const asyncFile = () => {
       const value = row()
       if (value._tag !== "AssistantPart") return false
+      if (value.group.type !== "part") return false
       const part = getMsgPart(value.group.ref.messageID, value.group.ref.partID)
       return part?.type === "tool" && ["edit", "write"].includes(part.tool)
     }

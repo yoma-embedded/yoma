@@ -4,7 +4,7 @@ import type { AssistantMessage, Part, SessionStatus, UserMessage } from "@yoma-d
 import type { Sdk } from "@/utils/kernel"
 import { createServerSession } from "@/context/server-session"
 import { createTimelineProjection } from "@/pages/session/timeline/projection"
-import { Timeline } from "@/pages/session/timeline/rows"
+import { Timeline, TimelineRow } from "@/pages/session/timeline/rows"
 
 const user = (id: string): UserMessage => ({
   id,
@@ -163,6 +163,62 @@ describe("timeline projection: 流式增量", () => {
           part(tool("line\n".repeat(index + 1)))
           timeline.rows()
         }
+        expect(spy.mock.calls.length).toBe(0)
+      } finally {
+        dispose()
+      }
+    })
+  })
+
+  test("第二个 read 到的时候,那一行原地长大:key 不变、别的行原样复用", () => {
+    createRoot((dispose) => {
+      try {
+        const { part, timeline } = setup(true)
+        const read = (id: string, status: "running" | "completed"): Part =>
+          ({
+            id,
+            messageID: "msg_1",
+            sessionID: "s",
+            type: "tool",
+            callID: `call_${id}`,
+            tool: "read",
+            state:
+              status === "running"
+                ? { status, input: { path: "startup.s" }, time: { start: 1 } }
+                : {
+                    status,
+                    input: { path: "startup.s" },
+                    output: "",
+                    title: "",
+                    metadata: {},
+                    time: { start: 1, end: 2 },
+                  },
+          }) as Part
+        const assistantRows = () => timeline.rows().filter((row) => row._tag === "AssistantPart")
+
+        part(read("prt_1", "completed"))
+        const [first] = assistantRows()
+        const userRow = timeline.rows()[0]
+        expect(first!.group).toEqual({
+          key: "context:msg_1:prt_1",
+          type: "context",
+          refs: [{ messageID: "msg_1", partID: "prt_1" }],
+        })
+
+        part(read("prt_2", "running"))
+        const [grown, ...rest] = assistantRows()
+        expect(rest).toEqual([])
+        expect(TimelineRow.key(grown!)).toBe(TimelineRow.key(first!))
+        expect(grown!.group.type === "context" && grown!.group.refs.map((ref) => ref.partID)).toEqual([
+          "prt_1",
+          "prt_2",
+        ])
+        expect(timeline.rows()[0]).toBe(userRow)
+
+        // 跑完只是卡片内容变了,行的结构没变。
+        const spy = builds()
+        part(read("prt_2", "completed"))
+        expect(assistantRows()[0]).toBe(grown)
         expect(spy.mock.calls.length).toBe(0)
       } finally {
         dispose()

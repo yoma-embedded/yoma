@@ -10,7 +10,7 @@
  * 闸门再用 `moveSeededSessions` 按目录 / 按文件 rename 进去 —— rename 是原子的,app 那边的 list
  * 要么看不见,要么看见完整的文件。
  */
-import { existsSync, mkdirSync, readdirSync, renameSync } from "node:fs"
+import { existsSync, mkdirSync, readdirSync, renameSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import {
   createModels,
@@ -33,6 +33,13 @@ export const SUBAGENT_ANSWER = "链接脚本在 STM32F405RGTX_FLASH.ld(工程根
 /** 后台那个(general-purpose):完成后通知回到主会话,画成一行通知。 */
 export const BACKGROUND_DESCRIPTION = "后台查手册"
 export const BACKGROUND_ANSWER = "SPI1 时钟上限 42 MHz(RM0090 28.3 节)"
+/**
+ * 前台那个在回答之前先「找东西」:列一次目录、读一个在的文件、读一个不在的文件(工具报错)。三次连着的只读调用在
+ * 子会话页上并成一行(session-ui 的 `groupParts`),那一行只有这里跑真窗口。只用 ls / read —— grep / find 要 rg,
+ * 这条闸门不该依赖引擎二进制装没装。
+ */
+export const EXPLORE_FILE = "startup_stm32f405xx.s"
+export const EXPLORE_MISSING_FILE = "不存在的链接脚本.ld"
 const PARENT_PROMPT = "派两个子 agent:一个查链接脚本,一个在后台查手册"
 const CHILD_PROMPT = "找出这个工程的链接脚本在哪"
 const BACKGROUND_PROMPT = "在手册里查 SPI1 的时钟上限"
@@ -73,7 +80,17 @@ function script() {
         text(`后台也查到了:${BACKGROUND_ANSWER}`),
       ],
     ],
-    [CHILD_PROMPT, [text(SUBAGENT_ANSWER)]],
+    [
+      CHILD_PROMPT,
+      [
+        fauxAssistantMessage([
+          fauxToolCall("ls", {}),
+          fauxToolCall("read", { path: EXPLORE_FILE }),
+          fauxToolCall("read", { path: EXPLORE_MISSING_FILE }),
+        ]),
+        text(SUBAGENT_ANSWER),
+      ],
+    ],
     [BACKGROUND_PROMPT, [text(BACKGROUND_ANSWER)]],
   ])
   let served = 0
@@ -95,6 +112,7 @@ export async function seedSubagentSession(input: { stagingRoot: string; workspac
 
   const events: KernelEvent[] = []
   mkdirSync(input.scratch, { recursive: true })
+  writeFileSync(join(input.workspace, EXPLORE_FILE), "Reset_Handler:\n  ldr sp, =_estack\n")
   const host = createKernelHost({
     sessionsRoot: input.stagingRoot,
     stateDir: join(input.scratch, "state"),

@@ -505,7 +505,7 @@ kernel 接它 —— 从前那份自有 harness(`agent-legacy` / `@yoma/agent`)�
 | `npm run smoke -w packages/desktop` | 内核冒烟:对 **构建产物** 验证内核装配(工具清单与 `TOOL_NAMES` 逐字同序,今天 21 个)+ 引擎二进制 |
 | `npm run e2e:ipc -w packages/desktop` | 生产路径:真 utilityProcess + 真 MessagePort + 真协议帧(不开窗口) |
 | `npm run e2e:renderer -w packages/desktop` | 最后一跳:真窗口 + 真 preload + **真 contextBridge**(含 mailbox 桥三条) |
-| `npm run e2e:paint -w packages/desktop` | 真窗口首屏 + 点一遍:Electron 跑构建产物 + 接 CDP,首页 / 会话页(含逻辑分析仪面板)/ 子 agent 卡片、完成通知行与子会话页 / 草稿页 / 手册库 / 调试台全点一遍,零 `exceptionThrown` 零 `console.error` / Log 错误(含资源 404)(窗口会在屏幕上闪几秒,别去点它) |
+| `npm run e2e:paint -w packages/desktop` | 真窗口首屏 + 点一遍:Electron 跑构建产物 + 接 CDP,首页 / 会话页(含逻辑分析仪面板)/ 子 agent 卡片、完成通知行与子会话页(含连着的只读调用并成的那一行)/ 草稿页 / 手册库 / 调试台全点一遍,零 `exceptionThrown` 零 `console.error` / Log 错误(含资源 404)(窗口会在屏幕上闪几秒,别去点它) |
 | `npm run smoke:mailbox -w packages/desktop` | 调试台冒烟:Electron RUN_AS_NODE 对打包产物跑完整**本机演练**(假模型,零 key 零硬件) |
 | `npm run e2e:mailbox -w packages/desktop` | main 托管端到端:真 kernel.js 的 `mailbox.setActive` 往返 + 假守护喂 `@@event` + 停止杀树 + 锁冲突人话 |
 | `tsx packages/bench/src/cli.ts check <job.json>` | 校验任务书 + 本机内核装配 |
@@ -610,6 +610,25 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
    的 entry id,这条不受影响。要干掉时钟回拨钳制的话,正路是给存储层的 Entry 加 `seq`。)
 3. **发射顺序**:父 `message.updated` 早于它的任何 part;`part.updated` 早于该 part 的 delta。
    reducer 会静默丢弃孤儿 part 和未知 part 的 delta。
+
+### 时间线的行(`packages/app/src/pages/session/timeline`,2026-09-21)
+
+`rows.ts` 把一轮(一条 user 消息 + 它名下的 assistant 消息)摊成行,`projection.ts` 按轮各记一个 memo。两条规矩:
+
+1. **行的 memo 不许直接读 `part.text`。** 行的结构只取决于一段文本「空 / 非空」(思考行另看标题),这两样由
+   `projection.ts` 的 `createPartReader` 按 part 各记一个 memo,经 `Timeline.PartReader` 交给 `constructMessageRows`。
+   直接读的话,流式增量每 16 ms 一批,每批都把当前这一轮的行重建一遍(遍历全部 part、逐行造对象再逐行比)。
+   闸门是 `test-browser/timeline-projection.test.ts`:数 `constructMessageRows` 被叫了几次 —— 200 个文本增量 0 次
+   (改之前 200 次);工具进度本来就是 0 次(`message.part.updated` 走 `reconcile` 原地更新,行只读 `part.type`)。
+   往行里加新的判断时,凡是要读正文的,照样先记成按 part 的 memo。
+2. **连着的只读「找东西」工具并成一行**(read / grep / find / ls,清单在 session-ui 的 `context-tool-group.ts`):
+   一轮里它们常常一连十几次,逐张摆开会把烧录、调试器那几张挤到屏幕外。`groupParts` 出 `type: "context"` 的组,
+   **只有一个也成组、key 取第一个 part** —— 第二个到的时候那一行是原地长大,不是旧行删掉新行插入(虚拟列表按 key
+   记高度)。只有一个的组照普通卡片画;两个以上画成 `ContextToolGroup`:折叠态「已探索 · 2 次读取 · 1 个列表」,
+   **失败数单独一段、折叠着也看得见**(一次 read 读不到往往就是模型接下来走偏的原因),展开是逐张卡片,
+   各自的展开状态仍按 part id 记在 `toolOpen` 里,组的按组 key 记。会动硬件、会改文件、会起进程的工具不许进清单。
+   这是 2026-09-10 卡片归零时连带删掉的 opencode `ContextToolGroup` 的重写版(上游后来的同类改动:ea582fc133)。
+   真窗口覆盖在 `e2e:paint` 的子会话页:种子里 Explore 先 `ls` + 读一个在的文件 + 读一个不在的文件。
 
 ### 内核事件只能用 `subscribe()`
 
