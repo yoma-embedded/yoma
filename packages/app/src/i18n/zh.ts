@@ -105,7 +105,7 @@ export const dict = {
   "prompt.popover.emptyResults": "没有匹配的结果",
   "prompt.popover.enterDirectory": "进入",
   "prompt.popover.emptyCommands": "没有匹配的命令",
-  "prompt.dropzone.label": "将图片拖放到此处（文本文件会转为 @ 提及）",
+  "prompt.dropzone.label": "将图片拖放到此处（其他文件会转为 @ 提及）",
   "prompt.dropzone.file.label": "拖放以 @提及文件",
   "prompt.context.removeFile": "从上下文移除文件",
   "prompt.action.attachFile": "附加文件",

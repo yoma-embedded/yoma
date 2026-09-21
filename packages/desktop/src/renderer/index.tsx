@@ -1,7 +1,7 @@
 // @refresh reload
 
 import {
-  ACCEPTED_FILE_EXTENSIONS,
+  INLINE_ATTACHMENT_EXTENSIONS,
   AppBaseProviders,
   AppInterface,
   handleNotificationClick,
@@ -130,12 +130,16 @@ const createPlatform = (): Platform => {
         multiple: opts?.multiple ?? false,
         title: opts?.title ?? t("desktop.dialog.chooseFile"),
         defaultPath: opts?.defaultPath,
-        extensions: opts?.extensions ?? ACCEPTED_FILE_EXTENSIONS,
+        // 不设类型过滤:有真实路径的文件一律能交给 agent(固件产物 .elf / .bin / .hex 也是)。
+        extensions: opts?.extensions,
+        inlineExtensions: INLINE_ATTACHMENT_EXTENSIONS,
       })
       if (!result) return
       try {
         for (const file of result.files) {
-          const selected = new File([await window.api.readPickedFile(result.token, file.path)], file.name)
+          // 只有图片的字节要进渲染器;其余只是一个带名字和路径的空壳,attachments 会把它转成 @path。
+          const bytes = file.inline ? [await window.api.readPickedFile(result.token, file.path)] : []
+          const selected = new File(bytes, file.name)
           attachmentPaths.set(selected, file.path)
           await onFile(selected)
         }

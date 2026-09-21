@@ -123,6 +123,52 @@ describe("createPromptAttachmentsCore.add 的能力分流", () => {
     expect(h.warned()).toBe(0)
   })
 
+  // 固件产物是这个产品里最常被拖进来的东西:.elf / .bin / .hex 拖进去,agent 拿到路径就能去烧录、反汇编。
+  // 它们的内容探测不出 mime(attachmentMime 返回 undefined),以前在这里就被拒了。
+  test("二进制文件有真实路径(desktop)时同样转成 @path,内容不进渲染器", async () => {
+    const h = makeHarness({ getPathForFile: () => "/proj/build/firmware.elf" })
+    const file = new File([Uint8Array.of(0x7f, 0x45, 0x4c, 0x46, 0, 0, 0)], "firmware.elf", {
+      type: "application/octet-stream",
+    })
+    expect(await attachmentMime(file)).toBeUndefined()
+    expect(await h.core.addAttachment(file)).toBe(true)
+    expect(h.parts()).toHaveLength(0)
+    expect(h.insertedParts).toEqual([
+      { type: "file", path: "/proj/build/firmware.elf", content: "@/proj/build/firmware.elf", start: 0, end: 0 },
+    ])
+    expect(h.warned()).toBe(0)
+  })
+
+  test("批量里混着二进制和图片:二进制走 @path,图片照旧,不报不支持", async () => {
+    const paths = new Map<string, string>([["app.bin", "/proj/build/app.bin"]])
+    const h = makeHarness({ getPathForFile: (file) => paths.get(file.name) ?? "" })
+    const found = await h.core.addAttachments([
+      new File([Uint8Array.of(0, 1, 2, 3)], "app.bin"),
+      new File([Uint8Array.of(1)], "board.png", { type: "image/png" }),
+    ])
+    expect(found).toBe(true)
+    expect(h.insertedParts).toMatchObject([{ type: "file", path: "/proj/build/app.bin" }])
+    expect(h.parts()).toHaveLength(1)
+    expect(h.warned()).toBe(0)
+  })
+
+  test("二进制文件没有真实路径(web)时明说做不了", async () => {
+    const h = makeHarness()
+    const file = new File([Uint8Array.of(0, 255, 1, 2)], "blob.bin", { type: "application/octet-stream" })
+    expect(await h.core.addAttachment(file)).toBe(false)
+    expect(h.insertedParts).toHaveLength(0)
+    expect(h.parts()).toHaveLength(0)
+    expect(h.warned()).toBe(1)
+    expect(h.warnedPdf()).toBe(0)
+  })
+
+  // desktop 的原生选择器对图片之外的文件只交一个带名字和路径的空壳(不读内容),这里必须照样认。
+  test("原生选择器交来的空壳文件(零字节 + 真实路径)转成 @path", async () => {
+    const h = makeHarness({ getPathForFile: () => "/proj/build/firmware.hex" })
+    expect(await h.core.addAttachment(new File([], "firmware.hex"))).toBe(true)
+    expect(h.insertedParts).toMatchObject([{ type: "file", path: "/proj/build/firmware.hex" }])
+  })
+
   test("文本文件没有真实路径(web 宿主的内存 File)时明说做不了", async () => {
     const h = makeHarness()
     const file = new File(["hello\n"], "notes.txt", { type: "text/plain" })

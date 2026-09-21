@@ -97,7 +97,9 @@ export type ElectronAPI = {
     title?: string
     defaultPath?: string
     extensions?: string[]
-  }) => Promise<{ token: string; files: { path: string; name: string; size: number }[] } | null>
+    /** 内容要读进渲染器的扩展名;其余文件只交路径(inline: false),readPickedFile 读不到它们。 */
+    inlineExtensions?: string[]
+  }) => Promise<{ token: string; files: { path: string; name: string; size: number; inline: boolean }[] } | null>
   readPickedFile: (token: string, path: string) => Promise<ArrayBuffer>
   releasePickedFiles: (token: string) => Promise<void>
   getPathForFile: (file: File) => string

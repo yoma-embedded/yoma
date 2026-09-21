@@ -6,7 +6,7 @@ import type { DesktopMenuAction } from "@yoma-desktop/app/desktop-menu"
 
 import type { FatalRendererError, TitlebarTheme } from "../preload/types"
 import { runDesktopMenuAction } from "./desktop-menu-actions"
-import { assertAttachmentBudget, createPickedFileAuthorizations } from "./attachment-picker"
+import { assertAttachmentBudget, createPickedFileAuthorizations, inlineAttachment } from "./attachment-picker"
 import { getStore } from "./store"
 import { getPinchZoomEnabled, setPinchZoomEnabled, setTitlebar, updateTitlebar } from "./windows"
 import type { UpdaterController } from "./updater-controller"
@@ -127,7 +127,13 @@ export function registerIpcHandlers(deps: Deps) {
     "open-file-picker",
     async (
       event: IpcMainInvokeEvent,
-      opts?: { multiple?: boolean; title?: string; defaultPath?: string; extensions?: string[] },
+      opts?: {
+        multiple?: boolean
+        title?: string
+        defaultPath?: string
+        extensions?: string[]
+        inlineExtensions?: string[]
+      },
     ) => {
       const result = await dialog.showOpenDialog({
         properties: ["openFile", ...(opts?.multiple ? ["multiSelections" as const] : [])],
@@ -141,10 +147,16 @@ export function registerIpcHandlers(deps: Deps) {
           path: filePath,
           name: basename(filePath),
           size: (await stat(filePath)).size,
+          inline: inlineAttachment(basename(filePath), opts?.inlineExtensions),
         })),
       )
-      assertAttachmentBudget(files)
-      const token = pickedFiles.add(event.sender.id, result.filePaths)
+      // 预算与读取授权都只管要读内容的那几个;只交路径的文件渲染器根本读不到。
+      const inline = files.filter((file) => file.inline)
+      assertAttachmentBudget(inline)
+      const token = pickedFiles.add(
+        event.sender.id,
+        inline.map((file) => file.path),
+      )
       return { token, files }
     },
   )

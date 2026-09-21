@@ -106,7 +106,7 @@ export const dict = {
   "prompt.popover.emptyResults": "No matching results",
   "prompt.popover.enterDirectory": "Open",
   "prompt.popover.emptyCommands": "No matching commands",
-  "prompt.dropzone.label": "Drop images here (text files become @-mentions)",
+  "prompt.dropzone.label": "Drop images here (other files become @-mentions)",
   "prompt.dropzone.file.label": "Drop to @mention file",
   "prompt.context.removeFile": "Remove file from context",
   "prompt.action.attachFile": "Add files",

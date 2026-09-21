@@ -59,33 +59,27 @@ export function createPromptAttachmentsCore(input: PromptAttachmentsCoreInput) {
     return { prompt, cursor: prompt.cursor() ?? getCursorPosition(editor) }
   }
 
-  const add = async (file: File, toast = true, target = capture(), knownMime?: string) => {
+  // known 用对象包一层:二进制文件探测出来的 mime 就是 undefined,裸传分不清"没探测过"和"探测过、不认识"。
+  const add = async (file: File, toast = true, target = capture(), known?: { mime: string | undefined }) => {
     if (!target) return false
-    const mime = knownMime ?? (await attachmentMime(file))
-    if (!mime) {
-      if (toast) input.warn?.()
-      return false
-    }
+    const mime = known ? known.mime : await attachmentMime(file)
 
     // 内核只把 image/* 附件送进模型(session-manager 的 prompt 过滤),别的类型编成
     // data-URL 附件就是"UI 显示成功、模型什么都收不到"的静默失败(实测踩过:PDF 原理
     // 图拖进去,agent 一无所知)。所以在这里分流,不让谎话进 composer:
-    //   - PDF/文本在 desktop 有真实路径时转成 @path,由原理图工具/read 按需读取；
-    //   - web 宿主只有内存 File,只能明确拒绝；
-    //   - 图片继续作为模型附件。
+    //   - 图片继续作为模型附件;
+    //   - 其余一切(PDF / 文本 / 固件产物 .elf .bin .hex 这类二进制)在 desktop 有真实路径,
+    //     转成 @path,由原理图工具 / read / 烧录工具按需去读 —— 内容不进渲染器,也就没有大小上限;
+    //   - web 宿主只有内存 File,只能明确拒绝。
     const filePath = input.getPathForFile?.(file)
-    if (mime === "application/pdf" && !filePath) {
-      if (toast) input.warnPdf?.()
-      return false
-    }
-    if (!mime.startsWith("image/")) {
+    if (!mime?.startsWith("image/")) {
       if (filePath) {
         input.focusEditor?.()
         const inserted = input.addPart?.({ type: "file", path: filePath, content: "@" + filePath, start: 0, end: 0 })
         if (!inserted && toast) input.warn?.()
         return inserted ?? false
       }
-      if (toast) input.warn?.()
+      if (toast) (mime === "application/pdf" ? input.warnPdf : input.warn)?.()
       return false
     }
 
@@ -112,7 +106,7 @@ export function createPromptAttachmentsCore(input: PromptAttachmentsCoreInput) {
 
     for (const file of files) {
       const mime = await attachmentMime(file)
-      const ok = await add(file, false, target, mime)
+      const ok = await add(file, false, target, { mime })
       if (ok) found = true
       if (!ok && mime === "application/pdf" && !input.getPathForFile?.(file)) pathlessPdf = true
     }

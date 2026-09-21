@@ -1,4 +1,4 @@
-import { ACCEPTED_FILE_TYPES, ACCEPTED_IMAGE_TYPES } from "@/constants/file-picker"
+import { ACCEPTED_FILE_TYPES, ACCEPTED_IMAGE_TYPES, IMAGE_EXTENSION_MIME } from "@/constants/file-picker"
 
 export { ACCEPTED_FILE_TYPES }
 
@@ -6,7 +6,6 @@ type AttachmentPicker = (
   options: {
     defaultPath?: string
     multiple?: boolean
-    accept?: string[]
   },
   onFile: (file: File) => Promise<unknown>,
 ) => Promise<void>
@@ -27,7 +26,6 @@ export function pickAttachmentFiles(input: {
       {
         defaultPath: input.directory(),
         multiple: true,
-        accept: ACCEPTED_FILE_TYPES,
       },
       input.onFile,
     )
@@ -35,13 +33,6 @@ export function pickAttachmentFiles(input: {
 }
 
 const IMAGE_MIMES = new Set(ACCEPTED_IMAGE_TYPES)
-const IMAGE_EXTS = new Map([
-  ["gif", "image/gif"],
-  ["jpeg", "image/jpeg"],
-  ["jpg", "image/jpeg"],
-  ["png", "image/png"],
-  ["webp", "image/webp"],
-])
 const TEXT_MIMES = new Set([
   "application/json",
   "application/ld+json",
@@ -88,7 +79,7 @@ export async function attachmentMime(file: File) {
   if (type === "application/pdf") return type
 
   const suffix = ext(file.name)
-  const fallback = IMAGE_EXTS.get(suffix) ?? (suffix === "pdf" ? "application/pdf" : undefined)
+  const fallback = IMAGE_EXTENSION_MIME.get(suffix) ?? (suffix === "pdf" ? "application/pdf" : undefined)
   if ((!type || type === "application/octet-stream") && fallback) return fallback
 
   if (textMime(type)) return "text/plain"
