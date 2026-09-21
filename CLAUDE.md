@@ -1327,6 +1327,18 @@ Windows 失败时这里超时变红,本来也不该有只含 mac 的 Release)。
   建好 284 → 亮出来 430;就绪到建窗口之间,协议 + 更新器 + 信箱 + IPC + netlog + 起内核**加起来不到 10 ms**,
   大头是 `setDockIcon()` 同步解一张 1024×1024 的 PNG(约 55 ms)—— 已挪到 `ready-to-show` 之后。所以
   opencode 那套"先亮窗口、其余全部后置"的重排在我们这边没有收益,别照搬。
+- **渲染器的持久化(`persisted()` → `platform.storage(name)`)在桌面端不是"写一个键发一次 IPC"。** 每个名字空间
+  (`yoma.global.dat`、`yoma.workspace.….dat`、`yoma.draft.….dat`)在渲染器里有一份内存副本(app 的
+  `utils/namespace-storage.ts`):只从主进程读一次(`store-items`),之后的读是 Map 查找;写先落内存、攒 100 ms
+  合成一次 `store-update`,主进程一次写盘。为什么:主进程每写一个键都要把整个文件读、解析、序列化、原子写回
+  (带 fsync,小文件也要 4–6 ms;2026-09-21 实测 dev 档的 global 文件 241 KB,`prompt-history` 一个键就 164 KB),
+  拖面板、打字、连着几次 setState 就是一串这样的同步写。闸门那一趟流程实测:store IPC 182 次 → 37 次,主进程花在
+  上面的时间 168 ms → 101 ms(那趟流程是一下一下点的,攒不出多少;连续写入的场景差得更多)。
+  **落盘边界是 `pagehide` 和窗口退到后台**:`flush()` 同步地把这一批交给 IPC,页面消失之前消息已经发出去了。
+  代价明说:硬崩溃最多丢最后 100 ms 的写。`e2e:paint` 有一条专门的闸门 —— 打完字**立刻** reload,草稿得还在
+  (把 pagehide 那一行去掉它就红)。单键的 `store-get` / `store-set` 留着:渲染器的 i18n 在 platform 建好之前
+  要读一个键,闸门脚本也直接用;**别在页面活着的时候用它们去改一个已经被缓存的名字空间**,副本不会知道。
+  多窗口的修订号那一套(opencode dc46ecfc55)没搬:我们只有一个窗口,主进程自己也不碰这些 `.dat`。
 
 ## 会咬人的地方
 

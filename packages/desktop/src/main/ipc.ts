@@ -8,6 +8,7 @@ import type { FatalRendererError, TitlebarTheme } from "../preload/types"
 import { runDesktopMenuAction } from "./desktop-menu-actions"
 import { assertAttachmentBudget, createPickedFileAuthorizations, inlineAttachment } from "./attachment-picker"
 import { getStore } from "./store"
+import { applyUpdate, stringItems } from "./store-batch"
 import { getPinchZoomEnabled, setPinchZoomEnabled, setTitlebar, updateTitlebar } from "./windows"
 import type { UpdaterController } from "./updater-controller"
 import { createUpdaterSubscriptions } from "./updater-subscriptions"
@@ -95,6 +96,22 @@ export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle("store-set", (_event: IpcMainInvokeEvent, name: string, key: string, value: string) => {
     getStore(name).set(key, value)
   })
+  // 渲染器的名字空间缓存走这两条:一个名字空间只读一次,一个窗口里攒的改动只写一次盘。
+  // 单键的 store-get / store-set 留着 —— 渲染器的 i18n 在 platform 建好之前要读一个键,闸门脚本也直接用。
+  ipcMain.handle("store-items", (_event: IpcMainInvokeEvent, name: string) => {
+    try {
+      return stringItems(getStore(name).store as Record<string, unknown>)
+    } catch {
+      return {}
+    }
+  })
+  ipcMain.handle(
+    "store-update",
+    (_event: IpcMainInvokeEvent, name: string, insert: Record<string, string>, remove: string[]) => {
+      const store = getStore(name)
+      store.store = applyUpdate(store.store as Record<string, unknown>, insert, remove)
+    },
+  )
   ipcMain.handle("store-delete", (_event: IpcMainInvokeEvent, name: string, key: string) => {
     getStore(name).delete(key)
   })

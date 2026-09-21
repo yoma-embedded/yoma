@@ -585,6 +585,19 @@ try {
     return (editor.textContent ?? "").trim()
   })()`)
   check("prompt 编辑器收得下打的字", typed === TYPED_TEXT, typed)
+  // 持久化的写现在先落在渲染器的内存副本里、攒 100 ms 才发给主进程(app 的 namespace-storage.ts)。落盘边界是
+  // pagehide:打完字**立刻** reload(两次求值之间只隔一个 CDP 往返,远小于 100 ms),草稿得还在 —— 丢了就是
+  // 那一批没赶在页面消失之前交出去。
+  await evaluate(`location.reload()`)
+  // reload 之后应用自己回到这个会话页(路由是记着的),不经过首页。
+  check(
+    "草稿还在:攒着没发的那一批在页面消失之前落盘了",
+    await waitFor(
+      `(document.querySelector('[data-component="prompt-input"]')?.textContent ?? "").trim() === ${json(TYPED_TEXT)}`,
+      MOUNT_TIMEOUT_MS,
+    ),
+    await evaluate<string>(`(document.querySelector('[data-component="prompt-input"]')?.textContent ?? "<没有编辑器>").trim()`),
+  )
   // 状态条现在住在会话页最底下那条**状态栏**里(v2-console:目标板状态永远在场,不用点)。
   check(
     "会话页底部状态栏在位(session-status-bar)",

@@ -2,6 +2,8 @@
 
 import {
   INLINE_ATTACHMENT_EXTENSIONS,
+  createNamespaceStorage,
+  type NamespaceStorage,
   AppBaseProviders,
   AppInterface,
   handleNotificationClick,
@@ -13,7 +15,6 @@ import {
   useCommand,
 } from "@yoma-desktop/app"
 import type { UpdaterState } from "@yoma-desktop/app/updater"
-import type { AsyncStorage } from "@solid-primitives/storage"
 import { createMemoryHistory, MemoryRouter, type BaseRouterProps } from "@solidjs/router"
 import { createEffect, createMemo, createResource, createSignal, onCleanup, onMount, Show } from "solid-js"
 import { render } from "solid-js/web"
@@ -86,30 +87,26 @@ const createPlatform = (): Platform => {
     return window.api.runDesktopMenuAction(action)
   }
 
+  // 每个名字空间在渲染器里留一份内存副本:只读一次,写攒成批(app 的 namespace-storage.ts)。
   const storage = (() => {
-    const cache = new Map<string, AsyncStorage>()
-
-    const createStorage = (name: string) => {
-      const api: AsyncStorage = {
-        getItem: (key: string) => window.api.storeGet(name, key),
-        setItem: (key: string, value: string) => window.api.storeSet(name, key, value),
-        removeItem: (key: string) => window.api.storeDelete(name, key),
-        clear: () => window.api.storeClear(name),
-        key: async (index: number) => (await window.api.storeKeys(name))[index],
-        getLength: () => window.api.storeLength(name),
-        get length() {
-          return api.getLength()
-        },
-      }
-      return api
+    const namespaces = new Map<string, NamespaceStorage>()
+    const driver = { items: window.api.storeItems, update: window.api.storeUpdate, clear: window.api.storeClear }
+    const flushAll = () => {
+      for (const namespace of namespaces.values()) void namespace.flush()
     }
+    // 攒着的改动的落盘边界:窗口退到后台,以及页面要走(关窗、退出、reload)。flush 是同步把这一批交给 IPC 的,
+    // 页面消失之前消息已经发出去了,主进程照常处理。
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") flushAll()
+    })
+    window.addEventListener("pagehide", flushAll)
 
     return (name = "default.dat") => {
-      const cached = cache.get(name)
+      const cached = namespaces.get(name)
       if (cached) return cached
-      const api = createStorage(name)
-      cache.set(name, api)
-      return api
+      const next = createNamespaceStorage(driver, name)
+      namespaces.set(name, next)
+      return next
     }
   })()
 

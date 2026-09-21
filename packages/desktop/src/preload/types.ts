@@ -81,6 +81,10 @@ export type ElectronAPI = {
   storeGet: (name: string, key: string) => Promise<string | null>
   storeSet: (name: string, key: string, value: string) => Promise<void>
   storeDelete: (name: string, key: string) => Promise<void>
+  /** 整个名字空间一次读出来(值的口径同 storeGet)。 */
+  storeItems: (name: string) => Promise<Record<string, string>>
+  /** 一批改动一次写盘。 */
+  storeUpdate: (name: string, insert: Record<string, string>, remove: string[]) => Promise<void>
   storeClear: (name: string) => Promise<void>
   storeKeys: (name: string) => Promise<string[]>
   storeLength: (name: string) => Promise<number>
