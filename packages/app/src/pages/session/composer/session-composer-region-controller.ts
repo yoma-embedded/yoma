@@ -4,13 +4,6 @@ import type { PromptInputState } from "@/components/prompt-input"
 import type { DockTask } from "@/pages/session/subagent/task-view"
 import { getSessionHandoff, setSessionHandoff } from "@/pages/session/handoff"
 
-export type SessionComposerFollowupDock = {
-  items: { id: string; text: string }[]
-  sending?: string
-  onSend: (id: string) => void
-  onEdit: (id: string) => void
-}
-
 /** 工具确认条(烧录前先问一声):未决的询问 + 正在回复的那条 + 回复动作。 */
 export type SessionComposerConfirmDock = {
   items: ToolConfirmView[]
@@ -48,7 +41,6 @@ export function createSessionComposerRegionController(input: {
   sessionID: Accessor<string | undefined>
   prompt: PromptInputState
   centered: Accessor<boolean>
-  followup: Accessor<SessionComposerFollowupDock | undefined>
   confirms: Accessor<SessionComposerConfirmDock | undefined>
   subagents: Accessor<SessionComposerSubagentDock | undefined>
   queue: Accessor<SessionComposerQueueDock | undefined>
@@ -78,7 +70,6 @@ export function createSessionComposerRegionController(input: {
 
   return {
     centered: input.centered,
-    followup: input.followup,
     confirms: input.confirms,
     subagents: input.subagents,
     queue: input.queue,
