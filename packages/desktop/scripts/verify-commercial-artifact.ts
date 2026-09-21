@@ -117,12 +117,9 @@ const RELATIVE_SPECIFIER = /(?:\bfrom|\bimport|\brequire)\s*\(?\s*["'](\.{1,2}\/
  */
 export function resolveEntryGraph(entry: string, files: ScannedFile[]): { text: string; parts: string[] } | undefined {
   const byPath = new Map(files.map((file) => [normalize(file.path), file.text]))
-  const lookup = (wanted: string): string | undefined => {
-    if (byPath.has(wanted)) return wanted
-    for (const key of byPath.keys()) if (key === wanted || key.endsWith(`/${wanted}`)) return key
-    return undefined
-  }
-  const start = lookup(entry)
+  // out/ 检查与 app.asar 分别只有这两种根。不能按后缀搜整个包:
+  // electron-log/src/main/index.js 会抢在 out/main/index.js 前面被误认成应用入口。
+  const start = [entry, `out/${entry}`].find((candidate) => byPath.has(candidate))
   if (start === undefined) return undefined
 
   const parts: string[] = []
@@ -137,7 +134,7 @@ export function resolveEntryGraph(entry: string, files: ScannedFile[]): { text: 
     const dir = current.includes("/") ? current.slice(0, current.lastIndexOf("/")) : ""
     for (const match of text.matchAll(RELATIVE_SPECIFIER)) {
       const resolved = joinPosix(dir, match[1]!)
-      const hit = lookup(resolved)
+      const hit = byPath.has(resolved) ? resolved : undefined
       if (hit !== undefined && !seen.has(hit)) queue.push(hit)
     }
   }

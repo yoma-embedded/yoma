@@ -297,11 +297,12 @@ async function leg1(plan: LicensePlan, issuer: Issuer): Promise<Leg> {
     if (expired) leg.note(`到期时刻 ${expired.license?.expiresAt};实际观测到 expired 的时刻 ${new Date().toISOString()}`)
 
     // 事件是**批推**的(StreamSink 攒一帧 ~16ms),所以不能在 status 回来的那一刻就断言 ——
-    // 第一版这么写,拿到的是"0 条",而事件其实在十几毫秒后才到。轮询等它。
+    // 第一版这么写,拿到的是"0 条",而事件其实在十几毫秒后才到。轮询等到 expired:
+    // 激活的 active 事件也可能在 pushesBefore 之后才送达,不能拿任意一条更新就结束等待。
     const updates = await until(
       () => {
         const seen = kernel.pushes.slice(pushesBefore).filter((e) => e.type === "license.updated")
-        return seen.length > 0 ? seen : undefined
+        return (seen.at(-1)?.status as Status | undefined)?.state === "expired" ? seen : undefined
       },
       { timeoutMs: 3_000, everyMs: 50 },
     )

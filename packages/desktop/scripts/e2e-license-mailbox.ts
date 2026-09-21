@@ -257,8 +257,10 @@ export async function leg3(plan: LicensePlan, issuer: Issuer, electron: string):
   const sessionsRoot = join(root, "sessions")
   const motherClone = join(root, "mother-clone")
   const runnerClone = join(root, "runner-clone")
-  const hostBundle = join(plan.desktopDir, "out", "main", "mailbox-host.mjs")
-  const turnBundle = join(plan.desktopDir, "out", "main", "mailbox-turn-entry.mjs")
+  // RUN_AS_NODE 的 ESM 入口不能从 asar 加载,与正式 main 的启动路径一致。
+  const bundleRoot = plan.desktopDir.endsWith(".asar") ? `${plan.desktopDir}.unpacked` : plan.desktopDir
+  const hostBundle = join(bundleRoot, "out", "main", "mailbox-host.mjs")
+  const turnBundle = join(bundleRoot, "out", "main", "mailbox-turn-entry.mjs")
   const licenseFile = licenseFilePath(configDir)
   const daemons: Daemon[] = []
 

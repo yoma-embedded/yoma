@@ -3,6 +3,7 @@
  *
  *   npm run e2e:license -w packages/desktop
  *   npm run e2e:license -w packages/desktop -- --out <desktop 目录> --key <私钥.pem> --key-id <编号>
+ *   同样支持 --out <安装目录/resources/app.asar>,守护从 app.asar.unpacked 加载。
  *
  * 单测那一层(`licensing.test.ts` / `license.test.ts` / `license-build.test.ts`)已经用**注入时钟**
  * 覆盖过规则本身。这条脚本补的是另一半:真 utilityProcess + 真 MessagePort 帧、真 preload +
@@ -125,7 +126,14 @@ try {
     console.log(`\n模式:对现成商业构建\n  被测目录 ${desktopDir}\n  签发私钥 ${keyPemFile}\n  公钥编号 ${keyId}`)
     for (const rel of [["out", "main", "kernel.js"], ["out", "main", "mailbox-host.mjs"], ["out", "main", "mailbox-turn-entry.mjs"], ["out", "preload", "index.js"]]) {
       const file = join(desktopDir, ...rel)
-      if (!existsSync(file)) throw new Error(`被测目录里没有 ${file} —— 先 npm run build -w packages/desktop`)
+      if (desktopDir.endsWith(".asar")) {
+        // 普通 Node 的 existsSync 看不到 asar 内部;Electron 那两条腿直接加载原包。
+        const { statFile } = await import("@electron/asar")
+        statFile(desktopDir, join(...rel))
+        if (rel.at(-1)?.endsWith(".mjs") && !existsSync(join(`${desktopDir}.unpacked`, ...rel))) {
+          throw new Error(`安装包缺少解包的守护入口 ${join(`${desktopDir}.unpacked`, ...rel)}`)
+        }
+      } else if (!existsSync(file)) throw new Error(`被测目录里没有 ${file} —— 先 npm run build -w packages/desktop`)
     }
   } else {
     // 自带模式:现场一把一次性密钥 → 编译期注入 → 往临时目录打商业产物。

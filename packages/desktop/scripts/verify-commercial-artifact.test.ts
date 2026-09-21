@@ -168,6 +168,28 @@ test("注入落在共享 chunk 里也算数 —— 真实构建就是这样(elec
 // 正常路径
 // ---------------------------------------------------------------------------
 
+test("asar 中依赖的同名 main/index.js 不会冒充应用入口", () => {
+  const dependency = { path: "node_modules/electron-log/src/main/index.js", text: DEV_BUILD_SOURCE }
+  const files = [dependency, ...artifacts()]
+  expect(resolveEntryGraph("main/index.js", files)?.parts).toEqual(["out/main/index.js"])
+  expect(verifyCommercialArtifact(files, { expectedKeys: [OFFICIAL] }).ok).toBe(true)
+
+  // 应用入口丢失时,哪怕依赖里有同名且带公钥的文件也不能通过。
+  const missing = files.filter((file) => file.path !== "out/main/index.js")
+  missing[0] = { ...dependency, text: bakedSource([OFFICIAL]) }
+  expect(resolveEntryGraph("main/index.js", missing)).toBeUndefined()
+  expect(verifyCommercialArtifact(missing, { expectedKeys: [OFFICIAL] }).ok).toBe(false)
+})
+
+test("asar 的共享块只能从应用入口的相对路径读取", () => {
+  const files = artifacts()
+  files[1] = { path: "out/main/index.js", text: 'import "./chunks/policy.js"' }
+  files.unshift({ path: "node_modules/decoy/out/main/chunks/policy.js", text: bakedSource([OFFICIAL]) })
+  expect(verifyCommercialArtifact(files, { expectedKeys: [OFFICIAL] }).ok).toBe(false)
+  files.push({ path: "out/main/chunks/policy.js", text: bakedSource([OFFICIAL]) })
+  expect(verifyCommercialArtifact(files, { expectedKeys: [OFFICIAL] }).ok).toBe(true)
+})
+
 test("四个产物都注入了、公钥与 trust-file 逐把一致 → 通过", () => {
   const report = verifyCommercialArtifact(artifacts(), { expectedKeys: [OFFICIAL], expectedKeysSource: "--trust-file k.json" })
   expect(report.ok).toBe(true)
