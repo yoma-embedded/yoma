@@ -120,14 +120,20 @@ export function setCursorPosition(parent: HTMLElement, position: number) {
 /**
  * 光标前那段 `@…` 在**纯文本偏移**里的起止;没有就是 null(调用方据此决定"就地插入"还是"替换")。
  *
- * 插 pill(选中一个文件)和目录下钻(把输入补成 `@dir/`)都要先把这一段选中再替换,
- * 两处必须算得一模一样 —— 各写一份正则的后果是替换错位,表现成
- * `@packages/@packages/app/` 这种半截拼接,而且只在某些光标位置出现。
+ * 弹不弹候选、插 pill(选中一个文件)、目录下钻(把输入补成 `@dir/`)三处都拿它算,必须
+ * 算得一模一样 —— 各写一份正则的后果是替换错位,表现成 `@packages/@packages/app/` 这种
+ * 半截拼接,而且只在某些光标位置出现。
+ *
+ * **`@` 得独立成词才算提及**:前面是开头或空白,光标后面是结尾或空白;否则它就是个普通
+ * 字符 —— `foo@bar.com`,以及补在一个词前面的 `@`(`看 @|README`)。前一半与 Claude Code
+ * 相同;后一半比它严,它会把光标后面紧跟的那个词接进查询词。
  */
 export function atMentionRange(rawText: string, cursor: number): { start: number; end: number } | null {
-  const match = rawText.substring(0, cursor).match(/@(\S*)$/)
+  const match = rawText.substring(0, cursor).match(/(?:^|\s)@(\S*)$/)
   if (!match) return null
-  return { start: match.index ?? cursor - match[0].length, end: cursor }
+  if (/\S/.test(rawText.charAt(cursor))) return null
+  // match[0] 可能带着 @ 前面那个空白,起点按查询词的长度倒推。
+  return { start: cursor - match[1].length - 1, end: cursor }
 }
 
 export function setRangeEdge(parent: HTMLElement, range: Range, edge: "start" | "end", offset: number) {
