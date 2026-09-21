@@ -74,6 +74,11 @@ export interface KernelHostOptions {
    */
   confirmTools?: SessionManagerOptions["confirmTools"]
   /**
+   * 没名字的主会话收到第一句话时自动起名。**桌面端传 true,bench 不传**(它用任务书的标题命名;
+   * faux 演练按脚本应答,多一次起名调用会吃掉一条脚本)。详见 SessionManagerOptions。
+   */
+  autoTitle?: SessionManagerOptions["autoTitle"]
+  /**
    * 子 agent 的宿主选项。**bench 与信箱工位端传 `{ background: false }`**(无人值守,按 idle 判一轮结束,
    * 后台子 agent 会让 idle 说谎)。详见 SessionManagerOptions。
    */
@@ -106,6 +111,7 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     toolchainSide: options.toolchainSide,
     toolchainManifestText: options.toolchainManifestText,
     confirmTools: options.confirmTools,
+    autoTitle: options.autoTitle,
     subagents: options.subagents,
     installRegistry: installs,
     emit: (events) => sink.push(events),
