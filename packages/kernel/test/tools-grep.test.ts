@@ -163,6 +163,28 @@ describe.skipIf(!rgAvailable)("grep 工具(真 rg)", () => {
     expect(lines).toEqual(["a.txt-1- hello world", "a.txt:2: second hello", "a.txt-3- third line"])
   })
 
+  it("重叠上下文只输出一次,相邻命中仍保留匹配标记", async () => {
+    const run = makeTool(makeRepo())
+    expect(matchLines(await run({ pattern: "hello", path: "a.txt", context: 1 }))).toEqual([
+      "a.txt:1: hello world", "a.txt:2: second hello", "a.txt-3- third line",
+    ])
+  })
+
+  it("密集命中不让重复上下文挤掉后面的证据,不同文件的同行号各自保留", async () => {
+    const root = makeRepo()
+    for (const name of ["dense-a.txt", "dense-b.txt"]) {
+      writeFileSync(join(root, name), Array.from({ length: 100 }, (_, i) => `evidence ${i + 1}`).join("\n"))
+    }
+    const result = await makeTool(root)({ pattern: "evidence", glob: "dense-*.txt", context: 10, limit: 300 })
+    const lines = matchLines(result)
+    expect(lines).toHaveLength(200)
+    expect(new Set(lines).size).toBe(200)
+    expect(lines).toContain("dense-a.txt:100: evidence 100")
+    expect(lines).toContain("dense-b.txt:100: evidence 100")
+    expect(lines.every(line => /^dense-[ab]\.txt:\d+: evidence \d+$/.test(line))).toBe(true)
+    expect(result.details?.truncation).toBeUndefined()
+  })
+
   it("flag 形状的 pattern 当文本搜,不当 rg 的参数", async () => {
     const run = makeTool(makeRepo())
     expect(textOf(await run({ pattern: "--pre=./x.sh" }))).toBe("No matches found")

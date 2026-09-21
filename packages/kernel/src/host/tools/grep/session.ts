@@ -70,8 +70,8 @@ function stripLineEnding(line: string): string {
  * 取上下文要用的文件行,按文件缓存。
  *
  * 用 env.readTextLines({ maxLines }) 而不是整文件读(上游 grep.ts:147-160 是整文件 + 缓存):
- * 第 3 行的匹配不该把一个 200 MB 的日志读进内存。缓存记的是"上次读到第几行",同一文件里更靠后的
- * 匹配要更多行时才重读。读不了就给空数组 —— 那只是少一段上下文,不该让整次搜索失败。
+ * 第 3 行的匹配不该把一个 200 MB 的日志读进内存。调用方先合并同一文件所需的最高行号,缓存让
+ * 后续窗口复用这次有界读取。读不了就给空数组 —— 那只是少一段上下文,不该让整次搜索失败。
  */
 async function readLinesUpTo(
   env: ExecutionEnv,
@@ -215,6 +215,18 @@ export function createGrepTool(
       let linesTruncated = false
       const outputLines: string[] = []
       const fileCache = new Map<string, { maxLines: number; lines: string[] }>()
+      // 相邻命中的窗口会重叠。每个文件行只输出一次,但后面的命中不能被前面的
+      // 上下文标成 '-'。先收齐命中行号,同时把同一文件的有界读取合成一次。
+      const fileMatches = new Map<string, { hits: Set<number>; needed: number; emitted: Set<number> }>()
+      for (const match of matches) {
+        let file = fileMatches.get(match.file)
+        if (!file) {
+          file = { hits: new Set(), needed: 0, emitted: new Set() }
+          fileMatches.set(match.file, file)
+        }
+        file.hits.add(match.line)
+        file.needed = Math.max(file.needed, match.line + contextLines)
+      }
       for (const match of matches) {
         const relative = toRelativePosix(cwd, match.file)
         if (contextLines === 0 && match.text !== undefined) {
@@ -223,7 +235,8 @@ export function createGrepTool(
           outputLines.push(`${relative}:${match.line}: ${line.text}`)
           continue
         }
-        const lines = await readLinesUpTo(env, context, fileCache, match.file, match.line + contextLines)
+        const file = fileMatches.get(match.file)!
+        const lines = await readLinesUpTo(env, context, fileCache, match.file, file.needed)
         if (lines.length === 0) {
           outputLines.push(`${relative}:${match.line}: (unable to read file)`)
           continue
@@ -231,9 +244,11 @@ export function createGrepTool(
         const start = Math.max(1, match.line - contextLines)
         const end = Math.min(lines.length, match.line + contextLines)
         for (let current = start; current <= end; current++) {
+          if (file.emitted.has(current)) continue
+          file.emitted.add(current)
           const line = truncateLine(stripLineEnding(lines[current - 1] ?? ""))
           if (line.wasTruncated) linesTruncated = true
-          const prefix = current === match.line ? `${relative}:${current}: ` : `${relative}-${current}- `
+          const prefix = file.hits.has(current) ? `${relative}:${current}: ` : `${relative}-${current}- `
           outputLines.push(`${prefix}${line.text}`)
         }
       }

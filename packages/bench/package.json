@@ -16,9 +16,11 @@
     "typecheck": "tsgo --noEmit -p tsconfig.json",
     "test": "vitest run",
     "bench": "tsx ./src/cli.ts",
-    "build:eval": "tsx ./scripts/build-eval-entry.ts"
+    "build:eval": "tsx ./scripts/build-eval-entry.ts",
+    "eval:behavior": "tsx ./src/eval/behavior/cli.ts"
   },
   "dependencies": {
+    "@earendil-works/pi-agent-core": "*",
     "@earendil-works/pi-ai": "*",
     "@yoma-desktop/kernel": "*"
   },

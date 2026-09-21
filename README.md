@@ -73,6 +73,10 @@ These resources stay on your computer: they are not uploaded or included in Yoma
 Missing resources are reported with configuration instructions. `schema` and raw netlist parsing need no CubeMX data.
 See the [engine and data delivery notes](docs/桌面版发布流程.md#引擎和数据的交付边界).
 
+### 6. Project profiles and memory
+
+Open a project and ask the agent to inspect and save its configuration, remember a debugging finding, retrieve previous experience, or forget an entry. Later turns load recent memories and retrieve more history as needed. Memory stays local but retrieved content is sent to your selected model. Saving relies on the agent calling the memory tool, not on background transcription. [Usage, storage and limitations (Chinese)](docs/project-memory.md).
+
 ## Run from source
 
 ```bash

@@ -120,7 +120,7 @@ describe("buildSystemPrompt", () => {
 			expect(prompt).toContain("Batch independent read-only tool calls in one response.");
 			expect(prompt).toContain("Evidence rules:");
 			expect(prompt).toContain("Safety:");
-			expect(prompt).toContain("Runtime behavior requires evidence from log or gdb.");
+			expect(prompt).toContain("Runtime claims need observations from the current firmware and test interval.");
 			expect(prompt).toContain("Do not perform destructive hardware actions such as chip erase unless explicitly requested.");
 		});
 	});

@@ -74,6 +74,9 @@ import { processImage } from "./domain/image/process.ts"
 import { createRegisteredTools, type RegisteredTool, type RegisteredToolOptions } from "./tools/index.ts"
 import { configurableProviders, resolveModel } from "./models.ts"
 import { discoverSkills, loadContextFiles } from "./resources.ts"
+import { readSessionName } from "./session-names.ts"
+import { autoTitleDisabled, fallbackTitle, generateTitle, pickTitleModel, TITLE_TIMEOUT_MS } from "./session-title.ts"
+import { projectContext } from "./domain/project/context.ts"
 import {
   clampThinkingLevel,
   getSupportedThinkingLevels,
@@ -114,6 +117,15 @@ function envNumber(name: string): number | undefined {
   if (!raw) return undefined
   const parsed = Number(raw)
   return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : undefined
+}
+
+/** 最多 limit 个一起跑(列表读会话名:几百个会话文件别同时打开)。 */
+async function eachLimit<T>(items: readonly T[], limit: number, run: (item: T) => Promise<void>): Promise<void> {
+  let next = 0
+  const worker = async () => {
+    while (next < items.length) await run(items[next++]!)
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
 }
 
 /** 本地日期 YYYY-MM-DD(子 agent 的 env 块;CC getLocalISODate 同款,不是 UTC)。 */
@@ -326,6 +338,13 @@ interface Entry {
   maxTurnsHit?: Set<string>
   /** yoma/subagent 值的读—改—写串行链:通知与落定几乎同时写它。 */
   metaWrites?: Promise<void>
+  /**
+   * 自动起名在飞(host/session-title.ts)。`placeholder` 是第一句话的开头,标题到之前界面先显示它;起名结束、
+   * 用户改名、删会话都会把它摘掉 —— 起名的结果只在它还挂着**同一个对象**时才算数。
+   */
+  titling?: { controller: AbortController; placeholder?: string }
+  /** list() 正在从 JSONL 里扫它的会话名。同时进来的另一次 list() 要等它 —— 见 list()。 */
+  naming?: Promise<void>
 }
 
 export interface SessionManagerOptions {
@@ -383,6 +402,13 @@ export interface SessionManagerOptions {
    * 确认台的十分钟超时,而 bench 判一轮结束看的是 idle 700ms,中间这十分钟没有任何人在看。
    */
   confirmTools?: boolean
+  /**
+   * 没名字的主会话收到第一句话时自动起名(host/session-title.ts)。**不传 = 不起**。
+   *
+   * 桌面端传 true。bench 不传:它建会话时就用任务书的标题命名,而且起名是一次额外的模型调用 —— 测试与演练用的
+   * faux 模型按脚本逐条应答,多出来的那一次会吃掉脚本里本该给正文那一轮的一条。
+   */
+  autoTitle?: boolean
   /**
    * 工具链安装的在飞注册表,与设置页的 `toolchain.install` RPC 共用同一个 —— agent 自己装和用户点着装
    * 是两条调用路径,同一个包同时跑两路会往同一棵目录树里解压。**不传 = 两边各装各的**,所以桌面端必须传。
@@ -708,18 +734,13 @@ export class SessionManager {
 
   async list(directory?: string): Promise<ViewSession[]> {
     const metas = await this.repoLocked(() => this.repo.list(directory ? { cwd: directory } : {}, this.context))
-    const out: ViewSession[] = []
+    const fresh: Entry[] = []
     for (const meta of metas) {
-      const existing = this.entries.get(meta.id)
-      if (existing) {
-        out.push(toView(existing))
-        continue
-      }
+      if (this.entries.has(meta.id)) continue
       const entry: Entry = {
         id: meta.id,
         cwd: meta.cwd,
-        // 标题懒加载:repo.list() 只读 JSONL 的头一行,拿不到后来写进去的会话名。
-        // 真名在 open() 时补上,列表先用占位,避免为了画一个列表把每个会话文件全读一遍。
+        // repo.list() 只读 JSONL 的头一行,拿不到后来写进去的会话名:主会话的名字下面按字节扫出来,子会话的等打开时补。
         title: "",
         createdAt: meta.createdAt,
         updatedAt: meta.modifiedAt,
@@ -730,9 +751,27 @@ export class SessionManager {
         ...(meta.parentSessionId ? { parentID: meta.parentSessionId } : {}),
       }
       this.entries.set(meta.id, entry)
-      out.push(toView(entry))
+      if (!entry.parentID) fresh.push(entry)
     }
-    return out.sort((a, b) => b.time.updated - a.time.updated)
+    // 从前这里只给占位(工程目录名),真名等打开时才补 —— 于是重启之后侧栏里个个同名,自动起的名字也等于白起。
+    // 现在按字节扫会话名那一行(host/session-names.ts,不解析整个会话),每个文件在一个进程里只扫一次(扫过就进了
+    // entries);实测 26 个会话 40 MB 共 30 ms。子会话不扫:它们不进侧栏,一条消息就能派出十几个,名字由 fillListed 补。
+    const naming = eachLimit(fresh, 8, async (entry) => {
+      const name = await readSessionName(entry.meta.path)
+      // 扫的这几毫秒里它可能已经被打开(fillListed 读了真名)或者被改了名:那边的更新。
+      if (name && !entry.title) entry.title = name
+    })
+    for (const entry of fresh) entry.naming = naming
+    // 同时进来的另一次 list()(首屏好几处一起拉同一个目录)看到这些会话已经在 entries 里,不会再扫 —— 它也得等这一次
+    // 扫完再回:不等的话它先带着占位回去,界面按到达的先后归约,名字就被它盖掉了。
+    await Promise.all(new Set(metas.flatMap((meta) => this.entries.get(meta.id)?.naming ?? [])))
+    for (const entry of fresh) if (entry.naming === naming) entry.naming = undefined
+    return metas
+      .flatMap((meta) => {
+        const entry = this.entries.get(meta.id)
+        return entry ? [toView(entry)] : []
+      })
+      .sort((a, b) => b.time.updated - a.time.updated)
   }
 
   async create(directory: string, title?: string): Promise<ViewSession> {
@@ -775,6 +814,7 @@ export class SessionManager {
   }
 
   private async deleteEntry(entry: Entry): Promise<void> {
+    this.cancelAutoTitle(entry)
     await this.dispose(entry)
     await this.repoLocked(() => this.repo.delete(entry.meta, this.context))
     this.entries.delete(entry.id)
@@ -784,6 +824,8 @@ export class SessionManager {
   /** 标题写回 JSONL(会话名是内核的绑定值),不是只存在内存里。 */
   async rename(sessionID: string, title: string): Promise<ViewSession> {
     const entry = await this.ensureOpen(sessionID)
+    // 人改的名字压过自动起的:在飞的那次作废。必须在写之前摘 —— 摘晚了,它可能恰好在这中间落定,把刚改的名字盖回去。
+    this.cancelAutoTitle(entry)
     await entry.harness!.setName(title, this.context)
     entry.title = title
     entry.updatedAt = Date.now()
@@ -929,6 +971,7 @@ export class SessionManager {
       // 东西,系统提示词字节不变。
 
       const allTools = createAgentTools({
+        project: { sessionID: entry.id },
         enginesDir: this.options.enginesDir,
         configDir: this.configDir,
         invocationEnv: () => this.toolEnv(entry),
@@ -978,7 +1021,10 @@ export class SessionManager {
           // 函数形态:每轮重新解析一次,于是 refreshMachineEnv 换掉 shellEnv 之后
           // 下一条 bash 命令就看得见新 PATH,不用重开会话。
           toolContext: () => ({ env: this.toolEnv(entry) }),
-          systemPrompt: () => {
+          systemPrompt: async () => {
+            const projectFiles = profile?.omitContextFiles ? [] : [
+              { path: "<project-memory>", content: await projectContext(entry.cwd) },
+            ]
             const toolchainSection = promptSectionFor(entry.toolchain ?? toolchain)
             const stm32Note = entry.stm32Availability?.available
               ? undefined
@@ -991,7 +1037,7 @@ export class SessionManager {
                 agentPrompt: profile.prompt,
                 selectedTools: entry.activeToolNames,
                 contextFiles: [
-                  ...(profile.omitContextFiles ? [] : contextFiles),
+                  ...(profile.omitContextFiles ? [] : [...contextFiles, ...projectFiles]),
                   ...(toolchainSection ? [{ path: "<toolchain>", content: toolchainSection }] : []),
                 ],
                 skills: discovered.skills,
@@ -1010,8 +1056,8 @@ export class SessionManager {
               cwd: entry.cwd,
               selectedTools: entry.activeToolNames,
               contextFiles: toolchainSection
-                ? [...contextFiles, { path: "<toolchain>", content: toolchainSection }]
-                : contextFiles,
+                ? [...contextFiles, ...projectFiles, { path: "<toolchain>", content: toolchainSection }]
+                : [...contextFiles, ...projectFiles],
               skills: discovered.skills,
               appendSystemPrompt: stm32Note,
             })
@@ -1299,6 +1345,16 @@ export class SessionManager {
   private async machineDirs(): Promise<string[]> {
     const ledger = await readLedger(this.configDir)
     return machinePathDirs({ configDir: this.configDir, ledger })
+  }
+
+  /** Settings build checks use the same machine/project PATH as agent sessions. */
+  async projectBuildEnvironment(directory: string): Promise<NodeJS.ProcessEnv> {
+    const base = this.baseShellEnv(await this.machineDirs())
+    const resolution = await resolveToolchain({
+      projectDir: directory, configDir: this.configDir, side: this.options.toolchainSide ?? "mother", env: base,
+      manifestText: this.options.toolchainManifestText,
+    })
+    return this.sessionShellEnv(resolution, base)
   }
 
   /**
@@ -1778,12 +1834,84 @@ export class SessionManager {
     const request: OperationRequest = images.length
       ? { kind: "prompt", prompt: text, images }
       : { kind: "prompt", prompt: text }
+    // 要不要拿这句话起名,得在 accept 之前看:accept 之后它自己就是历史里的第一条了。
+    const titleFrom = await this.titleSource(entry, input.text)
     entry.pendingUser = { id: messageID, text }
     const accepted = await this.runOperation(entry, request)
     // accept 的事件(含这条用户消息的 message_end)在它 resolve 之前就送达了;没认领上的也别留到下一轮。
     entry.pendingUser = undefined
     if (!accepted.ok) throw laneError(accepted.error)
+    if (titleFrom) this.startAutoTitle(entry, titleFrom)
     return { messageID }
+  }
+
+  // -------------------------------------------------------------------------
+  // 自动起名(host/session-title.ts)
+  // -------------------------------------------------------------------------
+
+  /**
+   * 这句话该不该拿来给会话起名:宿主开了自动起名、主会话、还没有名字、没在起,而且它是这个会话的第一条消息 ——
+   * 照 opencode / Claude Code 只看第一句。接着聊的旧会话不补起:半路的一句话代表不了整段对话(Claude Code 对
+   * 恢复的会话同样不起)。用的是用户打的原文,不带附件图片的处理说明;只发了图没打字的给不出名字。
+   */
+  private async titleSource(entry: Entry, text: string): Promise<string | undefined> {
+    if (!this.options.autoTitle || autoTitleDisabled() || entry.parentID || entry.title || entry.titling) return undefined
+    const source = text.trim()
+    if (!source || !entry.lane) return undefined
+    try {
+      const earlier = await entry.lane.findEntries({ type: "message", order: "oldestFirst", limit: 1 }, this.context)
+      return earlier.length === 0 ? source : undefined
+    } catch {
+      // 起名是锦上添花:这一步出任何问题都不能让用户这句话发不出去。
+      return undefined
+    }
+  }
+
+  /** 先把第一句话的开头当名字亮出来,再另起一次调用去起真名。不 await:这一轮已经开跑,起名与它并行。 */
+  private startAutoTitle(entry: Entry, text: string): void {
+    const attempt = { controller: new AbortController(), placeholder: fallbackTitle(text) }
+    entry.titling = attempt
+    if (attempt.placeholder) this.options.emit([{ type: "session.updated", session: toView(entry) }])
+    void this.finishAutoTitle(entry, attempt, text)
+  }
+
+  private async finishAutoTitle(entry: Entry, attempt: NonNullable<Entry["titling"]>, text: string): Promise<void> {
+    let generated: string | undefined
+    try {
+      const { models, model: fallback } = await this.ensureModels()
+      // 跟着这个会话此刻选的模型走(界面在发这句话之前刚 setModel 过);它不在注册表里了就用默认那个。
+      const current = entry.model
+        ? (models.getModel(entry.model.providerID, entry.model.modelID) as Model<string> | undefined)
+        : undefined
+      generated = await generateTitle({
+        models,
+        model: pickTitleModel(models, current ?? fallback),
+        text,
+        signal: AbortSignal.any([attempt.controller.signal, AbortSignal.timeout(TITLE_TIMEOUT_MS)]),
+      })
+    } catch {
+      // 起不出来就把占位定下来。不报 kernel.error:界面会把它当成这个会话出了错,弹系统通知、标红。
+    }
+    // 起名期间用户改了名、会话被删了、内核在退:这次作废,什么都不写。
+    if (entry.titling !== attempt || this.entries.get(entry.id) !== entry) return
+    entry.titling = undefined
+    const title = generated ?? attempt.placeholder
+    if (!title) return
+    // 先改内存、先推事件,再落盘 —— 落盘要 await,这中间用户改的名字得能照常压过它(rename 写在它后面,后写的赢)。
+    entry.title = title
+    this.options.emit([{ type: "session.updated", session: toView(entry) }])
+    // 会话被 LRU 关掉了就只留在内存里:为了写一个名字重开它,可能撞上正在进行的删除(repo 不许删开着的会话)。
+    // 这种情况下重启之后它没有名字,不影响用。
+    const session = entry.closing ? undefined : entry.session
+    await session?.setName(title, this.context).catch(() => {})
+  }
+
+  /** 改名 / 删会话 / 退出时,在飞的起名作废,请求也掐掉(不白花 token)。 */
+  private cancelAutoTitle(entry: Entry): void {
+    const attempt = entry.titling
+    if (!attempt) return
+    entry.titling = undefined
+    attempt.controller.abort()
   }
 
   /** 这个会话有一轮在飞(accept 过、run_end 还没来)。手动压缩不算:它不是一轮,不在工具边界取收件箱。 */
@@ -2320,6 +2448,8 @@ export class SessionManager {
   async disposeAll(): Promise<void> {
     // 不再派生、不再投通知;排队中的任务直接落定。
     this.taskManager.shutdown()
+    // 在飞的起名掐掉:进程要退了,再写会话名只会撞上正在关的会话。
+    for (const entry of this.entries.values()) this.cancelAutoTitle(entry)
     // 主会话先关:它们的停止顺着前台 agent 调用的中止停掉子 agent。反过来的话子 agent 先被停,主会话拿着
     // "子 agent 被停"的工具结果会再请求一次模型 —— 退出途中多跑一轮,而那一轮可能是一条烧录。
     const entries = [...this.entries.values()]
@@ -2365,7 +2495,8 @@ function toView(entry: Entry): ViewSession {
   return {
     id: entry.id,
     directory: entry.cwd,
-    title: entry.title || defaultTitle(entry),
+    // 自动起名还没回来时先显示第一句话的开头(entry.titling.placeholder),好过一排同名的工程目录。
+    title: entry.title || entry.titling?.placeholder || defaultTitle(entry),
     time: { created: entry.createdAt, updated: entry.updatedAt },
     ...(entry.model ? { model: entry.model } : {}),
     ...(entry.parentID ? { parentID: entry.parentID } : {}),
