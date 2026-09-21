@@ -309,7 +309,7 @@ export interface SessionManagerOptions {
    * 授权服务。**开始新的一轮**与**手动压缩**之前问它一次;已经接受的轮次不再回头查
    * (到期不会把跑到一半的烧录杀掉),停止 / 取消 / 读历史 / 关会话一律不经过它。
    *
-   * 不传 = 按这个构建编译期注入的策略自己建一个(社区 / 开发构建不强制)。`createKernelHost` 总是传:
+   * 不传 = 按这个构建编译期注入的策略自己建一个(没注入的开发态不强制)。`createKernelHost` 总是传:
    * 它要把状态变化推成 `license.updated` 事件。
    */
   license?: LicenseService

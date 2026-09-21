@@ -140,7 +140,7 @@ try {
     // `allowTestKeys` 只是这里的一个函数参数 —— 没有任何环境变量能打开它,
     // 正式打包管线走的是 resolveLicenseBuild(process.env)。
     const build = resolveLicenseBuild(
-      { YOMA_EDITION: "commercial", YOMA_LICENSE_TRUST_JSON: JSON.stringify({ trustedKeys: [generated.trusted] }) },
+      { YOMA_LICENSE_TRUST_JSON: JSON.stringify({ trustedKeys: [generated.trusted] }) },
       { allowTestKeys: true },
     )
     console.log(`  ${describeLicenseBuild(build).split("\n").join("\n  ")}`)
@@ -149,7 +149,7 @@ try {
     const outMain = join(desktopDir, "out", "main")
     mkdirSync(outMain, { recursive: true })
     const define = licenseDefine(build)
-    console.log("  打临时商业产物(与正式包同一套 esbuild 选项)……")
+    console.log("  打临时产物(注入临时公钥;与正式包同一套 esbuild 选项)……")
     const kernelJs = await buildKernelEntryBundle({ outDir: outMain, define, logLevel: "warning" })
     const bundles = await buildMailboxBundles({ outDir: outMain, define, logLevel: "warning" })
     for (const file of [kernelJs, ...bundles]) console.log(`    ${file}(${(statSync(file).size / 1024 / 1024).toFixed(1)} MB)`)

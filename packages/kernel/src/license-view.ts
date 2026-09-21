@@ -18,14 +18,8 @@ export const LICENSE_FILE_EXTENSION = ".yoma-license"
 export const LICENSE_MAX_BYTES = 16 * 1024
 
 /**
- * 构建版本。**编译期常量**,不是运行时配置:
- * - `commercial`:官方商业版,执行入口强制检查授权;
- * - `community`:从源码自行构建 / 开发态,不检查授权(MIT 源码本来就能自己构建)。
- */
-export type LicenseEdition = "commercial" | "community"
-
-/**
- * - `not-required`:社区 / 开发构建,不检查授权;
+ * - `not-required`:开发态(源码直跑、没注入可信公钥的本机构建),不检查授权。**不是一个产品形态**:
+ *   这种构建打不成安装包,客户手里的软件永远不会是这个状态;
  * - `missing`:未激活(没有授权文件);
  * - `active`:已激活,在有效期内;
  * - `not-yet-valid`:授权有效,但还没到生效时间;
@@ -66,7 +60,7 @@ export type LicenseErrorCode =
   | "not-yet-valid"
   /** 当前授权的有效期不短于这份文件。 */
   | "older-than-current"
-  /** 这个构建没有可信公钥(商业构建配置错误;正常构建流程会直接失败)。 */
+  /** 这个构建没有可信公钥(构建配置错误,或开发态;正常的出包流程会直接失败)。 */
   | "no-trusted-keys"
   /** 读写授权文件失败。 */
   | "io"
@@ -82,8 +76,7 @@ export interface LicenseInfoView {
 }
 
 export interface LicenseStatusView {
-  edition: LicenseEdition
-  /** 这个构建是否在执行入口强制检查授权(= edition 是 commercial)。 */
+  /** 这个构建是否在执行入口强制检查授权。安装包恒为 true;false 只出现在开发态。 */
   enforced: boolean
   state: LicenseState
   /** 验签通过的授权内容。`invalid` / `missing` 时没有。 */

@@ -28,7 +28,6 @@ const SH = "Asia/Shanghai"
 const NY = "America/New_York"
 
 const status = (over: Partial<LicenseStatusView>): LicenseStatusView => ({
-  edition: "commercial",
   enforced: true,
   state: "active",
   checkedAt: "2026-09-20T00:00:00.000Z",

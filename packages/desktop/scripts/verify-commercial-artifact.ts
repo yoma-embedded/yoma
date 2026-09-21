@@ -1,6 +1,9 @@
 /**
- * 商业产物的出厂检查:**打包之前**对着 out/(或已经打好的 .app / app.asar)逐条核,
+ * 产物的出厂检查:**打包之前**对着 out/(或已经打好的 .app / app.asar)逐条核,
  * 任何一条不过就非零退出,electron-builder 不会被执行。
+ *
+ * **每一次 `package:*` 都无条件跑它**:产品只有要授权的那一种,没有"这次出的是不检查授权的包,跳过"
+ * 这条路。没注入可信公钥的 `out/`(开发构建)在第 1 条就红,于是打不成安装包。
  *
  * 它挡的不是"代码写错了",而是**发货事故**:
  *
@@ -18,7 +21,6 @@
  *   npm run verify:commercial -w packages/desktop                       # 查 packages/desktop/out
  *   npm run verify:commercial -w packages/desktop -- --trust-file k.json # 再核公钥逐把一致
  *   npm run verify:commercial -w packages/desktop -- --app <目录|.app|app.asar>
- *   npm run verify:commercial -w packages/desktop -- --if-commercial     # 社区构建跳过(打包管线用)
  *
  * 不给 --trust-file 时,期望公钥从与构建同一套环境变量解析(YOMA_LICENSE_TRUST_FILE /
  * _JSON);两者都没有就只要求四个产物**互相一致**,并把指纹印出来让人核对。
@@ -30,7 +32,7 @@ import path from "node:path"
 import { KEY_ID_PATTERN } from "../../kernel/src/host/licensing/format.ts"
 import type { TrustedLicenseKey } from "../../kernel/src/host/licensing/format.ts"
 import { ISSUER_MARKER, TEST_KEY_ID_PATTERN, fingerprintOf } from "../../../scripts/license/lib.ts"
-import { EDITION_ENV, TRUST_FILE_ENV, TRUST_JSON_ENV, resolveLicenseBuild } from "./license-build.ts"
+import { TRUST_FILE_ENV, TRUST_JSON_ENV, missingTrustHelp, resolveLicenseBuild } from "./license-build.ts"
 
 // ---------------------------------------------------------------------------
 // 纯函数层:输入是"一堆已经读进内存的文件",不碰 fs
@@ -61,7 +63,8 @@ const ED25519_SPKI_B64 = /MCowBQYDK2VwAyEA[A-Za-z0-9+/]{42,44}={0,2}/g
 const TRUSTED_KEY_PAIR =
   /["']?id["']?\s*:\s*["']([^"']+)["']\s*,\s*["']?publicKey["']?\s*:\s*["'](MCowBQYDK2VwAyEA[A-Za-z0-9+/=]+)["']/g
 
-const EDITION_FIELD = /["']?edition["']?\s*:\s*["'](commercial|community)["']/g
+/** 信任名单的数组字面量:`trustedKeys:[` —— 注入的锚。`trustedKeys: keys` 这类非字面量不匹配。 */
+const TRUSTED_KEYS_ARRAY = /["']?trustedKeys["']?\s*:\s*\[/g
 
 /**
  * PEM 私钥块 —— 必须匹配**真的密钥体**。
@@ -86,10 +89,10 @@ const ISSUER_SYMBOLS = ["generateSigningKey", "issueLicense", "renewalPeriod"] a
 /**
  * 不许出现在产物里的字符串。
  *
- * 前三个是"读环境变量决定信任谁 / 要不要检查":正式包一旦能被一行 env 改变行为,授权就等于没有。
+ * 前两个是"读环境变量决定信任谁":正式包一旦能被一行 env 改变行为,授权就等于没有。
  * `allowTestKeys` 是构建脚本的函数参数,产物里出现它意味着那个放行开关被带进了运行期。
  */
-const FORBIDDEN_RUNTIME_SWITCHES = [EDITION_ENV, "YOMA_LICENSE_TRUST", "YOMA_LICENSE_KEY_PASSPHRASE", "allowTestKeys"] as const
+const FORBIDDEN_RUNTIME_SWITCHES = ["YOMA_LICENSE_TRUST", "YOMA_LICENSE_KEY_PASSPHRASE", "allowTestKeys"] as const
 
 /** 执行入口的源码里不许出现的注入口(它们是测试的代码级接缝,生产装配面一个都不传)。 */
 // 与 packages/kernel/src/host/license-entrypoints.test.ts 的那张表同一份:bench 侧的注入口叫
@@ -98,7 +101,6 @@ const FORBIDDEN_RUNTIME_SWITCHES = [EDITION_ENV, "YOMA_LICENSE_TRUST", "YOMA_LIC
 const FORBIDDEN_ENTRY_SEAMS = ["licensePolicy", "licenseNow", "LicenseService", "trustedKeys"] as const
 
 export interface InjectedPolicy {
-  edition: "commercial" | "community"
   trustedKeys: TrustedLicenseKey[]
 }
 
@@ -163,32 +165,28 @@ export function findEd25519PublicKeys(source: string): string[] {
 /**
  * 从产物文本里抠出注入的策略。
  *
- * 不做 JSON.parse:打包器会把 `{"edition":"commercial"}` 改写成 `{edition:"commercial"}`
+ * 不做 JSON.parse:打包器会把 `{"trustedKeys":[…]}` 改写成 `{trustedKeys:[…]}`
  * (引号风格、空白都可能变),而 `typeof X === "undefined" ? … : X` 这一句会让同一份字面量
  * 出现一到两次。所以按属性名 + Ed25519 前缀锚定,字面量怎么写都认得出。
+ *
+ * 每一个 `trustedKeys:[…]` 数组字面量算一份候选(空数组也算 —— `policy.ts` 自己的源码里就有两个,
+ * 调用方按"带公钥"筛)。
  */
 export function extractInjectedPolicies(source: string): InjectedPolicy[] {
   const policies: InjectedPolicy[] = []
-  for (const match of source.matchAll(EDITION_FIELD)) {
-    const region = enclosingObject(source, match.index)
+  for (const match of source.matchAll(TRUSTED_KEYS_ARRAY)) {
+    const region = balancedArray(source, match.index + match[0].length - 1)
     if (region === undefined) continue
     const trustedKeys: TrustedLicenseKey[] = []
     for (const pair of region.matchAll(TRUSTED_KEY_PAIR)) trustedKeys.push({ id: pair[1]!, publicKey: pair[2]! })
-    policies.push({ edition: match[1] as "commercial" | "community", trustedKeys })
+    policies.push({ trustedKeys })
   }
   return policies
 }
 
-/** 从 `at` 往前找最近的 `{`,再往后按括号配平取整段(跳过字符串字面量)。 */
-function enclosingObject(source: string, at: number): string | undefined {
-  let start = -1
-  for (let index = at; index >= 0 && at - index < 200; index -= 1) {
-    if (source[index] === "{") {
-      start = index
-      break
-    }
-  }
-  if (start < 0) return undefined
+/** `start` 指着 `[`:按括号配平取到与它配对的 `]`(跳过字符串字面量)。 */
+function balancedArray(source: string, start: number): string | undefined {
+  if (source[start] !== "[") return undefined
   let depth = 0
   let quote: string | undefined
   for (let index = start; index < source.length && index - start < 200_000; index += 1) {
@@ -199,8 +197,8 @@ function enclosingObject(source: string, at: number): string | undefined {
       continue
     }
     if (char === '"' || char === "'" || char === "`") quote = char
-    else if (char === "{") depth += 1
-    else if (char === "}") {
+    else if (char === "[") depth += 1
+    else if (char === "]") {
       depth -= 1
       if (depth === 0) return source.slice(start, index + 1)
     }
@@ -234,7 +232,7 @@ export interface VerifyReport {
 export function verifyCommercialArtifact(files: ScannedFile[], options: VerifyOptions = {}): VerifyReport {
   const checks: CheckResult[] = []
 
-  // ── a. 四个产物都吃到了注入,edition 是 commercial,公钥集合一致 ──────────────
+  // ── a. 四个产物都吃到了注入,公钥集合一致 ─────────────────────────────────
   // 每个入口连着它 import 的 chunk 一起看(打包器会把共享代码拆出去)。
   const found = new Map<string, { text: string; parts: string[] }>()
   const missing: string[] = []
@@ -250,26 +248,23 @@ export function verifyCommercialArtifact(files: ScannedFile[], options: VerifyOp
 
   /** 每个产物抠出来的"这个产物信任谁"(按指纹比较,顺序无关)。 */
   const perArtifact = new Map<string, TrustedLicenseKey[]>()
+  /** 根本没有注入的产物。"你忘了给公钥"那段补救话术只在**四个全是这种**时才说 —— 见下面 push 的地方。 */
+  const noInjection: string[] = []
   for (const [name, graph] of found) {
     const where = graph.parts.length > 1 ? `(连同 ${graph.parts.length - 1} 个 chunk)` : ""
     // **按"带公钥"筛**,不能拿全部候选去比:`policy.ts` 自己的源码里就有两个同形的字面量
-    // (`COMMUNITY_POLICY` 与 fail-closed 的 `{edition:"commercial",trustedKeys:[]}`),
-    // 它们跟着代码进每一个产物。第一版没筛,于是社区产物报出"edition 是 community / commercial",
-    // 而真正的商业产物会因为"两份不一样的信任名单"被误判不合格(实测,就是这一条救回来的)。
+    // (`DEVELOPMENT_POLICY` 与 fail-closed 的 `{enforced:true,trustedKeys:[]}`),
+    // 它们跟着代码进每一个产物。第一版没筛,于是真正带注入的产物会因为"两份不一样的信任名单"
+    // 被误判不合格(实测,就是这一条救回来的)。
     // 带公钥的字面量只可能来自注入:源码里没有、也不该有任何硬编码的 Ed25519 公钥。
     const withKeys = extractInjectedPolicies(graph.text).filter((policy) => policy.trustedKeys.length > 0)
     if (withKeys.length === 0) {
       policyOk = false
+      noInjection.push(name)
       policyEvidence.push(
-        `✗ ${name}${where}:找不到"商业版 + 至少一把可信公钥"的注入 —— 这是社区构建的产物,` +
-          `或者 __YOMA_LICENSE_BUILD__ 没被 define 替换(那种包谁都激活不了)`,
+        `✗ ${name}${where}:找不到"至少一把可信公钥"的注入 —— 这是开发构建的产物(构建时没给可信公钥,` +
+          `不检查授权),或者 __YOMA_LICENSE_BUILD__ 没被 define 替换。这种产物不许打成安装包`,
       )
-      continue
-    }
-    const editions = new Set(withKeys.map((policy) => policy.edition))
-    if (editions.size !== 1 || !editions.has("commercial")) {
-      policyOk = false
-      policyEvidence.push(`✗ ${name}${where}:带公钥的策略里 edition 是 ${[...editions].join(" / ")},不是 commercial`)
       continue
     }
     // 同一份字面量会出现两次(`typeof X === "undefined" ? … : X` 的两侧),两次必须说同一件事。
@@ -289,7 +284,7 @@ export function verifyCommercialArtifact(files: ScannedFile[], options: VerifyOp
       continue
     }
     perArtifact.set(name, keys)
-    policyEvidence.push(`✓ ${name}${where}:commercial,信任 ${keys.length} 把公钥`)
+    policyEvidence.push(`✓ ${name}${where}:强制检查授权,信任 ${keys.length} 把公钥`)
   }
 
   // 四个产物互相一致(没给 --trust-file 时这是唯一的横向约束)。
@@ -313,10 +308,14 @@ export function verifyCommercialArtifact(files: ScannedFile[], options: VerifyOp
       )
     }
     if (policyOk) policyEvidence.push(`✓ 四个产物的公钥与 ${options.expectedKeysSource ?? "--trust-file"} 逐把一致`)
-  } else {
+  } else if (perArtifact.size > 0) {
     policyEvidence.push("! 没给 --trust-file:只核了四个产物互相一致,请人工核对上面的指纹")
   }
-  checks.push({ name: "编译期注入的授权策略(四个产物 · edition · 公钥)", ok: policyOk, evidence: policyEvidence })
+  // 只在"四个产物都没有注入"(= 开发构建)时才教人怎么给公钥。按"没抠出公钥"判会误伤:注入被改过、
+  // 名单之外多出一把后门公钥,同样抠不出一份合格的名单 —— 那时维护者明明给了公钥,再叫他去设环境变量,
+  // 等于在一次真告警上指错路(审查时实测出来的)。
+  if (noInjection.length === REQUIRED_MAIN_ARTIFACTS.length) policyEvidence.push(missingTrustHelp())
+  checks.push({ name: "编译期注入的授权策略(四个产物 · 公钥)", ok: policyOk, evidence: policyEvidence })
 
   // ── b. 公钥编号不是测试前缀 ────────────────────────────────────────────────
   const idEvidence: string[] = []
@@ -509,29 +508,11 @@ async function main(argv: string[]): Promise<number> {
   const target = flag("app") ?? path.join(desktopDir, "out")
   const collected = await collectTarget(target)
 
-  // `--if-commercial`(打包脚本用):**环境变量说是商业,或产物本身像商业**,两者有一个成立就跑全套。
-  // 只看环境变量的话,"上一条命令带着变量 build 出商业 out/、这一条忘了带变量就 package"会把一份
-  // 商业产物不经检查地打进安装包。反过来 env=commercial 而产物没有注入,照旧是红的(走下面的全套)。
-  if (argv.includes("--if-commercial") && (process.env[EDITION_ENV] ?? "").trim() !== "commercial") {
-    const files = collected.files
-    const injected =
-      !!files &&
-      REQUIRED_MAIN_ARTIFACTS.some((entry) => {
-        const graph = resolveEntryGraph(entry, files)
-        return !!graph && extractInjectedPolicies(graph.text).some((policy) => policy.trustedKeys.length > 0)
-      })
-    if (!injected) {
-      console.log(`· ${EDITION_ENV} 不是 commercial,产物里也没有注入可信公钥:社区构建不检查授权,跳过商业产物检查`)
-      return 0
-    }
-    console.log(`· ${EDITION_ENV} 不是 commercial,但产物里注入了可信公钥 —— 这是一份商业产物,照常检查`)
-  }
-
   if (!collected.files) {
     console.error(`✗ ${collected.message}`)
     return 1
   }
-  console.log(`商业产物检查:${collected.label}(${collected.files.length} 个文本文件)`)
+  console.log(`产物检查:${collected.label}(${collected.files.length} 个文本文件)`)
 
   // 期望公钥:--trust-file 优先,其次与构建同一套环境变量。
   let expectedKeys: TrustedLicenseKey[] | undefined
@@ -540,15 +521,15 @@ async function main(argv: string[]): Promise<number> {
   try {
     if (trustFile) {
       expectedKeys = resolveLicenseBuild(
-        { [EDITION_ENV]: "commercial", [TRUST_FILE_ENV]: trustFile },
+        { [TRUST_FILE_ENV]: trustFile },
         // 检查端不该比构建端更宽松,也不该更严格:这里只是"把期望读出来"。
         // e2e 用测试公钥打的产物由 --trust-file 指同一份文件,所以要放行测试前缀 ——
         // 编号是不是测试前缀由上面的 b 条独立判,不靠这里。
         { allowTestKeys: true },
-      ).trustedKeys
+      )?.trustedKeys
       expectedKeysSource = `--trust-file ${trustFile}`
     } else if ((process.env[TRUST_FILE_ENV] ?? process.env[TRUST_JSON_ENV] ?? "").trim()) {
-      expectedKeys = resolveLicenseBuild({ ...process.env, [EDITION_ENV]: "commercial" }, { allowTestKeys: true }).trustedKeys
+      expectedKeys = resolveLicenseBuild(process.env, { allowTestKeys: true })?.trustedKeys
       expectedKeysSource = process.env[TRUST_FILE_ENV]?.trim() ? `环境变量 ${TRUST_FILE_ENV}` : `环境变量 ${TRUST_JSON_ENV}`
     }
   } catch (error) {
@@ -572,7 +553,7 @@ async function main(argv: string[]): Promise<number> {
     for (const line of check.evidence) console.log(`    ${line}`)
   }
   const ok = checks.every((check) => check.ok)
-  console.log(ok ? "\n✓ 商业产物检查全部通过" : "\n✗ 商业产物检查未通过 —— 不要发这个包")
+  console.log(ok ? "\n✓ 产物检查全部通过" : "\n✗ 产物检查未通过 —— 不要发这个包")
   return ok ? 0 : 1
 }
 

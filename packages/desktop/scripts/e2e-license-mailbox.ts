@@ -262,9 +262,8 @@ export async function leg3(plan: LicensePlan, issuer: Issuer, electron: string):
   const licenseFile = licenseFilePath(configDir)
   const daemons: Daemon[] = []
 
-  // 与被测产物同一把公钥的商业策略:导入这一侧必须和产物口径一致,否则"导进去了内核却不认"。
+  // 与被测产物同一把公钥的策略:导入这一侧必须和产物口径一致,否则"导进去了内核却不认"。
   const policy = normalizeLicensePolicy({
-    edition: "commercial",
     trustedKeys: [{ id: plan.keyId, publicKey: issuer.publicKeySpkiB64 }],
   })
   const service = () => new LicenseService({ configDir, policy })

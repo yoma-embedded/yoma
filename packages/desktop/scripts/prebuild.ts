@@ -3,7 +3,8 @@ import { writeMetainfo } from "./copy-metainfo"
 import { describeLicenseBuild, resolveLicenseBuild } from "./license-build.ts"
 import { resolveChannel } from "./utils"
 
-// 授权策略先解析:商业构建缺可信公钥、或社区构建却给了信任来源,都在这里**非零退出**。
+// 授权策略先解析:可信公钥给了但不对(格式、编号、测试前缀、两个来源同时给),在这里**非零退出**。
+// 没给 = 开发构建,照常往下走(它打不成安装包,那一道在 package:* 的产物检查里)。
 // 拦在最前面是为了让错误话术只出现一次、而且在任何产物落盘之前 —— electron-vite 的配置
 // 里还有第二道同源的解析,那一道的报错裹在 vite 的堆栈里,不适合给人看。
 const licenseBuild = (() => {

@@ -1,5 +1,5 @@
 /**
- * 构建期把「这个构建是哪个版本、信任哪些签名公钥」烧成常量 —— **唯一的生成处**。
+ * 构建期把「这个构建信任哪些签名公钥」烧成常量 —— **唯一的生成处**。
  *
  * 产物里没有任何一处读环境变量或配置文件来决定"要不要检查授权、信任谁":
  * `packages/kernel/src/host/licensing/policy.ts` 探的是编译期标识符 `__YOMA_LICENSE_BUILD__`,
@@ -12,10 +12,15 @@
  *   out/main/mailbox-turn-entry.mjs esbuild(build-mailbox.ts),轮次子进程
  * 少一个就等于留了一条绕过去的路,所以 `verify-commercial-artifact.ts` 四个一起核。
  *
- * ## 为什么"配置不全就让构建失败"
+ * ## 产品只有一种,开发构建打不成包
  *
- * 商业构建缺公钥时唯一安全的结局是**构建失败**。放行意味着出一个不检查授权的"商业包";
- * 而 `normalizeLicensePolicy` 的兜底(商业 + 零可信公钥 = 一律拦)是给"注入被改坏"准备的最后一道,
+ * 给了可信公钥 → 注入,产物在执行入口强制检查授权。**没有"不检查"的注入形状**,也没有版本开关。
+ * 没给 → 不注入,产物是**开发构建**(不检查授权):CI 的冒烟 / e2e 与本机调试跑的就是它。
+ * 它不是一个产品:`package:*` 在 electron-builder 之前无条件跑 `verify-commercial-artifact.ts`,
+ * 没注入公钥的 `out/` 在那里非零退出 —— 出安装包缺公钥时唯一的结局是失败,不是放行。
+ *
+ * 给了但不对(不是 Ed25519、编号不合规、重复、测试前缀、两个来源同时给)一律**构建失败**:
+ * `normalizeLicensePolicy` 的兜底(强制 + 零可信公钥 = 一律拦)是给"注入被改坏"准备的最后一道,
  * 不该是正常流程的出口 —— 那样出的包谁都激活不了,而错误只会在客户机器上显形。
  *
  * ## 导入一律用相对路径
@@ -39,8 +44,6 @@ export type { LicenseBuildConfig }
 /** 被 `define` 替换掉的标识符。`policy.ts` 用 `typeof` 探的就是它。 */
 export const LICENSE_BUILD_DEFINE_NAME = "__YOMA_LICENSE_BUILD__"
 
-/** `commercial` / `community`;未设或空串 = community。 */
-export const EDITION_ENV = "YOMA_EDITION"
 /** 可信公钥文件(`npm run license -- keygen` 产出的 `<id>.trust.json`)。 */
 export const TRUST_FILE_ENV = "YOMA_LICENSE_TRUST_FILE"
 /** 同上的内联 JSON —— 给 CI 的 repository variable 用(公钥不是秘密)。 */
@@ -65,12 +68,14 @@ export interface ResolveLicenseBuildOptions {
 /**
  * 从环境变量解析出这个构建的授权策略。**任何一处不对就抛** —— 调用方(prebuild / vite 配置 /
  * build-mailbox)不接,于是构建以非零退出结束。
+ *
+ * 返回 `undefined` = 两个来源都没给 = 开发构建,不注入(空串与未设同解:CI 里没配 repository variable 时
+ * `${{ vars.… }}` 展开出来正是空串)。
  */
 export function resolveLicenseBuild(
   env: Record<string, string | undefined>,
   options: ResolveLicenseBuildOptions = {},
-): LicenseBuildConfig {
-  const edition = readEdition(env[EDITION_ENV])
+): LicenseBuildConfig | undefined {
   const file = trimmed(env[TRUST_FILE_ENV])
   const inline = trimmed(env[TRUST_JSON_ENV])
 
@@ -82,44 +87,22 @@ export function resolveLicenseBuild(
     )
   }
 
-  if (edition === "community") {
-    if (file !== undefined || inline !== undefined) {
-      const which = file !== undefined ? TRUST_FILE_ENV : TRUST_JSON_ENV
-      throw new Error(
-        `给了可信公钥来源 ${which},但 ${EDITION_ENV} 是 ${env[EDITION_ENV] ? JSON.stringify(env[EDITION_ENV]) : "(未设)"}` +
-          ` —— 是不是忘了 ${EDITION_ENV}=commercial?社区构建不检查授权,信任配置在它这里一点作用都没有;` +
-          `静默忽略的结果是打出一个"以为要激活、其实谁都能用"的包,所以这里直接失败。见 ${DOC}`,
-      )
-    }
-    return { edition: "community", trustedKeys: [] }
-  }
-
-  if (file === undefined && inline === undefined) {
-    throw new Error(
-      `${EDITION_ENV}=commercial 的构建必须给可信公钥,否则打出来的包没有任何授权能通过验签(谁都激活不了)。` +
-        `\n  · 本机构建:${TRUST_FILE_ENV}=<那个 trust.json 的路径>` +
-        `\n  · CI:把 trust.json 的内容放进 repository variable ${TRUST_JSON_ENV}(公钥不是秘密)` +
-        `\n  · 还没有密钥:${KEYGEN_HINT}(私钥只落仓库外,备份好;丢了就没法给老客户续期)` +
-        `\n  · 只想自己构建自用:不设 ${EDITION_ENV},那是社区构建,不检查授权。` +
-        `\n见 ${DOC}`,
-    )
-  }
+  if (file === undefined && inline === undefined) return undefined
 
   const source = file !== undefined ? `可信公钥文件 ${file}` : `环境变量 ${TRUST_JSON_ENV}`
   const raw = file !== undefined ? readTrustFile(file, options.readTextFile) : inline!
   const trustedKeys = parseTrustedKeys(raw, source, options.allowTestKeys === true)
-  return { edition: "commercial", trustedKeys }
+  return { trustedKeys }
 }
 
-function readEdition(raw: string | undefined): "commercial" | "community" {
-  const value = trimmed(raw)
-  // 未设或空串 = 社区构建。空串必须与未设同解:CI 里没配 repository variable 时
-  // `${{ vars.YOMA_EDITION }}` 展开出来正是空串,那时的期望行为是"和今天完全一样"。
-  if (value === undefined) return "community"
-  if (value === "commercial" || value === "community") return value
-  throw new Error(
-    `${EDITION_ENV}=${JSON.stringify(value)} 不认识 —— 只有 commercial(官方商业构建,强制检查授权)` +
-      `与 community(源码自建 / 开发,不检查授权)两种。空着 = community。见 ${DOC}`,
+/** 出安装包却没有可信公钥时给人看的话(产物检查与文档共用这一份说法)。 */
+export function missingTrustHelp(): string {
+  return (
+    `出安装包必须给可信公钥,否则打出来的包不检查授权。` +
+    `\n  · 本机构建:${TRUST_FILE_ENV}=<那个 trust.json 的路径> npm run build -w packages/desktop` +
+    `\n  · CI:把 trust.json 的内容放进 repository variable ${TRUST_JSON_ENV}(公钥不是秘密)` +
+    `\n  · 还没有密钥:${KEYGEN_HINT}(私钥只落仓库外,备份好;丢了就没法给老客户续期)` +
+    `\n见 ${DOC}`
   )
 }
 
@@ -165,7 +148,7 @@ function parseTrustedKeys(raw: string, source: string, allowTestKeys: boolean): 
     )
   }
   if (entries.length === 0) {
-    throw new Error(`${source} 里的 trustedKeys 是空数组 —— 商业构建至少要一把公钥,否则谁都激活不了。见 ${DOC}`)
+    throw new Error(`${source} 里的 trustedKeys 是空数组 —— 至少要一把公钥,否则打出来的包谁都激活不了。见 ${DOC}`)
   }
 
   const keys: TrustedLicenseKey[] = []
@@ -213,23 +196,26 @@ function parseTrustedKeys(raw: string, source: string, allowTestKeys: boolean): 
 /**
  * → esbuild / vite 的 `define` 映射。
  *
- * 社区构建**也注入**(`{"edition":"community","trustedKeys":[]}`):让注入这条路每次构建都被走一遍,
- * 而不是只在商业打包时才第一次生效。`policy.ts` 对它与"根本没注入"同解,行为一个字节都不差。
+ * 开发构建(`undefined`)**什么都不注入**:`policy.ts` 靠"标识符不存在"认出开发态。注入的形状里只有
+ * 公钥 —— 没有任何一种写法能注入出"不检查"。
  */
-export function licenseDefine(config: LicenseBuildConfig): Record<string, string> {
+export function licenseDefine(config: LicenseBuildConfig | undefined): Record<string, string> {
+  if (config === undefined) return {}
   const canonical = {
-    edition: config.edition,
     trustedKeys: config.trustedKeys.map((key) => ({ id: key.id, publicKey: key.publicKey })),
   }
   return { [LICENSE_BUILD_DEFINE_NAME]: JSON.stringify(canonical) }
 }
 
-/** 构建日志里的一段话:版本 + 每把公钥的编号与指纹(拿去和签发端的备份核对)。 */
-export function describeLicenseBuild(config: LicenseBuildConfig): string {
-  if (config.edition === "community") {
-    return "授权:社区 / 开发构建 —— 不检查授权(源码自建本来就不受限;官方商业安装包是另一回事)"
+/** 构建日志里的一段话:每把公钥的编号与指纹(拿去和签发端的备份核对)。 */
+export function describeLicenseBuild(config: LicenseBuildConfig | undefined): string {
+  if (config === undefined) {
+    return (
+      `授权:开发构建 —— 没给 ${TRUST_FILE_ENV} / ${TRUST_JSON_ENV},不注入可信公钥、不检查授权。` +
+      `这份 out/ 只能拿来调试与跑冒烟,**打不成安装包**`
+    )
   }
-  const lines = [`授权:商业构建 —— 执行入口强制检查授权,信任 ${config.trustedKeys.length} 把公钥`]
+  const lines = [`授权:执行入口强制检查授权,信任 ${config.trustedKeys.length} 把公钥`]
   for (const key of config.trustedKeys) lines.push(`  · ${key.id}  指纹 ${fingerprintOf(key.publicKey)}`)
   return lines.join("\n")
 }

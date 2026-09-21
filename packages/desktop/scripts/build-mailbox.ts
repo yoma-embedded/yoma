@@ -40,7 +40,7 @@ export interface BundleOptions {
   outDir: string
   /**
    * 编译期常量。正式管线传 `licenseDefine(resolveLicenseBuild(process.env))`;
-   * **不传 = 不注入**,那时 `policy.ts` 落到社区版(不检查授权)。
+   * **不传 = 不注入**,那时 `policy.ts` 落到开发态(不检查授权;这种产物过不了打包前的产物检查)。
    */
   define?: Record<string, string>
   logLevel?: "silent" | "warning" | "info"
@@ -98,7 +98,7 @@ export async function buildKernelEntryBundle(options: BundleOptions): Promise<st
 
 // 命令行:正式管线的那一步。行为与从前一致,只多了编译期注入与一行日志。
 if (import.meta.filename === path.resolve(process.argv[1] ?? "")) {
-  // 解析失败(商业构建缺公钥之类)就让构建在这里非零退出 —— 这一步已经在 electron-vite
+  // 解析失败(可信公钥给了但不对)就让构建在这里非零退出 —— 这一步已经在 electron-vite
   // 之后,但 prebuild 早就先拦过一次;两处都拦是因为 out/ 里四个产物必须口径一致,
   // 少任何一个吃到注入都不行。
   const licenseBuild = resolveLicenseBuild(process.env)

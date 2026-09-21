@@ -134,7 +134,6 @@ class KernelClient {
 }
 
 interface Status {
-  edition?: string
   enforced?: boolean
   state?: string
   license?: { licenseId?: string; expiresAt?: string; notBefore?: string }
@@ -179,7 +178,7 @@ async function leg1(plan: LicensePlan, issuer: Issuer): Promise<Leg> {
 
     // ---- 1. 未激活:看得见、进得去,但开不了工 --------------------------------
     const status0 = (await kernel.request("license.status", undefined)) as Status
-    leg.check("license.status 是商业构建且强制检查", status0.edition === "commercial" && status0.enforced === true, `edition=${status0.edition} enforced=${status0.enforced}`)
+    leg.check("license.status 强制检查授权", status0.enforced === true, `enforced=${status0.enforced}`)
     leg.check("无授权时 state = missing", status0.state === "missing", String(status0.state))
     leg.check("信任的公钥编号正是产物里烧进去的那把", status0.trustedKeyIds?.length === 1 && status0.trustedKeyIds[0] === plan.keyId, (status0.trustedKeyIds ?? []).join(","))
     leg.check("授权文件位置落在隔离 HOME 里", status0.file === licenseFile, String(status0.file))
@@ -393,8 +392,8 @@ async function leg2(plan: LicensePlan, issuer: Issuer): Promise<Leg> {
       window.api.kernel.request("license.status", undefined).then((s) => ({ ok: true, s }), (e) => ({ ok: false, message: e && e.message }))
     `)
     leg.check(
-      "renderer 里读到 commercial / enforced / missing",
-      status?.ok === true && status.s?.edition === "commercial" && status.s?.enforced === true && status.s?.state === "missing",
+      "renderer 里读到 enforced / missing",
+      status?.ok === true && status.s?.enforced === true && status.s?.state === "missing",
       JSON.stringify(status),
     )
 

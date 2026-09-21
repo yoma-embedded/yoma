@@ -4,7 +4,7 @@ import appPlugin from "@yoma-desktop/app/vite"
 import { licenseDefine, resolveLicenseBuild } from "./scripts/license-build.ts"
 
 // 授权策略是**编译期常量**:两个 main 入口(index.js 与 kernel.js)共享这一份 define。
-// 配置不全(商业构建没给可信公钥、社区构建却给了)在这里就抛 —— 构建不该继续。
+// 可信公钥给了但不对,在这里就抛 —— 构建不该继续。没给 = 开发构建,不注入。
 // prebuild 先拦过一次并印出指纹;这里是第二道,保证真正落进产物的与那一份同源。
 const licenseBuild = resolveLicenseBuild(process.env)
 

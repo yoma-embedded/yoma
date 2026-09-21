@@ -45,7 +45,6 @@ describe("从 rejection 里认出授权问题", () => {
 
 describe("licenseRequiredFromStatus:发送前预检用的「会不会被拒」", () => {
   const base: Omit<LicenseStatusView, "state"> = {
-    edition: "commercial",
     enforced: true,
     checkedAt: "2026-09-20T00:00:00Z",
     file: "/x",
@@ -63,7 +62,7 @@ describe("licenseRequiredFromStatus:发送前预检用的「会不会被拒」",
   test("有效 / 不强制 → 不会被拒", () => {
     expect(licenseRequiredFromStatus({ ...base, state: "active", license }, "session.prompt")).toBeUndefined()
     expect(
-      licenseRequiredFromStatus({ ...base, edition: "community", enforced: false, state: "not-required" }, "session.prompt"),
+      licenseRequiredFromStatus({ ...base, enforced: false, state: "not-required" }, "session.prompt"),
     ).toBeUndefined()
   })
 

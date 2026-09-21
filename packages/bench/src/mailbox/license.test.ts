@@ -56,7 +56,7 @@ const KEY = (() => {
   const generated = generateSigningKey("bench-license-key")
   return { keyId: generated.keyId, privateKey: loadPrivateKey(generated.privateKeyPem), trusted: generated.trusted }
 })()
-const COMMERCIAL: LicensePolicy = { edition: "commercial", trustedKeys: [KEY.trusted] }
+const COMMERCIAL: LicensePolicy = { enforced: true, trustedKeys: [KEY.trusted] }
 
 function licenseText(period: { notBefore: string; expiresAt: string }, licenseId = "ORD-2026-0001"): string {
   return issueLicense({

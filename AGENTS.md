@@ -57,7 +57,8 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
   inline 时这两样一起消失 —— 也正因为这些参数属性,`tsconfig.yoma.json` 的
   `erasableSyntaxOnly: false` 是**承重的**,别顺手收紧。
 - **软件授权**(2026-09-20):`./host/licensing` 是新增的叶子门(验签 / 落盘 / 执行资格检查,只依赖 node 内建;没有签发能力)。
-  版本与可信公钥是**编译期常量**(`packages/desktop/scripts/license-build.ts` 注入,没注入 = 社区版不强制);检查只在
+  可信公钥是**编译期常量**(`packages/desktop/scripts/license-build.ts` 注入;注入了就强制检查,没有版本开关;没注入 = 开发态,
+  打不成安装包 —— 产品只有要授权的那一种,别加回社区版);检查只在
   `SessionManager.prompt()` / `compact()` 第一行、排在 `stop()` 之前;测试注入口只能是函数参数,绝不进 `TurnInput` /
   `MailboxHostConfig` / `StartCommand`。操作手册与入口清单见 `docs/licensing.md`,教训见 CLAUDE.md「软件授权」。
 - 新开一道深引用 = 改 `exports`(从前是改四份别名表)。`boundary.test.ts` 钉住五条:菜单里没有 Node;

@@ -43,7 +43,7 @@ export interface BenchLicenseOptions {
 
 /**
  * 这一步该问的那个服务。不传 `license` 就现建一个 —— 走**编译期策略**
- * (`buildLicensePolicy()`),社区 / 开发构建因此完全不受影响。
+ * (`buildLicensePolicy()`),没有注入的开发态因此完全不受影响。
  *
  * 每步现建一个不是浪费:`status()` 本来就每次重新读盘(那正是"另一个进程导入了续费授权,
  * 这边下一次轮询就看得见"的全部机制),服务对象自己不缓存任何东西。

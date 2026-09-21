@@ -29,7 +29,7 @@ interface Harness {
   launchThrows?: string
   /** 接线层的兜底工程目录(真实现里是 composeJob 从模板位置推导出来的)。 */
   derivedProjectDir?: string
-  /** 授权:undefined = 不检查(社区构建 / 没注入);给了就是"这台机器现在的资格"。 */
+  /** 授权:undefined = 不检查(不关心授权的那些用例);给了就是"这台机器现在的资格"。 */
   licensed?: { ok: true } | { ok: false; message: string; data: LicenseRequiredData }
 }
 

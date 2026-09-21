@@ -116,7 +116,7 @@ describe("调试台的授权暂停横幅", () => {
     expect(pause?.note).toBe("bench.license.note.restart")
   })
 
-  test("社区构建(not-required)也算就绪", () => {
+  test("开发态(not-required)也算就绪", () => {
     expect(
       selectBenchLicensePause({ stepPause: { state: "missing" }, licenseState: "not-required" }),
     ).toBeUndefined()

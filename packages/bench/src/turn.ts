@@ -79,7 +79,7 @@ export interface TurnOptions {
  * 所以它只能作为**函数参数**从代码里传进来:生产路径(turn-entry)一个字都不传,传它的只有测试。
  */
 export interface TurnSeams {
-  /** 不传 = 这个构建编译期注入的那一份策略(社区 / 开发构建即不强制)。 */
+  /** 不传 = 这个构建编译期注入的那一份策略(没注入的开发态即不强制)。 */
   licensePolicy?: Parameters<typeof createKernelHost>[0]["licensePolicy"]
   /** 授权检查用的时钟。 */
   licenseNow?: Parameters<typeof createKernelHost>[0]["licenseNow"]

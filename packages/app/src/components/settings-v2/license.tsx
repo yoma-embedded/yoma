@@ -107,9 +107,9 @@ export const SettingsLicenseV2: Component = () => {
   /** 导入被拒时那一句人话(未知 code 回落到内核给的中文兜底 message)。 */
   const rejectionText = (error: unknown) => {
     const data = licenseImportErrorFrom(error)
-    // 社区 / 开发构建没有可信公钥,内核用同一个 code(no-trusted-keys)拒收。那条 code 的通用话术是
-    // "构建配置有问题,请联系开发者" —— 对商业包成立,对社区构建是句假话:这里什么都没坏,只是这个构建
-    // 本来就不检查授权。多半是客户拿着授权文件却装错了包,要告诉他的正是这一点。
+    // 开发态(源码直跑、没注入公钥的本机构建)没有可信公钥,内核用同一个 code(no-trusted-keys)拒收。
+    // 那条 code 的通用话术是"构建配置有问题,请联系开发者" —— 对安装包成立,对开发态是句假话:这里什么都
+    // 没坏,只是这次运行本来就不检查授权。客户手里的安装包到不了这个分支,这句话是说给开发者自己看的。
     if (data?.code === "no-trusted-keys" && state() === "not-required") {
       return language.t("settings.license.stateDetail.not-required")
     }

@@ -18,7 +18,7 @@ import { LICENSE_MAX_BYTES, LICENSE_PRODUCT } from "../../license-view.ts"
 import { generateSigningKey, issueLicense, loadPrivateKey } from "../../../../../scripts/license/lib.ts"
 import { yomaConfigDir } from "../auth.ts"
 import {
-  COMMUNITY_POLICY,
+  DEVELOPMENT_POLICY,
   LicenseImportError,
   LicenseRequiredError,
   LicenseService,
@@ -45,7 +45,7 @@ function signer(keyId = "unit-key-a") {
 }
 
 const KEY = signer()
-const POLICY: LicensePolicy = { edition: "commercial", trustedKeys: [KEY.trusted] }
+const POLICY: LicensePolicy = { enforced: true, trustedKeys: [KEY.trusted] }
 
 function license(overrides: Partial<Parameters<typeof issueLicense>[0]> = {}) {
   return issueLicense({
@@ -267,31 +267,45 @@ describe("验签", () => {
 })
 
 describe("构建期策略", () => {
-  it("没经过打包(没有注入)就是社区版:不强制", () => {
-    expect(buildLicensePolicy()).toEqual(COMMUNITY_POLICY)
+  it("没经过带公钥的构建(没有注入)就是开发态:不强制", () => {
+    expect(buildLicensePolicy()).toEqual(DEVELOPMENT_POLICY)
     const status = service(buildLicensePolicy()).status()
-    expect(status).toMatchObject({ edition: "community", enforced: false, state: "not-required" })
+    expect(status).toMatchObject({ enforced: false, state: "not-required" })
+    expect(status).not.toHaveProperty("edition")
     expect(() => service(buildLicensePolicy()).assertCanExecute("session.prompt")).not.toThrow()
   })
 
-  it("注入内容坏了按「商业版 + 零可信公钥」处理:一律拦,不放行", () => {
+  it("注入内容坏了按「强制检查 + 零可信公钥」处理:一律拦,不放行", () => {
     for (const broken of [
       null,
       "commercial",
       {},
-      { edition: "paid" },
-      { edition: "commercial" },
-      { edition: "commercial", trustedKeys: [{ id: "k", publicKey: "AAAA" }] },
-      { edition: "commercial", trustedKeys: [{ id: KEY.keyId, publicKey: "not-a-key" }] },
-      { edition: "commercial", trustedKeys: [KEY.trusted, KEY.trusted] },
+      { trustedKeys: "all" },
+      { trustedKeys: [{ id: "k", publicKey: "AAAA" }] },
+      { trustedKeys: [{ id: KEY.keyId, publicKey: "not-a-key" }] },
+      { trustedKeys: [KEY.trusted, KEY.trusted] },
     ]) {
       const policy = normalizeLicensePolicy(broken)
-      expect(policy, JSON.stringify(broken)).toEqual({ edition: "commercial", trustedKeys: [] })
+      expect(policy, JSON.stringify(broken)).toEqual({ enforced: true, trustedKeys: [] })
       const blocked = new LicenseService({ configDir, policy, now: () => now })
       expect(() => blocked.assertCanExecute("session.prompt")).toThrow(LicenseRequiredError)
     }
-    expect(normalizeLicensePolicy({ edition: "commercial", trustedKeys: [KEY.trusted] })).toEqual(POLICY)
-    expect(normalizeLicensePolicy({ edition: "community", trustedKeys: [KEY.trusted] })).toEqual(COMMUNITY_POLICY)
+    expect(normalizeLicensePolicy({ trustedKeys: [KEY.trusted] })).toEqual(POLICY)
+  })
+
+  it("注入值里没有「不检查」这个选项:写什么都关不掉", () => {
+    // 产品只有要授权的那一种。从前注入形状里有 edition,写成 community 就等于一份不检查的安装包;
+    // 现在多出来的字段一律不认,注入了就是强制。
+    for (const smuggled of [
+      { edition: "community", trustedKeys: [KEY.trusted] },
+      { enforced: false, trustedKeys: [KEY.trusted] },
+      { enforced: false, edition: "community", trustedKeys: [] },
+    ]) {
+      const policy = normalizeLicensePolicy(smuggled)
+      expect(policy.enforced, JSON.stringify(smuggled)).toBe(true)
+      const svc = new LicenseService({ configDir, policy, now: () => now })
+      expect(() => svc.assertCanExecute("session.prompt")).toThrow(LicenseRequiredError)
+    }
   })
 })
 
@@ -443,8 +457,8 @@ describe("导入规则", () => {
     expect(readFileSync(path.join(nested, "license.json"), "utf8")).not.toContain("sk-secret")
   })
 
-  it("社区版不收授权文件(没有可信公钥),说清楚原因", () => {
-    expect(() => service(COMMUNITY_POLICY).importText(license().text)).toThrow(/社区/)
+  it("开发态不收授权文件(没有可信公钥),说清楚原因", () => {
+    expect(() => service(DEVELOPMENT_POLICY).importText(license().text)).toThrow(/开发态/)
   })
 })
 

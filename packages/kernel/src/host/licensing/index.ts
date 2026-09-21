@@ -23,7 +23,7 @@ export {
   verifyLicenseFile,
 } from "./format.ts"
 export type { LicenseEnvelope, LicensePayload, LicenseVerification, TrustedLicenseKey } from "./format.ts"
-export { COMMUNITY_POLICY, buildLicensePolicy, normalizeLicensePolicy } from "./policy.ts"
+export { DEVELOPMENT_POLICY, buildLicensePolicy, normalizeLicensePolicy } from "./policy.ts"
 export type { LicenseBuildConfig, LicensePolicy } from "./policy.ts"
 export { LICENSE_FILE_NAME, defaultLicenseConfigDir, licenseFilePath, readStoredLicense } from "./store.ts"
 export { LicenseImportError, LicenseRequiredError, LicenseService } from "./service.ts"

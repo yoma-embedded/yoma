@@ -455,8 +455,8 @@ kernel 接它 —— 从前那份自有 harness(`agent-legacy` / `@yoma/agent`)�
 | `npm run e2e:paint -w packages/desktop` | 真窗口首屏 + 点一遍:Electron 跑构建产物 + 接 CDP,首页 / 会话页(含逻辑分析仪面板)/ 草稿页 / 手册库 / 调试台全点一遍,零 `exceptionThrown` 零 `console.error` / Log 错误(含资源 404)(窗口会在屏幕上闪几秒,别去点它) |
 | `npm run smoke:mailbox -w packages/desktop` | 调试台冒烟:Electron RUN_AS_NODE 对打包产物跑完整**本机演练**(假模型,零 key 零硬件) |
 | `npm run e2e:mailbox -w packages/desktop` | main 托管端到端:真 kernel.js 的 `mailbox.setActive` 往返 + 假守护喂 `@@event` + 停止杀树 + 锁冲突人话 |
-| `npm run e2e:license -w packages/desktop` | 授权闭环的真进程验证:现场生成临时密钥 → 往临时目录打一份商业产物 → 真 utilityProcess / 真 contextBridge / 真守护 + 真 turn 子进程(假模型、**真的短有效期授权**)跑「导入 → 执行 → 到期暂停 → 续费恢复」。`-- --out <desktop 目录> --key <私钥> --key-id <id>` 对现成的商业 `out/` 跑 |
-| `npm run verify:commercial -w packages/desktop [-- --trust-file <trust.json>]` | 商业产物检查:四个产物里注入的公钥与信任文件逐把一致,没有私钥 / 签发工具 / 测试密钥 / 运行时开关。`package:*` 在 electron-builder 之前自动跑(env 说是商业、或产物本身带注入的公钥,有一个成立就跑) |
+| `npm run e2e:license -w packages/desktop` | 授权闭环的真进程验证:现场生成临时密钥 → 往临时目录打一份注入了临时公钥的产物 → 真 utilityProcess / 真 contextBridge / 真守护 + 真 turn 子进程(假模型、**真的短有效期授权**)跑「导入 → 执行 → 到期暂停 → 续费恢复」。`-- --out <desktop 目录> --key <私钥> --key-id <id>` 对现成的、注入了公钥的 `out/` 跑 |
+| `npm run verify:commercial -w packages/desktop [-- --trust-file <trust.json>]` | 产物检查:四个产物里注入的公钥与信任文件逐把一致,没有私钥 / 签发工具 / 测试密钥 / 运行时开关。`package:*` 在 electron-builder 之前**无条件**跑它 —— 没注入公钥的 `out/`(开发构建)打不成安装包 |
 | `npm run license -- keygen\|trust\|issue\|inspect …` | 授权签发工具(**只给开发者**,不进安装包)。私钥只落仓库外、绝不覆盖、不上屏;操作手册 `docs/licensing.md` |
 | `tsx packages/bench/src/cli.ts check <job.json>` | 校验任务书 + 本机内核装配 |
 | `tsx packages/bench/src/cli.ts mailbox sim <job.json> --project <工程目录>` | 信箱闭环单机模拟(`init`/`runner`/`mother`/`status` 是生产形态的四个子命令;工程目录是本机事实,任务书里没有) |
@@ -1104,13 +1104,16 @@ Windows 失败时这里超时变红,本来也不该有只含 mac 的 Release)。
 
 首版付费桌面版的闭环:演示 → 客户付款 → 开发者人工签发 `.yoma-license` → 客户在「设置 → 授权」导入 → 续费再导一份。
 没有账号服务器、支付、硬件绑定;验签完全离线。操作手册、格式、入口清单、已验证 / 未验证在 `docs/licensing.md`。
-**首版明确接受**:授权可被转发、时钟可回拨、客户端可被修改、MIT 源码可自建社区版 —— 都不防,别为此扩范围。
+**首版明确接受**:授权可被转发、时钟可回拨、客户端可被修改、公开的 MIT 源码可以跑起开发态 —— 都不防,别为此扩范围。
+**产品只有一种**(2026-09-21 起,维护者决定不支持免费版):没有社区版 / 版本开关 / `YOMA_EDITION`,别再加回来。
 
-- **版本与可信公钥是编译期常量,不是运行时配置。** `packages/desktop/scripts/license-build.ts` 是唯一生成处:
-  `YOMA_EDITION=commercial` + `YOMA_LICENSE_TRUST_FILE`(或 CI 的 `YOMA_LICENSE_TRUST_JSON`)→ `define` 把
-  `__YOMA_LICENSE_BUILD__` 写进 `kernel.js` / `index.js` / `mailbox-host.mjs` / `mailbox-turn-entry.mjs`。没注入(tsx、vitest、
-  平时的 `dev:desktop`)= 社区版不强制;注入了但形状坏 = 商业版 + 零公钥,**一律拦**(`policy.ts` 的 fail-closed)。
-  商业构建缺公钥 / 公钥不是 Ed25519 / 编号是测试前缀 → 构建失败。产物里没有任何环境变量或配置能关检查、加公钥。
+- **可信公钥是编译期常量,不是运行时配置;注入了就是强制检查。** `packages/desktop/scripts/license-build.ts` 是唯一生成处:
+  `YOMA_LICENSE_TRUST_FILE`(或 CI 的 `YOMA_LICENSE_TRUST_JSON`)→ `define` 把 `__YOMA_LICENSE_BUILD__`(形状只有一个
+  `trustedKeys` 数组,**没有"不检查"这个选项**)写进 `kernel.js` / `index.js` / `mailbox-host.mjs` / `mailbox-turn-entry.mjs`。
+  注入了但形状坏 = 强制 + 零公钥,**一律拦**(`policy.ts` 的 fail-closed);公钥不是 Ed25519 / 编号是测试前缀 / 两个来源同时给 → 构建失败。
+  没注入 = **开发态**不强制(tsx、vitest、`dev:desktop`、没给公钥的 `build` —— CI 的冒烟与 e2e 跑的就是它),它不是产品:
+  `package:*` 无条件先跑 `verify:commercial`,没注入公钥的 `out/` 在那里非零退出;两条发版流水线第一步就查
+  `vars.YOMA_LICENSE_TRUST_JSON`。产物里没有任何环境变量或配置能关检查、加公钥。
 - **检查只有一处,而且排在一切副作用之前**:`SessionManager.prompt()` / `compact()` 的第一行,**在 `stop()` 之前** ——
   没授权的请求不该有本事打断一轮已经被接受的执行(它可能正在烧录)。通过之后这一轮(含轮内压缩与重试)不再回头查。
   bench 的每一轮经 `createKernelHost` 进来,走的是同一道;`license-entrypoints.test.ts` 按源码扫
@@ -1131,9 +1134,10 @@ Windows 失败时这里超时变红,本来也不该有只含 mac 的 Release)。
 - 付过学费的几条:
   1. **产物检查要按入口的 import 图看,不能只看入口文件。** electron-vite 把 main 拆成共享 chunk,注入的策略实际落在
      `out/main/chunks/*.js` 里;只看 `kernel.js` 本身四条检查全红,而产物其实是对的 —— 那种误报一定会被人关掉。
-     `policy.ts` 自己的两个同形字面量(`COMMUNITY_POLICY` 与 fail-closed 那份)也会进产物,检查只认"带至少一把公钥"的注入。
-  2. **`--if-commercial` 不能只看环境变量。** 上一条命令带着变量 build 出商业 `out/`、这一条忘了带变量就 package,只看 env 的
-     闸门会把一份商业产物不经检查地放过去。现在 env 说是商业、**或产物本身带注入的公钥**,有一个成立就跑全套。
+     `policy.ts` 自己的两个同形字面量(`DEVELOPMENT_POLICY` 与 fail-closed 那份)也会进产物,检查只认"带至少一把公钥"的注入
+     (锚是 `trustedKeys:[…]` 这个数组字面量,按括号配平取)。
+  2. **打包前的闸门看产物本身,不看环境变量,也没有"跳过"分支。** 第一版有 `--if-commercial`(env 不是商业就跳过):上一条命令
+     带着变量 build、这一条忘了带变量就 package,一份该查的产物就被放过去了。现在 `package:*` 无条件跑全套,判据是 `out/` 里有没有注入的公钥。
   3. **`--key-id` 只是一个名字,工具没法从私钥知道它该叫什么。** 拼错照样签得出来、自检也过(自检用的是从这把私钥推出的公钥),
      而客户端按名字找公钥 —— 客户付了钱、导不进去。`issue` 因此读私钥同目录的 `*.public.json` 核对,对不上就拒签。
   4. **乐观消息插了再摘,会把虚拟时间线滚到一片空白上**(内容还在 DOM 里,视口停在下面)。单测、typecheck、`querySelector`
@@ -1150,9 +1154,9 @@ Windows 失败时这里超时变红,本来也不该有只含 mac 的 Release)。
      今天没踩到只是因为它们从不 destroy 窗口。
   8. 造"客户把到期日改了"的坏文件要改 **payload 解码后的字节**;改 base64url 末位字符拿到的是 `bad-payload`
      (那一位是补齐位),验签那道门根本没走到,用例看着绿其实测的是另一件事。
-- **发布渠道还没决定**(`docs/licensing.md` 第三部分第 1 条):今天 tag 流水线出的是社区构建,自动更新也指向它 ——
-  私下交付商业包而公开 Release 仍是社区版的话,客户一次自动更新就被换成不检查授权的版本。给仓库设上那两个 repository
-  variable(官方 Release 即商业版),或商业版走独立更新源,二选一;代码没有替维护者选。
+- **下一次发版之前要先有正式公钥**(`docs/licensing.md` 第三部分第 1 条):两条 tag 流水线没有 repository variable
+  `YOMA_LICENSE_TRUST_JSON` 第一步就红。设好之后官方 Release 即要授权的版本,自动更新也指向它 —— 于是装着 v0.3.0 的现有
+  用户更新之后会被要求激活;v0.3.0 及更早的 Release 不检查授权、今天仍能公开下载。这两件是维护者的决定,代码没有替他选。
 
 ## 约定与规矩
 
@@ -1274,7 +1278,7 @@ Windows 失败时这里超时变红,本来也不该有只含 mac 的 Release)。
 
 ## 已知的未完成项
 
-- **软件授权(2026-09-20)只在这台 Mac 上验过**:单测 + 真进程 e2e(`e2e:license`)+ 商业构建的产物检查 + 截图都过了,
+- **软件授权(2026-09-20)只在这台 Mac 上验过**:单测 + 真进程 e2e(`e2e:license`)+ 注入了公钥的构建的产物检查 + 截图都过了,
   但 Windows 一行没跑、没有打过正式安装包(`verify:commercial --app` 那条路只有单测)、两条 workflow 的变量透传没在
   GitHub 上真跑、没接真探针、信箱的暂停 / 恢复没有双机真跑;调试台的暂停横幅与英文界面没看图。购买联系方式是
   `configured: false`(界面显示"待配置"),正式签名密钥要维护者自己在仓库外生成。清单在 `docs/licensing.md` 第五部分。

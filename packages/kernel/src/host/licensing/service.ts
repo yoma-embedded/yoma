@@ -79,7 +79,7 @@ export class LicenseService {
   }
 
   get enforced(): boolean {
-    return this.policy.edition === "commercial"
+    return this.policy.enforced
   }
 
   /** 当前状态。每次重新读盘、重新验签、对着此刻的时钟判。 */
@@ -94,7 +94,6 @@ export class LicenseService {
   private compute(): { view: LicenseStatusView; verified?: Extract<LicenseVerification, { ok: true }> } {
     const nowMs = this.now()
     const base = {
-      edition: this.policy.edition,
       enforced: this.enforced,
       checkedAt: new Date(nowMs).toISOString(),
       file: licenseFilePath(this.configDir),
@@ -150,7 +149,10 @@ export class LicenseService {
    */
   importText(text: string): LicenseStatusView {
     if (!this.enforced) {
-      throw new LicenseImportError("no-trusted-keys", "这是社区 / 开发构建:不检查授权,也没有可信公钥,无需导入授权文件")
+      throw new LicenseImportError(
+        "no-trusted-keys",
+        "这是开发态运行(构建时没有注入可信公钥):不检查授权,也验不了任何授权文件。要验证导入,请用带公钥的构建",
+      )
     }
     if (typeof text !== "string") throw new LicenseImportError("bad-envelope", "导入内容不是文本")
     const incoming = verifyLicenseFile(text, this.policy.trustedKeys)
@@ -211,7 +213,7 @@ export class LicenseService {
     const lines = [
       "Yoma 授权诊断信息",
       `应用版本: ${extra.appVersion ?? "未知"}`,
-      `构建版本: ${status.edition}${status.enforced ? "(强制检查授权)" : "(不检查授权)"}`,
+      `授权检查: ${status.enforced ? "强制" : "未启用(开发态,没有注入可信公钥)"}`,
       `系统: ${process.platform} ${process.arch} · Node ${process.versions.node}`,
       `本机时间: ${status.checkedAt}(UTC) · 时区 ${offset}`,
       `授权状态: ${status.state}`,

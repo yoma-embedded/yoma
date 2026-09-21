@@ -6,7 +6,7 @@
  * 会全绿而软件实际上是免费的。
  *
  * 时钟是注入的(`licenseNow`),所以"到期"在这里是一个赋值,不是等 30 天;策略也是注入的
- * (`licensePolicy`),所以能在一个社区构建的仓库里跑商业版的行为。密钥每次现场生成,
+ * (`licensePolicy`),所以在没有注入公钥的源码态里也能跑安装包的行为。密钥每次现场生成,
  * 仓库里没有测试私钥。
  */
 import { afterEach, beforeAll, describe, expect, test } from "vitest"
@@ -60,7 +60,7 @@ const KEY = (() => {
 })()
 
 /** 注入给 host 的商业策略。生产里这份东西是编译期常量,没有任何运行时入口能换掉它。 */
-const COMMERCIAL: LicensePolicy = { edition: "commercial", trustedKeys: [KEY.trusted] }
+const COMMERCIAL: LicensePolicy = { enforced: true, trustedKeys: [KEY.trusted] }
 
 function licenseText(overrides: Partial<Parameters<typeof issueLicense>[0]> = {}): string {
   return issueLicense({
@@ -245,7 +245,7 @@ describe("商业构建 + 没有授权", () => {
       expect(readFileSync(path.join(rig.configDir, "auth.json"), "utf8")).toContain("sk-gate-test-not-a-real-key")
 
       const status = await allowed("license.status", () => rig.host.handle("license.status", undefined))
-      expect(status).toMatchObject({ edition: "commercial", enforced: true, state: "missing" })
+      expect(status).toMatchObject({ enforced: true, state: "missing" })
       expect(status.file).toBe(licenseFilePath(rig.configDir))
 
       const diagnostics = await allowed("license.diagnostics", () => rig.host.handle("license.diagnostics", undefined))
@@ -448,25 +448,25 @@ describe("到期不回头查已接受的轮次", () => {
   }, 60_000)
 })
 
-describe("社区构建", () => {
-  test("不传策略 = 社区版:没有授权文件也照样跑完一轮,状态是 not-required", async () => {
-    const rig = makeHost([fauxAssistantMessage([fauxText("社区版照跑")])])
+describe("开发态", () => {
+  test("不传策略 = 源码直跑(没有注入):没有授权文件也照样跑完一轮,状态是 not-required", async () => {
+    const rig = makeHost([fauxAssistantMessage([fauxText("开发态照跑")])])
     try {
       const status = await rig.host.handle("license.status", undefined)
-      expect(status).toMatchObject({ edition: "community", enforced: false, state: "not-required" })
+      expect(status).toMatchObject({ enforced: false, state: "not-required" })
       expect(status.license).toBeUndefined()
       expect(status.trustedKeyIds).toEqual([])
 
       const sessionID = await newSession(rig)
       await rig.host.handle("session.prompt", { sessionID, input: { text: "问一句" } })
       await waitFor(() => statusesOf(rig.events).at(-1) === "idle", 20_000)
-      expect(textsOf(rig.events).some((text) => text.includes("社区版照跑"))).toBe(true)
+      expect(textsOf(rig.events).some((text) => text.includes("开发态照跑"))).toBe(true)
       expect(rig.events.filter((event) => event.type === "kernel.error")).toEqual([])
 
-      // 社区版收不了授权文件(也没有可信公钥可验),但说得出为什么。
+      // 开发态收不了授权文件(没有可信公钥可验),但说得出为什么。
       const error = await rejection(() => rig.host.handle("license.import", { text: licenseText() }))
       expect(error.name).toBe("LicenseImportError")
-      expect(error.message).toContain("社区")
+      expect(error.message).toContain("开发态")
       expect(await rig.host.handle("license.status", undefined)).toMatchObject({ state: "not-required" })
     } finally {
       await rig.host.dispose()

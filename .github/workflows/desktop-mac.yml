@@ -64,6 +64,17 @@ jobs:
             exit 1
           fi
 
+      # 产品只有要授权的那一种:没有可信公钥就出不了包(package:mac 的产物检查会红)。
+      # 在最前面先拦,免得编完引擎、构建完,二十分钟后才失败。公钥不是秘密,所以用 vars 而不是 secrets。
+      - name: 确认已配置可信公钥(repository variable YOMA_LICENSE_TRUST_JSON)
+        env:
+          YOMA_LICENSE_TRUST_JSON: ${{ vars.YOMA_LICENSE_TRUST_JSON }}
+        run: |
+          if [ -z "${YOMA_LICENSE_TRUST_JSON//[[:space:]]/}" ]; then
+            echo "::error::没有配置 repository variable YOMA_LICENSE_TRUST_JSON(trust.json 的内容)。没有可信公钥出不了安装包,见 docs/licensing.md 第一部分"
+            exit 1
+          fi
+
       - name: 确认 runner 是 Apple Silicon
         run: |
           arch=$(uname -m)
@@ -96,9 +107,7 @@ jobs:
 
       - name: 构建 renderer / main / preload
         env:
-          # 授权是**编译期常量**:这两个 repository variable 决定这个包是商业版还是社区版、信任哪把公钥。
-          # 公钥不是秘密,所以用 vars 而不是 secrets。两个都没设 = 空串 = 社区构建 = 与从前完全一致。
-          YOMA_EDITION: ${{ vars.YOMA_EDITION }}
+          # 授权是**编译期常量**:这个 repository variable 决定这个包信任哪把公钥(给了就强制检查授权)。
           YOMA_LICENSE_TRUST_JSON: ${{ vars.YOMA_LICENSE_TRUST_JSON }}
         run: npm run build:desktop
 
@@ -133,9 +142,8 @@ jobs:
       - name: 出安装包
         env:
           YOMA_ENGINES_DIR: ${{ github.workspace }}/engines-dist
-          # 商业构建时 package:mac 会先对 out/ 跑一遍产物检查(四个入口的注入、公钥、没有私钥/签发工具);
-          # 社区构建(变量没设)那一步自己跳过。
-          YOMA_EDITION: ${{ vars.YOMA_EDITION }}
+          # package:mac 会先对 out/ 无条件跑一遍产物检查(四个入口的注入、公钥与这个变量逐把一致、
+          # 没有私钥/签发工具);没注入公钥的 out/ 在那里非零退出。
           YOMA_LICENSE_TRUST_JSON: ${{ vars.YOMA_LICENSE_TRUST_JSON }}
         run: npm run package:mac -w packages/desktop
 

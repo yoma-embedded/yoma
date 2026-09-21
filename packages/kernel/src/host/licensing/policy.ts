@@ -1,5 +1,5 @@
 /**
- * 这个构建的授权策略:是哪个版本(商业 / 社区)、信任哪些签名公钥。
+ * 这个构建的授权策略:执行入口强不强制检查、信任哪些签名公钥。
  *
  * ## 它是编译期常量,不是运行时配置
  *
@@ -7,8 +7,12 @@
  * (`packages/desktop/scripts/license-build.ts` 是唯一的生成处)。产物里没有任何一处读环境变量或
  * 配置文件来决定"要不要检查授权、信任谁" —— 正式包因此关不掉检查,客户也没法给自己加一把可信公钥。
  *
- * 没经过打包的运行(tsx、vitest、`npm run dev:desktop` 且没设商业构建变量)里这个标识符不存在,
- * 落到社区版:不强制授权。源码是 MIT 的,自己构建本来就不受限;官方商业安装包是另一回事。
+ * ## 产品只有一种:要授权的那一种
+ *
+ * 注入的形状里**没有"不检查"这个选项**:只要注入了,就是强制检查。不强制只剩一种情形 ——
+ * 这个标识符根本不存在,也就是没经过带公钥的构建:tsx、vitest、`npm run dev:desktop`、以及没给可信公钥的
+ * 本机 `build`(CI 的冒烟与 e2e 跑的就是它)。那是**开发态**,不是一个产品:`package:*` 在
+ * electron-builder 之前无条件跑产物检查,没注入公钥的 `out/` 打不成安装包。
  *
  * ## 测试怎么注入
  *
@@ -17,44 +21,43 @@
  * 所以拿到一份正式安装包的人够不着它们。
  */
 
-import type { LicenseEdition } from "../../license-view.ts"
 import { KEY_ID_PATTERN, parseTrustedKey, type TrustedLicenseKey } from "./format.ts"
 
 export interface LicensePolicy {
-  edition: LicenseEdition
-  /** 商业版才有意义;社区版留空。 */
+  /** 执行入口是否强制检查授权。`false` 只属于开发态(见文件头),任何注入都给不出它。 */
+  enforced: boolean
   trustedKeys: readonly TrustedLicenseKey[]
 }
 
 /** `define` 注进来的形状。 */
 export interface LicenseBuildConfig {
-  edition: LicenseEdition
   trustedKeys: TrustedLicenseKey[]
 }
 
 declare const __YOMA_LICENSE_BUILD__: LicenseBuildConfig | undefined
 
-export const COMMUNITY_POLICY: LicensePolicy = Object.freeze({ edition: "community", trustedKeys: Object.freeze([]) })
+/** 开发态:没经过带公钥的构建。不强制,也没有可信公钥。 */
+export const DEVELOPMENT_POLICY: LicensePolicy = Object.freeze({ enforced: false, trustedKeys: Object.freeze([]) })
 
 /**
  * 读编译期注入的策略。
  *
- * 注入了但形状不对(edition 不认识、公钥解析不了)时**按商业版且零可信公钥**处理 —— 也就是
- * 什么授权都验不过、一律拦下。配置坏了宁可拦住也不放行;正常的商业构建流程在构建期就会因此失败,
+ * 注入了但形状不对(公钥解析不了、编号不合规、重复)时**按强制检查且零可信公钥**处理 —— 也就是
+ * 什么授权都验不过、一律拦下。配置坏了宁可拦住也不放行;正常的构建流程在构建期就会因此失败,
  * 走不到这里。
  */
 export function buildLicensePolicy(): LicensePolicy {
   const baked = typeof __YOMA_LICENSE_BUILD__ === "undefined" ? undefined : __YOMA_LICENSE_BUILD__
-  if (baked === undefined) return COMMUNITY_POLICY
+  if (baked === undefined) return DEVELOPMENT_POLICY
   return normalizeLicensePolicy(baked)
 }
 
+/** 注入值 → 策略。**返回值恒为强制检查**:注入的内容决定的只是信任谁,决定不了查不查。 */
 export function normalizeLicensePolicy(config: unknown): LicensePolicy {
-  const failClosed: LicensePolicy = { edition: "commercial", trustedKeys: [] }
+  const failClosed: LicensePolicy = { enforced: true, trustedKeys: [] }
   if (!config || typeof config !== "object") return failClosed
-  const { edition, trustedKeys } = config as { edition?: unknown; trustedKeys?: unknown }
-  if (edition === "community") return COMMUNITY_POLICY
-  if (edition !== "commercial" || !Array.isArray(trustedKeys)) return failClosed
+  const { trustedKeys } = config as { trustedKeys?: unknown }
+  if (!Array.isArray(trustedKeys)) return failClosed
   const keys: TrustedLicenseKey[] = []
   for (const entry of trustedKeys) {
     const key = entry as Partial<TrustedLicenseKey> | undefined
@@ -63,5 +66,5 @@ export function normalizeLicensePolicy(config: unknown): LicensePolicy {
     if (keys.some((existing) => existing.id === key.id)) return failClosed
     keys.push({ id: key.id, publicKey: key.publicKey })
   }
-  return { edition: "commercial", trustedKeys: keys }
+  return { enforced: true, trustedKeys: keys }
 }

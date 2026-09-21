@@ -2,7 +2,7 @@
  * 产物检查的闸门测试 —— 用临时目录里的**假产物**逐条钉。
  *
  * 为什么要有这些用例:这个脚本自己就是一道闸门,而闸门最危险的失效方式是"永远通过"。
- * 每一条都造一份真的会出事的产物(社区包、混进私钥、公钥换成别人的、少一个入口、
+ * 每一条都造一份真的会出事的产物(没注入公钥的开发构建、混进私钥、公钥换成别人的、少一个入口、
  * 编号是测试前缀),断言它**被抓住**;再造一份干净的,断言它过。
  */
 
@@ -10,6 +10,7 @@ import { generateKeyPairSync } from "node:crypto"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
+import { readFileSync } from "node:fs"
 import { afterEach, expect, test } from "vitest"
 
 import { licenseDefine } from "./license-build.ts"
@@ -37,14 +38,20 @@ function key(id: string): { id: string; publicKey: string } {
 const OFFICIAL = key("yoma-official-20260920")
 
 /** 产物里 `__YOMA_LICENSE_BUILD__` 被替换之后长什么样(两次出现,typeof 那一句的两侧)。 */
-function bakedSource(keys: { id: string; publicKey: string }[], edition: "commercial" | "community" = "commercial"): string {
-  const literal = licenseDefine({ edition, trustedKeys: keys })["__YOMA_LICENSE_BUILD__"]!
+function bakedSource(keys: { id: string; publicKey: string }[]): string {
+  const literal = licenseDefine({ trustedKeys: keys })["__YOMA_LICENSE_BUILD__"]!
   return `var baked = typeof ${literal} === "undefined" ? void 0 : ${literal};\nfunction run(){return baked}\n`
 }
 
-function artifacts(keys = [OFFICIAL], edition: "commercial" | "community" = "commercial"): ScannedFile[] {
-  return REQUIRED_MAIN_ARTIFACTS.map((name) => ({ path: `out/${name}`, text: bakedSource(keys, edition) }))
+function artifacts(keys = [OFFICIAL]): ScannedFile[] {
+  return REQUIRED_MAIN_ARTIFACTS.map((name) => ({ path: `out/${name}`, text: bakedSource(keys) }))
 }
+
+/** 开发构建的产物:define 什么都没注入,`policy.ts` 那一句原样留在里面,外加它自己的两个同形字面量。 */
+const DEV_BUILD_SOURCE =
+  'var DEVELOPMENT_POLICY = Object.freeze({ enforced: false, trustedKeys: Object.freeze([]) });\n' +
+  'function normalize(c){ const failClosed = { enforced: true, trustedKeys: [] }; return failClosed }\n' +
+  'var baked = typeof __YOMA_LICENSE_BUILD__ === "undefined" ? void 0 : __YOMA_LICENSE_BUILD__;\n'
 
 const CLEAN_ENTRIES: ScannedFile[] = [
   { path: "kernel-entry.ts", text: "createKernelHost({ sessionsRoot, confirmTools: true })" },
@@ -57,14 +64,26 @@ const CLEAN_ENTRIES: ScannedFile[] = [
 // ---------------------------------------------------------------------------
 
 test("打包器怎么改写字面量都抠得出来:带引号、不带引号、单引号", () => {
-  const quoted = `{"edition":"commercial","trustedKeys":[{"id":"${OFFICIAL.id}","publicKey":"${OFFICIAL.publicKey}"}]}`
-  const bare = `{edition:"commercial",trustedKeys:[{id:"${OFFICIAL.id}",publicKey:"${OFFICIAL.publicKey}"}]}`
-  const single = `{edition:'commercial',trustedKeys:[{id:'${OFFICIAL.id}',publicKey:'${OFFICIAL.publicKey}'}]}`
-  for (const literal of [quoted, bare, single]) {
+  const quoted = `{"trustedKeys":[{"id":"${OFFICIAL.id}","publicKey":"${OFFICIAL.publicKey}"}]}`
+  const bare = `{trustedKeys:[{id:"${OFFICIAL.id}",publicKey:"${OFFICIAL.publicKey}"}]}`
+  const single = `{trustedKeys:[{id:'${OFFICIAL.id}',publicKey:'${OFFICIAL.publicKey}'}]}`
+  const spaced = `{ trustedKeys : [ { id: "${OFFICIAL.id}", publicKey: "${OFFICIAL.publicKey}" } ] }`
+  for (const literal of [quoted, bare, single, spaced]) {
     const policies = extractInjectedPolicies(`var x = ${literal};`)
     expect(policies).toHaveLength(1)
-    expect(policies[0]).toEqual({ edition: "commercial", trustedKeys: [OFFICIAL] })
+    expect(policies[0]).toEqual({ trustedKeys: [OFFICIAL] })
   }
+})
+
+test("一份名单就是一个数组字面量:两把公钥算一份,紧挨着的另一个数组不会被卷进来", () => {
+  const second = key("yoma-official-20270101")
+  const source =
+    `var a = {trustedKeys:[{id:"${OFFICIAL.id}",publicKey:"${OFFICIAL.publicKey}"},{id:"${second.id}",publicKey:"${second.publicKey}"}]};\n` +
+    `var b = {trustedKeys:[]}; var c = [{id:"stray",publicKey:"${key("whoever").publicKey}"}];`
+  const policies = extractInjectedPolicies(source)
+  expect(policies).toEqual([{ trustedKeys: [OFFICIAL, second] }, { trustedKeys: [] }])
+  // 非字面量(`trustedKeys: keys`、`policy.trustedKeys.map(…)`)不是注入,不算候选。
+  expect(extractInjectedPolicies("return { enforced: true, trustedKeys: keys }; x.trustedKeys.map(f)")).toEqual([])
 })
 
 test("Ed25519 公钥按 SPKI 前缀全文抠,所以名单之外多出来的那一把也躲不掉", () => {
@@ -76,6 +95,47 @@ test("Ed25519 公钥按 SPKI 前缀全文抠,所以名单之外多出来的那�
   const report = verifyCommercialArtifact(files, { expectedKeys: [OFFICIAL] })
   expect(report.ok).toBe(false)
   expect(evidenceOf(report)).toMatch(/信任名单之外还有 1 把 Ed25519 公钥/)
+})
+
+test("四个产物都被塞了后门公钥 → 报的是后门,不是「你忘了给公钥」", () => {
+  // 维护者明明给了公钥。这时再印"出安装包必须给可信公钥……去设环境变量",等于在一次真告警上指错路。
+  const stray = key("whoever")
+  const files = REQUIRED_MAIN_ARTIFACTS.map((name) => ({
+    path: `out/${name}`,
+    text: `${bakedSource([OFFICIAL])}\nvar backdoor = "${stray.publicKey}";`,
+  }))
+  const report = verifyCommercialArtifact(files, { expectedKeys: [OFFICIAL], expectedKeysSource: "--trust-file official.json" })
+  expect(report.ok).toBe(false)
+  const evidence = evidenceOf(report)
+  expect(evidence).toMatch(/信任名单之外还有 1 把 Ed25519 公钥/)
+  expect(evidence).not.toContain("出安装包必须给可信公钥")
+
+  // 只有一部分产物没注入(define 漏接了一个入口)也不是"忘了给公钥",同样不说那段话。
+  const partial = artifacts()
+  partial[1] = { path: partial[1]!.path, text: DEV_BUILD_SOURCE }
+  const partialReport = verifyCommercialArtifact(partial, { expectedKeys: [OFFICIAL] })
+  expect(partialReport.ok).toBe(false)
+  expect(evidenceOf(partialReport)).not.toContain("出安装包必须给可信公钥")
+})
+
+// ---------------------------------------------------------------------------
+// 打包脚本:这道检查是出包路上唯一的闸门,而它只是 package.json 里的一段字符串
+// ---------------------------------------------------------------------------
+
+test("每一个 package* 脚本都先无条件跑产物检查,再碰 electron-builder", () => {
+  const manifest = JSON.parse(readFileSync(path.resolve(import.meta.dirname, "..", "package.json"), "utf8")) as {
+    scripts: Record<string, string>
+  }
+  const packaging = Object.entries(manifest.scripts).filter(([, command]) => command.includes("electron-builder"))
+  // package / package:mac / package:win / package:linux —— 少了一个说明有人改了名字,这条要跟着看。
+  expect(packaging.map(([name]) => name).sort()).toEqual(["package", "package:linux", "package:mac", "package:win"])
+  for (const [name, command] of packaging) {
+    const steps = command.split("&&").map((step) => step.trim())
+    // 第一步就是它,不带任何参数:没有 --if-xxx 之类的跳过分支,也不许排在 electron-builder 后面。
+    expect(steps[0], name).toBe("tsx ./scripts/verify-commercial-artifact.ts")
+    expect(steps.findIndex((step) => step.includes("electron-builder")), name).toBeGreaterThan(0)
+    expect(command, name).not.toMatch(/\|\||;/)
+  }
 })
 
 // ---------------------------------------------------------------------------
@@ -108,7 +168,7 @@ test("注入落在共享 chunk 里也算数 —— 真实构建就是这样(elec
 // 正常路径
 // ---------------------------------------------------------------------------
 
-test("四个产物、commercial、公钥与 trust-file 逐把一致 → 通过", () => {
+test("四个产物都注入了、公钥与 trust-file 逐把一致 → 通过", () => {
   const report = verifyCommercialArtifact(artifacts(), { expectedKeys: [OFFICIAL], expectedKeysSource: "--trust-file k.json" })
   expect(report.ok).toBe(true)
   expect(evidenceOf(report)).toContain("逐把一致")
@@ -133,24 +193,35 @@ test("没给期望公钥时只核四个产物互相一致,并说清「这次没�
 // 每一条不合格的产物
 // ---------------------------------------------------------------------------
 
-test("社区产物被判不合格", () => {
-  const report = verifyCommercialArtifact(artifacts([], "community"))
+test("开发构建(没注入可信公钥)的产物被判不合格 —— 它打不成安装包", () => {
+  const dev = REQUIRED_MAIN_ARTIFACTS.map((name) => ({ path: `out/${name}`, text: DEV_BUILD_SOURCE }))
+  const report = verifyCommercialArtifact(dev)
   expect(report.ok).toBe(false)
-  expect(evidenceOf(report)).toMatch(/这是社区构建的产物/)
+  const evidence = evidenceOf(report)
+  expect(evidence).toMatch(/这是开发构建的产物/)
+  // 红了之后话里带着怎么出一份合格的。
+  expect(evidence).toContain("YOMA_LICENSE_TRUST_FILE")
+
+  // 注入了但名单是空的(零公钥的包谁都激活不了)同样不合格。
+  expect(verifyCommercialArtifact(artifacts([])).ok).toBe(false)
 })
 
-test("policy.ts 自己源码里的同形字面量不算注入(否则真商业产物会被误判)", () => {
-  // 真产物里一定有这两段:COMMUNITY_POLICY 与 fail-closed 的那一份,都是"带 edition、不带公钥"。
+test("注入形状里没有「不检查」:多写一个 edition / enforced 字段也换不来通过之外的任何东西", () => {
+  // 从前 `{edition:"community",…}` 是一种合法注入;现在产物检查只认"带公钥的信任名单",
+  // 运行期 normalizeLicensePolicy 对这种注入照样强制检查(licensing.test.ts 钉着那一半)。
+  const literal = `{"edition":"community","enforced":false,"trustedKeys":[{"id":"${OFFICIAL.id}","publicKey":"${OFFICIAL.publicKey}"}]}`
+  const files = REQUIRED_MAIN_ARTIFACTS.map((name) => ({ path: `out/${name}`, text: `var baked = ${literal};` }))
+  expect(verifyCommercialArtifact(files, { expectedKeys: [OFFICIAL] }).ok).toBe(true)
+})
+
+test("policy.ts 自己源码里的同形字面量不算注入(否则真带注入的产物会被误判)", () => {
+  // 真产物里一定有这两段:DEVELOPMENT_POLICY 与 fail-closed 的那一份,都是"带 trustedKeys、不带公钥"。
   const sourceLiterals =
-    'var COMMUNITY_POLICY = Object.freeze({ edition: "community", trustedKeys: Object.freeze([]) });\n' +
-    'function normalize(c){ const failClosed = { edition: "commercial", trustedKeys: [] }; return failClosed }\n'
+    'var DEVELOPMENT_POLICY = Object.freeze({ enforced: false, trustedKeys: Object.freeze([]) });\n' +
+    'function normalize(c){ const failClosed = { enforced: true, trustedKeys: [] }; return failClosed }\n'
   const files = REQUIRED_MAIN_ARTIFACTS.map((name) => ({ path: `out/${name}`, text: sourceLiterals + bakedSource([OFFICIAL]) }))
   const report = verifyCommercialArtifact(files, { expectedKeys: [OFFICIAL] })
   expect(report.ok).toBe(true)
-
-  // 反过来:只有那两段源码字面量、没有注入 → 社区构建,判不合格。
-  const community = REQUIRED_MAIN_ARTIFACTS.map((name) => ({ path: `out/${name}`, text: sourceLiterals }))
-  expect(verifyCommercialArtifact(community).ok).toBe(false)
 })
 
 test("少一个入口吃到注入就不合格 —— 少的那一个就是绕过授权的路", () => {
@@ -216,7 +287,6 @@ test("签发工具的标记与特征函数名混进产物 → 抓住", () => {
 test("产物里出现关掉授权的开关 → 抓住", () => {
   // 期望报出来的那一段(TRUST_FILE / TRUST_JSON 共用 YOMA_LICENSE_TRUST 这个前缀)。
   for (const [poison, reported] of [
-    ["YOMA_EDITION", "YOMA_EDITION"],
     ["YOMA_LICENSE_TRUST_JSON", "YOMA_LICENSE_TRUST"],
     ["YOMA_LICENSE_TRUST_FILE", "YOMA_LICENSE_TRUST"],
     ["YOMA_LICENSE_KEY_PASSPHRASE", "YOMA_LICENSE_KEY_PASSPHRASE"],

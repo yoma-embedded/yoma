@@ -43,7 +43,7 @@ const KEY = (() => {
   return { keyId: generated.keyId, privateKey: loadPrivateKey(generated.privateKeyPem), trusted: generated.trusted }
 })()
 /** "这台机器装的是商业包"那份编译期策略。测试经 TurnSeams 传,生产没有任何入口传它。 */
-const COMMERCIAL: LicensePolicy = { edition: "commercial", trustedKeys: [KEY.trusted] }
+const COMMERCIAL: LicensePolicy = { enforced: true, trustedKeys: [KEY.trusted] }
 
 /**
  * 往 configDir 里装一份授权。走**内核自己的导入路径**(文件格式与落点只有那一份实现),
@@ -162,7 +162,7 @@ describe("runTurn · 授权", () => {
     expect(result.text).toContain("看过了")
   })
 
-  test("社区 / 开发构建不受影响(不传 seams 就是编译期策略)", async () => {
+  test("开发态不受影响(不传 seams 就是编译期策略,源码直跑时没有注入)", async () => {
     const workspace = tempDir("bench-license-ws-")
     const result = await runTurn(turnOptions(workspace, tempDir("bench-license-config-")))
     expect(result.licenseBlocked).toBeUndefined()
@@ -174,9 +174,9 @@ describe("runTurn · 授权", () => {
     // turn-entry 是 `runTurn({ ...读进来的 JSON })`。假设有人在那份 JSON 里写了这两个键:
     const smuggled = {
       ...turnOptions(workspace, tempDir("bench-license-config-")),
-      licensePolicy: { edition: "community", trustedKeys: [] },
+      licensePolicy: { enforced: false, trustedKeys: [] },
       licenseNow: () => T0,
-      license: { edition: "community" },
+      license: { enforced: false },
     } as unknown as TurnOptions
 
     const result = await runTurn(smuggled, { licensePolicy: COMMERCIAL, licenseNow: () => T0 })
