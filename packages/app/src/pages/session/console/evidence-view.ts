@@ -21,9 +21,10 @@ import { consoleUI } from "./console-state"
 /**
  * 某一种数据形状里此刻显示的是哪一台。
  *
- * 与 `session-console.tsx` / `instrument-rail.tsx` 里那两个 `active` memo 同一条规矩:
- * 记着的那台不在了就回落到第一台。两边都要能单独回答这个问题(状态栏够不着那两个组件的
- * 局部 memo),所以规则写在这里一份。
+ * 文本流记着的那台不在了就回落到第一台(日志),控制台不能开着却是空白。
+ * 波形没有这个回落:没人点过示波器,右栏停在调试档也不该把它画出来 ——
+ * 打开日志的时候示波器跟着占掉右栏,就是这条回落造成的。
+ * 状态栏够不着两个容器里的局部 memo,所以规则写在这里一份。
  */
 export function activeOnSurface(
   surface: InstrumentSurface,
@@ -31,7 +32,10 @@ export function activeOnSurface(
   want: InstrumentId | undefined,
 ): InstrumentId | undefined {
   const list = visibleOnSurface(surface, ctx)
-  return (list.find((instrument) => instrument.id === want) ?? list[0])?.id
+  const found = list.find((instrument) => instrument.id === want)
+  if (found) return found.id
+  if (surface === "wave") return undefined
+  return list[0]?.id
 }
 
 /** 此刻用户正看着的那些仪器(0–2 台:底部控制台一台、右栏一台)。 */

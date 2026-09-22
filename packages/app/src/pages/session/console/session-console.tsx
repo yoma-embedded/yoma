@@ -97,7 +97,7 @@ export function SessionConsole() {
                   // roving tabindex:Tab 键只停在选中的那一格,格与格之间用左右键 —— 页签行
                   // 是一个控件,不是 N 个。
                   tabIndex={active()?.id === instrument.id ? 0 : -1}
-                  // 再点一下当前页签 = 收起控制台(同 VS Code 的底栏);`select` 里就是这条规则。
+                  // 选择当前页签保持面板打开，避免键盘导航或重复点击意外收起。
                   onClick={() => consoleUI.select(instrument.id)}
                 >
                   <span data-component="bench-led" data-state={instrument.status(bench.ctx())} />

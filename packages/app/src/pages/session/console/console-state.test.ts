@@ -115,18 +115,18 @@ describe("控制台的落盘状态", () => {
   })
 
   test("键在 yoma.* 下", () => {
-    expect(CONSOLE_STATE_KEY).toBe("yoma.console.v1")
+    expect(CONSOLE_STATE_KEY).toBe("yoma.console.v2")
   })
 
-  test("缺省是收着的 —— 它是一步可达,不是一直占地方", () => {
-    expect(consoleUI.opened()).toBe(false)
+  test("首次打开就能看到串口与日志", () => {
+    expect(consoleUI.opened()).toBe(true)
     expect(consoleUI.tab()).toBe("log")
   })
 
   test("非法内容一律当作默认,绝不抛", () => {
     for (const junk of ["", "not json", "null", "[]", '{"open":"yes","height":"tall","tab":"nope"}']) {
       const state = readConsoleState(junk)
-      expect(state.open).toBe(false)
+      expect(state.open).toBe(true)
       expect(state.tab).toBe("log")
       expect(state.height).toBeGreaterThanOrEqual(CONSOLE_MIN_HEIGHT)
       expect(state.rail).toBeUndefined()
@@ -138,7 +138,7 @@ describe("控制台的落盘状态", () => {
     expect(readConsoleState('{"height":4000}').height).toBe(4000)
   })
 
-  test("开合 / 页签 / 高度 / 右栏选择都落盘,最大化不落盘", () => {
+  test("开合 / 页签 / 高度 / 点过的右栏仪器都落盘,最大化不落盘", () => {
     consoleUI.open("gdb")
     consoleUI.resize(321)
     consoleUI.setRail("la")
@@ -151,10 +151,14 @@ describe("控制台的落盘状态", () => {
     expect(JSON.parse(localStorage.getItem(CONSOLE_STATE_KEY)!)).not.toHaveProperty("maximized")
   })
 
-  test("点当前页签 = 收起(同 VS Code 的底栏),点另一个页签只换页", () => {
+  test("没标过「用户点的」的右栏仪器不恢复 —— 那是自动落到示波器上留下的", () => {
+    expect(readConsoleState('{"open":true,"height":280,"tab":"log","rail":"scope"}').rail).toBeUndefined()
+  })
+
+  test("点击当前页签保持展开，点击其他页签切换工具", () => {
     consoleUI.open("log")
     consoleUI.select("log")
-    expect(consoleUI.opened()).toBe(false)
+    expect(consoleUI.opened()).toBe(true)
 
     consoleUI.select("gdb")
     expect(consoleUI.opened()).toBe(true)

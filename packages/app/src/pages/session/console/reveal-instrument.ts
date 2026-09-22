@@ -19,6 +19,43 @@ import { benchPins, EMPTY_BENCH_DISK, instrumentById, isVisible, type Instrument
 import { debug as dock } from "../debug/debug-data"
 import { consoleUI } from "./console-state"
 
+/** 这台仪器现在是不是正摊在它自己的那一面上。顶栏按钮的按下态和「再点一次收起」用同一条。 */
+export function instrumentShown(id: InstrumentId, ctx: InstrumentContext): boolean {
+  const instrument = instrumentById(id)
+  if (!instrument) return false
+  if (instrument.surface === "text") return consoleUI.opened() && consoleUI.tab() === id
+  return dock.opened() && dock.mode() === "debug" && consoleUI.rail() === id && isVisible(instrument, ctx)
+}
+
+/**
+ * 顶栏那一排:没开就打开,开着再点就收起。
+ * 文本仪器收的是底部控制台,波形仪器收的是右栏。
+ */
+export function toggleInstrument(id: InstrumentId, ctx: InstrumentContext): boolean {
+  const instrument = instrumentById(id)
+  if (!instrument) return false
+  if (instrumentShown(id, ctx)) {
+    if (instrument.surface === "text") {
+      consoleUI.close()
+      // 再点一次是把这一下打开的东西收回去。空的波形页不是用户点开的,跟着收。
+      if (dock.opened() && dock.mode() === "debug" && !consoleUI.rail()) dock.close()
+    } else dock.close()
+    return true
+  }
+  return revealInstrument(id, ctx)
+}
+
+/**
+ * 首页卡片进会话。文本仪器只留控制台:右栏若还停在波形档(包括上一回点开的示波器),
+ * 收起来,别跟进这个新会话。
+ */
+export function openWorkbenchInstrument(id: InstrumentId): boolean {
+  const opened = revealInstrument(id, usedInstrumentContext(id))
+  const instrument = instrumentById(id)
+  if (opened && instrument?.surface === "text" && dock.mode() === "debug") dock.close()
+  return opened
+}
+
 /** 亮出这台仪器。认得出来并且真去开了返回 true。 */
 export function revealInstrument(id: InstrumentId, ctx: InstrumentContext): boolean {
   const instrument = instrumentById(id)
@@ -26,6 +63,9 @@ export function revealInstrument(id: InstrumentId, ctx: InstrumentContext): bool
   if (!isVisible(instrument, ctx)) benchPins.pin(id)
   if (instrument.surface === "text") {
     consoleUI.open(id)
+    // 没人点过波形仪器时,右栏停在空的「波形」页。那是跟着日志一起冒出来的,收掉。
+    // 已经点过示波器 / 逻辑分析仪(rail 有值)就留着,两台可以同时开。
+    if (dock.opened() && dock.mode() === "debug" && !consoleUI.rail()) dock.close()
     return true
   }
   dock.open()

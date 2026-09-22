@@ -52,6 +52,7 @@ import { syncSessionModel } from "@/pages/session/session-model-helpers"
 import { SessionSidePanel } from "@/pages/session/session-side-panel"
 import { debug as debugDock } from "@/pages/session/debug/debug-data"
 import { BenchProvider } from "@/pages/session/bench/bench-context"
+import { WorkbenchToolbar } from "@/pages/session/console/workbench-toolbar"
 import { SessionConsole } from "@/pages/session/console/session-console"
 import { SessionStatusBar } from "@/pages/session/console/session-status-bar"
 import { consoleUI } from "@/pages/session/console/console-state"
@@ -64,7 +65,6 @@ import { directoryKey } from "@/context/global-sync/utils"
 import { createSessionOwnership } from "./session/session-ownership"
 import { prependRetracted, type RetractedMessage } from "./session/composer/queue-retract"
 import { dockTasks } from "./session/subagent/task-view"
-
 
 const sessionViewState = () => ({
   messageId: undefined as string | undefined,
@@ -1017,6 +1017,7 @@ export default function Page() {
       {/* 会话区 = 上面一行(聊天栏 | 右栏) + 底部控制台 + 状态栏。
           左侧栏不在这棵树里,所以"横跨聊天栏与右栏"就是这一列的全宽。 */}
       <BenchProvider>
+        <WorkbenchToolbar />
         <div class="flex-1 min-h-0 flex flex-col">
           <div
             class="flex-1 min-h-0 flex flex-col md:flex-row gap-2 p-2"

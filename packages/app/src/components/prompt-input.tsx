@@ -1232,7 +1232,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     (p) => p,
   )
 
-  const designPlaceholder = () => "Ask anything, / for commands, @ for context..."
+  const designPlaceholder = () => language.t("session.workbench.prompt")
 
   const modelControlState = createMemo<ComposerModelControlState>(() => ({
     loading: providersLoading(),

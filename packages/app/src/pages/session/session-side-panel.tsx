@@ -79,7 +79,7 @@ export function SessionSidePanel(props: {
   const command = useCommand()
   const dialog = useDialog()
   const sdk = useSDK()
-  const { sessionKey, tabs, view, params } = useSessionLayout()
+  const { sessionKey, tabs, view } = useSessionLayout()
 
   const isDesktop = createMediaQuery("(min-width: 768px)")
 
@@ -264,7 +264,7 @@ export function SessionSidePanel(props: {
   })
 
   return (
-    <Show when={isDesktop() && !!params.id}>
+    <Show when={isDesktop()}>
       <Show
         when={open()}
         fallback={
@@ -322,7 +322,7 @@ export function SessionSidePanel(props: {
               on={dock.mode() === "tabs"}
               onClick={() => switchMode("tabs")}
             />
-            <BarButton icon="debug" title="调试" on={dock.mode() === "debug"} onClick={() => switchMode("debug")} />
+            <BarButton icon="debug" title={language.t("session.rail.label")} label={language.t("session.workbench.waveforms")} on={dock.mode() === "debug"} onClick={() => switchMode("debug")} />
             <BarButton
               icon="file-tree"
               title={language.t("session.files.all")}

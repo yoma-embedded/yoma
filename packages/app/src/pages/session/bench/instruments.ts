@@ -13,6 +13,7 @@
  * - 用过:agent 这一轮碰过示波器,面板就该自己出现,不该让用户去找。
  * - 有数据:上一轮存下的波形,重开会话照样看得见(`la.captures` / `scope.captures` 读的是磁盘)。
  * - 钉住:用户明说"我要一直看着它"。
+ * 调试器和波形仪器不是核心:打开日志不该把示波器一起顶到右栏。
  */
 import { createRoot, createSignal, lazy, type Component } from "solid-js"
 import type { IconProps } from "@yoma-desktop/ui/icon"

@@ -1,3 +1,4 @@
+import { WorkbenchLauncher } from "@/components/workbench-launcher"
 import type { Session } from "@yoma-desktop/kernel"
 import {
   type ComponentProps,
@@ -326,6 +327,16 @@ export function NewHome() {
     },
   ])
 
+  async function chooseWorkbenchProject() {
+    if (platform.platform !== "desktop") return
+    const picked = await platform.openDirectoryPickerDialog({ title: language.t("command.project.open"), multiple: false })
+    const directory = Array.isArray(picked) ? picked[0] : picked
+    if (!directory) return
+    global.ctx.projects.open(directory)
+    global.ctx.projects.touch(directory)
+    return directory
+  }
+
   function openNewSession() {
     const project = newSessionProject()
     if (!project) return
@@ -350,13 +361,12 @@ export function NewHome() {
 
   return (
     <div class="rounded-[10px] shadow-[var(--v2-elevation-raised)] m-2 min-h-0 lg:overflow-hidden bg-v2-background-bg-base self-stretch flex-1">
-      <div
-        class="mx-auto grid h-full w-full max-w-[1080px] grid-rows-[auto_minmax(0,1fr)_auto] gap-4 px-3 lg:grid-rows-1 lg:gap-8 lg:px-6 lg:grid-cols-[minmax(0,760px)] lg:justify-center"
-      >
+      <div class="mx-auto grid h-full w-full max-w-[1080px] grid-rows-[auto_minmax(0,1fr)_auto] gap-4 px-3 lg:grid-rows-1 lg:gap-8 lg:px-6 lg:grid-cols-[minmax(0,760px)] lg:justify-center">
         <section
           class="min-h-0 min-w-0 flex-1 flex flex-col pt-6 lg:pt-12 relative"
           aria-label={language.t("sidebar.project.recentSessions")}
         >
+          <WorkbenchLauncher directory={newSessionProject()?.worktree} onChooseProject={chooseWorkbenchProject} />
           <HomeSessionSearch
             value={state.search}
             placeholder={searchPlaceholder()}
@@ -441,11 +451,7 @@ export function NewHome() {
   )
 }
 
-function HomeUtilityNav(props: {
-  class?: string
-  openSettings: () => void
-  language: ReturnType<typeof useLanguage>
-}) {
+function HomeUtilityNav(props: { class?: string; openSettings: () => void; language: ReturnType<typeof useLanguage> }) {
   return (
     <div class={`${props.class ?? ""} min-w-0 flex-col gap-1`}>
       <button
@@ -460,11 +466,7 @@ function HomeUtilityNav(props: {
   )
 }
 
-function HomeSessionLeading(props: {
-  project: LocalProject
-  session: Session
-  revealProjectOnHover: boolean
-}) {
+function HomeSessionLeading(props: { project: LocalProject; session: Session; revealProjectOnHover: boolean }) {
   return (
     <div class="relative shrink-0">
       <SessionTabAvatar

@@ -31,6 +31,8 @@ import {
   createWriteTool,
   formatSkillInvocation,
   value,
+  withAbortSignal,
+  type AgentHarnessToolInvocation,
   type AgentLane,
   type AgentMessage,
   type Branch,
@@ -72,6 +74,10 @@ import { ToolProgressThrottle } from "./tool-progress.ts"
 import { confirmNeeded } from "./tools/contracts.ts"
 import { processImage } from "./domain/image/process.ts"
 import { createRegisteredTools, type RegisteredTool, type RegisteredToolOptions } from "./tools/index.ts"
+import { withFriendlyArguments } from "./tools/arguments.ts"
+import { createLogTool, type LogTool } from "./tools/log/session.ts"
+import { listSerialPorts } from "./tools/log/serial.ts"
+import { createGdbTool, type GdbTool } from "./tools/gdb/session.ts"
 import { withOverwrittenContent } from "./write-before.ts"
 import { configurableProviders, resolveModel } from "./models.ts"
 import { discoverSkills, loadContextFiles } from "./resources.ts"
@@ -85,7 +91,7 @@ import {
   type Models,
 } from "@earendil-works/pi-ai"
 
-import type { KernelEvent, PromptInput } from "../protocol.ts"
+import type { InstrumentResult, KernelEvent, KernelParams, PromptInput } from "../protocol.ts"
 import type {
   AgentInfo,
   ProviderInfo,
@@ -267,6 +273,13 @@ interface Entry {
   unhook?: () => void
   /** 这个会话的装配面。留着是为了关会话时收长驻工具(log 的采集器握着串口)。 */
   tools?: RegisteredTool[]
+  instruments?: { log: LogTool; gdb: GdbTool }
+  environmentOpening?: Promise<void>
+  manualRuns?: Map<AbortController, Promise<InstrumentResult>>
+  /** A manual request has taken ownership of the shared instruments/environment. */
+  manualOwned?: boolean
+  /** Covers teardown AND repository deletion; readers must not reopen this entry. */
+  deleting?: Promise<void>
   /**
    * prompt() 在 accept 之前的准备期(压缩附件图片,可能要几秒)。这段时间 lane 还是 idle,
    * stop() 找不到任何在飞的操作 —— 没有这个标记,用户按下的"停止"会被整个吞掉。
@@ -766,15 +779,18 @@ export class SessionManager {
   async delete(sessionID: string): Promise<void> {
     const entry = this.entries.get(sessionID)
     if (!entry) return
-    if (entry.parentID) await this.taskManager.forgetTask(sessionID)
-    else {
-      await this.taskManager.forgetParent(sessionID)
-      // 子会话与父同一个 cwd;list 把还没进内存的也补进 entries。
-      await this.list(entry.cwd)
-      const children = [...this.entries.values()].filter((item) => item.parentID === sessionID)
-      for (const child of children) await this.deleteEntry(child)
-    }
-    await this.deleteEntry(entry)
+    entry.deleting ??= (async () => {
+      if (entry.parentID) await this.taskManager.forgetTask(sessionID)
+      else {
+        await this.taskManager.forgetParent(sessionID)
+        // 子会话与父同一个 cwd;list 把还没进内存的也补进 entries。
+        await this.list(entry.cwd)
+        const children = [...this.entries.values()].filter((item) => item.parentID === sessionID)
+        for (const child of children) await this.delete(child.id)
+      }
+      await this.deleteEntry(entry)
+    })().finally(() => { entry.deleting = undefined })
+    return entry.deleting
   }
 
   private async deleteEntry(entry: Entry): Promise<void> {
@@ -828,12 +844,13 @@ export class SessionManager {
       await this.list()
       found = this.entries.get(sessionID)
     }
-    if (!found) throw sessionNotFound(sessionID)
+    if (!found || found.deleting) throw sessionNotFound(sessionID)
     // 闭包(toolContext)要一个确定非空的引用,所以先定住。
     const entry = found
     entry.touched = Date.now()
     // 正在销毁:它会把 lane/projection 逐个清掉,这中间交出去的 entry 是半关的。
     if (entry.closing) await entry.closing.catch(() => {})
+    if (entry.deleting || this.entries.get(sessionID) !== entry) throw sessionNotFound(sessionID)
     if (entry.opening) {
       const preparation = entry.preparing
       try {
@@ -844,6 +861,7 @@ export class SessionManager {
         if (!readOnly || !preparation?.cancelled) throw error
       }
     }
+    if (entry.deleting || this.entries.get(sessionID) !== entry) throw sessionNotFound(sessionID)
     if (isOpen(entry) || (readOnly && entry.projection)) return entry
     entry.opening ??= (readOnly ? this.readEntry(entry) : this.openEntry(entry)).finally(() => {
       entry.opening = undefined
@@ -872,20 +890,15 @@ export class SessionManager {
     // 不能像 loadContextFiles/discoverSkills 那样并进它们那个 Promise.all —— 那两个
     // 的入参正是 env,而 env 本身要等这次解析完才能造出来,凑一起就是循环依赖。
     // 真正同类(不依赖 env、建会话时只读一次的快照)又能安全并发的是 ensureModels()。
-    const baseEnv = this.baseShellEnv(await this.machineDirs())
-    const [{ models, model }, toolchain] = await Promise.all([
-      this.ensureModels(),
-      this.resolveToolchainSafe(entry, baseEnv),
-    ])
+    const [{ models, model }] = await Promise.all([this.ensureModels(), this.ensureToolEnvironment(entry)])
+    const toolchain = entry.toolchain!
 
     const session = entry.session ?? (await this.repo.open(entry.meta, this.context))
     entry.session = session
     await this.fillListed(entry, session)
-    entry.toolchain = toolchain
     // engines/bin 前置进 PATH:bash 工具里要有 rg(在例程语料里 grep 全靠它,Windows
     // 没有内置 grep)。机器级目录(Yoma 装的 + 用户手指的)夹在中间:项目清单解析到的
     // 赢过它们,它们赢过 process.env 里原有的。
-    entry.shellEnv = this.sessionShellEnv(toolchain, baseEnv)
     const env = this.toolEnv(entry)
     let harness: AgentHarness<ExecutionToolContext> | undefined
     try {
@@ -932,6 +945,7 @@ export class SessionManager {
       // 东西,系统提示词字节不变。
 
       const allTools = createAgentTools({
+        instruments: this.instrumentTools(entry),
         project: { sessionID: entry.id },
         enginesDir: this.options.enginesDir,
         configDir: this.configDir,
@@ -1096,14 +1110,19 @@ export class SessionManager {
       entry.projection = undefined
       for (const unsubscribe of entry.unsubscribes ?? []) unsubscribe()
       entry.unsubscribes = undefined
-      await env.cleanup(this.context).catch(() => {})
+      if (!entry.manualOwned) {
+        for (const tool of Object.values(entry.instruments ?? {})) await tool.dispose?.().catch(() => {})
+        entry.instruments = undefined
+        await env.cleanup(this.context).catch(() => {})
+        entry.env = undefined
+        entry.shellEnv = undefined
+        entry.toolchain = undefined
+      }
       if (harness) await harness.close(this.context).catch(() => {})
       else await session.close(this.context).catch(() => {})
       entry.harness = undefined
       entry.session = undefined
-      entry.env = undefined
-      entry.shellEnv = undefined
-      entry.toolchain = undefined
+      entry.tools = undefined
       throw error
     }
 
@@ -1330,6 +1349,75 @@ export class SessionManager {
     return withEnginesOnPath(shellEnvFor(toolchain, baseEnv), this.options.enginesDir)
   }
 
+  /** Model-free preparation, shared by manual instruments and agent harness assembly. */
+  private async ensureToolEnvironment(entry: Entry): Promise<void> {
+    if (entry.shellEnv) return
+    entry.environmentOpening ??= (async () => {
+      const baseEnv = this.baseShellEnv(await this.machineDirs())
+      const toolchain = await this.resolveToolchainSafe(entry, baseEnv)
+      entry.toolchain = toolchain
+      entry.shellEnv = this.sessionShellEnv(toolchain, baseEnv)
+    })().finally(() => { entry.environmentOpening = undefined })
+    await entry.environmentOpening
+  }
+
+  private instrumentTools(entry: Entry): { log: LogTool; gdb: GdbTool } {
+    return entry.instruments ??= {
+      log: withFriendlyArguments(createLogTool()),
+      gdb: withFriendlyArguments(createGdbTool()),
+    }
+  }
+
+  async serialPorts() {
+    return listSerialPorts(process.platform, this.baseShellEnv(await this.machineDirs()))
+  }
+
+  /** Explicit user actions only. Never opens a model or appends a synthetic chat prompt. */
+  async executeInstrument(params: KernelParams<"instrument.execute">): Promise<InstrumentResult> {
+    if (params.tool !== "log" && params.tool !== "gdb") throw new Error("Unsupported manual instrument")
+    // Instruments need the session identity and cwd, not a transcript or an agent harness.
+    // In particular, a pending/failed model initialization must never block Disconnect.
+    let entry = this.entries.get(params.sessionID)
+    if (!entry) { await this.list(); entry = this.entries.get(params.sessionID) }
+    if (!entry || entry.deleting) throw sessionNotFound(params.sessionID)
+    if (entry.parentID) throw new Error("Open the parent session to control its instruments")
+    if (entry.closing) await entry.closing.catch(() => {})
+    if (entry.deleting || this.entries.get(params.sessionID) !== entry) throw sessionNotFound(params.sessionID)
+    entry.touched = Date.now()
+    entry.manualOwned = true
+    const controller = new AbortController()
+    const runs = entry.manualRuns ??= new Map()
+    const run = (async () => {
+      await this.ensureToolEnvironment(entry)
+      controller.signal.throwIfAborted()
+      const instruments = this.instrumentTools(entry)
+      const tool: RegisteredTool = instruments[params.tool]
+      const input = (tool.prepareArguments ? tool.prepareArguments(params.input) : params.input) as Record<string, unknown>
+      if (params.tool === "log" && input.action === "status") {
+        const details = instruments.log.snapshot()
+        return { text: `${details.running ? "Receiving" : "Disconnected"}${details.source ? ` — ${details.source}` : ""}`, details: { ...details } }
+      }
+      if (params.tool === "log" && input.action === "write") {
+        const result = await instruments.log.sendSerial(input as import("./tools/log/contract.ts").LogInput)
+        return { text: result.content.filter((part) => part.type === "text").map((part) => part.text).join("\n"), details: { ...result.details } }
+      }
+      if (params.tool === "log" && input.action === "stop") await instruments.log.stopCapture()
+      const id = `manual-${crypto.randomUUID()}`
+      const invocation: AgentHarnessToolInvocation = {
+        invocationId: id, operationId: id, turnId: id,
+        getMemo: async () => undefined, setMemo: async () => {},
+      }
+      const result = await tool.execute(id, input, () => {}, { env: this.toolEnv(entry) }, invocation,
+        withAbortSignal(controller.signal, this.context))
+      return {
+        text: result.content.filter((part) => part.type === "text").map((part) => part.text).join("\n"),
+        ...(result.details && typeof result.details === "object" ? { details: result.details as Record<string, unknown> } : {}),
+      }
+    })()
+    runs.set(controller, run)
+    try { return await run } finally { runs.delete(controller) }
+  }
+
   /** 会话当前的执行环境。shellEnv 换过之后(refreshMachineEnv)这里会重建一个。 */
   private toolEnv(entry: Entry): NodeExecutionEnv {
     if (!entry.env) {
@@ -1370,10 +1458,10 @@ export class SessionManager {
     const generation = ++this.envRefreshGeneration
     const baseEnv = this.baseShellEnv(await this.machineDirs())
     for (const entry of this.entries.values()) {
-      if (!isOpen(entry)) continue
+      if (entry.closing || (!isOpen(entry) && !entry.shellEnv)) continue
       const toolchain = await this.resolveToolchainSafe(entry, baseEnv)
       if (generation !== this.envRefreshGeneration) return
-      if (!isOpen(entry)) continue
+      if (entry.closing || (!isOpen(entry) && !entry.shellEnv)) continue
       // Publish the resolution and its environment together; a slower old refresh cannot
       // overwrite a newer settings change after its probe finally exits.
       entry.toolchain = toolchain
@@ -2295,10 +2383,15 @@ export class SessionManager {
     this.desk.cancel(entry.id)
     // 装配还在飞就先等它:不等的话那次 open 会在我们关完之后把 lane 又挂回去。
     if (entry.opening) await entry.opening.catch(() => {})
+    for (const controller of entry.manualRuns?.keys() ?? []) controller.abort()
     for (const unsubscribe of entry.unsubscribes ?? []) unsubscribe()
     entry.unsubscribes = undefined
     // 在飞轮次先中断:**硬件安全**优先,别把板子停在半条命令上。
     if (entry.lane) await this.stop(entry).catch(() => {})
+    // Manual calls may be queued behind an agent tool. Abort the lane before waiting for that queue.
+    await Promise.allSettled(entry.manualRuns?.values() ?? [])
+    entry.manualRuns = undefined
+    if (entry.environmentOpening) await entry.environmentOpening.catch(() => {})
     // 钩子在 stop 之后才摘:中断落地前再挂起的询问仍要过门,它们会被 stop 的取消信号结算掉。
     entry.unhook?.()
     entry.unhook = undefined
@@ -2306,8 +2399,12 @@ export class SessionManager {
     if (entry.harness) await entry.harness.close(this.context).catch(() => {})
     else if (entry.session) await entry.session.close(this.context).catch(() => {})
     // 长驻工具先收:log 的采集器握着串口,会话关了它就该还回去,不能等到内核进程退出。
-    for (const tool of entry.tools ?? []) await tool.dispose?.().catch(() => {})
+    // Agent tools wrap the instrument object, so deduplicate by name rather than wrapper identity.
+    const tools = new Map([...(entry.tools ?? []), ...Object.values(entry.instruments ?? {})].map((tool) => [tool.name, tool]))
+    for (const tool of tools.values()) await tool.dispose?.().catch(() => {})
     entry.tools = undefined
+    entry.instruments = undefined
+    entry.manualOwned = undefined
     // 当前的和 refreshMachineEnv 退役掉的一起收:遗留子进程一个都不许活过会话。
     await this.cleanupRetiredEnvs(entry)
     await entry.env?.cleanup(this.context).catch(() => {})

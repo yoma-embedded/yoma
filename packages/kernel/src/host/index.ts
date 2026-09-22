@@ -134,6 +134,8 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     // 只列主会话:子 agent 的会话不进侧边栏与首页(CC 同款),从卡片与任务面板打开;列进来还会占掉目录列表的配额。
     "session.list": async ({ directory }) => (await sessions.list(directory)).filter((session) => !session.parentID),
     "session.get": ({ sessionID }) => sessions.get(sessionID),
+    "instrument.execute": (params) => sessions.executeInstrument(params),
+    "instrument.ports": () => sessions.serialPorts(),
     "session.create": ({ directory, title }) => sessions.create(directory, title),
     "session.delete": ({ sessionID }) => sessions.delete(sessionID),
     "session.rename": ({ sessionID, title }) => sessions.rename(sessionID, title),

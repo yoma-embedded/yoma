@@ -31,6 +31,8 @@ import { createTaskStopTool } from "./task_stop/session.ts"
 import { createToolchainTool, type ToolchainToolOptions } from "./toolchain/session.ts"
 
 export interface RegisteredToolOptions {
+  /** Session-owned instruments, also used by the manual controls. */
+  instruments?: Partial<Record<"log" | "gdb", RegisteredTool>>
   project?: { sessionID?: string }
   /** engines/ 根目录(bin/rg 在里面)。空串也算没给:kernel-entry 把未设的路径透传成 ""。 */
   enginesDir?: string
@@ -72,10 +74,10 @@ export function createRegisteredTools(options: RegisteredToolOptions = {}): Regi
     createToolchainTool(options.toolchain),
     createProjectTool(options.project),
     createFlashTool(),
-    createLogTool(),
+    options.instruments?.log ?? createLogTool(),
     createLaTool(shared),
     createScopeTool(),
-    createGdbTool(),
+    options.instruments?.gdb ?? createGdbTool(),
     createDatasheetTool(options.datasheet),
     createNetlistTool(stm32),
     createStm32ConfigTool(stm32),

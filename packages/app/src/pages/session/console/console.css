@@ -48,7 +48,7 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
-  height: 30px;
+  min-height: 36px;
   padding: 0 6px 0 8px;
   border-bottom: 1px solid var(--bench-line);
   background: var(--bench-surface-raised);
@@ -80,10 +80,9 @@
   border-radius: 6px;
   background: transparent;
   color: var(--bench-muted);
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
+  letter-spacing: 0;
   white-space: nowrap;
   cursor: pointer;
 }
@@ -263,7 +262,7 @@
  * 「来源」那一行读数在这儿是重复的 —— 页签行的名牌已经给了同一句(而且给的是全文)。
  * 一条 240px 高的控制台里,一行就是 6% 的可见日志。
  */
-[data-component="session-console"] [data-component="bench-log-panel"] > [data-component="bench-readout"] {
+[data-component="session-console"] [data-component="bench-log-panel"] [data-slot="monitor-output"] > [data-component="bench-readout"] {
   display: none;
 }
 
@@ -478,7 +477,8 @@
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 6px 8px 0;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--bench-line);
   min-width: 0;
   overflow-x: auto;
   scrollbar-width: none;
@@ -492,10 +492,9 @@
   border-radius: 6px;
   background: transparent;
   color: var(--bench-muted);
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
+  letter-spacing: 0;
   white-space: nowrap;
   cursor: pointer;
 }

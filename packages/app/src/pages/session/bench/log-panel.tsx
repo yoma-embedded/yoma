@@ -2,7 +2,7 @@
  * 日志面板 —— 工程 `.yoma/logs` 里最新那份硬件日志的尾巴。
  *
  * 它读的是**磁盘**(`log-feed.ts`),不是 transcript:采集停了、会话重开了,日志照样在。
- * 采集状态那一格才来自 transcript(`BenchStatus.log`),因为"还在采不采"只有工具知道。
+ * 串口控制与状态直接查询会话持有的采集器;手动操作与 agent 共用同一个日志源。
  *
  * 2000 行还能滑动靠的是 CSS 的 `content-visibility: auto`(见 bench.css):视口外的行
  * 不排版不绘制,而 `contain-intrinsic-size` 给出占位高度,滚动条长度不会跳。
@@ -22,6 +22,8 @@ import { useBenchStatus } from "./use-bench-status"
 import { useLogFeed } from "./log-feed"
 import { filterLogLines } from "./log-lines"
 import { logCaptureLabel } from "./bench-status"
+import { SerialControls } from "./serial-controls"
+import { serialCopy } from "./serial-copy"
 
 /** 过滤框 + 跟随 + 重读。容器决定它站哪一行(面板里自己一行,控制台里挤在页签行右边)。 */
 export function LogControls() {
@@ -104,63 +106,65 @@ export function LogBody() {
   }
 
   return (
-    <Show
-      when={feed.state.name}
-      fallback={
-        <div data-component="bench-empty">
-          {language.t("session.bench.log.empty")}
-          <span data-slot="hint">{language.t("session.bench.log.emptyHint")}</span>
-        </div>
-      }
-    >
-      {/* 来源全文("serial /dev/cu.usbmodem1103 @ 115200 8N1")正是"我现在到底在听哪儿"的
-          答案,只塞进标题的 title 属性太隐蔽了 —— 给它一行读数。 */}
-      <Show when={status().log?.source}>
-        {(source) => (
-          <div data-component="bench-readout">
-            <span data-slot="key">{language.t("session.bench.log.source")}</span>
-            <span data-slot="dots" />
-            <span data-slot="val">{source()}</span>
+    <SerialControls onChange={() => feed.refresh()}>
+      <Show
+        when={feed.state.name}
+        fallback={
+          <div data-component="bench-empty">
+            {serialCopy[language.locale()].empty}
+            <span data-slot="hint">{serialCopy[language.locale()].emptyHint}</span>
           </div>
-        )}
-      </Show>
-      <Show when={feed.state.truncated}>
-        <div data-slot="notice">{language.t("session.bench.log.truncated")}</div>
-      </Show>
-      <Show when={feed.state.clipped > 0}>
-        <div data-slot="notice">{language.t("session.bench.log.clipped", { count: feed.state.clipped })}</div>
-      </Show>
-      <div
-        data-slot="lines"
-        ref={(element) => (scroller = element)}
-        onScroll={onScroll}
-        role="log"
-        aria-live="off"
-        aria-label={language.t("session.bench.instrument.log")}
+        }
       >
-        {/* **`Index` 而不是 `For`**:每一拍的行都是新对象,`For` 按引用比,于是 2000 个
-            DOM 节点每 2 秒整体重建 —— 用户正选中的一段栈回溯会被清掉(复制不走),
-            节点重排还会夹一次 scrollTop 把"跟随"关掉。`Index` 按下标复用节点,只更新变了的字。 */}
-        <Index
-          each={lines()}
-          fallback={
-            <div data-slot="line" data-level="info">
-              <span data-slot="text">{language.t("session.bench.log.noMatch")}</span>
-            </div>
-          }
-        >
-          {(line) => (
-            <div data-slot="line" data-level={line().level}>
-              <span data-slot="no">{line().no}</span>
-              <span data-slot="text">{line().text}</span>
+        {/* 来源全文("serial /dev/cu.usbmodem1103 @ 115200 8N1")正是"我现在到底在听哪儿"的
+          答案,只塞进标题的 title 属性太隐蔽了 —— 给它一行读数。 */}
+        <Show when={status().log?.source}>
+          {(source) => (
+            <div data-component="bench-readout">
+              <span data-slot="key">{language.t("session.bench.log.source")}</span>
+              <span data-slot="dots" />
+              <span data-slot="val">{source()}</span>
             </div>
           )}
-        </Index>
-      </div>
-      <Show when={feed.state.error}>
-        <div data-slot="notice">{feed.state.error}</div>
+        </Show>
+        <Show when={feed.state.truncated}>
+          <div data-slot="notice">{language.t("session.bench.log.truncated")}</div>
+        </Show>
+        <Show when={feed.state.clipped > 0}>
+          <div data-slot="notice">{language.t("session.bench.log.clipped", { count: feed.state.clipped })}</div>
+        </Show>
+        <div
+          data-slot="lines"
+          ref={(element) => (scroller = element)}
+          onScroll={onScroll}
+          role="log"
+          aria-live="off"
+          aria-label={language.t("session.bench.instrument.log")}
+        >
+          {/* **`Index` 而不是 `For`**:每一拍的行都是新对象,`For` 按引用比,于是 2000 个
+            DOM 节点每 2 秒整体重建 —— 用户正选中的一段栈回溯会被清掉(复制不走),
+            节点重排还会夹一次 scrollTop 把"跟随"关掉。`Index` 按下标复用节点,只更新变了的字。 */}
+          <Index
+            each={lines()}
+            fallback={
+              <div data-slot="line" data-level="info">
+                <span data-slot="text">{language.t("session.bench.log.noMatch")}</span>
+              </div>
+            }
+          >
+            {(line) => (
+              <div data-slot="line" data-level={line().level}>
+                <span data-slot="no">{line().no}</span>
+                <span data-slot="text">{line().text}</span>
+              </div>
+            )}
+          </Index>
+        </div>
+        <Show when={feed.state.error}>
+          <div data-slot="notice">{feed.state.error}</div>
+        </Show>
       </Show>
-    </Show>
+    </SerialControls>
   )
 }
 

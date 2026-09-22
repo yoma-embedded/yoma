@@ -9,7 +9,7 @@
  * 3. **一台都不该露面时是安静的空态**,不是两个不亮的大窗口。露面的规则仍是注册表那一条
  *    (核心 ∪ 本会话用过 ∪ 磁盘上有数据 ∪ 钉住),这里一个字都没重写。
  */
-import { createEffect, createMemo, For, on, Show, Suspense } from "solid-js"
+import { createMemo, For, Show, Suspense } from "solid-js"
 import { Dynamic } from "solid-js/web"
 import { Icon } from "@yoma-desktop/ui/icon"
 import { useLanguage } from "@/context/language"
@@ -18,6 +18,7 @@ import { EvidenceDot } from "../bench/evidence-dot"
 import { benchPins, hiddenOnSurface, visibleOnSurface, type InstrumentDef } from "../bench/instruments"
 import { consoleUI } from "./console-state"
 import { useMarkSeen, useUnseenSet } from "./evidence-view"
+import { handleTablistKeys } from "./tablist-keys"
 import "./console.css"
 
 export function InstrumentRail() {
@@ -28,17 +29,12 @@ export function InstrumentRail() {
   const visible = createMemo(() => visibleOnSurface("wave", bench.ctx()))
   const hidden = createMemo(() => hiddenOnSurface("wave", bench.ctx()))
 
+  // 只显示点名要的那一台。没有记录、或者那台这会儿不该露面,就是空态,
+  // 不拿登记序里的第一台(示波器)顶上 —— 打开日志不该把示波器一起打开。
   const active = createMemo<InstrumentDef | undefined>(() => {
-    const list = visible()
-    return list.find((instrument) => instrument.id === consoleUI.rail()) ?? list[0]
+    const want = consoleUI.rail()
+    return want ? visible().find((instrument) => instrument.id === want) : undefined
   })
-
-  // 存着的那台不在了(换了会话 / 取消了钉住)就把选择挪到还在的那台上。
-  createEffect(
-    on(active, (instrument) => {
-      if (instrument && instrument.id !== consoleUI.rail()) consoleUI.setRail(instrument.id)
-    }),
-  )
 
   // 提示点:这一页开着就算看过了(这个组件只在右栏展开且停在「调试」档时才挂上,
   // 所以"右栏收着的时候证据继续积累"是白得的)。
@@ -49,7 +45,7 @@ export function InstrumentRail() {
     <div class="ybench" data-component="instrument-rail">
       {/* 一台的时候不出页签行 —— 一个孤零零的页签只是噪声,名字在仪器自己的名牌上。 */}
       <Show when={visible().length > 1}>
-        <div data-slot="tablist" role="tablist" aria-label={t("session.rail.label")}>
+        <div data-slot="tablist" role="tablist" aria-label={t("session.rail.label")} onKeyDown={handleTablistKeys}>
           <For each={visible()}>
             {(instrument) => (
               <button
@@ -58,6 +54,7 @@ export function InstrumentRail() {
                 data-slot="tab"
                 data-instrument={instrument.id}
                 aria-selected={active()?.id === instrument.id ? "true" : "false"}
+                tabIndex={active()?.id === instrument.id ? 0 : -1}
                 onClick={() => consoleUI.setRail(instrument.id)}
               >
                 <span data-component="bench-led" data-state={instrument.status(bench.ctx())} />

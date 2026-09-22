@@ -10,6 +10,8 @@
  */
 
 import { mkdir } from "node:fs/promises"
+import { closeSync } from "node:fs"
+import { serialBytes } from "./serial-output.ts"
 import path from "node:path"
 import { executionEnvSnapshot } from "../../domain/execution-env.ts"
 
@@ -34,6 +36,7 @@ import {
   MIN_BAUD,
   normalizeSerialPort,
   prepareSerial,
+  prepareSerialWriter,
   serialArgv,
   serialPowershellExe,
   serialLabel,
@@ -50,6 +53,11 @@ const UPDATE_THROTTLE_MS = 100
 export type LogTool = AgentHarnessTool<ExecutionToolContext, typeof LOG_CONTRACT.parameters, LogDetails> & {
   /** 会话关闭:停掉采集器、还回串口。没 start 过就是 no-op;绝不抛。 */
   dispose(): Promise<void>
+  /** UI status must remain readable while an agent is waiting for a line. */
+  snapshot(): LogDetails
+  /** Release a source immediately, also waking an in-flight wait before the queued stop result. */
+  stopCapture(): Promise<void>
+  sendSerial(params: LogInput): Promise<AgentToolResult<LogDetails>>
 }
 
 /**
@@ -137,6 +145,7 @@ export function createLogTool(): LogTool {
     totalLines: capture?.totalLines ?? 0,
     dropped: capture?.dropped ?? 0,
     ...(capture ? { source: capture.label, file: capture.file } : {}),
+    ...(capture?.source.kind === "child" && capture.source.serial ? { serial: capture.source.serial, writable: capture.running } : { writable: false }),
     ...(capture?.exited ? { exitCode: capture.exited.code } : {}),
     ...extra,
   })
@@ -148,6 +157,9 @@ export function createLogTool(): LogTool {
     parameters: LOG_CONTRACT.parameters,
     // 只是给人看的意图声明:AgentHarness 不读它,真正的串行在上面的 serialize 里。
     executionMode: "sequential",
+    snapshot: () => detailsOf("status"),
+    sendSerial,
+    stopCapture: async () => { await capture?.stop() },
     async dispose() {
       // 不排队:closeEntry 先 stop 掉这一轮(wait 会被中止信号叫醒),这里直接收采集器就行;
       // 排队的话一条还没被中止的 wait 会把关会话拖住两分钟。正在 spawn 途中的 start 靠 disposed 旗兜住。
@@ -160,6 +172,14 @@ export function createLogTool(): LogTool {
       const env = executionEnvSnapshot(toolContext.env)
       return serialize(() => executeAction(params, onUpdate, toolContext.env.cwd, context.abortSignal, env))
     },
+  }
+
+  async function sendSerial(params: LogInput): Promise<AgentToolResult<LogDetails>> {
+    if (disposed) throw new Error("Serial session is closed")
+    const data = serialBytes(params)
+    const active = requireCapture("write")
+    const bytesSent = await active.writeSerial(data)
+    return { content: [{ type: "text", text: `Sent ${bytesSent} bytes to ${active.label}. Device acknowledgement is not implied.` }], details: detailsOf("write", { bytesSent }) }
   }
 
   async function executeAction(
@@ -235,13 +255,22 @@ export function createLogTool(): LogTool {
           const hold = opening
             ? await withPortHints(() => prepareSerial(opening.device, opening.baud, process.platform, env), env)
             : undefined
-          if (hold !== undefined && source.kind === "child") source = { ...source, hold }
+          if (source.kind === "child" && opening) {
+            let writeFd: number | undefined
+            try { if (hold !== undefined) writeFd = prepareSerialWriter(opening.device) }
+            catch (error) { if (hold !== undefined) closeSync(hold); throw error }
+            source = { ...source, hold, writeFd, serial: { port: opening.device, baud: opening.baud } }
+          }
           const started = new LogCapture(source, label, file, cwd, { env })
           try {
             await started.start()
           } catch (error) {
             // 起不来也要把串口还回去(fd 的所有权已在 LogCapture 手里,stop 会收)。
             await started.stop()
+            if (serial) {
+              const detail = started.lines.map((line) => line.text).join("; ").trim()
+              throw new Error(`log start: ${error instanceof Error ? error.message : String(error)}${detail ? `: ${detail}` : ""}`)
+            }
             throw error
           }
           // 有的系统上 spawn 成功并不代表口开成了(等多久由 serial.ts 说了算,它才认识平台)。
@@ -270,6 +299,8 @@ Full log: ${file}
 Next: \`log wait\` with a pattern (e.g. "boot|fault|error") — it blocks until something matches instead of dumping the log.`
           return { content: [{ type: "text", text }], details: detailsOf("start") }
         }
+
+        case "write": return sendSerial(params)
 
         case "read": {
           const active = requireCapture("read")
