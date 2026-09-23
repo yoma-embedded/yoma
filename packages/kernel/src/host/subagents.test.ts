@@ -1097,7 +1097,7 @@ describe("子 agent 宿主(P2)", () => {
   )
 
   test(
-    "(v) 重开进程后列表里的会话是懒的(占位标题,子会话还不知道类型);打开时推一条 session.updated 补上真名与类型",
+    "(v) 重开进程后列表里的子会话是懒的(占位标题,还不知道类型),打开时推一条 session.updated 补上真名与类型;主会话在列表里就有真名",
     async () => {
       const { manager, reopen, events, script, workspace } = setup()
       script.route("查手册", text("查到了"))
@@ -1115,9 +1115,12 @@ describe("子 agent 宿主(P2)", () => {
       await manager.disposeAll()
 
       const again = reopen()
-      const lazy = (await again.list(workspace)).find((session) => session.id === child!.id)
+      const listed = await again.list(workspace)
+      const lazy = listed.find((session) => session.id === child!.id)
       expect(lazy?.title).not.toBe("查手册")
       expect(lazy?.agent).toBeUndefined()
+      // 主会话的名字 list() 就从 JSONL 里读出来了(host/session-names.ts),不用等打开 —— 打开时也就没有变化可推。
+      expect(listed.find((session) => session.id === parent.id)?.title).toBe("派子 agent 的会话")
 
       const mark = events.length
       await again.messages(child!.id)
@@ -1128,7 +1131,7 @@ describe("子 agent 宿主(P2)", () => {
         agent: "Explore",
         parentID: parent.id,
       })
-      expect(updated.find((session) => session.id === parent.id)?.title).toBe("派子 agent 的会话")
+      expect(updated.find((session) => session.id === parent.id)).toBeUndefined()
 
       // 已经开着的再读一次不重复推。
       const settled = events.length

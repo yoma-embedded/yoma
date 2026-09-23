@@ -866,11 +866,11 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       return
     }
 
-    const atMatch = rawText.substring(0, cursorPosition).match(/@(\S*)$/)
+    const mention = atMentionRange(rawText, cursorPosition)
     const slashMatch = rawText.match(/^\/(\S*)$/)
 
-    if (atMatch) {
-      atOnInput(atMatch[1])
+    if (mention) {
+      atOnInput(rawText.slice(mention.start + 1, mention.end))
       setStore("popover", "at")
     } else if (slashMatch) {
       slashOnInput(slashMatch[1])

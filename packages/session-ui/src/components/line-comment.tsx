@@ -267,13 +267,17 @@ export const LineCommentEditor = (props: LineCommentEditorProps) => {
     if (!split.mention) return
     if (textarea.selectionStart !== textarea.selectionEnd) return
 
+    // 与输入框同一条规则(app 的 prompt-input/editor-dom.ts 的 atMentionRange):`@` 前面是开头或
+    // 空白、光标后面是结尾或空白才算提及,否则它就是个普通字符(`foo@bar.com`)。
     const end = textarea.selectionStart
-    const match = textarea.value.slice(0, end).match(/@(\S*)$/)
+    const match = textarea.value.slice(0, end).match(/(?:^|\s)@(\S*)$/)
     if (!match) return
+    if (/\S/.test(textarea.value.charAt(end))) return
 
+    const query = match[1] ?? ""
     return {
-      query: match[1] ?? "",
-      start: end - match[0].length,
+      query,
+      start: end - query.length - 1,
       end,
     }
   }

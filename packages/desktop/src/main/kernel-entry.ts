@@ -118,6 +118,8 @@ if (parentPort) {
         // 烧录这类契约声明要问的工具,跑之前挂起等用户点允许。桌面端永远开 —— 屏幕前有人,
         // 所以不进 StartCommand(那是"这台机器上的路径"那一类参数,不是产品决定)。
         confirmTools: true,
+        // 没名字的会话收到第一句话就自动起名(照 opencode / Claude Code;`YOMA_TITLE_MODEL=off` 关掉)。
+        autoTitle: true,
         onEvents: broadcast,
       })
       hostReady?.()

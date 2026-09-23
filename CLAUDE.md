@@ -888,7 +888,7 @@ v3 规格(`pi/packages/agent/docs/harness.md` §5.5/§5.6)的形状 —— hooks
    不能按"下一条 user 消息"认领 —— 会被排队的那条抢走。
 4. **列表里的会话是懒的**:`repo.list` 只读文件头,标题是占位;而只读查看(`session.messages`)从来不读会话名 ——
    从磁盘加载的会话看完了标题仍是占位。`fillListed` 在只读与装配两条路上补名字与子会话类型,有变化推
-   `session.updated`。
+   `session.updated`。(主会话的名字 2026-09-21 起在 `list()` 里就按字节读出来了,见「会话自动起名」;子会话仍靠这条。)
 5. **事件流不分会话**:子会话的 `session.status`、消息、工具调用与主会话的走同一条流,凡是按事件判断"这一轮"
    的地方都要先看 sessionID(bench 那次就是这么漏的,见「调试台」第 3 条)。
 6. **上游哨兵**:`host/subagent-v2.test.ts` 钉着本方案依赖的 v2 行为(steer 在工具边界插入、空闲时 accept 空
@@ -898,6 +898,37 @@ v3 规格(`pi/packages/agent/docs/harness.md` §5.5/§5.6)的形状 —— hooks
 测试:`host/subagents.test.ts`(场景 22 例)、`host/subagent-v2.test.ts`、`test/agents-domain.test.ts`、
 `test/tools-agent.test.ts`、`host/projector.test.ts` 的通知一组、`bench/src/turn.test.ts` 的子 agent 一组、
 app 的 `test-browser/subagent-ui.test.ts`,以及 `e2e:paint` 的子 agent 一段。
+
+### 会话自动起名(`host/session-title.ts` + `host/session-names.ts`,2026-09-21)
+
+照主流 agent 做(对着本机的 opencode 与 Claude Code 源码核过;Codex / Cline / pi 不起名,只拿第一句话当名字):主会话收到
+**第一句话**、而它还没有名字时,另起一次模型调用起一个短标题 —— 与这一轮并行,不 await、不占 lane。
+
+- **先占位再换**(Claude Code 桥接 claude.ai 那条路的做法):收下这句话立刻拿它的第一句当临时名字(`Entry.titling.placeholder`,
+  只在视图里),模型的标题到了再换上、落盘(`session.setName`);没起出来(报错、30 秒超时、没有能用的字)就把占位定下来。
+  失败**不发 kernel.error** —— 界面会把它当成"这个会话出错了",弹系统通知、标红。
+- **请求**:提示词照 opencode 的 title.txt(几家里唯一明确要求"跟用户同一种语言"的,中文用户就靠这条),加了中文的长度与嵌入式的
+  例子;不带工具;思考开到模型允许的最低档 —— 关得掉就关、顺手封 256 个输出,关不掉的给最低档、不封(思考也记在输出里,封小了
+  正文一个字都到不了)。输出剥 `<think>`、引号、"Title:",取第一行有字的,50 字封顶。
+- **模型**:跟着会话当前的模型;`YOMA_TITLE_MODEL=<provider>/<model>` 钉一个便宜的(没配 key 就不理它),`off` 整个关掉。
+  主流是挑同家的小模型(Claude Code 固定 Haiku,opencode 按一张型号优先表),没抄那张表:目录四十家、型号按周变,手写的表会烂
+  (见「模型目录会过期」),而会话自己的模型一定配了 key。
+- **人说了算**:建会话时带了名字(bench 用任务书的标题)就不起;起名期间用户改名 / 删会话,那一次作废并掐掉请求 —— 结果只在
+  `entry.titling` 还是**同一个对象**时才算数。落定时先改内存、推事件,再落盘:rename 的写排在它后面,后写的赢。opencode 在这里
+  有竞态(改名会被晚到的标题盖掉),Claude Code 在 await 之后重查,我们照后者。起名期间会话被删了,不能再推它的
+  `session.updated` —— 界面的归约器找不到就**插入**,删掉的会话会回到列表里。
+- **只看第一句**:会话里已经有消息的(上线前的旧会话)不补起,半路的一句话代表不了整段对话(Claude Code 对恢复的会话也不起);
+  只发了图没打字的第一句给不出名字。
+- **宿主开关** `autoTitle`:桌面端开,bench 不开。起名是一次额外的模型调用,faux 演练与测试按脚本逐条应答,多出来的那次会吃掉
+  正文那一轮的一条 —— 所以缺省关、`makeHost` 不传。测试里要开就像 `session-title.test.ts` 那样按系统提示词路由,不能按调用次序
+  写脚本(起名与正文并发,谁先到 faux 不一定)。
+- **列表里读得到名字**(`session-names.ts`):`repo.list` 只读文件头,会话名是后来追加的一条值 —— 从前重启之后侧栏里个个叫工程
+  目录名,点开才对,自动起的名字等于白起。现在 `list()` 对没进内存的主会话按字节扫 `"namespace":"pi.session.name"` 那一行
+  (不解析整个会话,最后一次写为准;消息正文里的同样字样在 JSONL 里是转义的,对不上),实测 26 个会话 40 MB 共 30 ms;子会话不扫
+  (不进侧栏、一条消息能派十几个),仍由 `fillListed` 在打开时补。格式是上游的:`session-names.test.ts` 头一组用真 repo 写名字
+  再读回来,上游一改写法它先红。
+
+测试:`host/session-title.test.ts`(纯函数 + SessionManager 场景)、`host/session-names.test.ts`。
 
 ### 调试台(`packages/bench`)
 
