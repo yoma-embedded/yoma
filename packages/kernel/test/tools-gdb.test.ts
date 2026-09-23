@@ -46,7 +46,14 @@ import {
   serverBinary,
 } from "../src/host/tools/gdb/servers.ts"
 import { createGdbTool, type GdbTool } from "../src/host/tools/gdb/session.ts"
-import { displayFrame, elfMachineOf, locationOf, resolveGdbPath, verifyImage } from "../src/host/tools/gdb/target.ts"
+import {
+  displayFrame,
+  elfMachineOf,
+  locationOf,
+  resolveGdbPath,
+  safeToDereference,
+  verifyImage,
+} from "../src/host/tools/gdb/target.ts"
 import { fakeExeName, writeFakeExe } from "./fixtures/fake-exe.ts"
 
 // ─── 脚手架 ──────────────────────────────────────────────────────────────────
@@ -514,6 +521,19 @@ describe("gdb 二进制与 ELF", () => {
 })
 
 describe("verifyImage", () => {
+  it("指针局部变量只在落在内存区时自动解引用:外设区读一下就会清标志、吃掉数据", () => {
+    expect(safeToDereference("0x20001bd0", true)).toBe(true)
+    expect(safeToDereference("0x08000200 <table>", true)).toBe(true)
+    expect(safeToDereference("0x60000000", true)).toBe(true)
+    expect(safeToDereference("0x40011000", true)).toBe(false) // USART1:读 DR 会弹出收到的字节
+    expect(safeToDereference("0x5000_0000".replace("_", ""), true)).toBe(false)
+    expect(safeToDereference("0xe000ed00", true)).toBe(false) // SCB
+    expect(safeToDereference("0x0", true)).toBe(false)
+    expect(safeToDereference("<optimized out>", true)).toBe(false)
+    // 认不出是 Cortex-M(RISC-V、ESP32 的外设区在 0x3FF0_0000 一带):不按这张表猜,一律不解引用
+    expect(safeToDereference("0x20001bd0", false)).toBe(false)
+  })
+
   it("没有烧录记录:放行但标 UNVERIFIED;记录匹配:verified;不匹配:拒", async () => {
     const cwd = createTempDir()
     const none = await verifyImage(cwd, FIXTURE_ELF)
@@ -955,7 +975,13 @@ describeFakeGdb("gdb 工具 + 假 gdb", () => {
 
   it("status 与 stop:stop 之后 status 回到 no-session,转录文件留着", async () => {
     const { run, cwd } = await attached()
-    const st = textOf(await run({ action: "status" }))
+    const status = await run({ action: "status" })
+    const st = textOf(status)
+    expect(status.details?.inspect?.frames[0]?.func).toBe("main")
+    expect(status.details?.inspect?.frames[0]?.file).toBe("main.c")
+    expect(status.details?.inspect?.frames[0]?.line).toBe(150)
+    expect(status.details?.inspect?.frames[0]?.path).toBeUndefined()
+    expect(status.details?.inspect?.locals?.map((item) => item.name)).toEqual(["i", "cfg", "p"])
     expect(st).toContain(`elf: ${FIXTURE_ELF}`)
     expect(st).toContain("server: external (localhost:3333)")
     expect(st).toContain("session log:")
@@ -1264,6 +1290,21 @@ describe.skipIf(!HAS_E2E)("端到端(QEMU + 真 gdb)", () => {
     else expect(text).toContain(`source paths: 1 of 1 compile-time paths do not exist here; mapped`)
     expect(r.details?.state).toBe("halted")
     expect(r.details?.connection).toMatch(/^localhost:\d+$/)
+  }, 30_000)
+
+  it("QEMU 不看烧录记录:它自己加载这份 ELF,记录对不上也照常连上", async () => {
+    const cwd = createTempDir()
+    mkdirSync(join(cwd, ".yoma"), { recursive: true })
+    writeFileSync(
+      join(cwd, FLASH_STATE_FILE),
+      JSON.stringify({ elfPath: "/other/fw.elf", sha256: "0".repeat(64), at: Date.now() - 60_000 }),
+    )
+    const { run } = makeTool(cwd)
+    const { allowUnverified: _, ...strict } = startParams
+    const r = await run(strict)
+    expect(textOf(r)).toContain("image: loaded by QEMU from this ELF")
+    expect(textOf(r)).not.toContain("MISMATCH")
+    expect(r.details?.state).toBe("halted")
   }, 30_000)
 
   it("断点 → continue → 停止报告;编辑器位置指向一个本机真实存在的 main.c", async () => {

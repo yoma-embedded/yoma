@@ -26,9 +26,21 @@ import {
   frameOf,
   hex,
   hexToWords,
+  framesOf,
+  localsOf,
+  clipDetail,
+  asmLinesOf,
+  expressionWrites,
+  expressionCalls,
+  exceptionOf,
+  sourceFilesOf,
   miNumber,
   miString,
+  miTuple,
+  pickRegisters,
   preferredGdbNames,
+  registerNamesOf,
+  registerValuesOf,
   relFrame,
   renderFrame,
   renderFrames,
@@ -37,6 +49,7 @@ import {
   unwrapList,
 } from "../../domain/gdb/index.ts"
 import { readFlashState, sha256File } from "../flash/session.ts"
+import type { GdbInspect } from "./contract.ts"
 import type { GdbSession } from "./mi-session.ts"
 import { findOnPath } from "./servers.ts"
 
@@ -427,4 +440,194 @@ export function locationOf(frame: Frame | undefined): { path: string; line: numb
     return undefined
   }
   return { path: frame.fullname, line }
+}
+
+/** `struct x *` / `foo_t *`(不含 char / void / 函数指针):值是地址,展开的是它指向的东西。 */
+function isAggregatePointer(type: string | undefined): boolean {
+  if (!type || !/\*\s*$/.test(type) || /\*\s*\*\s*$/.test(type)) return false
+  if (/\(/.test(type)) return false
+  return !/^(const\s+)?(volatile\s+)?(unsigned\s+|signed\s+)?(char|void|u?int\d*_t|short|int|long|float|double|bool|_Bool|u8|u16|u32|i8|i16|i32)\b/.test(type)
+}
+
+/**
+ * 这个指针能不能自动解引用。**只在认出是 Cortex-M 时**,且只认代码 / SRAM(0x0000_0001–0x3FFF_FFFF)与
+ * 外部存储器(0x6000_0000–0x9FFF_FFFF):外设区 0x4000_0000–0x5FFF_FFFF 与 0xA000_0000 以上的系统区一律不碰。
+ * 读外设寄存器不是无害的 —— USART 先读 SR 再读 DR 会清掉 RXNE / ORE、丢掉收到的字节,SPI 读 DR 会弹出
+ * RX FIFO;没初始化的指针局部变量里的旧栈值也可能指向外设区,时钟没开的外设在一些芯片上会把调试口读挂。
+ * 而这件事每次停住都会发生,用户什么都没点。
+ */
+export function safeToDereference(value: string | undefined, cortexM: boolean): boolean {
+  if (!cortexM || !value) return false
+  const match = /^(0x[0-9a-f]+)\b/i.exec(value.trim())
+  if (!match) return false
+  const addr = Number(match[1])
+  if (!Number.isFinite(addr) || addr === 0) return false
+  return addr < 0x4000_0000 || (addr >= 0x6000_0000 && addr < 0xa000_0000)
+}
+
+/** 监视表达式最多几条、每条多长:界面的监视列表,不是脚本入口。 */
+export const WATCH_LIMIT = 20
+const WATCH_EXPR_LIMIT = 200
+
+type HaltedReadings = Omit<GdbInspect, "breakpoints" | "breakpointBudget" | "sources">
+
+/**
+ * 手动调试界面要的快照。目标没停时只回断点表,不发 MI —— status 在 continue 等停止的
+ * 那几十秒里必须立刻回来,而 send 是串行的,多一条命令就会排到那次 resume 后面。
+ *
+ * 停住时的读数按 (epoch, 第几次停止, inspectVersion, 帧, 监视列表) 缓存:界面每 2.5 秒轮询一次,
+ * 目标停着不动时第二次起一条 MI 都不发 —— 否则每次几十条命令,真探针上慢,会话日志(模型要读的那份)
+ * 被刷满。任何非 status 的动作(agent 的也算)都会让 inspectVersion 变,缓存随之作废。
+ */
+export async function captureInspect(
+  session: GdbSession,
+  core: CoreProbe,
+  frame?: number,
+  watch: readonly string[] = [],
+): Promise<GdbInspect> {
+  const breakpoints = [...session.breakpoints.entries()].map(([number, bp]) => ({
+    number,
+    kind: bp.kind,
+    location: bp.location,
+    ...(bp.addr ? { addr: bp.addr } : {}),
+    ...(bp.file ? { file: bp.file } : {}),
+    ...(bp.line ? { line: bp.line } : {}),
+    enabled: true,
+  }))
+  const breakpointBudget = {
+    used: session.usedUnits("break"),
+    ...(core.breakpointUnits ? { total: core.breakpointUnits } : {}),
+  }
+  const cachedSources = () => (session.sourceFiles ? { sources: session.sourceFiles } : {})
+  if (session.state !== "halted") {
+    return { frames: [], locals: [], selectedFrame: 0, breakpoints, registers: [], breakpointBudget, ...cachedSources() }
+  }
+  if (!session.sourceFiles) {
+    const reply = await session.send("-file-list-exec-source-files").catch(() => undefined)
+    if (reply?.class === "done") session.sourceFiles = sourceFilesOf(unwrapList(reply.results?.files), existsSync)
+  }
+
+  const list = watch
+    .slice(0, WATCH_LIMIT)
+    .map((item) => item.trim().slice(0, WATCH_EXPR_LIMIT))
+    .filter(Boolean)
+  const key = JSON.stringify([session.epoch, session.stopCount, session.inspectVersion, frame ?? null, list])
+  let readings = session.inspectCache?.key === key ? (session.inspectCache.value as HaltedReadings) : undefined
+  if (!readings) {
+    const version = session.inspectVersion
+    readings = await readHalted(session, core, frame, list)
+    // 读的这几十毫秒里有别的动作插进来(status 不排队)的话,这一份可能半新半旧:不缓存。
+    if (version === session.inspectVersion) session.inspectCache = { key, value: readings }
+  }
+  return { ...readings, breakpoints, breakpointBudget, ...cachedSources() }
+}
+
+async function readHalted(
+  session: GdbSession,
+  core: CoreProbe,
+  frame: number | undefined,
+  watch: readonly string[],
+): Promise<HaltedReadings> {
+  // 不 `-stack-select-frame`:选中帧是 gdb 全局的,和 agent 共用。界面点了第 1 帧,agent 下一句
+  // `p local_sq` 就会在 main 里找 —— QEMU 实测报 "No symbol in current context"。所以只读,
+  // 用 `--thread/--frame` 逐条指定;status 不排队,这样每条命令也各自原子,不怕和 exec 交错。
+  const threads = await session.send("-thread-info").catch(() => undefined)
+  const thread = threads?.class === "done" ? miString(threads.results?.["current-thread-id"]) : undefined
+  const info = await session.send("-stack-info-frame").catch(() => undefined)
+  const current = miNumber(miTuple(info?.results?.frame)?.level) ?? 0
+
+  const framesReply = await session.send("-stack-list-frames 0 7").catch(() => undefined)
+  const raw =
+    framesReply?.class === "done"
+      ? unwrapList(framesReply.results?.stack, "frame")
+          .map(frameOf)
+          .filter((item): item is Frame => item !== undefined)
+      : []
+  const frames = framesOf(raw).map((item) => {
+    const at = locationOf({ fullname: item.fullname, line: item.line !== undefined ? String(item.line) : undefined })
+    return {
+      level: item.level,
+      ...(item.func ? { func: item.func } : {}),
+      ...(item.file ? { file: item.file } : {}),
+      ...(item.line !== undefined ? { line: item.line } : {}),
+      ...(item.addr ? { addr: item.addr } : {}),
+      ...(at ? { path: at.path } : {}),
+    }
+  })
+
+  const wanted = frame !== undefined && thread && frames.some((item) => item.level === frame) ? frame : undefined
+  const selected = wanted ?? current
+  const scope = wanted !== undefined ? ` --thread ${thread} --frame ${wanted}` : ""
+
+  const localsReply = await session.send(`-stack-list-variables${scope} --simple-values`).catch(() => undefined)
+  const locals = localsReply?.class === "done" ? localsOf(unwrapList(localsReply.results?.variables)) : []
+  // --simple-values 只给结构体 / 数组一个类型名。逐个求一次整段值,界面拆成可展开的树。
+  // 最多 8 个:一次停止多几条 MI,几毫秒;再多就该用 -var-create 按需展开了。
+  // 指向结构体的指针(`struct frame *`)同样值得展开:求 `*p` —— 但只在指针落在内存区时(见 safeToDereference)。
+  const cortexM = !!core.core
+  const expandable = locals
+    .filter((item) => item.value === undefined || (isAggregatePointer(item.type) && safeToDereference(item.value, cortexM)))
+    .slice(0, 8)
+  for (const local of expandable) {
+    const expr = local.value === undefined ? local.name : `*${local.name}`
+    const reply = await session
+      .send(`-data-evaluate-expression${scope} "${escapeCString(expr)}"`)
+      .catch(() => undefined)
+    const text = reply?.class === "done" ? miString(reply.results?.value) : undefined
+    if (text) local.detail = clipDetail(text)
+  }
+
+  const namesReply = await session.send("-data-list-register-names").catch(() => undefined)
+  const valuesReply = await session.send(`-data-list-register-values${scope} x`).catch(() => undefined)
+  const names = namesReply?.class === "done" ? registerNamesOf(namesReply.results?.["register-names"]) : []
+  const values =
+    valuesReply?.class === "done" ? registerValuesOf(unwrapList(valuesReply.results?.["register-values"])) : new Map()
+
+  const registers = pickRegisters(names, values)
+  const exception = exceptionOf(registers)
+
+  // 选中帧所在函数的反汇编。-a 取整个函数;地址不在任何符号里(异常入口、坏 PC)时退回按地址窗口取。
+  const pc = frames.find((item) => item.level === selected)?.addr
+  let disassembly: ReturnType<typeof asmLinesOf> = []
+  if (pc && Number(pc) < 0xf0000000) {
+    let reply = await session.send(`-data-disassemble -a ${pc} -- 0`).catch(() => undefined)
+    if (reply?.class !== "done") {
+      reply = await session.send(`-data-disassemble -s ${pc}-32 -e ${pc}+96 -- 0`).catch(() => undefined)
+    }
+    if (reply?.class === "done") disassembly = asmLinesOf(unwrapList(reply.results?.asm_insns), pc)
+  }
+
+  const watches: { expr: string; value?: string; error?: string }[] = []
+  for (const expr of watch) {
+    if (expressionWrites(expr)) {
+      watches.push({ expr, error: "writes the target — not evaluated" })
+      continue
+    }
+    // 函数调用会在目标上真的执行(inferior call):卡住就拖死整个会话,撞上断点就留下一次停止。
+    if (expressionCalls(expr)) {
+      watches.push({ expr, error: "calls a function on the target — not evaluated" })
+      continue
+    }
+    const reply = await session
+      .send(`-data-evaluate-expression${scope} "${escapeCString(expr)}"`)
+      .catch(() => undefined)
+    if (reply?.class === "done") watches.push({ expr, value: clipDetail(miString(reply.results?.value) ?? "") })
+    else watches.push({ expr, error: miString(reply?.results?.msg) ?? "no value" })
+  }
+
+  // gdb 13 之前(mi/20684 修掉之前)`--frame N` 会把选中帧永久留在 N:读完挪回去,新 gdb 上这一条是空操作。
+  if (wanted !== undefined && wanted !== current) {
+    await session.send(`-stack-select-frame ${current}`).catch(() => undefined)
+  }
+
+  return {
+    frames,
+    locals,
+    selectedFrame: selected,
+    registers,
+    ...(exception ? { exception } : {}),
+    ...(pc ? { pc } : {}),
+    ...(disassembly.length ? { disassembly } : {}),
+    ...(watch.length ? { watches } : {}),
+  }
 }
