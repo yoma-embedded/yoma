@@ -91,6 +91,8 @@ export default function NewSessionPage() {
             style={{
               display: desktop() && debug.fullscreen() ? "none" : undefined,
               width: desktop() ? `calc(100% - ${(debug.opened() ? layout.dock.width() : 36) + 8}px)` : undefined,
+              // 同会话页:右栏宽度是存下来的固定值,窗口窄了由右栏让,聊天栏不被挤成一条。
+              "min-width": desktop() && debug.opened() && !debug.fullscreen() ? "min(380px, 50%)" : undefined,
             }}
           >
             <div class="size-full overflow-hidden">

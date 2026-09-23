@@ -93,8 +93,10 @@ function resolveDebugPort(): number {
   const candidates = [mainEntry, join(desktop, "src", "main", "index.ts")]
   for (const file of candidates) {
     if (!existsSync(file)) continue
-    const hit = readFileSync(file, "utf8").match(/remote-debugging-port"\s*,\s*"(\d+)"/)
-    if (hit?.[1]) return Number(hit[1])
+    // `appendSwitch("remote-debugging-port", process.env.YOMA_DEBUG_PORT || "9222")`:缺省值是引号里那个数,
+    // 环境变量给了就用环境变量(这条闸门的子进程继承同一份环境)。
+    const hit = readFileSync(file, "utf8").match(/remote-debugging-port"[^"\n]*"(\d+)"/)
+    if (hit?.[1]) return Number(process.env.YOMA_DEBUG_PORT || hit[1])
   }
   throw new Error(
     `没在 ${candidates.join("、")} 里找到 remote-debugging-port —— main 改了开关写法的话,这条闸门要跟着改`,
@@ -651,9 +653,33 @@ try {
       && level("HardFault") === "error" && level("sched: tick") === "debug"
   })()`),
   )
+  // 2026-09-23:只有日志一台文本仪器时控制台不画自己的页签行,最大化 / 关闭挂在串口那一行工具条右端;
+  // 没连串口时发送行不出现。量的是"日志第一行上面压着多少壳":从前是页签行 + 连接行 + 状态行 ≈ 90px。
+  const consoleChrome = await evaluate<{ head: boolean; close: boolean; send: boolean; above: number }>(`(() => {
+    const root = document.querySelector('[data-component="session-console"]')
+    const lines = root?.querySelector('[data-component="bench-log-panel"] [data-slot="lines"]')
+    return {
+      head: !!root?.querySelector('[data-slot="head"]'),
+      close: !!root?.querySelector('[data-component="serial-controls"] [data-slot="toolbar"] [data-slot="actions"] button:last-child'),
+      send: !!root?.querySelector('[data-slot="send-bar"]'),
+      above: root && lines ? Math.round(lines.getBoundingClientRect().top - root.getBoundingClientRect().top) : -1,
+    }
+  })()`)
+  check(
+    "底部控制台只有日志一台时没有自己的页签行,关闭按钮在串口工具条上,没连串口时没有发送行",
+    !consoleChrome.head && consoleChrome.close && !consoleChrome.send,
+    JSON.stringify(consoleChrome),
+  )
+  check(
+    "日志第一行上面只压着一行工具条(≤ 56px)",
+    consoleChrome.above > 0 && consoleChrome.above <= 56,
+    `${consoleChrome.above}px`,
+  )
   // 收回去:下面那一串示波器操作要按坐标点画布,右栏高度与从前一致时最稳。
-  // 顺手也把"关得掉"这一半验了 —— 开合是同一个按钮。
+  // 顺手也把"关得掉"这一半验了 —— 用的是工具条上那颗关闭(页签行没了之后它是控制台里唯一的关闭)。
   await evaluate(`(() => {
+    const close = document.querySelector('[data-component="session-console"] [data-slot="actions"] button:last-child')
+    if (close) { close.click(); return true }
     const toggle = document.querySelector('[data-component="session-status-bar"] button[data-slot="console-toggle"]')
     if (toggle && toggle.getAttribute("aria-pressed") === "true") toggle.click()
     return true
@@ -662,31 +688,53 @@ try {
     "底部控制台关得掉",
     await waitFor(`!document.querySelector('[data-component="session-console"]')`, APPEAR_TIMEOUT_MS),
   )
-  // 逻辑分析仪现在**按需**露出(仪器注册表:核心 ∪ 本会话用过 ∪ 磁盘上有数据 ∪ 用户钉住)。
-  // 这份种出来的工程只有示波器采集,所以 LA 默认藏在"+ 仪器"里 —— 先钉住它再断言面板。
-  // 钉住是落 localStorage 的,所以第二次跑时它已经在了,两种情形都得认。
-  const pinnedLa = await evaluate<string>(`(() => {
-    const tab = document.querySelector('[data-component="instrument-rail"] button[data-slot="tab"][data-instrument="la"]')
-    if (tab) { tab.click(); return "already" }
-    const button = document.querySelector('[data-component="bench-instrument-picker"] button[data-instrument="la"]')
+  // 右栏的仪器只从左侧栏的「仪器」挑(2026-09-23 起右栏不再有自己那排页签与「+ 仪器」):
+  // f152305 起右栏缺省收着,点左侧栏的示波器把它打开。已经开着就不动 —— 同一个按钮再点一次是收起。
+  await evaluate(`(() => {
+    if (!document.querySelector('[data-component="scope-body"]'))
+      document.querySelector('[data-component="workbench-nav"] button[data-instrument="scope"]')?.click()
+    return true
+  })()`)
+  check(
+    "左侧栏的仪器入口打得开右栏(instrument-rail)",
+    await waitFor(`!!document.querySelector('[data-component="instrument-rail"]')`, APPEAR_TIMEOUT_MS),
+  )
+  check(
+    "右栏不再有自己的仪器页签与「+ 仪器」",
+    await evaluate<boolean>(`(() => {
+      const rail = document.querySelector('[data-component="instrument-rail"]')
+      return !!rail && !rail.querySelector('[data-slot="tablist"], [data-component="bench-instrument-picker"]')
+    })()`),
+  )
+  check(
+    "右栏顶上那一行写着当前仪器的名字",
+    await waitFor(
+      `!!document.querySelector('#review-panel button[aria-label="仪器"], #review-panel button[aria-label="Instruments"]')?.textContent?.match(/示波器|Oscilloscope/)`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  // 逻辑分析仪按需露出(这份种出来的工程只有示波器采集),左侧栏的入口总在,点它就钉住并摊开。
+  const pickedLa = await evaluate<string>(`(() => {
+    if (document.querySelector('[data-component="la-body"]')) return "already"
+    const button = document.querySelector('[data-component="workbench-nav"] button[data-instrument="la"]')
     if (!button) return "no-button"
     button.click()
     return "clicked"
   })()`)
-  check("「+ 仪器」里钉得住逻辑分析仪", pinnedLa !== "no-button", pinnedLa)
+  check("左侧栏切得到逻辑分析仪", pickedLa !== "no-button", pickedLa)
   check(
     "右栏逻辑分析仪仪器体在位(la-body)",
     await waitFor(`!!document.querySelector('[data-component="la-body"]')`, APPEAR_TIMEOUT_MS),
   )
-  // 右栏一次只显示一台波形仪器(页内小页签),所以断言示波器之前先切回去。
+  // 右栏一次只显示一台波形仪器,所以断言示波器之前先切回去。
   const pickedScope = await evaluate<string>(`(() => {
     if (document.querySelector('[data-component="scope-body"]')) return "already"
-    const tab = document.querySelector('[data-component="instrument-rail"] button[data-slot="tab"][data-instrument="scope"]')
-    if (!tab) return "no-tab"
-    tab.click()
+    const button = document.querySelector('[data-component="workbench-nav"] button[data-instrument="scope"]')
+    if (!button) return "no-button"
+    button.click()
     return "clicked"
   })()`)
-  check("右栏页签切得回示波器", pickedScope !== "no-tab", pickedScope)
+  check("左侧栏切得回示波器", pickedScope !== "no-button", pickedScope)
   check(
     "示波器历史采集面板读取离线证据",
     await waitFor(

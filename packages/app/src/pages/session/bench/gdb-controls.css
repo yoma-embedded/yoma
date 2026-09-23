@@ -1,47 +1,172 @@
+/*
+ * 调试器面板。密度照 GDB TUI:一行 20px、等宽 12px,信息同时摆出来,不藏在页签后面;
+ * 按钮只剩工具条上的一排图标。颜色只用 bench 的几个语义色:
+ *   active = 当前行 / 当前指令 / 选中帧,fail = 断点圆点 / 异常,warn = 刚变过的值,ok = 继续。
+ */
+
+/* ── 高度链:占满右栏,工具条和控制台钉住,中间两块各自滚。整块面板不滚,否则每停一次都要滚回去找「单步」。 */
+[data-component="instrument-rail"] [data-slot="body"]:has(> [data-component="bench-gdb-panel"]) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+[data-component="instrument-rail"] [data-slot="body"] > [data-component="bench-gdb-panel"],
+[data-component="bench-gdb-panel"][data-chrome="bare"] {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 [data-component="gdb-controls"] {
   --bench-ink: var(--text-strong);
   --bench-muted: var(--text-base);
+  --gdb-row: 20px;
+  --gdb-current: color-mix(in oklch, var(--bench-active) 16%, transparent);
+  --gdb-changed: color-mix(in oklch, var(--bench-warn) 14%, transparent);
+  container: gdb / inline-size;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 6px 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--bench-ink);
 }
-[data-component="gdb-controls"] [data-slot="status"] {
+[data-component="gdb-controls"] :is(button, input, select, summary):focus-visible {
+  outline: 2px solid var(--bench-active);
+  outline-offset: -2px;
+}
+
+/* ── 工具条 + 状态行 ─────────────────────────────────────────────────────── */
+[data-component="gdb-controls"] [data-slot="toolbar"] {
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  min-height: 28px;
+}
+[data-component="gdb-controls"] [data-slot="tools"] {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 1px;
+  border: 1px solid var(--bench-line);
+  border-radius: 5px;
+  background: var(--bench-surface);
+}
+[data-component="gdb-controls"] button[data-slot="tool"] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--bench-ink);
+  cursor: pointer;
+}
+[data-component="gdb-controls"] button[data-slot="tool"]:hover:enabled {
+  background: var(--bench-surface-raised);
+}
+[data-component="gdb-controls"] button[data-slot="tool"]:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+[data-component="gdb-controls"] button[data-slot="tool"][data-tone="go"] {
+  color: var(--bench-ok);
+}
+[data-component="gdb-controls"] button[data-slot="tool"][data-tone="stop"] {
+  color: var(--bench-fail);
+}
+[data-component="gdb-controls"] [data-slot="tool-text"] {
+  font-family: var(--bench-mono);
+  font-size: 11px;
+  font-weight: 600;
+}
+[data-component="gdb-controls"] [data-slot="sep"] {
+  width: 1px;
+  height: 16px;
+  margin: 0 3px;
+  background: var(--bench-line);
+}
+[data-component="gdb-controls"] [data-slot="where"] {
+  flex: 1 1 260px;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: var(--bench-mono);
   color: var(--bench-muted);
 }
-[data-component="gdb-controls"] [data-slot="status"] strong {
-  font-weight: 500;
+[data-component="gdb-controls"] [data-slot="where"] strong {
+  font-family: var(--font-family-sans, inherit);
+  font-weight: 600;
   color: var(--bench-ink);
 }
-[data-component="gdb-controls"] [data-slot="connection"] {
-  font-family: var(--bench-mono);
+[data-component="gdb-controls"] [data-slot="where"] [data-slot="func"] {
+  color: var(--bench-ink);
+  font-weight: 600;
 }
+/* 挤不下时先让连接地址让位,再让函数名省略;文件:行 与 PC 是停在哪的答案,不省略。 */
+[data-component="gdb-controls"] [data-slot="where"] > * {
+  flex: none;
+}
+[data-component="gdb-controls"] [data-slot="where"] :is([data-slot="func"], [data-slot="conn"]) {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+[data-component="gdb-controls"] [data-slot="where"] [data-slot="conn"] {
+  flex-shrink: 100;
+}
+[data-component="gdb-controls"] [data-slot="where"] [data-slot="exception"] {
+  padding: 0 6px;
+  border-radius: 3px;
+  color: var(--bench-fail);
+  background: color-mix(in oklch, var(--bench-fail) 14%, transparent);
+  font-weight: 600;
+}
+[data-component="gdb-controls"] [data-slot="where"] [data-slot="agent"] {
+  color: var(--bench-warn);
+  font-family: var(--font-family-sans, inherit);
+}
+[data-component="gdb-controls"] [data-slot="where"] [data-slot="warn"] {
+  color: var(--bench-warn);
+}
+[data-component="gdb-controls"] [data-slot="where"] [data-slot="conn"] {
+  margin-left: auto;
+  color: var(--bench-faint);
+}
+
+/* ── 连接表单(没连上时) ─────────────────────────────────────────────────── */
 [data-component="gdb-controls"] [data-slot="connect"] {
+  flex: none;
   display: flex;
   align-items: end;
   flex-wrap: wrap;
   gap: 10px;
 }
-[data-component="gdb-controls"] label {
+[data-component="gdb-controls"] [data-slot="connect"] label {
   display: flex;
   flex-direction: column;
   gap: 4px;
   color: var(--bench-muted);
   font-size: 11px;
 }
-[data-component="gdb-controls"] label[data-slot="elf"],
-[data-component="gdb-controls"] label[data-slot="config"] {
+[data-component="gdb-controls"] [data-slot="connect"] :is(label[data-slot="elf"], label[data-slot="config"]) {
   flex: 1;
   min-width: 200px;
 }
-[data-component="gdb-controls"] input,
-[data-component="gdb-controls"] select {
+[data-component="gdb-controls"] [data-slot="connect"] :is(input:not([type="checkbox"]), select) {
   min-width: 0;
-  height: 30px;
+  height: 28px;
   border: 1px solid var(--bench-line-strong);
   border-radius: 5px;
   padding: 0 8px;
@@ -50,39 +175,36 @@
   font-family: var(--bench-mono);
   font-size: 12px;
 }
-[data-component="gdb-controls"] button {
-  min-height: 30px;
-  padding: 0 10px;
-  border: 1px solid var(--bench-line-strong);
-  border-radius: 5px;
-  color: var(--bench-ink);
-  background: var(--bench-surface-raised);
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
+[data-component="gdb-controls"] [data-slot="connect-row"] {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
-[data-component="gdb-controls"] button[data-primary] {
+[data-component="gdb-controls"] [data-slot="connect"] label[data-slot="check"] {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+[data-component="gdb-controls"] [data-slot="connect"] button[data-primary] {
+  height: 28px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 5px;
   background: var(--bench-active);
   color: var(--background-base);
-  border-color: transparent;
+  font-size: 12px;
+  cursor: pointer;
 }
-[data-component="gdb-controls"] button:hover:enabled {
-  border-color: var(--bench-active);
-}
-[data-component="gdb-controls"] button:disabled {
+[data-component="gdb-controls"] [data-slot="connect"] button:disabled {
   opacity: 0.45;
   cursor: default;
-}
-[data-component="gdb-controls"] :is(button, input, select, summary):focus-visible {
-  outline: 2px solid var(--bench-active);
-  outline-offset: 2px;
 }
 [data-component="gdb-controls"] [data-slot="advanced"] {
   flex-basis: 100%;
   color: var(--bench-muted);
   font-size: 11px;
 }
-[data-component="gdb-controls"] summary {
+[data-component="gdb-controls"] [data-slot="advanced"] summary {
   cursor: pointer;
   width: fit-content;
 }
@@ -90,44 +212,574 @@
   margin-top: 8px;
   max-width: 480px;
 }
-[data-component="gdb-controls"] label[data-slot="check"] {
-  flex-direction: row;
-  align-items: center;
-}
-[data-component="gdb-controls"] [data-slot="run-controls"] {
-  display: flex;
-  flex-wrap: wrap;
+
+/* ── 工作区:代码 + 信息分区。窄时上下叠,宽时左右并排。 ─────────────────── */
+[data-component="gdb-controls"] [data-slot="workspace"] {
+  flex: 1 1 auto;
+  min-height: 240px;
+  display: grid;
+  grid-template-rows: minmax(140px, 1fr) minmax(140px, 44%);
   gap: 6px;
 }
-[data-component="gdb-controls"] [data-slot="commands"] {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+@container gdb (min-width: 720px) {
+  [data-component="gdb-controls"] [data-slot="workspace"] {
+    grid-template-rows: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) clamp(280px, 38%, 460px);
+  }
 }
-[data-component="gdb-controls"] [data-slot="commands"] form {
-  display: flex;
-  flex: 1;
-  min-width: 250px;
-  gap: 6px;
-}
-[data-component="gdb-controls"] [data-slot="commands"] input {
-  flex: 1;
-}
-[data-component="gdb-controls"] [data-slot="error"] {
-  color: var(--bench-fail);
-  font-size: 12px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-[data-component="gdb-controls"] [data-slot="output"] {
+[data-component="gdb-controls"] :is([data-slot="code"], [data-slot="sidebar"], [data-slot="console"]) {
+  min-height: 0;
   border: 1px solid var(--bench-line);
-  background: var(--bench-surface);
-  padding: 10px 12px;
   border-radius: 5px;
+  background: var(--bench-surface);
+  overflow: hidden;
+}
+
+/* 代码区 */
+[data-component="gdb-controls"] [data-slot="code"] {
+  display: flex;
+  flex-direction: column;
+}
+[data-component="gdb-controls"] [data-slot="code-head"] {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 6px;
+  border-bottom: 1px solid var(--bench-line);
+  background: var(--bench-surface-raised);
+  min-width: 0;
+}
+[data-component="gdb-controls"] [data-slot="segmented"] {
+  flex: none;
+  display: flex;
+  border: 1px solid var(--bench-line);
+  border-radius: 4px;
+  overflow: hidden;
+}
+[data-component="gdb-controls"] [data-slot="segmented"] button {
+  height: 20px;
+  padding: 0 8px;
+  border: none;
+  background: transparent;
+  color: var(--bench-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+[data-component="gdb-controls"] [data-slot="segmented"] button[aria-selected="true"] {
+  background: var(--bench-surface);
+  color: var(--bench-ink);
+  font-weight: 600;
+}
+[data-component="gdb-controls"] [data-slot="crumb"] {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 4px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--bench-ink);
   font-family: var(--bench-mono);
   font-size: 12px;
-  line-height: 1.7;
+  text-align: left;
+  cursor: pointer;
+}
+[data-component="gdb-controls"] button[data-slot="crumb"]:hover:enabled {
+  background: var(--bench-surface);
+}
+[data-component="gdb-controls"] [data-slot="crumb"][data-static] {
+  cursor: default;
+}
+[data-component="gdb-controls"] [data-slot="caret"] {
+  margin-left: 4px;
+  color: var(--bench-faint);
+}
+[data-component="gdb-controls"] [data-slot="faint"] {
+  color: var(--bench-muted);
+}
+[data-component="gdb-controls"] [data-slot="crumb-input"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--bench-active);
+  border-radius: 4px;
+  background: var(--bench-surface);
+  color: var(--bench-ink);
+  font-family: var(--bench-mono);
+  font-size: 12px;
+}
+[data-component="gdb-controls"] button[data-slot="back"] {
+  flex: none;
+  margin-left: auto;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid var(--bench-line-strong);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--bench-active);
+  font-size: 11px;
+  cursor: pointer;
+}
+[data-component="gdb-controls"] [data-slot="scroll"] {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  font-family: var(--bench-mono);
+  font-size: 12px;
+  line-height: var(--gdb-row);
+}
+[data-component="gdb-controls"] [data-slot="scroll"] [data-slot="row"] {
+  display: flex;
+  align-items: center;
+  min-width: max-content;
+  height: var(--gdb-row);
+}
+[data-component="gdb-controls"] [data-slot="row"][data-current="true"] {
+  background: var(--gdb-current);
+}
+[data-component="gdb-controls"] [data-slot="row"][data-focus="true"]:not([data-current="true"]) {
+  background: var(--gdb-changed);
+}
+[data-component="gdb-controls"] [data-slot="row"] code {
+  padding-right: 16px;
+  white-space: pre;
+  font-family: inherit;
+}
+[data-component="gdb-controls"] [data-slot="mark"] {
+  flex: none;
+  width: 14px;
+  color: var(--bench-active);
+  font-size: 10px;
+  text-align: center;
+}
+[data-component="gdb-controls"] button[data-slot="gutter"] {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  min-width: 52px;
+  height: var(--gdb-row);
+  padding: 0 4px 0 6px;
+  border: none;
+  background: transparent;
+  color: var(--bench-faint);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+[data-component="gdb-controls"] [data-kind="asm"] button[data-slot="gutter"] {
+  min-width: 22px;
+}
+[data-component="gdb-controls"] button[data-slot="gutter"]:disabled {
+  cursor: default;
+}
+[data-component="gdb-controls"] [data-slot="row"][data-current="true"] button[data-slot="gutter"] {
+  color: var(--bench-active);
+  font-weight: 600;
+}
+/* 断点圆点:实心 = 已插进目标;空心 = 目标在跑,下次停住时再插;悬停出一个淡圈提示"点这里下断点"。 */
+[data-component="gdb-controls"] [data-slot="dot"] {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid transparent;
+}
+[data-component="gdb-controls"] button[data-slot="gutter"]:hover:enabled [data-slot="dot"] {
+  border-color: color-mix(in oklch, var(--bench-fail) 50%, transparent);
+}
+[data-component="gdb-controls"] :is(button[data-set="true"], [data-slot="bp-row"]) [data-slot="dot"] {
+  background: var(--bench-fail);
+  border-color: var(--bench-fail);
+}
+[data-component="gdb-controls"] :is(button[data-pending="true"] [data-slot="dot"], [data-slot="dot"][data-hollow]) {
+  background: transparent;
+  border-color: var(--bench-fail);
+}
+[data-component="gdb-controls"] [data-slot="bp-row"] [data-slot="dot"][data-kind="watch"] {
+  border-radius: 1px;
+  background: var(--bench-warn);
+  border-color: var(--bench-warn);
+}
+[data-component="gdb-controls"] [data-slot="addr"] {
+  flex: none;
+  width: 11ch;
+  color: var(--bench-muted);
+}
+[data-component="gdb-controls"] [data-slot="sym"] {
+  flex: none;
+  min-width: 7ch;
+  padding-right: 12px;
+  color: var(--bench-faint);
+}
+[data-component="gdb-controls"] [data-slot="empty"] {
+  margin: 0;
+  padding: 4px 18px;
+  color: var(--bench-muted);
+  font-family: var(--font-family-sans, inherit);
+  font-size: 12px;
+  line-height: 20px;
+}
+
+/* 信息分区 */
+[data-component="gdb-controls"] [data-slot="sidebar"] {
+  overflow-y: auto;
+  font-family: var(--bench-mono);
+  line-height: var(--gdb-row);
+}
+[data-component="gdb-controls"] [data-slot="section"] + [data-slot="section"] {
+  border-top: 1px solid var(--bench-line);
+}
+[data-component="gdb-controls"] button[data-slot="section-head"] {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 24px;
+  padding: 0 8px 0 4px;
+  border: none;
+  background: var(--bench-surface-raised);
+  color: var(--bench-ink);
+  font-family: var(--font-family-sans, inherit);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+[data-component="gdb-controls"] button[data-slot="section-head"] [data-slot="caret"] {
+  width: 12px;
+  margin: 0;
+  color: var(--bench-muted);
+  font-size: 10px;
+  text-align: center;
+}
+[data-component="gdb-controls"] button[data-slot="section-head"] [data-slot="meta"] {
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--bench-muted);
+  font-family: var(--bench-mono);
+  font-weight: 400;
+}
+[data-component="gdb-controls"] [data-slot="section-body"] {
+  padding: 2px 0 4px;
+}
+
+/* 一行变量:名字 | 值。结构体是 details,展开是缩进的同样的行。 */
+[data-component="gdb-controls"] :is([data-slot="var"], [data-slot="var-tree"] > summary) {
+  display: grid;
+  grid-template-columns: minmax(64px, 40%) minmax(0, 1fr);
+  gap: 8px;
+  min-height: var(--gdb-row);
+  padding: 0 8px 0 18px;
+  white-space: nowrap;
+}
+[data-component="gdb-controls"] [data-slot="var-tree"] > summary {
+  position: relative;
+  list-style: none;
+  cursor: pointer;
+}
+[data-component="gdb-controls"] [data-slot="var-tree"] > summary::-webkit-details-marker {
+  display: none;
+}
+[data-component="gdb-controls"] [data-slot="var-tree"] > summary::before {
+  content: "▸";
+  position: absolute;
+  left: 6px;
+  color: var(--bench-muted);
+  font-size: 10px;
+}
+[data-component="gdb-controls"] [data-slot="var-tree"][open] > summary::before {
+  content: "▾";
+}
+[data-component="gdb-controls"] [data-slot="var-children"] {
+  margin-left: 12px;
+  border-left: 1px solid var(--bench-line);
+}
+[data-component="gdb-controls"] [data-slot="name"] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--bench-muted);
+}
+[data-component="gdb-controls"] [data-slot="value"] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--bench-ink);
+}
+[data-component="gdb-controls"] [data-slot="value"][data-faint] {
+  color: var(--bench-faint);
+}
+[data-component="gdb-controls"] [data-changed="true"] {
+  background: var(--gdb-changed);
+}
+[data-component="gdb-controls"] [data-changed="true"] [data-slot="value"] {
+  color: var(--bench-warn);
+  font-weight: 600;
+}
+[data-component="gdb-controls"] [data-slot="var"][data-error="true"] [data-slot="value"] {
+  color: var(--bench-fail);
+  font-family: var(--font-family-sans, inherit);
+}
+
+/* 调用栈 */
+[data-component="gdb-controls"] button[data-slot="frame"],
+[data-component="gdb-controls"] [data-slot="bp-main"] {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: var(--gdb-row);
+  padding: 0 8px 0 10px;
+  border: none;
+  background: transparent;
+  color: var(--bench-ink);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+[data-component="gdb-controls"] button[data-slot="frame"]:hover:enabled,
+[data-component="gdb-controls"] button[data-slot="bp-main"]:hover:enabled {
+  background: var(--bench-surface-raised);
+}
+[data-component="gdb-controls"] button[data-slot="frame"]:disabled {
+  cursor: default;
+}
+[data-component="gdb-controls"] button[data-slot="frame"][data-selected="true"] {
+  background: var(--gdb-current);
+}
+[data-component="gdb-controls"] button[data-slot="frame"][data-handler="true"] {
+  color: var(--bench-warn);
+  font-style: italic;
+}
+[data-component="gdb-controls"] :is(button[data-slot="frame"], [data-slot="bp-main"]) [data-slot="level"] {
+  color: var(--bench-faint);
+}
+[data-component="gdb-controls"] :is(button[data-slot="frame"], [data-slot="bp-main"]) [data-slot="func"] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-component="gdb-controls"] :is(button[data-slot="frame"], [data-slot="bp-main"]) [data-slot="where"] {
+  color: var(--bench-muted);
+  white-space: nowrap;
+}
+
+/* 寄存器:两列(够宽时三列),TUI 那张表的样子。 */
+[data-component="gdb-controls"] [data-slot="regs"] {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  padding: 0 8px 0 18px;
+  column-gap: 12px;
+}
+[data-component="gdb-controls"] [data-slot="reg"] {
+  display: flex;
+  gap: 8px;
+  padding: 0 4px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+[data-component="gdb-controls"] [data-slot="reg"] [data-slot="name"] {
+  flex: none;
+  width: 9ch; /* faultmask / basepri 要放得下 */
+}
+
+/* 断点与监视:行尾的 ×,悬停才出来。 */
+[data-component="gdb-controls"] :is([data-slot="bp-row"], [data-slot="watch-row"]) {
+  position: relative;
+}
+[data-component="gdb-controls"] [data-slot="bp-row"] [data-slot="bp-main"] {
+  grid-template-columns: 12px 22px minmax(0, 1fr) auto;
+  padding-right: 26px;
+}
+[data-component="gdb-controls"] [data-slot="bp-row"] span[data-slot="bp-main"] {
+  cursor: default;
+}
+[data-component="gdb-controls"] [data-slot="bp-row"][data-hit="true"] [data-slot="bp-main"] {
+  background: var(--gdb-current);
+}
+[data-component="gdb-controls"] [data-slot="bp-row"][data-pending="true"] {
+  color: var(--bench-muted);
+}
+[data-component="gdb-controls"] [data-slot="watch-row"] :is([data-slot="var"], [data-slot="var-tree"] > summary) {
+  padding-right: 26px;
+}
+[data-component="gdb-controls"] button[data-slot="remove"] {
+  position: absolute;
+  top: 0;
+  right: 4px;
+  width: 18px;
+  height: var(--gdb-row);
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--bench-muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+}
+[data-component="gdb-controls"] :is([data-slot="bp-row"], [data-slot="watch-row"]):hover button[data-slot="remove"],
+[data-component="gdb-controls"] button[data-slot="remove"]:focus-visible {
+  opacity: 1;
+}
+[data-component="gdb-controls"] button[data-slot="remove"]:hover:enabled {
+  color: var(--bench-fail);
+}
+[data-component="gdb-controls"] form[data-slot="add"] input {
+  width: 100%;
+  height: var(--gdb-row);
+  padding: 0 8px 0 18px;
+  border: none;
+  background: transparent;
+  color: var(--bench-ink);
+  font-family: var(--bench-mono);
+  font-size: 12px;
+}
+[data-component="gdb-controls"] form[data-slot="add"] input::placeholder {
+  color: var(--bench-faint);
+}
+[data-component="gdb-controls"] form[data-slot="add"] input:focus {
+  outline: none;
+  background: var(--bench-surface-raised);
+}
+[data-component="gdb-controls"] [data-section="history"] [data-slot="section-body"] {
+  padding: 4px 8px;
+  font-family: var(--font-family-sans, inherit);
+}
+
+/* ── 调试控制台 ──────────────────────────────────────────────────────────── */
+[data-component="gdb-controls"] [data-slot="console"] {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  height: 150px;
+}
+[data-component="gdb-controls"]:not([data-connected]) [data-slot="console"] {
+  height: 120px;
+}
+[data-component="gdb-controls"] [data-slot="console-log"] {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 8px;
+}
+[data-component="gdb-controls"] [data-slot="entry"] {
+  margin: 0;
+  font-family: var(--bench-mono);
+  font-size: 12px;
+  line-height: 18px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   color: var(--bench-ink);
+}
+[data-component="gdb-controls"] [data-slot="entry"][data-kind="cmd"] {
+  margin-top: 4px;
+  color: var(--bench-active);
+}
+[data-component="gdb-controls"] [data-slot="entry"][data-kind="cmd"]:first-child {
+  margin-top: 0;
+}
+[data-component="gdb-controls"] [data-slot="entry"][data-kind="err"] {
+  color: var(--bench-fail);
+}
+[data-component="gdb-controls"] [data-slot="entry"][data-kind="stop"] {
+  margin-top: 4px;
+  padding-left: 6px;
+  border-left: 2px solid var(--bench-active);
+}
+[data-component="gdb-controls"] [data-slot="console-hint"] {
+  margin: 0;
+  color: var(--bench-faint);
+  font-size: 12px;
+  line-height: 18px;
+}
+[data-component="gdb-controls"] form[data-slot="prompt"] {
+  flex: none;
+  display: flex;
+  align-items: center;
+  border-top: 1px solid var(--bench-line);
+}
+[data-component="gdb-controls"] [data-slot="ps"] {
+  flex: none;
+  padding: 0 6px 0 8px;
+  color: var(--bench-active);
+  font-family: var(--bench-mono);
+  font-size: 12px;
+}
+[data-component="gdb-controls"] form[data-slot="prompt"] input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px 0 0;
+  border: none;
+  background: transparent;
+  color: var(--bench-ink);
+  font-family: var(--bench-mono);
+  font-size: 12px;
+}
+[data-component="gdb-controls"] form[data-slot="prompt"] input:focus {
+  outline: none;
+}
+[data-component="gdb-controls"] form[data-slot="prompt"] input::placeholder {
+  color: var(--bench-faint);
+}
+[data-component="gdb-controls"] button[data-slot="console-toggle"] {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-left: 1px solid var(--bench-line);
+  background: transparent;
+  color: var(--bench-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+[data-component="gdb-controls"] button[data-slot="console-toggle"]:hover {
+  color: var(--bench-ink);
+  background: var(--bench-surface-raised);
+}
+/* 收起:只留最后一条输出的第一行,看得到"刚才那条命令怎么样了"。 */
+[data-component="gdb-controls"] [data-slot="console"][data-collapsed="true"] {
+  height: auto;
+}
+[data-component="gdb-controls"] [data-collapsed="true"] [data-slot="console-log"] {
+  flex: none;
+  height: 22px;
+  overflow: hidden;
+  padding-top: 2px;
+}
+[data-component="gdb-controls"] [data-collapsed="true"] [data-slot="entry"]:not(:last-child),
+[data-component="gdb-controls"] [data-collapsed="true"] [data-slot="console-hint"] {
+  display: none;
+}
+[data-component="gdb-controls"] [data-collapsed="true"] [data-slot="entry"]:last-child {
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  border-left: none;
+  padding-left: 0;
+}
+/* 上一次停住时的读数(单步 / 继续之后新读数还没到):变淡,不清空 —— 清空的话每按一下 F10 就闪一次。 */
+[data-component="gdb-controls"] [data-stale="true"] :is([data-slot="section-body"], [data-slot="row"]) {
+  opacity: 0.5;
+  transition: opacity 120ms;
+}
+/* agent 的那一次调用:和自己敲的 (gdb) 区分开,看得出"这一步是它走的"。 */
+[data-component="gdb-controls"] [data-slot="entry"][data-kind="agent"] {
+  margin-top: 4px;
+  color: var(--bench-warn);
 }

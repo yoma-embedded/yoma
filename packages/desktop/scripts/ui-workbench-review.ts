@@ -166,8 +166,8 @@ async function surfaceState() {
   return page!.evaluate<string>(`JSON.stringify({
     console: !!document.querySelector('[data-component="session-console"]'),
     review: !!document.querySelector("#review-panel"),
-    tabs: Array.from(document.querySelectorAll('[data-component="session-console"] [data-instrument], [data-component="instrument-rail"] [data-instrument]'))
-      .map(element => [element.getAttribute("data-instrument"), element.getAttribute("aria-selected")]),
+    tabs: Array.from(document.querySelectorAll('[data-component="session-console"] [data-instrument], [data-component="workbench-nav"] [data-instrument]'))
+      .map(element => [element.getAttribute("data-instrument"), element.getAttribute("aria-selected") ?? element.getAttribute("aria-pressed")]),
   })`)
 }
 
@@ -264,12 +264,15 @@ try {
     await openSession(seed.sessions[0]!.title)
     const consolePanel = page.locator('[data-component="session-console"]')
     await consolePanel.waitFor()
-    for (const instrument of ["log", "gdb"]) {
+    // 控制台今天只有日志一台文本仪器,不画页签行(调试器在右栏);有页签时才验"重复点页签不收起"。
+    for (const instrument of ["log"]) {
       const tab = consolePanel.locator(`[role="tab"][data-instrument="${instrument}"]`)
-      await tab.click()
-      await tab.click()
+      if (await tab.count()) {
+        await tab.click()
+        await tab.click()
+      }
       if (!(await consolePanel.isVisible())) throw new Error(`${instrument}: repeated tab click hid console`)
-      checks.push(`${instrument}: visible tab remains open after repeated click`)
+      checks.push(`${instrument}: console stays open`)
       await capture(`10-${instrument}`)
       if (instrument === "log") {
         const serial = consolePanel.locator('[data-component="serial-controls"]')
@@ -341,7 +344,8 @@ while True:
           await serial.screenshot({ path: join(out, "10-serial-panel.png") })
           checks.push("serial: production UI → contextBridge → kernel → PTY exact UTF-8/CRLF, Hex 00 FF, Ctrl+C 03; reply visible; typing sends nothing")
           await serial.locator('[data-slot="connect"]').click()
-          await page.waitForFunction(`document.querySelector('[data-component="serial-controls"] [data-slot="ctrl-c"]')?.disabled === true`)
+          // 断开之后发送行整条收起(没连着时它只占日志的地方)。
+          await page.waitForFunction(`!document.querySelector('[data-component="serial-controls"] [data-slot="send-bar"]')`)
           serialDevice.kill("SIGTERM")
           serialDevice = undefined
         }
@@ -349,8 +353,9 @@ while True:
       }
     }
     await typingCheck("11-session")
-    const scopeTab = page.locator('[data-component="instrument-rail"] [data-instrument="scope"]').first()
-    if (await scopeTab.count()) await scopeTab.click()
+    // 右栏没有自己的页签了,仪器只从左侧栏挑;示波器已经摊开时别再点(同一个按钮再点是收起)。
+    if (!(await page.locator('[data-component="scope-body"]').count()))
+      await page.locator('[data-component="workbench-nav"] button[data-instrument="scope"]').click()
     const plot = page.locator('[data-component="scope-waveform"] [data-slot="plot"]')
     await plot.waitFor()
     await page.waitForFunction(
@@ -417,7 +422,7 @@ while True:
     await home()
     await page.locator('[data-component="workbench-launcher"] button[data-instrument="log"]').click()
     await page.locator('[data-component="serial-controls"]').waitFor()
-    const toolbarLog = page.locator('[data-component="workbench-toolbar"] button[data-instrument="log"]')
+    const toolbarLog = page.locator('[data-component="workbench-nav"] button[data-instrument="log"]')
     await toolbarLog.click()
     await toolbarLog.click()
     if (!(await page.locator('[data-component="session-console"]').isVisible()))

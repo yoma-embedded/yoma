@@ -203,7 +203,8 @@ const main = Effect.gen(function* () {
   app.commandLine.appendSwitch("proxy-bypass-list", "<-loopback>")
   const features = app.commandLine.getSwitchValue("enable-features")
   app.commandLine.appendSwitch("enable-features", features ? `${jsCallStackFeature},${features}` : jsCallStackFeature)
-  if (!app.isPackaged) app.commandLine.appendSwitch("remote-debugging-port", "9222")
+  // 开发构建开调试端口给 e2e 与截图工装用。YOMA_DEBUG_PORT 可以换:工装要和开着的 dev:desktop 同时跑时,两边都占 9222 就互相卡住。
+  if (!app.isPackaged) app.commandLine.appendSwitch("remote-debugging-port", process.env.YOMA_DEBUG_PORT || "9222")
 
   if (!app.requestSingleInstanceLock()) {
     app.quit()

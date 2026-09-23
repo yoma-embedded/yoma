@@ -241,6 +241,21 @@
   overflow: hidden;
 }
 
+/**
+ * 没有页签行时(只有一台文本仪器):仪器自己最上面那一行就是控制台的顶,上边距只留出拖高手柄的那 4px。
+ * 最大化 / 关闭挂在仪器的工具条右端;仪器不认 `chrome` 时退回右上角浮一组。
+ */
+[data-component="session-console"] [data-slot="body"][data-bare="true"] {
+  position: relative;
+  padding: 6px 8px 6px;
+}
+[data-component="session-console"] [data-slot="floating-actions"] {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  z-index: 1;
+}
+
 /** 日志:控制台这个框本身就是仪器的边框,行区不用再画一个。 */
 [data-component="session-console"] [data-component="bench-log-panel"] {
   flex: 1 1 auto;
@@ -471,62 +486,11 @@
   pointer-events: none;
 }
 
-/** 一台仪器时不出页签行 —— 一个孤零零的页签只是噪声。 */
-[data-component="instrument-rail"] [data-slot="tablist"] {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--bench-line);
-  min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-[data-component="instrument-rail"] button[data-slot="tab"] {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 9px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--bench-muted);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0;
-  white-space: nowrap;
-  cursor: pointer;
-}
-[data-component="instrument-rail"] button[data-slot="tab"]:hover {
-  color: var(--bench-ink);
-  background: var(--bench-surface-raised);
-}
-[data-component="instrument-rail"] button[data-slot="tab"][aria-selected="true"] {
-  color: var(--bench-ink);
-  border-color: var(--bench-line);
-  background: var(--bench-surface-raised);
-}
-[data-component="instrument-rail"] button[data-slot="tab"]:focus-visible {
-  outline: 2px solid var(--bench-active);
-  outline-offset: 1px;
-}
-[data-component="instrument-rail"] button[data-slot="tab"] svg {
-  width: 12px;
-  height: 12px;
-  opacity: 0.75;
-}
-
 [data-component="instrument-rail"] [data-slot="body"] {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   padding: 10px 12px 12px;
-}
-
-[data-component="instrument-rail"] [data-slot="footer"] {
-  flex: none;
-  padding: 0 12px 10px;
 }
 
 /** 一台都不该露面时的安静空态。 */

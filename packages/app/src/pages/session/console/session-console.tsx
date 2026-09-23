@@ -1,13 +1,18 @@
 /**
- * 底部控制台 —— 文本流仪器(日志 / GDB,将来的上位机控制台)的家。
+ * 底部控制台 —— 文本流仪器(日志,将来的上位机控制台)的家。调试器在右栏,和示波器、
+ * 逻辑分析仪一起:源码视图要的是高度。
  *
- * 为什么在底下:这些东西是**一行一行往下滚的文本**,要的是宽度。压进一条 480px 的右栏里,
- * 一条 `0x080004a2 <foc_zero_isense+10>` 就折三行,而串口与调试控制台恰恰是嵌入式工程师
- * 一天到晚盯着的两样 —— IDE 把它们放在底下不是审美,是行宽。
+ * 为什么日志在底下:它是**一行一行往下滚的文本**,要的是宽度。压进一条 480px 的右栏里,
+ * 一条串口日志就折三行。
  *
  * 页签里有哪几台**不写死**:问注册表要 `surface === "text"` 且此刻该露面的那些
  * (核心 ∪ 本会话用过 ∪ 磁盘上有数据 ∪ 钉住)。所以加一台"上位机控制台"= 注册表加一条,
  * 这个文件一个字都不用改。
+ *
+ * **只有一台可选时不画页签行**(2026-09-23)。今天文本仪器只有日志一台,那一行就是
+ * 「串口与日志 ——— 过滤 跟随 ↻ ⤢ ✕」:一个永远选中的页签加一条线,而日志正下面还有串口自己那一行 ——
+ * 两行半的"壳"压着本来要看的日志。现在把最大化 / 关闭递给仪器(`chrome`),仪器挂到自己最上面那一行;
+ * 第二台文本仪器来了,页签行自己回来。
  */
 import { createEffect, createMemo, For, on, Show, Suspense } from "solid-js"
 import { Dynamic } from "solid-js/web"
@@ -59,6 +64,32 @@ export function SessionConsole() {
 
   const toggleKey = () => command.keybind("console.toggle")
 
+  /** 有得选才要页签行:两台以上,或者还有藏着、可以点「+」加进来的。 */
+  const hasTabs = createMemo(() => tabs().length > 1 || hidden().length > 0)
+
+  /** 控制台自己的两颗按钮。有页签行时站在页签行右端,没有时递给仪器挂到它的工具条上。 */
+  const actions = () => (
+    <div data-slot="actions">
+      <button
+        type="button"
+        aria-label={consoleUI.maximized() ? t("session.console.restore") : t("session.console.maximize")}
+        title={consoleUI.maximized() ? t("session.console.restore") : t("session.console.maximize")}
+        aria-pressed={consoleUI.maximized() ? "true" : "false"}
+        onClick={() => consoleUI.toggleMaximized()}
+      >
+        <Icon name={consoleUI.maximized() ? "collapse" : "expand"} size="small" />
+      </button>
+      <button
+        type="button"
+        aria-label={t("session.console.close")}
+        title={[t("session.console.close"), toggleKey()].filter(Boolean).join(" ")}
+        onClick={() => consoleUI.close()}
+      >
+        <Icon name="close-small" size="small" />
+      </button>
+    </div>
+  )
+
   return (
     <Show when={consoleUI.opened()}>
       <section
@@ -84,94 +115,97 @@ export function SessionConsole() {
           />
         </Show>
 
-        <div data-slot="head">
-          <div data-slot="tablist" role="tablist" aria-label={t("session.console.title")} onKeyDown={handleTablistKeys}>
-            <For each={tabs()}>
-              {(instrument) => (
-                <button
-                  type="button"
-                  role="tab"
-                  data-slot="tab"
-                  data-instrument={instrument.id}
-                  aria-selected={active()?.id === instrument.id ? "true" : "false"}
-                  // roving tabindex:Tab 键只停在选中的那一格,格与格之间用左右键 —— 页签行
-                  // 是一个控件,不是 N 个。
-                  tabIndex={active()?.id === instrument.id ? 0 : -1}
-                  // 选择当前页签保持面板打开，避免键盘导航或重复点击意外收起。
-                  onClick={() => consoleUI.select(instrument.id)}
-                >
-                  <span data-component="bench-led" data-state={instrument.status(bench.ctx())} />
-                  <Icon name={instrument.icon} size="small" />
-                  {t(instrument.labelKey)}
-                  <EvidenceDot when={unseen().has(instrument.id)} />
-                </button>
-              )}
-            </For>
-            {/* 藏着的文本仪器(通常是还没连过的调试器):给一个显式的入口,而不是让它凭空冒出来。 */}
-            <For each={hidden()}>
-              {(instrument) => (
-                <button
-                  type="button"
-                  data-slot="add"
-                  data-instrument={instrument.id}
-                  title={t("session.bench.add")}
-                  onClick={() => {
-                    benchPins.pin(instrument.id)
-                    consoleUI.setTab(instrument.id)
-                  }}
-                >
-                  + {t(instrument.labelKey)}
-                </button>
-              )}
-            </For>
-          </div>
-
-          <Show when={active()?.headline?.(bench.ctx(), t)}>
-            {(headline) => (
-              <span data-slot="headline" title={headline()}>
-                {headline()}
-              </span>
-            )}
-          </Show>
-
-          <span data-slot="rule" />
-
-          <Show when={active()?.controls} keyed>
-            {(controls) => (
-              <div data-slot="controls">
-                <Suspense>
-                  <Dynamic component={controls} />
-                </Suspense>
-              </div>
-            )}
-          </Show>
-
-          <div data-slot="actions">
-            <button
-              type="button"
-              aria-label={consoleUI.maximized() ? t("session.console.restore") : t("session.console.maximize")}
-              title={consoleUI.maximized() ? t("session.console.restore") : t("session.console.maximize")}
-              aria-pressed={consoleUI.maximized() ? "true" : "false"}
-              onClick={() => consoleUI.toggleMaximized()}
+        <Show when={hasTabs()}>
+          <div data-slot="head">
+            <div
+              data-slot="tablist"
+              role="tablist"
+              aria-label={t("session.console.title")}
+              onKeyDown={handleTablistKeys}
             >
-              <Icon name={consoleUI.maximized() ? "collapse" : "expand"} size="small" />
-            </button>
-            <button
-              type="button"
-              aria-label={t("session.console.close")}
-              title={[t("session.console.close"), toggleKey()].filter(Boolean).join(" ")}
-              onClick={() => consoleUI.close()}
-            >
-              <Icon name="close-small" size="small" />
-            </button>
-          </div>
-        </div>
+              <For each={tabs()}>
+                {(instrument) => (
+                  <button
+                    type="button"
+                    role="tab"
+                    data-slot="tab"
+                    data-instrument={instrument.id}
+                    aria-selected={active()?.id === instrument.id ? "true" : "false"}
+                    // roving tabindex:Tab 键只停在选中的那一格,格与格之间用左右键 —— 页签行
+                    // 是一个控件,不是 N 个。
+                    tabIndex={active()?.id === instrument.id ? 0 : -1}
+                    // 选择当前页签保持面板打开，避免键盘导航或重复点击意外收起。
+                    onClick={() => consoleUI.select(instrument.id)}
+                  >
+                    <span data-component="bench-led" data-state={instrument.status(bench.ctx())} />
+                    <Icon name={instrument.icon} size="small" />
+                    {t(instrument.labelKey)}
+                    <EvidenceDot when={unseen().has(instrument.id)} />
+                  </button>
+                )}
+              </For>
+              {/* 藏着的文本仪器(通常是还没连过的调试器):给一个显式的入口,而不是让它凭空冒出来。 */}
+              <For each={hidden()}>
+                {(instrument) => (
+                  <button
+                    type="button"
+                    data-slot="add"
+                    data-instrument={instrument.id}
+                    title={t("session.bench.add")}
+                    onClick={() => {
+                      benchPins.pin(instrument.id)
+                      consoleUI.setTab(instrument.id)
+                    }}
+                  >
+                    + {t(instrument.labelKey)}
+                  </button>
+                )}
+              </For>
+            </div>
 
-        <div data-slot="body" role="tabpanel">
+            <Show when={active()?.headline?.(bench.ctx(), t)}>
+              {(headline) => (
+                <span data-slot="headline" title={headline()}>
+                  {headline()}
+                </span>
+              )}
+            </Show>
+
+            <span data-slot="rule" />
+
+            <Show when={active()?.controls} keyed>
+              {(controls) => (
+                <div data-slot="controls">
+                  <Suspense>
+                    <Dynamic component={controls} />
+                  </Suspense>
+                </div>
+              )}
+            </Show>
+
+            {actions()}
+          </div>
+        </Show>
+
+        <div data-slot="body" role={hasTabs() ? "tabpanel" : undefined} data-bare={hasTabs() ? undefined : "true"}>
           <Show when={active()} keyed>
             {(instrument) => (
               <Suspense fallback={<div data-slot="pending">{t("session.bench.loading")}</div>}>
-                <Dynamic component={instrument.compact ?? instrument.component} />
+                {/* 没有页签行时,最大化 / 关闭交给仪器挂;仪器没有紧凑装配(不认 chrome)的话,
+                    退回到在正文右上角浮一组 —— 控制台总得关得掉。 */}
+                <Show
+                  when={!hasTabs() && instrument.compact}
+                  fallback={
+                    <>
+                      <Show when={!hasTabs()}>
+                        <div data-slot="floating-actions">{actions()}</div>
+                      </Show>
+                      <Dynamic component={instrument.compact ?? instrument.component} />
+                    </>
+                  }
+                >
+                  {(compact) => <Dynamic component={compact()} chrome={actions} />}
+                </Show>
               </Suspense>
             )}
           </Show>

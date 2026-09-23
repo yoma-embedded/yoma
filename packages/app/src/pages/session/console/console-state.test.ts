@@ -22,27 +22,27 @@ function ctx(
 const ids = (list: { id: string }[]) => list.map((item) => item.id)
 
 describe("按数据的形状分家", () => {
-  test("每台仪器都表了态,文本流两台在前、波形两台在后", () => {
+  test("每台仪器都表了态:日志在底部,调试器跟波形在右栏", () => {
     expect(INSTRUMENTS.map((instrument) => [instrument.id, instrument.surface])).toEqual([
       ["log", "text"],
-      ["gdb", "text"],
+      ["gdb", "wave"],
       ["scope", "wave"],
       ["la", "wave"],
     ])
   })
 
-  test("底部控制台拿文本流,右栏拿波形 —— 两边都还守着「该不该露面」那条规则", () => {
+  test("底部控制台拿文本流,右栏拿波形和调试器 —— 两边都还守着「该不该露面」那条规则", () => {
     // 什么都没发生:控制台只有核心的日志,右栏一台都没有(= 空态)。
     expect(ids(visibleOnSurface("text", ctx()))).toEqual(["log"])
     expect(ids(visibleOnSurface("wave", ctx()))).toEqual([])
-    expect(ids(hiddenOnSurface("text", ctx()))).toEqual(["gdb"])
-    expect(ids(hiddenOnSurface("wave", ctx()))).toEqual(["scope", "la"])
+    expect(ids(hiddenOnSurface("text", ctx()))).toEqual([])
+    expect(ids(hiddenOnSurface("wave", ctx()))).toEqual(["gdb", "scope", "la"])
   })
 
   test("碰过 / 有数据 / 钉住,各自把仪器送进它该去的那一边", () => {
     const used = ctx({ status: { gdb: { state: "halted", epoch: 1, stops: [], at: 0 } } })
-    expect(ids(visibleOnSurface("text", used))).toEqual(["log", "gdb"])
-    expect(ids(visibleOnSurface("wave", used))).toEqual([])
+    expect(ids(visibleOnSurface("text", used))).toEqual(["log"])
+    expect(ids(visibleOnSurface("wave", used))).toEqual(["gdb"])
 
     const onDisk = ctx({ disk: { scopeCaptures: 2 } })
     expect(ids(visibleOnSurface("wave", onDisk))).toEqual(["scope"])
@@ -53,7 +53,7 @@ describe("按数据的形状分家", () => {
     expect(ids(visibleOnSurface("text", pinned))).toEqual(["log"])
   })
 
-  test("紧凑装配只给文本流那两台配了正文,波形那两台退回完整面板", () => {
+  test("紧凑装配只给文本流配了正文,右栏那几台退回完整面板", () => {
     for (const instrument of INSTRUMENTS) {
       if (instrument.surface === "text") expect(typeof instrument.compact).toBe("function")
       else expect(instrument.compact).toBeUndefined()

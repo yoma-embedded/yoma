@@ -34,7 +34,8 @@ const busy = () =>
 describe("回落规则只有一份", () => {
   test("记着的那台还在就用它", () => {
     expect(activeOnSurface("wave", busy(), "la")).toBe("la")
-    expect(activeOnSurface("text", busy(), "gdb")).toBe("gdb")
+    expect(activeOnSurface("wave", busy(), "gdb")).toBe("gdb")
+    expect(activeOnSurface("text", busy(), "log")).toBe("log")
   })
 
   test("文本流回落到日志;波形没有记录就不打开示波器", () => {
@@ -60,10 +61,16 @@ describe("此刻用户正看着哪几台", () => {
   })
 
   test("控制台开着 = 它停着的那一页算开着,另一页不算", () => {
-    consoleUI.open("gdb")
-    expect([...openInstruments(busy())]).toEqual(["gdb"])
+    consoleUI.open("log")
+    expect([...openInstruments(busy())]).toEqual(["log"])
     consoleUI.setTab("log")
     expect([...openInstruments(busy())]).toEqual(["log"])
+  })
+
+  test("调试器在右栏:展开调试档并选中它才算开着", () => {
+    dock.open()
+    consoleUI.setRail("gdb")
+    expect([...openInstruments(busy())]).toEqual(["gdb"])
   })
 
   test("右栏展开且停在「调试」档 = 页签选中的那一台算开着", () => {

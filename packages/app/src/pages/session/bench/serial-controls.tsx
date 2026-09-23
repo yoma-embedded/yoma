@@ -31,8 +31,12 @@ function SerialChoice(props: {
   const id = createUniqueId()
   return (
     <>
-      <label for={id}>{props.label}</label>
-      <div data-component="serial-choice">
+      {/* 字面标签只留给读屏:一行工具条里"端口 / 波特率"四个字换来的是日志区少一截宽度,
+          而框里的占位字与数值本身已经说得出它是什么(鼠标停一下有 title)。 */}
+      <label for={id} data-slot="sr-only">
+        {props.label}
+      </label>
+      <div data-component="serial-choice" title={props.label}>
         <input
           id={id}
           aria-label={props.label}
@@ -62,7 +66,27 @@ function SerialChoice(props: {
   )
 }
 
-export function SerialControls(props: { onChange?: () => void; children?: JSX.Element }) {
+/**
+ * 串口监视器:连接行 + 日志区(children)+ 发送行。
+ *
+ * **非日志的部分压到最少**(2026-09-23,用户:"本来要看日志的,其余部分倒占了很大一部分")。
+ * 从前是四层:控制台自己的页签行 → 端口 / 波特率 / 换行符 / 8N1 / 连接一行 → 一行状态字 →
+ * 一个虚线大空框,最底下还有一条永远在的发送行。现在:
+ * - **一行工具条**:灯 · 端口 · 波特率 · 连接 · 状态读数,右边接容器给的 `toolbar`
+ *   (底部控制台把过滤 / 跟随 / 最大化 / 关闭放进来,它自己就不再有页签行)。
+ * - **换行符挪进发送行**:它只管发出去的那一串,和连接没关系。8N1 是固定的,进了波特率框的 title。
+ * - **发送行只在"连着一个能写的串口"时出现**:没连、或者连的是 agent 起的命令 / TCP 采集(只收不发)时,
+ *   那一行全是灰的按钮,只占地方。
+ * - 状态字(来源、RX 行数、刚发出去多少字节)并进工具条里的一段读数,挤不下打省略号,title 给全文。
+ */
+export function SerialControls(props: {
+  onChange?: () => void
+  children?: JSX.Element
+  /** 工具条右端,由容器决定放什么(过滤框、跟随、容器自己的最大化 / 关闭)。 */
+  toolbar?: JSX.Element
+  /** 没连着时读数那一段说什么(比如"已停止 sh tools/uart-sim.sh""磁盘上的上一次采集")。 */
+  note?: string
+}) {
   const language = useLanguage()
   const sdk = useSDK()
   const copy = () => serialCopy[language.locale()]
@@ -298,9 +322,26 @@ export function SerialControls(props: { onChange?: () => void; children?: JSX.El
     revision++
   })
 
+  /** 工具条上那一段读数:连着时是来源 + 收发计数,没连着时是容器给的那句话(或上一次的来源)。 */
+  const readout = () => {
+    if (state.running) {
+      return [
+        state.source || copy().connected,
+        state.checked && state.source ? `RX ${state.totalLines.toLocaleString()} ${copy().lines}` : "",
+        state.sent ? `TX ${state.sent}` : "",
+        state.writable ? "" : copy().readOnly,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    }
+    return props.note || (state.source ? `${copy().disconnected} · ${state.source}` : "")
+  }
+  const readoutTitle = () =>
+    [readout(), state.running && !state.writable ? copy().readOnlySource : ""].filter(Boolean).join("\n")
+
   return (
     <div data-component="serial-controls">
-      <div data-slot="monitor-header">
+      <div data-slot="toolbar">
         <form
           data-slot="connection"
           onSubmit={(event) => {
@@ -308,6 +349,15 @@ export function SerialControls(props: { onChange?: () => void; children?: JSX.El
             void connect()
           }}
         >
+          <span
+            data-slot="state"
+            data-running={state.running}
+            role="status"
+            aria-label={state.running ? copy().connected : copy().disconnected}
+            title={state.running ? copy().connected : copy().disconnected}
+          >
+            <i />
+          </span>
           <div data-slot="port-field">
             <SerialChoice
               label={copy().port}
@@ -337,7 +387,7 @@ export function SerialControls(props: { onChange?: () => void; children?: JSX.El
           </div>
           <div data-slot="baud-field">
             <SerialChoice
-              label={copy().baud}
+              label={`${copy().baud} · 8N1`}
               pickerLabel={copy().baudPresets}
               value={state.baud}
               numeric
@@ -349,25 +399,6 @@ export function SerialControls(props: { onChange?: () => void; children?: JSX.El
               }}
             />
           </div>
-          <label data-slot="ending-field">
-            {copy().lineEnding}
-            <select
-              aria-label={copy().lineEnding}
-              value={state.ending}
-              onChange={(event) => {
-                setState("ending", event.currentTarget.value as Ending)
-                save()
-              }}
-            >
-              <option value="none">None</option>
-              <option value="lf">LF (\n)</option>
-              <option value="cr">CR (\r)</option>
-              <option value="crlf">CRLF (\r\n)</option>
-            </select>
-          </label>
-          <span data-slot="format" title={copy().format}>
-            8N1
-          </span>
           <button
             type="submit"
             data-slot="connect"
@@ -377,93 +408,96 @@ export function SerialControls(props: { onChange?: () => void; children?: JSX.El
             {state.pending ? copy().working : state.running ? copy().disconnect : copy().connect}
           </button>
         </form>
-        <div data-slot="connection-status" role="status">
-          <span data-slot="state" data-running={state.running}>
-            <i />
-            {state.running ? copy().connected : copy().disconnected}
-          </span>
-          <span data-slot="source" title={state.source}>
-            {state.source || copy().readyHint}
-          </span>
-          <Show when={state.checked && state.source}>
-            <span data-slot="count">
-              RX {state.totalLines.toLocaleString()} {copy().lines}
-            </span>
-          </Show>
-          <Show when={state.sent}>
-            <span data-slot="sent">TX {state.sent}</span>
-          </Show>
-        </div>
-        <Show when={state.error || state.statusError}>
-          <div data-slot="connection-error" role="alert">
-            {state.error || state.statusError}
-          </div>
-        </Show>
+        <span data-slot="readout" title={readoutTitle()}>
+          {readout()}
+        </span>
+        <Show when={props.toolbar}>{(toolbar) => <div data-slot="toolbar-end">{toolbar()}</div>}</Show>
       </div>
+      <Show when={state.error || state.statusError}>
+        <div data-slot="connection-error" role="alert">
+          {state.error || state.statusError}
+        </div>
+      </Show>
       <div data-slot="monitor-output">{props.children}</div>
-      <div data-slot="send-bar">
-        <form
-          data-slot="send-form"
-          onSubmit={(event) => {
-            event.preventDefault()
-            void send()
-          }}
-        >
-          <span data-slot="tx-label">TX</span>
-          <input
-            ref={(element) => (input = element)}
-            data-slot="send-input"
-            aria-label={copy().sendPlaceholder}
-            value={state.data}
-            disabled={state.sending}
-            placeholder={state.encoding === "hex" ? "01 A0 FF 0D 0A" : copy().sendPlaceholder}
-            maxLength={12288}
-            autocomplete="off"
-            spellcheck={false}
-            onInput={(event) =>
-              setState({ data: event.currentTarget.value, historyIndex: -1, sendError: "", sent: "" })
-            }
-            onKeyDown={recall}
-          />
-          <select
-            aria-label={copy().sendMode}
-            value={state.encoding}
-            disabled={state.sending}
-            onChange={(event) => {
-              setState("encoding", event.currentTarget.value as Encoding)
-              setState("sendError", "")
-              save()
+      <Show when={state.running && state.writable}>
+        <div data-slot="send-bar">
+          <form
+            data-slot="send-form"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void send()
             }}
           >
-            <option value="text">{copy().text}</option>
-            <option value="hex">Hex</option>
-          </select>
+            <span data-slot="tx-label">TX</span>
+            <input
+              ref={(element) => (input = element)}
+              data-slot="send-input"
+              aria-label={copy().sendPlaceholder}
+              value={state.data}
+              disabled={state.sending}
+              placeholder={state.encoding === "hex" ? "01 A0 FF 0D 0A" : copy().sendPlaceholder}
+              maxLength={12288}
+              autocomplete="off"
+              spellcheck={false}
+              onInput={(event) =>
+                setState({ data: event.currentTarget.value, historyIndex: -1, sendError: "", sent: "" })
+              }
+              onKeyDown={recall}
+            />
+            <select
+              aria-label={copy().sendMode}
+              title={copy().sendMode}
+              value={state.encoding}
+              disabled={state.sending}
+              onChange={(event) => {
+                setState("encoding", event.currentTarget.value as Encoding)
+                setState("sendError", "")
+                save()
+              }}
+            >
+              <option value="text">{copy().text}</option>
+              <option value="hex">Hex</option>
+            </select>
+            <label data-slot="ending-field" title={copy().lineEnding}>
+              <span data-slot="sr-only">{copy().lineEnding}</span>
+              <select
+                aria-label={copy().lineEnding}
+                value={state.ending}
+                onChange={(event) => {
+                  setState("ending", event.currentTarget.value as Ending)
+                  save()
+                }}
+              >
+                <option value="none">{copy().noEnding}</option>
+                <option value="lf">LF (\n)</option>
+                <option value="cr">CR (\r)</option>
+                <option value="crlf">CRLF (\r\n)</option>
+              </select>
+            </label>
+            <button
+              type="submit"
+              data-slot="send"
+              disabled={!canSend() || (!state.data && state.ending === "none")}
+              title={copy().enterSend}
+            >
+              {state.sending ? copy().sending : copy().send}
+            </button>
+          </form>
           <button
-            type="submit"
-            data-slot="send"
-            disabled={!canSend() || (!state.data && state.ending === "none")}
-            title={copy().enterSend}
+            type="button"
+            data-slot="ctrl-c"
+            disabled={!canSend()}
+            onClick={() => void send("03")}
+            title={copy().ctrlHint}
           >
-            {state.sending ? copy().sending : copy().send}
+            Ctrl+C
           </button>
-        </form>
-        <button
-          type="button"
-          data-slot="ctrl-c"
-          disabled={!canSend()}
-          onClick={() => void send("03")}
-          title={copy().ctrlHint}
-        >
-          Ctrl+C
-        </button>
-      </div>
+        </div>
+      </Show>
       <Show when={state.sendError}>
         <div data-slot="send-error" role="alert">
           {state.sendError}
         </div>
-      </Show>
-      <Show when={state.running && !state.writable}>
-        <div data-slot="send-notice">{copy().readOnlySource}</div>
       </Show>
     </div>
   )

@@ -32,6 +32,8 @@ import { setSessionHandoff } from "@/pages/session/handoff"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { DebugContent } from "@/pages/session/debug/debug-content"
 import { debug as dock, type DockMode } from "@/pages/session/debug/debug-data"
+import { instrumentById } from "@/pages/session/bench/instruments"
+import { consoleUI } from "@/pages/session/console/console-state"
 import { ExplorerPanel } from "@/pages/session/explorer/explorer-panel"
 import { explorerScope } from "@/pages/session/explorer/explorer-state"
 import { getFilenameTruncated } from "@yoma-desktop/util/path"
@@ -129,6 +131,11 @@ export function SessionSidePanel(props: {
   }
 
   const open = createMemo(() => dock.opened())
+  /** 仪器档当前摊开的那一台(左侧栏 / 状态栏 / 卡片点名的)。 */
+  const railInstrument = createMemo(() => {
+    const id = consoleUI.rail()
+    return id ? instrumentById(id) : undefined
+  })
   // 三个子页共用同一个宽度（layout.dock.width）：切页只换内容，不换宽度。
   // 只有全屏才让面板吃掉整行（此时中间会话栏被 session.tsx 隐藏）。
   const panelWidth = createMemo(() => {
@@ -289,7 +296,8 @@ export function SessionSidePanel(props: {
           id="review-panel"
           ref={(el: HTMLElement) => (panelEl = el)}
           aria-label={language.t("session.panel.title")}
-          class="relative min-w-0 h-full flex flex-col shrink-0 overflow-hidden bg-background-base"
+          // 可以收窄:存下来的宽度是按当时的窗口拖出来的,窗口变窄 / 左侧栏展开之后聊天栏有最小宽度,由这边让。
+          class="relative min-w-0 h-full flex flex-col shrink overflow-hidden bg-background-base"
           classList={{
             "transition-[width] duration-[240ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none":
               !props.size.active() && !props.snap,
@@ -322,7 +330,18 @@ export function SessionSidePanel(props: {
               on={dock.mode() === "tabs"}
               onClick={() => switchMode("tabs")}
             />
-            <BarButton icon="debug" title={language.t("session.rail.label")} label={language.t("session.workbench.waveforms")} on={dock.mode() === "debug"} onClick={() => switchMode("debug")} />
+            {/* 仪器档的按钮上直接写当前是哪一台(没选时写「仪器」):右栏不再单独占一行页签。 */}
+            <BarButton
+              icon={railInstrument()?.icon ?? "debug"}
+              title={language.t("session.rail.label")}
+              label={
+                railInstrument()
+                  ? language.t(railInstrument()!.labelKey as Parameters<typeof language.t>[0])
+                  : language.t("session.workbench.waveforms")
+              }
+              on={dock.mode() === "debug"}
+              onClick={() => switchMode("debug")}
+            />
             <BarButton
               icon="file-tree"
               title={language.t("session.files.all")}

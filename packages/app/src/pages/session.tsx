@@ -174,6 +174,8 @@ export default function Page() {
   // 新布局这一行有 gap-2(8px)：中间栏按百分比减宽时要把这道缝一起减掉，
   // 否则 中间 + 缝 + 右栏 会超出一格，右栏顶掉右侧 8px 留白（贴到窗口边）。
   const rowGap = () => 8
+  /** 聊天栏的下限:窄窗口里也至少一半,宽窗口里 380px 够放输入框与模型选择。 */
+  const CHAT_MIN_WIDTH = "min(380px, 50%)"
   const sessionPanelWidth = createMemo(() => {
     if (dockVisible()) {
       if (!debugDock.opened()) return `calc(100% - ${36 + rowGap()}px)` // 收起态：给展开窄条(w-9)留位
@@ -299,8 +301,15 @@ export default function Page() {
         }),
   }))
   const refreshVcs = debounce(() => void queryClient.invalidateQueries({ queryKey: vcsKey() }), 100)
-  // avoids suspense
-  const vcsDiffs = () => (vcsQuery.isFetched ? (vcsQuery.data ?? []) : [])
+  // 不读 vcsQuery.data:solid-query 的 data getter 在"上一份值是 undefined"时读的是 query 的 resource,
+  // 重新拉取期间就会让**整页**进上层 <Suspense>(layout-new.tsx)—— 页面被摘下再插回,时间线的滚动位置
+  // 没有任何 scroll 事件地归零,虚拟列表还画着底部那几行,聊天区于是一片空白。会话每次变空闲都会刷新一次
+  // (上面那条 effect),所以按停止 / agent 说完一轮就会撞上(2026-09-23 真窗口复现:停止后 150ms 整页被重插两次)。
+  // 只订阅"数据换了"(dataUpdatedAt 是普通字段),值从缓存里拿。
+  const vcsDiffs = createMemo(() => {
+    void vcsQuery.dataUpdatedAt
+    return queryClient.getQueryData<typeof vcsQuery.data>(vcsKey()) ?? []
+  })
 
   const setActiveMessage = (message: UserMessage | undefined) => {
     messageMark = scrollMark
@@ -1031,6 +1040,9 @@ export default function Page() {
               }}
               style={{
                 width: sessionPanelWidth(),
+                // 右栏存的是固定像素宽:窗口一窄,聊天栏会被挤成一条(标题、输入框、首屏大字全折成竖排)。
+                // 给它一个下限,不够的时候让右栏收窄(右栏是 shrink 的)。
+                "min-width": dockVisible() && debugDock.opened() && !debugDock.fullscreen() ? CHAT_MIN_WIDTH : undefined,
                 // 右侧面板全屏时隐藏中间会话栏（inline style 优先级高于 flex 类）
                 display: debugDock.fullscreen() ? "none" : undefined,
               }}

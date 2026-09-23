@@ -17,9 +17,13 @@ describe("串口栏的样式", () => {
     expect(css).toContain("linear-gradient(135deg, var(--text-weak) 50%, transparent 50%)")
   })
 
-  test("一行里的间距是同一个 8px,多出来的宽度留在端口输入框", () => {
-    expect(css).toContain("gap: 8px")
-    expect(css).toContain("flex: 1 1 240px")
+  test("连接那一组不抢宽度:端口框有上限,多出来的宽度留给读数", () => {
+    expect(css).toMatch(/\[data-slot="port-field"\] \{\s*flex: 0 1 auto;\s*width: 230px;/)
+    expect(css).toMatch(/\[data-slot="readout"\] \{\s*flex: 1 1 80px;/)
     expect(css).toContain("font-size: 0")
+  })
+
+  test("工具条挤不下时折行,不把按钮压成一堆", () => {
+    expect(css).toMatch(/\[data-slot="toolbar"\] \{[^}]*flex-wrap: wrap;/)
   })
 })

@@ -12,10 +12,13 @@
  * - `<LogControls/>` 过滤框 / 跟随 / 重读;
  * - `<LogBody/>` 来源读数 + 提示 + 行区;
  * - `<LogPanel/>` 名牌 + 上面两件(注册表的缺省装配,右栏那种"一台仪器一个窗口"的摆法)。
+ *
+ * 底部控制台只有日志这一台时**不画自己的页签行**(2026-09-23):它把最大化 / 关闭递进来(`chrome`),
+ * `<LogBody/>` 把过滤框和它们一起挂到串口那一行工具条的右端 —— 日志上面只剩一行。
  * 三件都无 props、都自己去 `useLogFeed()` 拿同一份(按工程目录引用计数的)feed,所以
  * 过滤词与跟随开关住在 feed 的 store 里而不是组件里 —— 不然页签行上的框和下面的行区各过滤各的。
  */
-import { createEffect, createMemo, Index, on, Show } from "solid-js"
+import { createEffect, createMemo, Index, on, Show, type JSX } from "solid-js"
 import { useLanguage } from "@/context/language"
 import { useSDK } from "@/context/sdk"
 import { useBenchStatus } from "./use-bench-status"
@@ -74,12 +77,24 @@ export function LogControls() {
   )
 }
 
-/** 来源读数 + 提示 + 行区。容器给它多少高度就用多少(bench.css 给了一个保底的 max-height)。 */
-export function LogBody() {
+/**
+ * 来源读数 + 提示 + 行区。容器给它多少高度就用多少(bench.css 给了一个保底的 max-height)。
+ *
+ * `chrome`:容器**没有**自己的页签行时递进来的那几颗按钮。给了它,过滤框 / 跟随 / 重读也由这里挂上
+ * (没有页签行替它们站),工具条的读数在没连着时说"这份日志是哪来的"(页签行名牌右边原来那句)。
+ */
+export function LogBody(props: { chrome?: () => JSX.Element }) {
   const language = useLanguage()
   const sdk = useSDK()
   const status = useBenchStatus()
   const feed = useLogFeed(() => sdk().directory)
+  const t = (key: string) => language.t(key as Parameters<typeof language.t>[0])
+  /** 同注册表里日志的 `headline`:这次会话碰过 log 工具就说它的状态,否则说"磁盘上的上一次采集"。 */
+  const note = () =>
+    !props.chrome
+      ? undefined
+      : (logCaptureLabel(status().log, t, { full: true }) ??
+        (feed.state.name ? t("session.bench.log.fromDisk") : undefined))
 
   let scroller: HTMLDivElement | undefined
 
@@ -106,13 +121,25 @@ export function LogBody() {
   }
 
   return (
-    <SerialControls onChange={() => feed.refresh()}>
+    <SerialControls
+      onChange={() => feed.refresh()}
+      note={note()}
+      toolbar={
+        props.chrome ? (
+          <>
+            <div data-slot="controls">
+              <LogControls />
+            </div>
+            {props.chrome()}
+          </>
+        ) : undefined
+      }
+    >
       <Show
         when={feed.state.name}
         fallback={
-          <div data-component="bench-empty">
-            {serialCopy[language.locale()].empty}
-            <span data-slot="hint">{serialCopy[language.locale()].emptyHint}</span>
+          <div data-slot="idle">
+            {serialCopy[language.locale()].empty} · {serialCopy[language.locale()].emptyHint}
           </div>
         }
       >
@@ -169,13 +196,14 @@ export function LogBody() {
 }
 
 /**
- * 容器自己带了名牌与工具条(底部控制台的页签行)时用这一件:只有正文。
+ * 容器自己带了名牌与工具条(底部控制台)时用这一件:只有正文。
  * 外面这层 `bench-log-panel` 还在,因为 bench.css 的行区样式挂在它下面。
+ * `chrome` 见 `LogBody`:容器没画页签行时,它的按钮由这里挂到串口那一行上。
  */
-export function LogCompact() {
+export function LogCompact(props: { chrome?: () => JSX.Element }) {
   return (
     <div data-component="bench-log-panel" data-chrome="bare">
-      <LogBody />
+      <LogBody chrome={props.chrome} />
     </div>
   )
 }

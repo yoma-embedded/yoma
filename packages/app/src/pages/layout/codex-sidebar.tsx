@@ -20,17 +20,15 @@ import { displayName, projectForSession, sortedRootSessions } from "./helpers"
 import { sessionTitle } from "@/utils/session-title"
 import { sessionHref } from "@/utils/session-href"
 import { sessionTime, terseAgo } from "./codex-util"
+import { registerSidebarInstrumentSlot } from "./sidebar-slot"
+import { SIDEBAR_ROW, SIDEBAR_ROW_ACTIVE, SIDEBAR_ROW_IDLE } from "./sidebar-row"
 
 const LOAD_LIMIT = 64
 
-const ROW =
-  "group flex h-8 w-full min-w-0 items-center gap-2 rounded-[7px] px-2 text-left text-[13px] transition-colors [font-weight:500]"
-// 悬浮与选中都用**叠加层**而不是 bg-layer-*:浅色主题下 bg-layer-01 与侧栏自己的底色 bg-deep
-// 同为 grey-100(theme.css),拿它当 hover 等于什么都没画。叠加层在任何底色上都留得下痕迹,
-// 同一个文件里的 ProjectChoiceRow 本来就是这么写的。
-const ROW_IDLE =
-  "text-v2-text-text-muted hover:bg-v2-overlay-simple-overlay-hover hover:text-v2-text-text-base focus-visible:bg-v2-overlay-simple-overlay-hover focus-visible:text-v2-text-text-base focus-visible:outline-none"
-const ROW_ACTIVE = "bg-v2-overlay-simple-overlay-pressed text-v2-text-text-base"
+// 行的样子与画进侧栏的仪器入口共用(sidebar-row.ts),叠加层的理由写在那边。
+const ROW = SIDEBAR_ROW
+const ROW_IDLE = SIDEBAR_ROW_IDLE
+const ROW_ACTIVE = SIDEBAR_ROW_ACTIVE
 
 export function CodexSidebar() {
   const layout = useLayout()
@@ -116,6 +114,8 @@ export function CodexSidebar() {
           <ActionRow icon="status" label={language.t("bench.nav")} onClick={() => navigate("/bench")} />
         </Show>
       </div>
+      {/* 会话页 / 草稿页把这一会话的仪器入口画进来(Portal);别的页面这里是空的。 */}
+      <div data-slot="sidebar-instruments" ref={(element) => registerSidebarInstrumentSlot(element)} />
 
       <ScrollView class="-mr-1 min-h-0 flex-1 pr-1">
         <div class="flex flex-col gap-4 pt-3">

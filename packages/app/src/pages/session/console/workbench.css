@@ -1,61 +1,7 @@
-[data-component="workbench-toolbar"],
 [data-component="workbench-launcher"] {
   --bench-ink: var(--text-strong);
   --bench-muted: var(--text-base);
 }
-[data-component="workbench-toolbar"] {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 20px;
-  min-height: 46px;
-  margin: 0 8px;
-  padding: 5px 10px;
-  border-bottom: 1px solid var(--bench-line);
-}
-[data-component="workbench-toolbar"] [data-slot="identity"] {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 600;
-  font-size: 12px;
-  white-space: nowrap;
-}
-[data-component="workbench-toolbar"] [data-slot="identity"] svg {
-  color: var(--bench-active);
-}
-[data-component="workbench-toolbar"] [data-slot="instruments"] {
-  display: flex;
-  gap: 4px;
-  overflow-x: auto;
-}
-[data-component="workbench-toolbar"] button {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 32px;
-  padding: 0 10px;
-  border: 1px solid transparent;
-  border-radius: 5px;
-  color: var(--bench-muted);
-  background: transparent;
-  white-space: nowrap;
-  font-size: 12px;
-  cursor: pointer;
-}
-[data-component="workbench-toolbar"] button:hover,
-[data-component="workbench-toolbar"] button[aria-pressed="true"] {
-  background: var(--bench-surface-raised);
-  color: var(--bench-ink);
-  border-color: var(--bench-line);
-}
-[data-component="workbench-toolbar"] [data-slot="hint"] {
-  margin-left: auto;
-  font-size: 11px;
-  color: var(--bench-muted);
-  white-space: nowrap;
-}
-[data-component="workbench-toolbar"] button:focus-visible,
 [data-component="workbench-launcher"] button:focus-visible {
   outline: 2px solid var(--bench-active);
   outline-offset: 2px;
@@ -153,11 +99,17 @@
   font-size: 11px;
   letter-spacing: 0.12em;
 }
+[data-component="session-new-design"] {
+  container-type: inline-size;
+}
 [data-component="session-new-design"] h1 {
-  font-size: 24px;
+  /* 窄栏里标题会折好几行:字号跟着栏宽缩,行高给足,折行时上下两行不压在一起。 */
+  font-size: clamp(18px, 5cqi, 24px);
+  line-height: 1.35;
   font-weight: 600;
   margin: 10px 0;
   color: var(--text-strong);
+  overflow-wrap: anywhere;
 }
 [data-component="session-new-design"] p {
   font-size: 13px;
@@ -188,22 +140,32 @@
   border-radius: 8px;
   background: var(--background-base);
 }
-@media (max-width: 1100px) {
-  [data-component="workbench-toolbar"] [data-slot="hint"] {
-    display: none;
-  }
-  [data-component="workbench-toolbar"] {
-    gap: 10px;
-  }
-}
 @media (max-width: 767px) {
-  [data-component="workbench-toolbar"] [data-slot="identity"] {
-    display: none;
-  }
-  [data-component="workbench-toolbar"] button {
-    padding: 0 6px;
-  }
   [data-component="workbench-launcher"] [data-slot="tools"] {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+/* 左侧栏里的仪器入口(workbench-toolbar.tsx 画进侧栏那一格)。行本身的样子用侧栏共用的类,这里只管标题、图标与灯。 */
+[data-component="workbench-nav"] {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 10px;
+}
+[data-component="workbench-nav"] [data-slot="heading"] {
+  padding: 4px 8px 2px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--v2-text-text-faint, var(--text-weaker));
+}
+[data-component="workbench-nav"] button svg {
+  flex: none;
+  color: var(--v2-icon-icon-muted, var(--icon-base));
+}
+[data-component="workbench-nav"] button[aria-pressed="true"] svg {
+  color: var(--bench-active);
+}
+[data-component="workbench-nav"] [data-component="bench-led"] {
+  margin-right: 2px;
 }

@@ -246,23 +246,41 @@ describe("serial send bar", () => {
     await vi.waitFor(() => expect(root.querySelector<HTMLButtonElement>('[data-slot="ctrl-c"]')!.disabled).toBe(false))
   }
 
-  test("typing alone sends nothing; presets and custom values are editable and persisted", async () => {
+  test("offline there is no send bar at all; presets and custom values are editable and persisted", async () => {
     mount()
     await flush()
-    fill('[data-slot="send-input"]', "status")
+    // 没连着时发送行整条不出现(全是灰按钮,只占日志的地方)—— 也就无从"打字就发出去"。
+    expect(root.querySelector('[data-slot="send-bar"]')).toBeNull()
     select('[data-slot="baud-field"] select', "74880")
     expect(root.querySelector<HTMLInputElement>('[data-slot="baud-field"] input')!.value).toBe("74880")
     fill('[data-slot="baud-field"] input', "123456")
     fill('[data-slot="port-field"] input', "/dev/custom")
-    expect(send().disabled).toBe(true)
-    transmit()
     expect(mock.execute).not.toHaveBeenCalled()
     expect(mock.create).not.toHaveBeenCalled()
     dispose!()
     mount()
     expect(root.querySelector<HTMLInputElement>('[data-slot="baud-field"] input')!.value).toBe("123456")
     expect(root.querySelector<HTMLInputElement>('[data-slot="port-field"] input')!.value).toBe("/dev/custom")
-    expect(tx().value).toBe("")
+  })
+
+  test("a receive-only capture (agent command / TCP) shows no send bar and says so in the readout", async () => {
+    setParams("id", "serial-ro")
+    mock.execute.mockResolvedValue({
+      text: "",
+      details: { running: true, writable: false, source: "command sh tools/uart-sim.sh", totalLines: 3 },
+    })
+    mount()
+    await vi.waitFor(() => expect(root.querySelector('[data-slot="readout"]')!.textContent).toContain("receive-only"))
+    expect(root.querySelector('[data-slot="readout"]')!.textContent).toContain("command sh tools/uart-sim.sh")
+    expect(root.querySelector('[data-slot="send-bar"]')).toBeNull()
+  })
+
+  test("typing sends nothing until Enter or Send", async () => {
+    await online()
+    fill('[data-slot="send-input"]', "status")
+    await flush()
+    expect(mock.execute.mock.calls.filter(([p]) => p.input.action === "write")).toHaveLength(0)
+    expect(send().disabled).toBe(false)
   })
 
   test("text sends the selected line ending, clears only on success, and recalls command history", async () => {
