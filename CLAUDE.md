@@ -1054,6 +1054,10 @@ app 的 `test-browser/subagent-ui.test.ts`,以及 `e2e:paint` 的子 agent 一�
    "什么时候不出字"为准,数据换成内核的阶段(用户定);两边还各新建了一个 `timeline/activity.ts`,rebase 时撞成 add/add。
    以后给这一行加东西,改的是 `activity.ts` / `activity-row.tsx` 这一对。"在跑的工具卡片显示命令并走表"归 tool-display
    (紧凑工具行、完成后的耗时、未完成标记)。
+6. **回复底下的耗时**是"这一轮最后一条回复的 `time.completed` − 用户消息的时刻"(app 的 `turnDurationMs`)。`completed` 是回复
+   **写完**的时刻:live 由 message_end 那一刻给(`applyMessage` 的 `completedAt`),重放用那条 entry 的落盘时间。从前填的是
+   `message.timestamp`(回复**开始**请求的时刻),单步回复恒为「0秒」、多步少算最后一条。子 agent 的完成通知是新一轮的起点
+   (`applyTaskNotification`),被通知叫醒的续跑各算各的一段 —— 用户 2026-09-24 定保持分段,不合成"自提问起"的总时长。
 
 测试:`host/activity.test.ts`、`host/activity-trace.test.ts`(faux 真跑:阶段序列、轨迹序列、确认、报告读真会话)、
 `host/trace/{sink,report}.test.ts`、`host/stream.test.ts` 的合并一条、`test/model-probe.test.ts`、`test/system-prompt.test.ts`

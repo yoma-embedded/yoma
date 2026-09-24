@@ -746,3 +746,36 @@ describe("fork 的指令消息(/btw 转后台,docs/btw顺便问-设计方案-202
     ])
   })
 })
+
+// 回复底下的耗时 = 这一轮最后一条回复的 time.completed − 用户消息的时刻(app 的 turnDurationMs)。从前 completed 填的是回复
+// **开始**请求的时刻:单步回复恒为「0秒」,多步少算最后一条的生成时间(docs/调试留痕-规划-20260924.md §8)。
+describe("回复写完的时刻(time.completed)", () => {
+  const replyOf = (events: KernelEvent[]) =>
+    events.flatMap((event) => (event.type === "message.updated" && event.message.role === "assistant" ? [event.message] : [])).at(-1)!
+
+  test("live 用 message_end 给的写完时刻;重放用这条 entry 的落盘时刻", () => {
+    const live = replyOf(projection().applyMessage(assistant([{ type: "text", text: "好" }]), { completedAt: T0 + 5_000 }))
+    expect(live.time).toEqual({ created: T0 + 1, completed: T0 + 5_000 })
+    const replayed = replyOf(projection().applyMessage(assistant([{ type: "text", text: "好" }]), { timestamp: T0 + 7_000 }))
+    expect(replayed.time).toEqual({ created: T0 + 1, completed: T0 + 7_000 })
+  })
+
+  test("流式过的那条收尾时换上写完时刻;live 与重放给同一个时刻时逐字节相同", () => {
+    const live = projection()
+    live.applyMessage(user("你好"))
+    live.startAssistant(assistant([{ type: "text", text: "" }], { stopReason: "toolUse" }))
+    const final = assistant([{ type: "text", text: "完整回答" }])
+    expect(replyOf(live.applyMessage(final, { completedAt: T0 + 9_000 })).time.completed).toBe(T0 + 9_000)
+
+    const replayed = projection()
+    replayed.applyMessage(user("你好"))
+    replayed.applyMessage(final, { timestamp: T0 + 9_000 })
+    expect(JSON.stringify(live.snapshot())).toBe(JSON.stringify(replayed.snapshot()))
+  })
+
+  test("toolUse 的回复照旧不带 completed;都没给时退回开始时刻", () => {
+    const call = assistant([{ type: "toolCall", id: "c1", name: "read", arguments: {} }], { stopReason: "toolUse" })
+    expect(replyOf(projection().applyMessage(call, { completedAt: T0 + 5_000 })).time.completed).toBeUndefined()
+    expect(replyOf(projection().applyMessage(assistant([{ type: "text", text: "好" }]))).time.completed).toBe(T0 + 1)
+  })
+})

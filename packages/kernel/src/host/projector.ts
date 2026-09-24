@@ -262,21 +262,25 @@ export class SessionProjection {
    * 当年的工具结果时间戳 —— 相减是个负数。live 不需要:tool_start 会覆盖。
    * 代价:一批里的调用是逐个开跑的,每个开跑前先过 before_tool(要确认的在那儿等人点),所以重放出来的耗时
    * 含"等确认"的那段(烧录、带探针命令的 bash);live 的是真开跑之后的。transcript 里没有更准的开始时间。
+   *
+   * `completedAt` 是这条回复**写完**的时刻:live 由 message_end 那一刻给;重放不给,用 `timestamp` —— assistant 那条 entry
+   * 正是回复写完时落盘的。都没有时退回 `message.timestamp`,那是这条回复**开始**请求的时刻。从前一直用的是它,于是回复
+   * 底下的耗时单步恒为「0秒」、多步少算最后一条的生成时间(docs/调试留痕-规划-20260924.md §8)。
    */
   applyMessage(
     message: AgentMessage,
-    options?: { entryId?: string; messageID?: string; timestamp?: number },
+    options?: { entryId?: string; messageID?: string; timestamp?: number; completedAt?: number },
   ): KernelEvent[] {
     if (message.role === "toolResult") return this.applyToolResult(message)
     // 每条路自己认领 lastID;先清掉,免得"这条没投影出消息"时 entryId 绑到上一条身上。
     this.lastID = ""
     // renderer 的乐观 id 优先,其次是重建投影时这条 entry 上一次的 id。
     const given = options?.messageID ?? this.seededID(options?.entryId)
-    const committed = options?.timestamp
-    const toolStart = typeof committed === "number" && Number.isFinite(committed) && committed > 0 ? committed : undefined
+    const toolStart = validTime(options?.timestamp)
+    const completedAt = validTime(options?.completedAt) ?? toolStart
     const events =
       message.role === "assistant"
-        ? this.finalizeAssistant(message, given, toolStart)
+        ? this.finalizeAssistant(message, given, toolStart, completedAt)
         : message.role === "user"
           ? this.applyUser(message, given)
           : this.applySynthetic(message, given)
@@ -284,13 +288,13 @@ export class SessionProjection {
     return events
   }
 
-  /** message_start:开一条流式 assistant 消息。`toolStart` 见 `applyMessage`。 */
-  startAssistant(message: AssistantBody, givenID?: string, toolStart?: number): KernelEvent[] {
+  /** message_start:开一条流式 assistant 消息。`toolStart`、`completedAt` 见 `applyMessage`。 */
+  startAssistant(message: AssistantBody, givenID?: string, toolStart?: number, completedAt?: number): KernelEvent[] {
     const id = this.mintID(message.timestamp, givenID)
     this.streamingID = id
     this.lastID = id
 
-    const info = this.assistantInfo(id, message)
+    const info = this.assistantInfo(id, message, completedAt)
     const parts = this.assistantParts(id, message.content as AssistantBlock[], toolStart)
 
     this.messages.set(id, { info, parts })
@@ -615,7 +619,8 @@ export class SessionProjection {
   // 构件
   // -------------------------------------------------------------------------
 
-  private assistantInfo(id: string, message: AssistantBody): ViewAssistant {
+  /** `completedAt`:这条回复写完的时刻(见 `applyMessage`);只有收尾那一条(不是 toolUse)带 completed。 */
+  private assistantInfo(id: string, message: AssistantBody, completedAt?: number): ViewAssistant {
     const usage = message.usage
     return {
       id,
@@ -624,7 +629,7 @@ export class SessionProjection {
       parentID: this.turnParentID,
       time: {
         created: message.timestamp,
-        ...(message.stopReason && message.stopReason !== "toolUse" ? { completed: message.timestamp } : {}),
+        ...(message.stopReason && message.stopReason !== "toolUse" ? { completed: completedAt ?? message.timestamp } : {}),
       },
       providerID: message.provider ?? this.providerID,
       modelID: message.model ?? this.modelID,
@@ -701,19 +706,24 @@ export class SessionProjection {
    * 必须和 startAssistant 分开:message_end 到达时那条消息 **已经有 id 了**,再走
    * startAssistant 会铸一个新 id,transcript 上就多出一条重复回复。
    */
-  private finalizeAssistant(message: AssistantBody, givenID?: string, toolStart?: number): KernelEvent[] {
+  private finalizeAssistant(
+    message: AssistantBody,
+    givenID?: string,
+    toolStart?: number,
+    completedAt?: number,
+  ): KernelEvent[] {
     const id = this.streamingID
     const entry = id ? this.messages.get(id) : undefined
     // 没流式过(非流式 provider、重放)就新建;建完立刻清掉流式标记,否则紧跟着的
     // 下一条 assistant 消息会被"收尾"到这一条上,transcript 里就少一条回复。
     if (!id || !entry) {
-      const events = this.startAssistant(message, givenID, toolStart)
+      const events = this.startAssistant(message, givenID, toolStart, completedAt)
       this.streamingID = ""
       return events
     }
 
     this.lastID = id
-    entry.info = this.assistantInfo(id, message)
+    entry.info = this.assistantInfo(id, message, completedAt)
     entry.parts = this.assistantParts(id, message.content as AssistantBlock[], toolStart)
     this.streamingID = ""
     return [{ type: "message.updated", message: entry.info }, ...entry.parts.map(partEvent)]
@@ -805,6 +815,11 @@ export class SessionProjection {
 
 /** running 态 output 的上限(字符)。与 flash / powershell 那头 appendTail 的默认值同一个数。 */
 const LIVE_OUTPUT_CHARS = 8_000
+
+/** 一个能当时刻用的毫秒数(有限、正);否则当没给。 */
+function validTime(value: number | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined
+}
 
 function partEvent(part: Part): KernelEvent {
   return { type: "message.part.updated", part }

@@ -1903,10 +1903,13 @@ export class SessionManager {
           message.role === "user" && pending && textOf(message.content) === pending.text ? pending.id : undefined
         if (given) entry.pendingUser = undefined
         if (entry.parentID && message.role === "assistant") this.taskManager.onAssistant(entry.id, message)
+        // 回复写完的这一刻:回复底下的耗时按它算(重放用这条 entry 的落盘时间,见 projector.applyMessage)。
+        const completedAt = message.role === "assistant" ? Date.now() : undefined
         apply((projection) =>
           projection.applyMessage(message, {
             ...(event.entryId ? { entryId: event.entryId } : {}),
             ...(given ? { messageID: given } : {}),
+            ...(completedAt ? { completedAt } : {}),
           }),
         )
       }),
