@@ -1,6 +1,7 @@
 import { Show, type JSX } from "solid-js"
 import { SessionConfirmDock } from "@/pages/session/composer/session-confirm-dock"
 import { SessionQueueDock } from "@/pages/session/composer/session-queue-dock"
+import { SessionBtwDock } from "@/pages/session/composer/session-btw-dock"
 import { SubagentDock } from "@/pages/session/subagent/subagent-dock"
 import type { SessionComposerRegionController } from "./session-composer-region-controller"
 
@@ -34,7 +35,7 @@ export function SessionComposerRegion(props: {
               items={controller.confirms()!.items}
               replying={controller.confirms()!.replying}
               onReply={controller.confirms()!.onReply}
-              attached={!controller.subagents()?.items.length && !controller.queue()?.items.length}
+              attached={!controller.subagents()?.items.length && !controller.queue()?.items.length && !controller.btw()}
             />
           </Show>
           {/* 子 agent 坞:缺省后台之后"现在有谁在跑"必须有个不随对话滚动的位置。 */}
@@ -44,7 +45,7 @@ export function SessionComposerRegion(props: {
               onOpen={controller.subagents()!.onOpen}
               onStop={controller.subagents()!.onStop}
               onStopAll={controller.subagents()!.onStopAll}
-              attached={!controller.queue()?.items.length}
+              attached={!controller.queue()?.items.length && !controller.btw()}
             />
           </Show>
           <Show when={controller.queue()?.items.length}>
@@ -52,8 +53,21 @@ export function SessionComposerRegion(props: {
               items={controller.queue()!.items}
               retracting={controller.queue()!.retracting}
               onRetract={controller.queue()!.onRetract}
-              attached
+              attached={!controller.btw()}
             />
+          </Show>
+          {/* /btw 顺便问一句:紧贴输入框,答案离视线最近。 */}
+          <Show when={controller.btw()}>
+            {(btw) => (
+              <SessionBtwDock
+                view={btw().view}
+                forking={btw().forking}
+                onDismiss={btw().onDismiss}
+                onFork={btw().onFork}
+                onCopy={btw().onCopy}
+                attached
+              />
+            )}
           </Show>
           {props.promptInput}
         </div>

@@ -17,6 +17,7 @@ import type { AgentMessage, BranchSummaryEntry, CompactionEntry, CustomEntry } f
 
 import { formatTaskNotification, TASK_NOTIFICATION_TYPE } from "./domain/agents/notification.ts"
 import { removalEvents, SessionProjection } from "./projector.ts"
+import { FORK_BOILERPLATE_TAG, forkDirectiveText } from "./btw.ts"
 import type { KernelEvent } from "../protocol.ts"
 import { sortKeyOf } from "../ids.ts"
 import type { Part, ToolPart, ToolStateCompleted } from "../types.ts"
@@ -644,5 +645,25 @@ describe("子 agent 的完成通知", () => {
   test("live 与重放同一条路:逐字节相同", () => {
     const history = [user("派个子 agent"), notification("结果")]
     expect(JSON.stringify(replay(history))).toBe(JSON.stringify(replay(history)))
+  })
+})
+
+describe("fork 的指令消息(/btw 转后台,docs/btw顺便问-设计方案-20260924.md §4.6)", () => {
+  test("以 <fork-boilerplate> 开头的用户消息只画指令那一段;live 与重放同一个样子;普通消息原样", () => {
+    const directive = forkDirectiveText("查清楚 main.c 是干嘛的")
+    const live = projection()
+    const events = live.applyMessage(user(directive))
+    const texts = partsOf(events).flatMap((part) => (part.type === "text" ? [part.text] : []))
+    expect(texts).toEqual(["查清楚 main.c 是干嘛的"])
+
+    const replayed = projection()
+    replayed.applyMessage(user(directive))
+    expect(JSON.stringify(replayed.snapshot())).toBe(JSON.stringify(live.snapshot()))
+
+    const plain = projection()
+    const quoted = `我在文档里看到 <${FORK_BOILERPLATE_TAG}> 这个标签`
+    expect(partsOf(plain.applyMessage(user(quoted))).flatMap((part) => (part.type === "text" ? [part.text] : []))).toEqual([
+      quoted,
+    ])
   })
 })

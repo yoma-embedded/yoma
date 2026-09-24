@@ -205,6 +205,17 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       disabled: !params.id || subagent() || userMessages().length === 0,
       onSelect: compact,
     }),
+    // /btw 顺便问一句(docs/btw顺便问-设计方案-20260924.md §4.8):带参数,选中只是往输入框写 "/btw ",
+    // 回车时由 submit.ts 截走。只在 `/` 候选里出现(命令面板里没有"参数"可接)。
+    sessionCommand({
+      id: "session.btw",
+      title: language.t("command.session.btw"),
+      description: language.t("command.session.btw.description"),
+      slash: "btw",
+      slashInsert: "/btw ",
+      hidden: true,
+      disabled: !params.id || subagent(),
+    }),
   ]
 
   const fileCmds = () => {

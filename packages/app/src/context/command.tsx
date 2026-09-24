@@ -79,6 +79,11 @@ export interface CommandOption {
   category?: string
   keybind?: KeybindConfig
   slash?: string
+  /**
+   * 带参数的斜杠命令(`/btw 问题`):从 `/` 候选里选中时**往输入框里写这段字**、光标放到末尾,不执行 onSelect ——
+   * 参数要用户接着打。没有它的命令照旧"选中即执行"。
+   */
+  slashInsert?: string
   suggested?: boolean
   disabled?: boolean
   hidden?: boolean

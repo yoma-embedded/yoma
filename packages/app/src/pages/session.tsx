@@ -936,6 +936,46 @@ export default function Page() {
     return true
   }
 
+  // ── /btw 顺便问一句(docs/btw顺便问-设计方案-20260924.md §4.8)──────────────────────────
+  // 数据是内核的 session.btw(整条快照)。关掉 = 本地先拿掉,还在答就让内核取消;转后台 = btwFork,成功后
+  // 内核推 cancelled、坞自己关掉,fork 出现在上面的子 agent 坞里。
+  const btwView = createMemo(() => {
+    const id = params.id
+    return id ? sync().data.btw[id] : undefined
+  })
+  const [btwUI, setBtwUI] = createStore<{ forking: boolean }>({ forking: false })
+  /** 关掉顺便问(× 与 Esc 共用)。返回 true = 关掉了一条,Esc 据此不再去停 agent。 */
+  const dismissBtw = () => {
+    const sessionID = params.id
+    if (!sessionID) return false
+    const dismissed = sync().session.dismissBtw(sessionID)
+    if (!dismissed) return false
+    void kernel.session.btwCancel({ sessionID, btwID: dismissed.id }).catch(() => {})
+    return true
+  }
+  const forkBtw = async () => {
+    const sessionID = params.id
+    const view = btwView()
+    if (!sessionID || view?.status !== "done" || btwUI.forking) return
+    setBtwUI("forking", true)
+    try {
+      await kernel.session.btwFork({ sessionID, btwID: view.id })
+      showToast({ title: language.t("session.btwDock.forked") })
+    } catch (err) {
+      fail(err)
+    } finally {
+      setBtwUI("forking", false)
+    }
+  }
+  const copyBtw = () => {
+    const text = btwView()?.text
+    if (!text) return
+    void navigator.clipboard?.writeText(text).then(
+      () => showToast({ title: language.t("session.btwDock.copied") }),
+      () => {},
+    )
+  }
+
   const composerRegion = () => {
     const controller = createSessionComposerRegionController({
       sessionKey,
@@ -966,6 +1006,17 @@ export default function Page() {
               onRetract: (entryId) => void retractQueued([entryId]),
             }
           : undefined,
+      btw: () => {
+        const view = btwView()
+        if (!view) return undefined
+        return {
+          view,
+          forking: btwUI.forking,
+          onDismiss: () => void dismissBtw(),
+          onFork: () => void forkBtw(),
+          onCopy: copyBtw,
+        }
+      },
       setPromptRef: (el) => {
         inputRef = el
       },
@@ -987,6 +1038,7 @@ export default function Page() {
               resumeScroll()
             }}
             onRetractQueued={retractAllQueued}
+            onDismissBtw={dismissBtw}
           />
         }
       />

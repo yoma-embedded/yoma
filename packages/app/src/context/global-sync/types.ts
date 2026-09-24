@@ -1,4 +1,13 @@
-import type { Message, Part, QueuedItemView, Session, SessionStatus, TaskView, VcsInfo } from "@yoma-desktop/kernel"
+import type {
+  BtwView,
+  Message,
+  Part,
+  QueuedItemView,
+  Session,
+  SessionStatus,
+  TaskView,
+  VcsInfo,
+} from "@yoma-desktop/kernel"
 import { NormalizedProviderListResponse } from "@yoma-desktop/session-ui/context"
 
 /**
@@ -67,6 +76,10 @@ export type State = {
   /** 会话收件箱现状(按会话 id)。 */
   queue: {
     [sessionID: string]: QueuedItemView[]
+  }
+  /** /btw 顺便问一句(按会话 id,一个会话同时只有一条)。 */
+  btw: {
+    [sessionID: string]: BtwView
   }
 }
 

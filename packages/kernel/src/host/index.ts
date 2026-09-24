@@ -150,6 +150,9 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     "session.prompt": ({ sessionID, input }) => sessions.prompt(sessionID, input),
     "session.abort": ({ sessionID }) => sessions.abort(sessionID),
     "session.cancelQueued": ({ sessionID, entryId }) => sessions.cancelQueued(sessionID, entryId),
+    "session.btw": ({ sessionID, input }) => sessions.btw(sessionID, input),
+    "session.btwCancel": ({ sessionID, btwID }) => sessions.btwCancel(sessionID, btwID),
+    "session.btwFork": ({ sessionID, btwID }) => sessions.btwFork(sessionID, btwID),
     "session.compact": ({ sessionID }) => sessions.compact(sessionID),
     "session.navigate": ({ sessionID, messageID }) => sessions.navigate(sessionID, messageID),
     "session.setModel": ({ sessionID, providerID, modelID, thinking }) =>

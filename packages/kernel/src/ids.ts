@@ -19,6 +19,8 @@ const PREFIXES = {
   part: "prt",
   // 工具确认。它不进 transcript,字典序只被用来"最早提的那条摆最上面"。
   confirm: "cfm",
+  // /btw 顺便问一句。同样不进 transcript,只用来对上"关掉 / 转后台的是不是还是这一条"。
+  btw: "btw",
 } as const
 
 export type IdPrefix = keyof typeof PREFIXES

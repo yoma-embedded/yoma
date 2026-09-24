@@ -12,6 +12,8 @@ export interface SlashCommand {
   title: string
   description?: string
   keybind?: string
+  /** 选中时往输入框写这段字(带参数的命令,如 `/btw `),而不是执行。 */
+  insert?: string
 }
 
 type PromptPopoverProps = {

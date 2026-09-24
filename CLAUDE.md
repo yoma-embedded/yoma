@@ -930,6 +930,48 @@ app 的 `test-browser/subagent-ui.test.ts`,以及 `e2e:paint` 的子 agent 一�
 
 测试:`host/session-title.test.ts`(纯函数 + SessionManager 场景)、`host/session-names.test.ts`。
 
+### /btw 顺便问一句(`host/btw.ts` + session-manager 的 /btw 一节 + `composer/session-btw-dock.tsx`,2026-09-24)
+
+照 CC 做(2.1.88 还原源码的 `commands/btw/`、`utils/sideQuestion.ts`;转后台照 `tools/AgentTool/forkSubagent.ts` 与文档里 v2.1.206
+起的 fork 规则),方案与每一处偏离的理由在 `docs/btw顺便问-设计方案-20260924.md`。agent 在跑时输入 `/btw 问题`:不打断、不排队、
+问答不进对话历史,答案画在输入框上方的坞里;答完可以一键转成后台子 agent。
+
+- **本质是一次旁路调用**:拿主会话此刻的上下文,末尾追加一条包好的问题(CC 的 `<system-reminder>` 原话),单发一次
+  `models.streamSimple`。不走 admit / lane、不改会话状态、**零写入**(测试钉住 /btw 前后 JSONL 逐字节相同);事件只有
+  `session.btw`(整条快照,正文按 100 ms 节流,复用工具进度那个节流器),**不复用 `message.*`**(会落进 transcript 的 store,
+  bench 也会把它当成这一轮的输出)。一个会话同时一条,新的顶掉旧的 —— 旧的先推 `cancelled`,再推新的第一拍。
+- **请求前缀必须和主轮逐字相同**,供应商的缓存才命中(长会话十万 token,差十倍的钱):系统提示词记"最后一次真发出去的"
+  (`openEntry` 用 `recordSystemPrompt` 包一层;项目记忆一改,发动机下一次请求现算出来的就变了);工具按 `lane.getActiveTools()`
+  的顺序**照带不执行**;消息按 `readBoundedEntries` 的扫法从分支读,拼法照抄发动机**没导出**的 `buildSessionContext`
+  (`btw.ts` 的 `contextMessages`);请求选项照 `createRequestOptions`,**外加 `sessionId: <会话 id>:main`** —— 发动机在
+  `drive/generation.ts` 真发请求时才补这个,pi-ai 拿它做会话亲和头与 OpenAI 的 `prompt_cache_key`,只看 `createRequestOptions`
+  会漏掉它(写方案时就漏过一次)。思考档跟会话走(用户定,CC 同理:档位是缓存键的一部分)。`session-btw.test.ts` 拿发动机
+  **真发出去的**请求逐字比对,上游一改拼法它先红;把工具顺序反过来两条对齐用例都红(变异验证过)。
+- **只动尾巴**:最后一条 assistant 里还没结果的工具调用补一条"还在运行"(`isError: false`)—— 不补的话 pi-ai 补的是
+  `isError: true` 的 "No result provided",模型会据此说"那个工具失败了"。历史中间悬空的调用不碰:两条路 pi-ai 补的一样,前缀
+  照样相同。正在写的那条回复在 pending 帧里、不在分支上,天然看不见。
+- **附件**与 `prompt()` 共用 `prepareImages`(抽出来的,`prompt()` 行为不变):图片过同一道压缩、说明跟着正文进模型;没送到的图、
+  非图片的 `data:` 附件写进坞上的提示。/btw 的失败与附件提示**都不发 `kernel.error`**(那会弹系统通知、把会话标红)。
+- **转成后台任务(fork)**:`session.btwFork` → `TaskManager.fork()`(不查 profiles、没有父工具调用、**一律后台**,宿主不能后台就拒)。
+  子会话照主会话的样子装:合成的 `fork` profile(`domain/agents/fork.ts`,不进 `BUILTIN_AGENTS`,agent 工具选不到)、主会话的
+  系统提示词原字符串与激活工具名、主会话的模型与思考档,落在子会话的 `yoma/fork` 值里(重开照用)。首轮 = 继承的上下文 + 问答 +
+  `<fork-boilerplate>` 守则(照 CC 2.1.88 改了三处:不许再派子 agent、改了文件列出来不许 commit、点名会被拒的工具),一次 accept
+  种进去;种子只在内存里,排队期间内核重启过的 fork 以失败落定。**四个子 agent 工具与五个硬件工具的定义照带(缓存),调用在
+  `childBeforeTool` 拦下**(参数校验在 before_tool 之前,拦截用例的参数得合法);agent 工具的门面换成一律拒绝的桩。跑完照常
+  task-notification 通知主会话。子会话页上那条守则消息由**投影器**只画指令那一段(`projector.ts` 的 `userText`,live 与重放同一条路)
+  —— 放在内核而不是 app 的时间线,是因为 app/AGENTS.md 要求改时间线先量基准,而那套 Playwright 基准的场景 2026-08-13 就删光了。
+- **界面**:`submit.ts` 在所有"发消息"逻辑之前截 `^/btw(\s|$)`(比 CC 的单词边界严,同 @ 提及那次);不先 `setModel` —— 要的是主轮
+  正在用的模型。`/btw` 候选走新加的 `CommandOption.slashInsert`(选中是往输入框写 `"/btw "`、光标放末尾,不是执行)。坞在栈底紧贴
+  输入框。**Esc / Ctrl+G 先关坞再停 agent**(`PromptInput.onDismissBtw`):agent 在跑正是用 /btw 的时候,顺序反了用户想关答案却把
+  agent 停了。关掉的那条 id 记进 `server-session.ts` 的 `dismissedBtw`,之后到的它的事件一律不认 —— 否则关之前已经在路上的那一拍
+  会把坞画回来。
+- 没做 / 已知:CC 后来版本的历史列表、Tab 切换、`/btw` 不带参数重开上一条、`skipCacheWrite`;fork 的缓存路由键是子会话自己的 id
+  (发动机定的);窗口重载会丢掉在飞的答案(事件不重放);**真机(桌面 + DeepSeek)与 `e2e:paint` 还没跑过**。
+
+测试:`host/btw.test.ts`(纯函数)、`host/session-btw.test.ts`(逐字对齐、跑到一半、压缩后、附件、取消与顶替、失败、想调工具、fork 的
+继承 / 拦截 / 通知)、`host/projector.test.ts` 的 fork 一条、app 的 `components/prompt-input/btw.test.ts`、`context/server-session.test.ts`
+的 /btw 一组、`test-browser/btw-dock.test.ts`、`i18n/parity.test.ts` 的两个前缀。
+
 ### 调试台(`packages/bench`)
 
 host 的**第二个宿主**:`createKernelHost()` 是纯 Node 装配(零 Electron 依赖),
@@ -1516,6 +1558,8 @@ Windows 失败时这里超时变红,本来也不该有只含 mac 的 Release)。
 
 ## 已知的未完成项
 
+- **/btw 顺便问一句**(见「/btw 顺便问一句」一节):内核与界面都只过了单测(faux 模型)与组件测试,**没在真窗口里跑过**,
+  也没对真供应商核过缓存命中(开发期看 /btw 那次请求的 cacheRead 不为 0 即可)。
 - **子 agent**(见「子 agent」一节):子 agent 坞、状态栏任务面板、子会话页的状态与停止、"排队中"一栏都只有组件
   渲染测试,**没在真窗口里跑过**(`e2e:paint` 里的内核没有模型,种进去的任务不在它的注册表里);fork 型子 agent、
   worktree 隔离、硬件子 agent、重启后重新挂接前台调用等见设计稿 P5。

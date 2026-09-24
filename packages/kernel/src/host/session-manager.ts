@@ -25,6 +25,7 @@ import {
   AgentHarness,
   BACKGROUND_CONTEXT,
   JsonlSessionRepo,
+  convertToLlm,
   createBashTool,
   createEditTool,
   createReadTool,
@@ -52,8 +53,21 @@ import { loadAgentProfiles } from "./domain/agents/load.ts"
 import { TASK_NOTIFICATION_TYPE } from "./domain/agents/notification.ts"
 import type { AgentProfile } from "./domain/agents/profile.ts"
 import { describeAgentTools, resolveAgentTools, SUBAGENT_TOOL_NAMES } from "./domain/agents/select.ts"
-import type { StopOutcome } from "./domain/agents/task-host.ts"
-import { TaskManager, type ChildSpec, type SubagentMeta, type TaskPort } from "./tasks.ts"
+import { FORK_AGENT_TYPE, FORK_PROFILE, forkBlockReason } from "./domain/agents/fork.ts"
+import type { StopOutcome, TaskHost } from "./domain/agents/task-host.ts"
+import { TaskManager, type ChildSpec, type ForkSpec, type SubagentMeta, type TaskPort } from "./tasks.ts"
+import {
+  answerText,
+  contextMessages,
+  forkSeed,
+  requestOptions,
+  requestTools,
+  settleAnswer,
+  settleRunningToolCalls,
+  userMessage as btwMessage,
+  withNotes,
+  wrapSideQuestion,
+} from "./btw.ts"
 import { bindExecutionEnv } from "./domain/execution-env.ts"
 import { inspectStm32Availability, type Stm32Availability } from "./domain/stm32/availability.ts"
 import {
@@ -87,6 +101,7 @@ import { projectContext } from "./domain/project/context.ts"
 import {
   clampThinkingLevel,
   getSupportedThinkingLevels,
+  type AssistantMessage,
   type AuthContext,
   type ImageContent,
   type Model,
@@ -96,6 +111,7 @@ import {
 import type { InstrumentResult, KernelEvent, KernelParams, PromptInput } from "../protocol.ts"
 import type {
   AgentInfo,
+  BtwView,
   ProviderInfo,
   QueuedItemView,
   Session as ViewSession,
@@ -114,6 +130,111 @@ const MAX_LIVE_SESSIONS = 8
 
 /** 子会话的会话级值(docs/子agent-设计方案-v0.4-20260918.md §4.6):续跑与重启后重建任务都靠它。 */
 const SUBAGENT_META = value<SubagentMeta>("yoma", "subagent")
+
+/** fork 的装配信息(ForkSpec 去掉只在内存里的种子)。重开 fork 的子会话时靠它照主会话的样子装。 */
+type ForkMeta = Omit<ForkSpec, "seed">
+
+/** fork 子会话的会话级值:系统提示词原字符串、激活工具名、模型与思考档位(docs/btw顺便问-设计方案-20260924.md §4.6)。 */
+const FORK_META = value<ForkMeta>("yoma", "fork")
+
+function forkMetaOf(spec: ForkSpec): ForkMeta {
+  return {
+    systemPrompt: spec.systemPrompt,
+    activeToolNames: spec.activeToolNames,
+    model: spec.model,
+    thinkingLevel: spec.thinkingLevel,
+  }
+}
+
+/**
+ * 一条在飞或答完的 /btw(host/btw.ts)。答完的留着,直到被顶掉、被关掉或转了后台 —— 转后台要用它的问答。
+ * `question` 是用户打的原话(界面显示);`prompt` 是交给模型的正文(拼上了图片的说明)。
+ */
+interface BtwAttempt {
+  id: string
+  controller: AbortController
+  question: string
+  prompt: string
+  images: ImageContent[]
+  notices: string[]
+  status: BtwView["status"]
+  text: string
+  attemptedTool?: string
+  error?: string
+  startedAt: number
+  endedAt?: number
+  /** 答完时模型的原消息:转后台时它是 fork 历史里的那条答案。 */
+  answer?: AssistantMessage
+}
+
+function btwView(sessionID: string, attempt: BtwAttempt): BtwView {
+  return {
+    id: attempt.id,
+    sessionID,
+    question: attempt.question,
+    status: attempt.status,
+    text: attempt.text,
+    ...(attempt.attemptedTool ? { attemptedTool: attempt.attemptedTool } : {}),
+    ...(attempt.error ? { error: attempt.error } : {}),
+    ...(attempt.notices.length > 0 ? { notices: attempt.notices } : {}),
+    startedAt: attempt.startedAt,
+    ...(attempt.endedAt ? { endedAt: attempt.endedAt } : {}),
+  }
+}
+
+interface PreparedImages {
+  images: ImageContent[]
+  /** 跟着正文进模型的说明:缩过多少、转过格式、哪张没送到(模型看不到原图,不说它就按缩略图的坐标回答)。 */
+  notes: string[]
+  /** 没送到模型的图:`文件名:原因`。 */
+  omitted: string[]
+  /** 不是图片的 `data:` 附件(送不进模型,忽略)。 */
+  dropped: string[]
+}
+
+/**
+ * 输入框附件里的图片过一道压缩(`prompt()` 与 /btw 共用):截图与手机照片动辄十几 MB,原样发出去整轮会被供应商拒掉。
+ * `file://` 的提及件跳过 —— 路径已经在正文里。`cancelled` 在每张图前后各看一次(压缩一张要几百毫秒)。
+ */
+async function prepareImages(
+  files: PromptInput["files"],
+  cancelled: () => boolean,
+): Promise<PreparedImages> {
+  const prepared: PreparedImages = { images: [], notes: [], omitted: [], dropped: [] }
+  for (const file of files ?? []) {
+    if (cancelled()) break
+    if (!file.mime.startsWith("image/")) continue
+    const base64 = /^data:[^;]+;base64,(.*)$/s.exec(file.url)?.[1]
+    if (base64 === undefined) continue
+    const processed = await processImage(Buffer.from(base64, "base64"), file.mime)
+    if (cancelled()) break
+    if (!processed.ok) {
+      prepared.notes.push(processed.message)
+      prepared.omitted.push(`${file.filename ?? file.mime}:${processed.message}`)
+      continue
+    }
+    // 说明**跟着消息进模型**,不只弹个界面提示:缩过的图坐标全变了,而模型看不到原图。
+    // 少了这句,"复位键在哪个像素"这类问题会得到一个按缩略图算出来、乘回去才对的答案。
+    prepared.notes.push(...processed.hints)
+    prepared.images.push({ type: "image", data: processed.data, mimeType: processed.mimeType })
+  }
+  // 一轮只收 images,别的附件送不进模型。曾经的事故形态:UI 把 PDF 显示成附件、
+  // 这里静默丢掉,两边都不吭声,用户以为模型看过了。UI 侧已按能力分流(有本机路径的
+  // PDF/文本转 @ 提及,无路径的 PDF 拒收),这里是防回归的哨兵 —— 只盯 data: URL 的
+  // 内容型附件;file:// 的提及件路径已在正文里、agent 自己会去读,丢掉 part 是预期行为。
+  prepared.dropped = (files ?? [])
+    .filter((file) => !file.mime.startsWith("image/") && file.url.startsWith("data:"))
+    .map((file) => file.filename ?? file.mime)
+  return prepared
+}
+
+/** 附件的两句提示:`prompt()` 发成 kernel.error,/btw 写进坞上(不弹系统通知、不标红会话)。 */
+function attachmentNotices(prepared: PreparedImages): string[] {
+  return [
+    ...(prepared.omitted.length > 0 ? [`图片没能送达模型 —— ${prepared.omitted.join(";")}`] : []),
+    ...(prepared.dropped.length > 0 ? [`附件 ${prepared.dropped.join("、")} 不是图片,当前无法送达模型,已忽略`] : []),
+  ]
+}
 
 /** 同时在跑的子 agent 缺省上限(CC 的 CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY 缺省也是 10)。 */
 const DEFAULT_MAX_CONCURRENT_AGENTS = 10
@@ -333,8 +454,11 @@ interface Entry {
   pendingUser?: { id: string; text: string }
   /** 子 agent 的会话:派它的主会话(repo 的 parentSessionId)。有它的会话不接用户的 prompt。 */
   parentID?: string
-  /** 子会话怎么装配:agent 类型、profile、模型入参。进程重启后由 openEntry 从 yoma/subagent 值补齐。 */
-  child?: { agent: string; profile?: AgentProfile; model?: string }
+  /**
+   * 子会话怎么装配:agent 类型、profile、模型入参。进程重启后由 openEntry 从 yoma/subagent 值补齐。fork 另带
+   * 装配信息(重开时从 yoma/fork 值补齐)和首轮的种子(只在内存里,首轮一用就放掉)。
+   */
+  child?: { agent: string; profile?: AgentProfile; model?: string; fork?: ForkMeta; seed?: AgentMessage[] }
   /** 主会话打开时读到的 agent 定义快照:agent 工具的描述由它拼,会话内不变。 */
   profiles?: AgentProfile[]
   /** 子 agent 任务排队中 / 运行中:LRU 不许淘汰它(docs/子agent-设计方案-v0.4-20260918.md §6.7)。 */
@@ -360,6 +484,13 @@ interface Entry {
   titling?: { controller: AbortController; placeholder?: string }
   /** list() 正在从 JSONL 里扫它的会话名。同时进来的另一次 list() 要等它 —— 见 list()。 */
   naming?: Promise<void>
+  /**
+   * 系统提示词函数(openEntry 装的那个)与它最后一次交给发动机的原字符串。/btw 与 fork 要和主轮**逐字相同**的
+   * 系统提示词才吃得到缓存,而发动机每次请求现算一次(项目记忆一改就变)—— 所以记"最后一次真发出去的",还没发过才现算。
+   */
+  systemPrompt?: { build: () => Promise<string>; last?: string }
+  /** /btw 顺便问一句:同一时间一条。新的一条先掐掉旧的;结果回来时这里已经不是同一个对象就作废。 */
+  btw?: BtwAttempt
 }
 
 export interface SessionManagerOptions {
@@ -833,6 +964,7 @@ export class SessionManager {
 
   private async deleteEntry(entry: Entry): Promise<void> {
     this.cancelAutoTitle(entry)
+    this.cancelBtw(entry)
     await this.dispose(entry)
     await this.repoLocked(() => this.repo.delete(entry.meta, this.context))
     this.entries.delete(entry.id)
@@ -963,14 +1095,21 @@ export class SessionManager {
 
       // 子 agent 的会话按自己的 profile 装配(docs/子agent-设计方案-v0.4-20260918.md §4、§5.3、§6.8);
       // 主会话读 agent 定义的快照(会话内不变,agent 工具的描述因此字节稳定)、拿 TaskHost 门面。
+      // fork(从 /btw 转出去的后台子 agent)照主会话的样子装:同一份工具定义、主会话的系统提示词原字符串 ——
+      // 它的第一次请求要和主会话的前缀逐字相同(docs/btw顺便问-设计方案-20260924.md §4.6)。
       const profile = entry.parentID ? await this.childProfile(entry, session) : undefined
-      if (!profile) {
+      const fork = profile?.name === FORK_AGENT_TYPE ? await this.forkMeta(entry, session) : undefined
+      // fork 的 agent 工具描述要与主会话逐字相同:主会话还开着就用它那份快照,不再从磁盘重读(定义文件可能改过)。
+      const parentProfiles = fork && entry.parentID ? this.entries.get(entry.parentID)?.profiles : undefined
+      if (parentProfiles) entry.profiles = parentProfiles
+      else if (!profile || fork) {
         const loaded = await loadAgentProfiles({
           cwd: entry.cwd,
           configDir: this.configDir,
           homeDir: this.options.subagents?.homeDir,
         })
-        for (const diagnostic of loaded.diagnostics) {
+        // fork 的这份只用来拼 agent 工具的描述(与主会话逐字相同),定义里的问题主会话已经报过了。
+        for (const diagnostic of fork ? [] : loaded.diagnostics) {
           this.options.emit([
             { type: "kernel.error", sessionID: entry.id, message: `agent 定义 ${diagnostic.path}:${diagnostic.message}` },
           ])
@@ -1003,29 +1142,43 @@ export class SessionManager {
         // 手册服务器地址从同一个 configDir 的 .env 解析:设置页、手册库页、agent 说同一个地址。
         datasheet: { configDir: this.configDir },
         // 子 agent 四件的宿主门面,绑定本会话 id。子会话不给:四件在子会话里由硬黑名单裁掉(§5.3)。
-        ...(profile
+        // fork 给一个一律拒绝的门面:四件只为了定义与主会话逐字相同,调用由 childBeforeTool 先拦下。
+        ...(profile && !fork
           ? {}
-          : { agents: { host: this.taskManager.hostFor(entry.id, () => entry.profiles ?? []), canReadOutputFile: true } }),
+          : {
+              agents: {
+                host: fork ? this.forkTaskHost(entry) : this.taskManager.hostFor(entry.id, () => entry.profiles ?? []),
+                canReadOutputFile: true,
+              },
+            }),
       })
       entry.stm32Availability = await this.inspectStm32(entry, preparationSignal)
       preparationSignal?.throwIfAborted()
-      const tools = profile ? this.childTools(entry, profile, allTools) : allTools
-      entry.activeToolNames = profile
-        ? tools.map((tool) => tool.name)
-        : activeToolNames(tools, entry.stm32Availability!.available, true)
+      const tools = profile && !fork ? this.childTools(entry, profile, allTools) : allTools
+      entry.activeToolNames = fork
+        ? fork.activeToolNames.filter((name) => tools.some((tool) => tool.name === name))
+        : profile
+          ? tools.map((tool) => tool.name)
+          : activeToolNames(tools, entry.stm32Availability!.available, true)
       // 新 lane 的种子。子 agent:模型按 env > 入参 > profile > 继承主会话,思考缺省 off(CC 同款,§4.5);
+      // fork:主会话此刻的模型与思考档位(CC:fork 继承主对话的模型与思考设置);
       // 主会话:宿主不表态就交给内核(off)。重开旧会话时用的是 lane 自己存下来的那一组。
-      const seed = profile
-        ? this.childSeed(entry, profile, models, model)
-        : {
-            model,
-            thinkingLevel: this.options.defaultThinkingLevel
-              ? (pickThinkingLevel(
-                  getSupportedThinkingLevels(model) as string[],
-                  this.options.defaultThinkingLevel,
-                ) as ThinkingLevel)
-              : undefined,
-          }
+      const forkModel = fork
+        ? ((models.getModel(fork.model.provider, fork.model.modelId) as Model<string> | undefined) ?? model)
+        : undefined
+      const seed = forkModel
+        ? { model: forkModel, thinkingLevel: clampThinkingLevel(forkModel, fork!.thinkingLevel) }
+        : profile
+          ? this.childSeed(entry, profile, models, model)
+          : {
+              model,
+              thinkingLevel: this.options.defaultThinkingLevel
+                ? (pickThinkingLevel(
+                    getSupportedThinkingLevels(model) as string[],
+                    this.options.defaultThinkingLevel,
+                  ) as ThinkingLevel)
+                : undefined,
+            }
       const created = await AgentHarness.create<ExecutionToolContext>(
         {
           session,
@@ -1037,7 +1190,7 @@ export class SessionManager {
           // 函数形态:每轮重新解析一次,于是 refreshMachineEnv 换掉 shellEnv 之后
           // 下一条 bash 命令就看得见新 PATH,不用重开会话。
           toolContext: () => ({ env: this.toolEnv(entry) }),
-          systemPrompt: async () => {
+          systemPrompt: this.recordSystemPrompt(entry, fork, async () => {
             const projectFiles = profile?.omitContextFiles ? [] : [
               { path: "<project-memory>", content: await projectContext(entry.cwd) },
             ]
@@ -1077,7 +1230,7 @@ export class SessionManager {
               skills: discovered.skills,
               appendSystemPrompt: stm32Note,
             })
-          },
+          }),
           // lane.skill() 从这里查技能。
           resources: { skills: discovered.skills },
         },
@@ -1211,6 +1364,11 @@ export class SessionManager {
     if (entry.child?.profile) return entry.child.profile
     const meta = (await session.getValue(SUBAGENT_META, this.context))?.value
     const agent = entry.child?.agent ?? meta?.agent ?? DEFAULT_AGENT_TYPE
+    // fork 是合成的,不在任何定义列表里(docs/btw顺便问-设计方案-20260924.md §4.6)。
+    if (agent === FORK_AGENT_TYPE) {
+      entry.child = { ...entry.child, agent, profile: FORK_PROFILE }
+      return FORK_PROFILE
+    }
     const parent = entry.parentID ? this.entries.get(entry.parentID) : undefined
     let profile = parent?.profiles?.find((item) => item.name === agent)
     if (!profile) {
@@ -1233,6 +1391,41 @@ export class SessionManager {
     }
     entry.child = { ...entry.child, agent, profile }
     return profile
+  }
+
+  /** fork 的装配信息:本进程派出的在 entry.child 上,重开时从 yoma/fork 值读。 */
+  private async forkMeta(entry: Entry, session: PiSession<JsonlSessionMetadata>): Promise<ForkMeta> {
+    const meta = entry.child?.fork ?? (await session.getValue(FORK_META, this.context))?.value
+    if (!meta) throw new Error("这个后台任务(fork)的装配信息丢了,没法打开")
+    if (entry.child) entry.child.fork = meta
+    return meta
+  }
+
+  /**
+   * fork 的子 agent 四件用的门面:profiles 与能不能后台都与主会话的那份相同(agent 工具的描述因此逐字相同),
+   * 真要调用一律拒 —— childBeforeTool 已经先拦下了,这里是第二道。
+   */
+  private forkTaskHost(entry: Entry): TaskHost {
+    const host = this.taskManager.hostFor(entry.parentID ?? entry.id, () => entry.profiles ?? [])
+    const refuse = async (): Promise<never> => {
+      throw new Error(forkBlockReason("agent"))
+    }
+    return { profiles: host.profiles, backgroundAllowed: host.backgroundAllowed, spawn: refuse, output: refuse, stop: refuse, send: refuse }
+  }
+
+  /**
+   * 包一层系统提示词函数:每次交给发动机之前记下原字符串 —— /btw 与 fork 要和主轮逐字相同(docs/btw顺便问-设计方案-20260924.md
+   * §4.2)。fork 不现算,一直用主会话交给它的那一份(CC:"Reconstructing by re-calling getSystemPrompt() can diverge … and
+   * bust the prompt cache")。
+   */
+  private recordSystemPrompt(entry: Entry, fork: ForkMeta | undefined, build: () => Promise<string>): () => Promise<string> {
+    const state: NonNullable<Entry["systemPrompt"]> = { build: fork ? async () => fork.systemPrompt : build }
+    entry.systemPrompt = state
+    return async () => {
+      const text = await state.build()
+      state.last = text
+      return text
+    }
   }
 
   /**
@@ -1321,6 +1514,11 @@ export class SessionManager {
     event: { toolCallId: string; toolName: string; args: Record<string, unknown>; runId: string },
     context: Context,
   ): Promise<{ block: { reason: string; terminate?: boolean } } | undefined> {
+    // fork 手上有主会话的全套工具定义(缓存),但子 agent 四件与硬件五件在这里拦下(§4.6)。
+    if (profile.name === FORK_AGENT_TYPE) {
+      const reason = forkBlockReason(event.toolName)
+      if (reason) return { block: { reason } }
+    }
     if (profile.maxTurns && (entry.turnCounts?.get(event.runId) ?? 0) > profile.maxTurns) {
       entry.maxTurnsHit?.add(event.runId)
       return { block: { reason: "max turns reached", terminate: true } }
@@ -1850,11 +2048,9 @@ export class SessionManager {
 
     const messageID = input.messageID ?? Identifier.ascending("message")
 
-    // 贴进来的图同样要过压缩:截图与手机照片动辄十几 MB,原样发出去整轮会被供应商拒掉。
-    // file:// 的提及件在这里跳过 —— 它的路径已经在正文里,agent 自己会用 read 去读(那条路也过同一道压缩)。
-    const images: ImageContent[] = []
-    const notes: string[] = []
-    const omitted: string[] = []
+    // 贴进来的图同样要过压缩(prepareImages,与 /btw 共用);file:// 的提及件跳过 —— 它的路径已经在正文里,
+    // agent 自己会用 read 去读(那条路也过同一道压缩)。
+    let prepared: PreparedImages = { images: [], notes: [], omitted: [], dropped: [] }
     // 这一段要花秒级时间,而 lane 还没有操作可中断:给它一个可取消的标记(见 Entry.preparing 与 stop)。
     const preparing = { cancelled: false, controller: new AbortController() }
     entry.preparing = preparing
@@ -1865,23 +2061,7 @@ export class SessionManager {
       if (!preparing.cancelled && alreadyOpen && !this.isRunning(entry)) {
         await this.refreshAvailability(entry, preparing.controller.signal)
       }
-      for (const file of input.files ?? []) {
-        if (preparing.cancelled) break
-        if (!file.mime.startsWith("image/")) continue
-        const base64 = /^data:[^;]+;base64,(.*)$/s.exec(file.url)?.[1]
-        if (base64 === undefined) continue
-        const processed = await processImage(Buffer.from(base64, "base64"), file.mime)
-        if (preparing.cancelled) break
-        if (!processed.ok) {
-          notes.push(processed.message)
-          omitted.push(`${file.filename ?? file.mime}:${processed.message}`)
-          continue
-        }
-        // 说明**跟着消息进模型**,不只弹个界面提示:缩过的图坐标全变了,而模型看不到原图。
-        // 少了这句,"复位键在哪个像素"这类问题会得到一个按缩略图算出来、乘回去才对的答案。
-        notes.push(...processed.hints)
-        images.push({ type: "image", data: processed.data, mimeType: processed.mimeType })
-      }
+      prepared = await prepareImages(input.files, () => preparing.cancelled)
     } catch (error) {
       if (!preparing.cancelled) throw error
     } finally {
@@ -1889,27 +2069,12 @@ export class SessionManager {
     }
     // 准备期里用户按了停止:这一轮就此作罢,别让它在"已经点过停止"之后才开跑。
     if (preparing.cancelled) return { messageID }
-    if (omitted.length > 0) {
-      this.options.emit([{ type: "kernel.error", sessionID, message: `图片没能送达模型 —— ${omitted.join(";")}` }])
+    // 没送到的图、忽略的非图片附件:两边都不吭声的话,用户会以为模型看过了。
+    for (const message of attachmentNotices(prepared)) {
+      this.options.emit([{ type: "kernel.error", sessionID, message }])
     }
-    const text = notes.length > 0 ? `${input.text}\n\n${notes.join("\n")}` : input.text
-
-    // 一轮只收 images,别的附件送不进模型。曾经的事故形态:UI 把 PDF 显示成附件、
-    // 这里静默丢掉,两边都不吭声,用户以为模型看过了。UI 侧已按能力分流(有本机路径的
-    // PDF/文本转 @ 提及,无路径的 PDF 拒收),这里是防回归的哨兵 —— 只盯 data: URL 的
-    // 内容型附件;file:// 的提及件路径已在正文里、agent 自己会去读,丢掉 part 是预期行为。
-    const dropped = (input.files ?? []).filter(
-      (file) => !file.mime.startsWith("image/") && file.url.startsWith("data:"),
-    )
-    if (dropped.length > 0) {
-      this.options.emit([
-        {
-          type: "kernel.error",
-          sessionID,
-          message: `附件 ${dropped.map((f) => f.filename ?? f.mime).join("、")} 不是图片,当前无法送达模型,已忽略`,
-        },
-      ])
-    }
+    const images = prepared.images
+    const text = withNotes(input.text, prepared.notes)
 
     // 忙着(准备期结束时再判断一次 —— 那几秒里这一轮可能已经收工):排进收件箱,不打断。
     // 不做乐观插入:它被取走时才随 message_end 落在 transcript 里的真实位置(当前工具轮次的结果之后)。
@@ -2002,6 +2167,180 @@ export class SessionManager {
     if (!attempt) return
     entry.titling = undefined
     attempt.controller.abort()
+  }
+
+  // -------------------------------------------------------------------------
+  // /btw 顺便问一句(host/btw.ts,docs/btw顺便问-设计方案-20260924.md)
+  // -------------------------------------------------------------------------
+
+  /**
+   * 顺便问一句:立即回 btwID,答案走 `session.btw` 事件。不走 admit / lane —— 不受忙闲、排队、压缩影响,不改会话状态;
+   * 零写入(不记用量、不写条目、不改名)。同一个会话同时只有一条,新的一条先掐掉旧的。
+   */
+  async btw(sessionID: string, input: PromptInput): Promise<{ btwID: string }> {
+    const entry = await this.ensureOpen(sessionID)
+    if (entry.parentID) throw subagentSession(sessionID)
+    if (!input.text.trim()) throw new Error("/btw 后面要跟一个问题")
+    this.cancelBtw(entry)
+    const attempt: BtwAttempt = {
+      id: Identifier.ascending("btw"),
+      controller: new AbortController(),
+      question: input.text,
+      prompt: input.text,
+      images: [],
+      notices: [],
+      status: "thinking",
+      text: "",
+      startedAt: Date.now(),
+    }
+    entry.btw = attempt
+    // 答案可能要想几十秒:这期间别让 LRU 把这个会话关掉。
+    entry.touched = Date.now()
+    this.emitBtw(entry, attempt)
+    void this.runBtw(entry, attempt, input.files)
+    return { btwID: attempt.id }
+  }
+
+  /** 关掉这条顺便问:还在答就取消请求;答完了就放掉(转后台要用的问答也一起放掉)。对不上 id 什么都不做。 */
+  async btwCancel(sessionID: string, btwID: string): Promise<void> {
+    const entry = this.entries.get(sessionID)
+    if (!entry || entry.btw?.id !== btwID) return
+    this.cancelBtw(entry)
+  }
+
+  /**
+   * 把答完的顺便问转成后台子 agent(照 CC 的 fork,§4.6):此刻重新读一遍主会话的上下文,接上这次的问答与指令,连同
+   * 系统提示词原字符串、激活工具名、模型与思考档位交给 TaskManager。转出去之后这条顺便问就放掉(界面上坞关掉)。
+   */
+  async btwFork(sessionID: string, btwID: string): Promise<{ taskID: string }> {
+    const entry = await this.ensureOpen(sessionID)
+    if (entry.parentID) throw subagentSession(sessionID)
+    const attempt = entry.btw
+    if (!attempt || attempt.id !== btwID || attempt.status !== "done" || !attempt.answer) {
+      throw new Error("这条顺便问已经不在了或还没答完,没法转成后台任务")
+    }
+    const snapshot = await this.btwSnapshot(entry)
+    const task = await this.taskManager.fork(entry.id, {
+      agent: FORK_AGENT_TYPE,
+      description: fallbackTitle(attempt.question) ?? "btw",
+      prompt: attempt.prompt,
+      fork: {
+        seed: forkSeed({ context: snapshot.messages, question: attempt.prompt, images: attempt.images, answer: attempt.answer }),
+        systemPrompt: snapshot.systemPrompt,
+        activeToolNames: snapshot.activeToolNames,
+        model: snapshot.model,
+        thinkingLevel: snapshot.thinkingLevel,
+      },
+    })
+    if (entry.btw === attempt) this.cancelBtw(entry)
+    return { taskID: task.taskID }
+  }
+
+  /** 掐掉并放掉这个会话的 /btw,推一条 cancelled 让界面拿掉它(被新的一条顶掉时也走这里,先于新的那条的事件)。 */
+  private cancelBtw(entry: Entry): void {
+    const attempt = entry.btw
+    if (!attempt) return
+    entry.btw = undefined
+    attempt.controller.abort()
+    if (this.entries.get(entry.id) !== entry) return
+    this.options.emit([{ type: "session.btw", btw: { ...btwView(entry.id, attempt), status: "cancelled" } }])
+  }
+
+  /** 这条 /btw 还是这个会话当前的那一条,才推事件:被顶掉、被关掉、会话被删之后晚到的一拍一律不发。 */
+  private emitBtw(entry: Entry, attempt: BtwAttempt): void {
+    if (this.entries.get(entry.id) !== entry || entry.btw !== attempt) return
+    this.options.emit([{ type: "session.btw", btw: btwView(entry.id, attempt) }])
+  }
+
+  private async runBtw(entry: Entry, attempt: BtwAttempt, files: PromptInput["files"]): Promise<void> {
+    const signal = attempt.controller.signal
+    // 正文按"前沿立即、之后每 100 ms、尾沿补发"节流(与工具进度同一个节流器),每一拍发的是整段快照。
+    const throttle = new ToolProgressThrottle(() => this.emitBtw(entry, attempt))
+    try {
+      const prepared = await prepareImages(files, () => signal.aborted)
+      if (signal.aborted) return
+      attempt.images = prepared.images
+      attempt.prompt = withNotes(attempt.question, prepared.notes)
+      attempt.notices = attachmentNotices(prepared)
+      if (attempt.notices.length > 0) this.emitBtw(entry, attempt)
+      const { models } = await this.ensureModels()
+      const snapshot = await this.btwSnapshot(entry)
+      const model = models.getModel(snapshot.model.provider, snapshot.model.modelId) as Model<string> | undefined
+      if (!model) throw new Error(`模型 ${snapshot.model.provider}/${snapshot.model.modelId} 不可用(没配 key,或已不在模型目录里)`)
+      if (signal.aborted) return
+      const stream = models.streamSimple(
+        model,
+        {
+          systemPrompt: snapshot.systemPrompt,
+          messages: convertToLlm([...snapshot.messages, btwMessage(wrapSideQuestion(attempt.prompt), attempt.images)]),
+          tools: requestTools(snapshot.tools, snapshot.activeToolNames),
+        },
+        requestOptions({
+          streamOptions: snapshot.streamOptions,
+          thinkingLevel: snapshot.thinkingLevel,
+          sessionId: `${entry.id}:${snapshot.lane}`,
+          signal,
+        }),
+      )
+      for await (const event of stream) {
+        if (event.type !== "text_delta" || entry.btw !== attempt) continue
+        attempt.status = "answering"
+        attempt.text = answerText(event.partial)
+        throttle.push(attempt.id, { content: [] })
+      }
+      const message = await stream.result()
+      throttle.settle(attempt.id)
+      if (entry.btw !== attempt) return
+      const outcome = settleAnswer(message)
+      attempt.status = outcome.status
+      attempt.text = outcome.text
+      attempt.attemptedTool = outcome.attemptedTool
+      attempt.error = outcome.error
+      attempt.endedAt = Date.now()
+      if (outcome.status === "done") attempt.answer = message
+      if (outcome.status === "cancelled") this.cancelBtw(entry)
+      else this.emitBtw(entry, attempt)
+    } catch (error) {
+      throttle.settle(attempt.id)
+      if (entry.btw !== attempt || signal.aborted) return
+      attempt.status = "failed"
+      attempt.error = error instanceof Error ? error.message : String(error)
+      attempt.endedAt = Date.now()
+      this.emitBtw(entry, attempt)
+    } finally {
+      throttle.dispose()
+    }
+  }
+
+  /**
+   * 主会话此刻交给模型的样子(/btw 与 fork 共用,§4.2):模型取在飞那一轮捕获的、没在跑就取 lane 的配置;系统提示词取最后
+   * 一次真发出去的;上下文从分支读(与 `readBoundedEntries` 同一个扫法),只在尾巴上给没出结果的工具调用补占位;
+   * 工具与请求选项照主轮的取法。正在写的那条回复还在 pending 帧里、不在分支上,自然不在里面。
+   */
+  private async btwSnapshot(entry: Entry) {
+    const lane = entry.lane
+    const harness = entry.harness
+    const prompt = entry.systemPrompt
+    if (!lane || !harness || !prompt) throw new Error("会话已经关闭,请重新打开")
+    const execution = await lane.inspectExecution(this.context)
+    const [entries, activeToolNames, tools, streamOptions, thinkingLevel, systemPrompt] = await Promise.all([
+      lane.findEntries({ stopAtType: "compaction", order: "newestFirst" }, this.context),
+      lane.getActiveTools(this.context),
+      harness.getTools(this.context),
+      harness.getStreamOptions(this.context),
+      lane.getThinkingLevel(this.context),
+      prompt.last ?? prompt.build(),
+    ])
+    return {
+      lane: lane.name,
+      model: execution.current?.capturedModel ?? execution.configuredModel,
+      systemPrompt,
+      messages: settleRunningToolCalls(contextMessages([...entries].reverse())),
+      tools,
+      activeToolNames,
+      streamOptions,
+      thinkingLevel,
+    }
   }
 
   /** 这个会话有一轮在飞(accept 过、run_end 还没来)。手动压缩不算:它不是一轮,不在工具边界取收件箱。 */
@@ -2175,9 +2514,12 @@ export class SessionManager {
       parentID,
       child: {
         agent: spec.agent,
-        ...(parent.profiles?.find((profile) => profile.name === spec.agent)
-          ? { profile: parent.profiles.find((profile) => profile.name === spec.agent)! }
-          : {}),
+        // fork:合成的 profile + 装配信息 + 首轮的种子(只在内存里,firstMessages 一用就放掉)。
+        ...(spec.fork
+          ? { profile: FORK_PROFILE, fork: forkMetaOf(spec.fork), seed: spec.fork.seed }
+          : parent.profiles?.find((profile) => profile.name === spec.agent)
+            ? { profile: parent.profiles.find((profile) => profile.name === spec.agent)! }
+            : {}),
         ...(spec.model ? { model: spec.model } : {}),
       },
       pinned: true,
@@ -2189,7 +2531,7 @@ export class SessionManager {
       {
         agent: spec.agent,
         parentSessionId: parentID,
-        toolCallId: spec.toolCallId,
+        ...(spec.toolCallId ? { toolCallId: spec.toolCallId } : {}),
         description: spec.description,
         background: spec.background,
         createdAt: Date.now(),
@@ -2197,6 +2539,8 @@ export class SessionManager {
       },
       this.context,
     )
+    // fork 重开时要照主会话的样子装(系统提示词原字符串、激活工具名、模型与档位),落在自己的会话值里。
+    if (spec.fork) await session.setValue(FORK_META, forkMetaOf(spec.fork), this.context)
     this.options.emit([{ type: "session.created", session: toView(entry) }])
     try {
       await this.ensureOpen(entry.id)
@@ -2231,6 +2575,13 @@ export class SessionManager {
   }
 
   private firstMessages(entry: Entry, prompt: string): AgentMessage[] {
+    // fork 的首轮是继承来的整串上下文 + 问答 + 指令(host/btw.ts 的 forkSeed),一次 accept 全部落进它自己的历史。
+    if (entry.child?.agent === FORK_AGENT_TYPE) {
+      const seed = entry.child.seed
+      if (!seed) throw new Error("这个后台任务要继承的对话上下文已经不在了(内核重启过),没法开始")
+      entry.child.seed = undefined
+      return [...seed]
+    }
     const profile = entry.child?.profile
     const messages: AgentMessage[] = []
     for (const name of profile?.skills ?? []) {
@@ -2494,6 +2845,8 @@ export class SessionManager {
     // 先结算未决的确认:下面摘订阅并不会结算已在飞的 ask,而 stop 被 `if (entry.lane)` 挡住时
     // 确认台会一直挂到十分钟超时。
     this.desk.cancel(entry.id)
+    // /btw 读的是这个 lane 与 harness,下面就要拆了:在飞的掐掉,答完的放掉。
+    this.cancelBtw(entry)
     // 装配还在飞就先等它:不等的话那次 open 会在我们关完之后把 lane 又挂回去。
     if (entry.opening) await entry.opening.catch(() => {})
     for (const controller of entry.manualRuns?.keys() ?? []) controller.abort()
@@ -2534,6 +2887,8 @@ export class SessionManager {
     entry.queued = undefined
     entry.turnCounts = undefined
     entry.maxTurnsHit = undefined
+    // 系统提示词函数闭包着这次装配的资源;重开时 openEntry 再装一个。
+    entry.systemPrompt = undefined
   }
 
   /** 收掉 refreshMachineEnv 退役下来的执行环境(它们可能还拖着子进程)。 */
@@ -2547,8 +2902,11 @@ export class SessionManager {
   async disposeAll(): Promise<void> {
     // 不再派生、不再投通知;排队中的任务直接落定。
     this.taskManager.shutdown()
-    // 在飞的起名掐掉:进程要退了,再写会话名只会撞上正在关的会话。
-    for (const entry of this.entries.values()) this.cancelAutoTitle(entry)
+    // 在飞的起名与 /btw 掐掉:进程要退了,再写会话名只会撞上正在关的会话,答案也没人看了。
+    for (const entry of this.entries.values()) {
+      this.cancelAutoTitle(entry)
+      this.cancelBtw(entry)
+    }
     // 主会话先关:它们的停止顺着前台 agent 调用的中止停掉子 agent。反过来的话子 agent 先被停,主会话拿着
     // "子 agent 被停"的工具结果会再请求一次模型 —— 退出途中多跑一轮,而那一轮可能是一条烧录。
     const entries = [...this.entries.values()]

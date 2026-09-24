@@ -152,6 +152,11 @@ export interface PromptInputProps {
    * 返回 true = 接住了(有东西可撤),这一下 ↑ 不再翻历史。
    */
   onRetractQueued?: () => boolean
+  /**
+   * Esc:输入框上方的 /btw 坞开着就先关它(返回 true = 关掉了),这一下 Esc 不再去停 agent —— agent 在跑正是
+   * 用 /btw 的时候,想关答案却把 agent 停了,对正在烧录的板子是实打实的损失(docs/btw顺便问-设计方案-20260924.md §4.8)。
+   */
+  onDismissBtw?: () => boolean
   onSubmit?: () => void
   toolbar?: JSX.Element
 }
@@ -624,6 +629,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
         title: opt.title,
         description: opt.description,
         keybind: opt.keybind,
+        ...(opt.slashInsert ? { insert: opt.slashInsert } : {}),
       })),
   )
 
@@ -631,6 +637,14 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     if (!cmd) return
     closePopover()
     const images = imageAttachments()
+
+    // 带参数的命令:写进输入框、光标放末尾,等用户接着打参数(附件照留)。
+    if (cmd.insert) {
+      const text = cmd.insert
+      prompt.set([{ type: "text", content: text, start: 0, end: text.length }, ...images], text.length)
+      restoreFocus()
+      return
+    }
 
     clearEditor()
     prompt.set([...DEFAULT_PROMPT, ...images], 0)
@@ -1114,6 +1128,12 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
         return
       }
 
+      if (props.onDismissBtw?.()) {
+        event.preventDefault()
+        event.stopPropagation()
+        return
+      }
+
       if (working()) {
         void abort()
         event.preventDefault()
@@ -1172,6 +1192,11 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     if (ctrl && event.code === "KeyG") {
       if (store.popover) {
         closePopover()
+        event.preventDefault()
+        return
+      }
+      // 与 Esc 同一个顺序:/btw 的坞开着就先关它。
+      if (props.onDismissBtw?.()) {
         event.preventDefault()
         return
       }

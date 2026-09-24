@@ -25,6 +25,9 @@ const PARITY_PREFIXES = [
   "session.search.",
   // 左侧栏的项目列表(标题行、每个项目的菜单、移除后的提示)。
   "codex.projects.",
+  // /btw 顺便问一句:输入框上方那个坞的状态、按钮与说明,以及发不出去时的提示。
+  "session.btwDock.",
+  "prompt.toast.btw.",
 ] as const
 
 /**
