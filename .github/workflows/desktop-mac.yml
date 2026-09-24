@@ -270,12 +270,26 @@ jobs:
           echo "::error::等了 60 分钟仍没有 Release $TAG —— 多半是 desktop-win 这次失败了。修好它之后重跑本任务即可。"
           exit 1
 
+      # 先传安装包,最后才传 latest-mac.yml 与校验和。这时 Release 已经发布了(Windows 那条建的),
+      # 而已装的 Mac 端只看 latest-mac.yml:它先上去、dmg / zip 却没传成(runner 往 Release 传大文件会
+      # 间歇 HTTP 500 或挂住,v0.2.9 撞过)的话,用户收到新版提示,点开发布页却没有安装包。
+      # 每一段带重试(--clobber 覆盖传了一半的)和超时(挂住的上传别吃掉整个任务的 75 分钟)。
       - name: 把 mac 产物挂到 Release
         run: |
-          gh release upload "$TAG" --clobber \
+          upload() {
+            for attempt in 1 2 3; do
+              if timeout 1200 gh release upload "$TAG" --clobber "$@"; then
+                return 0
+              fi
+              echo "::warning::第 $attempt 次上传失败:$*"
+              sleep 60
+            done
+            echo "::error::上传三次都没成功:$*"
+            return 1
+          }
+          upload \
             release/yoma-mac-arm64.dmg \
             release/yoma-mac-arm64.dmg.blockmap \
             release/yoma-mac-arm64.zip \
-            release/yoma-mac-arm64.zip.blockmap \
-            release/latest-mac.yml \
-            release/SHA256SUMS-mac.txt
+            release/yoma-mac-arm64.zip.blockmap
+          upload release/latest-mac.yml release/SHA256SUMS-mac.txt
