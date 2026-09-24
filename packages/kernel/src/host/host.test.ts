@@ -253,9 +253,14 @@ function compactionPartOf(page: { items: Array<{ parts: Part[] }> }): Compaction
     | undefined
 }
 
-/** 会话状态的时间序列。重试测试靠它断言"中间不能出现 idle"。 */
+/**
+ * 会话状态的**转移**序列(相邻相同的合成一个)。重试测试靠它断言"中间不能出现 idle"。
+ * 忙时阶段一变内核就多推一条 busy(带 activity,docs/调试留痕-规划-20260924.md §2.2)—— 那是 busy 里的进度,
+ * 不是状态机的一次转移,不折的话每条"busy → idle"的断言都会被阶段数牵着走。
+ */
 function statusesOf(events: KernelEvent[]): string[] {
-  return events.flatMap((event) => (event.type === "session.status" ? [event.status.type] : []))
+  const types = events.flatMap((event) => (event.type === "session.status" ? [event.status.type] : []))
+  return types.filter((type, index) => index === 0 || type !== types[index - 1])
 }
 
 /** 等到某个条件成立或超时 —— 一轮对话是异步的,prompt() 立刻返回。 */

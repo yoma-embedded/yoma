@@ -32,7 +32,6 @@ import { DialogFooter, DialogHeader, DialogTitleGroup, DialogV2 } from "@yoma-de
 import { InlineInput } from "@yoma-desktop/ui/inline-input"
 import { ButtonV2 } from "@yoma-desktop/ui/v2/button-v2"
 import { ScrollView } from "@yoma-desktop/ui/scroll-view"
-import { TextReveal } from "@yoma-desktop/ui/text-reveal"
 import { TextShimmer } from "@yoma-desktop/ui/text-shimmer"
 import type { AssistantMessage, Message as MessageType, Part as PartType, UserMessage } from "@yoma-desktop/kernel"
 import { showToast } from "@/utils/toast"
@@ -56,7 +55,8 @@ import { TimelineSearch } from "./timeline-search"
 import { createTimelineProjection } from "./projection"
 import { MessageComment, TimelineRow, TimelineRowMap } from "./rows"
 import { ModelRequestStatus } from "./model-request-status"
-import { turnActivity, type TurnActivity } from "./activity"
+import { kernelActivity, turnActivity } from "./activity"
+import { TimelineActivityRow } from "./activity-row"
 import { filterVirtualIndexes } from "./virtual-items"
 import { SubagentBack, SubagentStatus } from "../subagent/subagent-header"
 
@@ -100,46 +100,6 @@ const markBoundaryGesture = (input: {
   ) {
     input.onMarkScrollGesture(input.root)
   }
-}
-
-/**
- * 正在跑的那一轮底下那一行(`TimelineRow.Thinking`):此刻在干什么(`activity.ts`,照 pi-agent-desktop 的 phaseLabel)。
- * 模型正在往外发思考内容才说「思考中」(打开了「显示思考」时不在这里说 —— 思考块自己在闪);有工具在跑说「正在运行 …」;
- * 在等下一次请求出字说「等待模型」;模型在写正文、在写调用参数时不出字。小号、最淡:它是状态,不是回复。
- */
-function TimelineActivityRow(props: {
-  activity: TurnActivity | undefined
-  reasoningHeading?: string
-  showReasoningSummaries: boolean
-}) {
-  const language = useLanguage()
-  const label = createMemo(() => {
-    const activity = props.activity
-    if (!activity) return
-    if (activity.kind === "thinking")
-      return props.showReasoningSummaries ? undefined : language.t("ui.sessionTurn.status.thinking")
-    if (activity.kind === "waiting") return language.t("ui.sessionTurn.status.waitingModel")
-    const shown = activity.names.slice(0, 3).join(language.t("ui.sessionTurn.status.toolSeparator"))
-    if (activity.names.length <= 3) return language.t("ui.sessionTurn.status.runningTools", { names: shown })
-    return language.t("ui.sessionTurn.status.runningToolsMore", {
-      names: shown,
-      total: activity.names.length,
-      more: activity.names.length - 3,
-    })
-  })
-
-  return (
-    <Show when={label()}>
-      {(text) => (
-        <div data-slot="session-turn-thinking" data-activity={props.activity?.kind}>
-          <TextShimmer text={text()} />
-          <Show when={props.activity?.kind === "thinking"}>
-            <TextReveal text={props.reasoningHeading} class="session-turn-thinking-heading" travel={25} duration={700} />
-          </Show>
-        </div>
-      )}
-    </Show>
-  )
 }
 
 export function MessageTimeline(props: {
@@ -212,6 +172,18 @@ export function MessageTimeline(props: {
   })
   const activeMessageID = projection.activeMessageID
   const assistantMessagesByParent = projection.assistantMessagesByParent
+  // 忙时"此刻在干什么"(内核在 busy 里带的 activity):只给底部那一行用,行的结构不读它 —— 阶段变化不重建行。
+  const busyActivity = createMemo(() => {
+    const status = sessionStatus()
+    return status.type === "busy" ? status.activity : undefined
+  })
+  // 这一轮正在流的那段推理有多少字(状态行思考阶段的"已想多少字")。组件里读正文,不在行的 memo 里读(规矩 1)。
+  const streamingReasoningChars = (userMessageID: string) => {
+    const message = assistantMessagesByParent().get(userMessageID)?.at(-1)
+    if (!message) return 0
+    const part = getMsgParts(message.id).findLast((item) => item.type === "reasoning")
+    return part?.type === "reasoning" ? (part.text?.length ?? 0) : 0
+  }
   const messageByID = projection.messageByID
   const messageLastRowIndex = projection.messageLastRowIndex
   const messageRowIndex = projection.messageRowIndex
@@ -980,13 +952,16 @@ export function MessageTimeline(props: {
       }
       case "Thinking": {
         const thinkingRow = row as Accessor<TimelineRowByTag<"Thinking">>
-        // 此刻在干什么要读工具状态:在组件里现算,不进行的 memo(规矩 1)。
-        const activity = createMemo(() =>
-          turnActivity(
+        // 此刻在干什么:内核在 busy 里给了阶段就用它(带起点,这一行才走得了表),没给时按这一轮的 part 推断。
+        // 要读工具状态:在组件里现算,不进行的 memo(规矩 1)。
+        const activity = createMemo(() => {
+          const kernel = busyActivity()
+          if (kernel) return kernelActivity(kernel)
+          return turnActivity(
             assistantMessagesByParent().get(thinkingRow().userMessageID) ?? emptyAssistantMessages,
             getMsgParts,
-          ),
-        )
+          )
+        })
         return (
           <TimelineRowFrame row={thinkingRow}>
             <div data-slot="session-turn-message-container" class="w-full px-4 md:px-5">
@@ -994,6 +969,7 @@ export function MessageTimeline(props: {
                 activity={activity()}
                 reasoningHeading={thinkingRow().reasoningHeading}
                 showReasoningSummaries={settings.general.showReasoningSummaries()}
+                reasoningChars={() => streamingReasoningChars(thinkingRow().userMessageID)}
               />
             </div>
           </TimelineRowFrame>

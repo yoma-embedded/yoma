@@ -9,6 +9,8 @@
  * 分片 fork 会让两个进程各自以为自己在写同一条历史。所以整个 app 只 fork 这一个。
  */
 
+import { join } from "node:path"
+
 import { createKernelHost, kernelSelfCheck, type KernelHost } from "@yoma-desktop/kernel/host"
 import { DEFAULT_THINKING_LEVEL, diffToolNames, type KernelEvent, type KernelFrame } from "@yoma-desktop/kernel"
 // 手册工具按 configDir 在每次调用时解析地址,与 main 的手册库页共用同一实现。
@@ -20,7 +22,12 @@ type StartCommand = {
   stateDir: string
   enginesDir?: string
   version?: string
+  /** 本次启动的日志目录(main 的 logging.ts):调试轨迹写这里的 trace.jsonl。 */
+  logDir?: string
 }
+
+/** 给 main 的心跳间隔(main/kernel.ts 的 HEARTBEAT_MS 同一个数):main 20 s 收不到就记"内核没响应"。 */
+const HEARTBEAT_MS = 5_000
 
 type ParentPort = {
   postMessage(message: unknown): void
@@ -120,10 +127,15 @@ if (parentPort) {
         confirmTools: true,
         // 没名字的会话收到第一句话就自动起名(照 opencode / Claude Code;`YOMA_TITLE_MODEL=off` 关掉)。
         autoTitle: true,
+        // 调试轨迹(docs/调试留痕-规划-20260924.md §3):跟 main / renderer 的日志放同一个目录,7 天清理与
+        // "Export logs" 都白得。`YOMA_TRACE=off` 关掉,`YOMA_TRACE_FILE` 改位置。
+        trace: { file: command.logDir ? join(command.logDir, "trace.jsonl") : undefined },
         onEvents: broadcast,
       })
       hostReady?.()
       parentPort.postMessage({ type: "ready" })
+      // 心跳:事件循环整个卡死时内核自己什么都写不了,main 按心跳判(main/kernel-heartbeat.ts)。
+      setInterval(() => parentPort.postMessage({ type: "heartbeat" }), HEARTBEAT_MS).unref?.()
       // start 可能晚于 attach 到达 —— 那些先挂上的端口现在才等到 host,补一次 resync。
       host.resync()
       return

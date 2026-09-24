@@ -37,6 +37,8 @@ import { builtinProviders, getBuiltinModelDataGeneratedAt } from "@earendil-work
 import { catalogBaseUrlFromEnv, withRemoteCatalog } from "./model-catalog.ts";
 import { FileModelsStore } from "./models-store.ts";
 import { streamIdleMsFromEnv, withStreamGuard } from "./stream-guard.ts";
+import { withModelTrace } from "./trace/model-probe.ts";
+import { NOOP_TRACE, type Trace } from "./trace/sink.ts";
 
 function readJson(path: string): any {
 	try {
@@ -145,6 +147,11 @@ export interface ResolveModelOptions {
 	/** 宿主的显式选择(如 CLI 参数或恢复的会话),优先于环境与默认设置。 */
 	provider?: string;
 	modelId?: string;
+	/**
+	 * 调试轨迹(host/trace;docs/调试留痕-规划-20260924.md §3.3)。给了就在看门狗**里面**套一层 HTTP 探针,
+	 * 记每次模型请求的发出、响应头、第一行 data:、keep-alive 与收尾;不给(测试、叶子门的调用方)就没有这一层。
+	 */
+	trace?: Trace;
 }
 
 export interface ResolvedModel {
@@ -153,20 +160,31 @@ export interface ResolvedModel {
 }
 
 /**
+ * 每个宿主拿到的 Models 都过这一道:空闲看门狗(stream-guard.ts)在外、HTTP 探针(trace/model-probe.ts)在里。
+ * **顺序是承重的**:看门狗只在调用方没给 fetch 时注入它的 fetch,探针要是套在外层,会先把 options.fetch 占住,
+ * 看门狗就再也不注入了 —— 流静默断掉时又回到"内核等 15 分钟"。test/model-probe.test.ts 钉着这一条。
+ */
+export function guardModels<T extends Models>(models: T, options: { trace?: Trace; idleMs?: number } = {}): T {
+	return withStreamGuard(withModelTrace(models, options.trace ?? NOOP_TRACE), {
+		idleMs: options.idleMs ?? streamIdleMsFromEnv(),
+	});
+}
+
+/**
  * 装配注册表:注册全部内建 provider,再把没凭证的删掉,并选出默认模型。
  */
 export async function resolveModel(configDir: string, options?: ResolveModelOptions): Promise<ResolvedModel> {
 	const authPath = join(configDir, "auth.json");
 	const settings = readJson(join(configDir, "settings.json")) ?? {};
-	// 流的空闲看门狗挂在这一层:所有宿主的每次请求都经这个 Models 的 streamSimple(见 stream-guard.ts)。
-	const models = withStreamGuard(
+	// 流的空闲看门狗与 HTTP 探针挂在这一层:所有宿主的每次请求都经这个 Models 的 streamSimple。
+	const models = guardModels(
 		createModels({
 			credentials: new FileCredentialStore(authPath),
 			authContext: options?.authContext,
 			// 模型目录的本机缓存。内建目录是随版本冻结的快照,厂商上新比我们发版快 —— 见 models-store.ts。
 			modelsStore: new FileModelsStore(configDir),
 		}),
-		{ idleMs: streamIdleMsFromEnv() },
+		{ trace: options?.trace },
 	);
 
 	// 每个 provider 都包一层远端目录(自带 refreshModels 的原样返回)。不包的话,静态 provider

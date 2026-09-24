@@ -46,6 +46,20 @@ export const SUBAGENT_NOTES = `Notes:
 - For clear communication with the user the assistant MUST avoid using emojis.
 - Do not use a colon before tool calls. Text like "Let me read the file:" followed by a read tool call should just be "Let me read the file." with a period.`;
 
+/**
+ * 手上有 grep / find / ls 又有 shell 时的找文件守则(docs/调试留痕-规划-20260924.md §2.1)。
+ *
+ * 2026-09-24 从本机会话量出来的"卡在工具上"全是这一类:Windows 上经 Git Bash 对每个子目录跑 `du -sh`、没排除 node_modules 的
+ * `grep -rn`,一跑就是几分钟到半小时、管道后面还接着 sort / head,一个字都不出。自带的 grep / find 走 rg、认 .gitignore,
+ * 同样的搜索是秒级。工具名按实际装配的拼 —— 子 agent 的工具池按 profile 裁过,提到它手上没有的工具只会让它空转一次。
+ */
+export function fileSearchGuideline(tools: readonly string[]): string | undefined {
+	const finders = ["grep", "find", "ls"].filter((name) => tools.includes(name));
+	const shells = ["bash", "powershell"].filter((name) => tools.includes(name));
+	if (finders.length === 0 || shells.length === 0) return undefined;
+	return `Search and list files with the ${finders.join("/")} tool${finders.length > 1 ? "s" : ""}, not ${shells.join(" or ")}: they are fast and skip .gitignore'd paths. Never run recursive scans in the shell (du, grep -r, find, ls -R, Get-ChildItem -Recurse) over node_modules, build output or a whole drive — on Windows they can run for many minutes with no output. If one is unavoidable, exclude those directories and pass a timeout.`;
+}
+
 /** Build the system prompt with tools, guidelines, and context */
 export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	const {
@@ -91,6 +105,9 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 		const hasLs = tools.includes("ls");
 		if (hasBash && !hasGrep && !hasFind && !hasLs) {
 			guidelinesSet.add("Use bash for file operations like ls, rg, find");
+		} else {
+			const search = fileSearchGuideline(tools);
+			if (search) guidelinesSet.add(search);
 		}
 
 		// 硬件工具各自的守则写在它们的契约里(host/tools/<name>/contract.ts 的 guidelines),

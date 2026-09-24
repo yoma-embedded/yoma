@@ -22,6 +22,7 @@
     "upstream:check": "tsx scripts/check-upstream.ts",
     "upstream:diff": "tsx scripts/sync-upstream.ts",
     "upstream:update": "tsx scripts/sync-upstream.ts --apply",
+    "trace": "tsx scripts/trace.ts",
     "postinstall": "patch-package && install-electron"
   },
   "workspaces": [

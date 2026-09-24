@@ -11,6 +11,7 @@
     "./host/models": "./src/host/models.ts",
     "./host/engines": "./src/host/domain/engines.ts",
     "./host/toolchain-schema": "./src/host/domain/toolchain/schema.ts",
+    "./host/trace-report": "./src/host/trace/report.ts",
     "./tools/*/contract": "./src/host/tools/*/contract.ts",
     "./tools/contracts": "./src/host/tools/contracts.ts",
     "./package.json": "./package.json"

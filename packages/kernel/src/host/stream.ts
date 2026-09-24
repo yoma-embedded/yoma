@@ -97,6 +97,18 @@ export class StreamSink {
         this.queue[this.queue.length - 1] = event
         return
       }
+      // 同一会话相邻的两条 busy(忙时的阶段变化,host/activity.ts):后一条就是现状。**只合 busy → busy**:
+      // idle 不能被吞 —— 通知("一轮跑完")与 bench 的收工判据都认它。
+      if (
+        tail.type === "session.status" &&
+        event.type === "session.status" &&
+        tail.sessionID === event.sessionID &&
+        tail.status.type === "busy" &&
+        event.status.type === "busy"
+      ) {
+        this.queue[this.queue.length - 1] = event
+        return
+      }
     }
     this.queue.push(event)
   }

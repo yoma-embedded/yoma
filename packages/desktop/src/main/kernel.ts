@@ -9,6 +9,7 @@
 import { app, BrowserWindow, MessageChannelMain, utilityProcess, type UtilityProcess } from "electron"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { createHeartbeatWatch } from "./kernel-heartbeat"
 
 const SERVICE_NAME = "yoma-kernel"
 
@@ -17,10 +18,19 @@ export interface KernelProcessOptions {
   stateDir: string
   enginesDir?: string
   version?: string
+  /** 本次启动的日志目录:内核的调试轨迹写在这里的 trace.jsonl(docs/调试留痕-规划-20260924.md §3.1)。 */
+  logDir?: string
   onStdout?(line: string): void
   onStderr?(line: string): void
   onExit?(code: number): void
+  /** 内核 20 s 没心跳(事件循环整个卡死)。 */
+  onUnresponsive?(silentMs: number): void
+  /** 没心跳之后又回来了,带卡了多久。 */
+  onResponsive?(stalledMs: number): void
 }
+
+/** 内核发心跳的间隔(kernel-entry.ts 同一个数)与 main 的检查间隔。 */
+const HEARTBEAT_MS = 5_000
 
 export interface KernelProcess {
   /** 把一个窗口接到内核上。窗口 reload 之后需要重新调用。 */
@@ -40,7 +50,23 @@ export function spawnKernel(options: KernelProcessOptions): KernelProcess {
 
   child.stdout?.on("data", (chunk: Buffer) => options.onStdout?.(chunk.toString("utf8").trimEnd()))
   child.stderr?.on("data", (chunk: Buffer) => options.onStderr?.(chunk.toString("utf8").trimEnd()))
-  child.once("exit", (code) => options.onExit?.(code))
+
+  // 内核整个卡死(事件循环再也不转)时,它自己什么都写不了 —— 由这边按心跳判,证据落 kernel.log。
+  const heartbeat = createHeartbeatWatch({
+    checkMs: HEARTBEAT_MS,
+    onSilent: (ms) => options.onUnresponsive?.(ms),
+    onRecovered: (ms) => options.onResponsive?.(ms),
+  })
+  let heartbeatTimer: ReturnType<typeof setInterval> | undefined
+  const stopHeartbeat = () => {
+    if (heartbeatTimer) clearInterval(heartbeatTimer)
+    heartbeatTimer = undefined
+  }
+
+  child.once("exit", (code) => {
+    stopHeartbeat()
+    options.onExit?.(code)
+  })
 
   let resolveReady: () => void
   let rejectReady: (error: Error) => void
@@ -53,9 +79,16 @@ export function spawnKernel(options: KernelProcessOptions): KernelProcess {
   timeout.unref?.()
 
   child.on("message", (message: { type?: string; error?: { message?: string } }) => {
+    if (message?.type === "heartbeat") {
+      heartbeat.beat()
+      return
+    }
     if (message?.type === "ready") {
       clearTimeout(timeout)
       resolveReady()
+      heartbeat.beat()
+      heartbeatTimer ??= setInterval(() => heartbeat.check(), HEARTBEAT_MS)
+      heartbeatTimer.unref?.()
     }
     if (message?.type === "error") {
       clearTimeout(timeout)
@@ -69,6 +102,7 @@ export function spawnKernel(options: KernelProcessOptions): KernelProcess {
     stateDir: options.stateDir,
     enginesDir: options.enginesDir,
     version: options.version ?? app.getVersion(),
+    logDir: options.logDir,
   })
 
   return {
@@ -80,6 +114,8 @@ export function spawnKernel(options: KernelProcessOptions): KernelProcess {
       window.webContents.postMessage("kernel-port", null, [channel.port2])
     },
     async stop() {
+      // 正在收尾(dispose 会等在飞的轮次与轨迹写完):这段时间不算"没响应"
+      stopHeartbeat()
       child.postMessage({ type: "stop" })
       await new Promise<void>((resolve) => {
         const timer = setTimeout(() => {

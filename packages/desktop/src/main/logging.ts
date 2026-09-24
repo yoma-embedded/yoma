@@ -19,6 +19,9 @@ let netLogPath: string | undefined
 let logger: MainLogger
 export const getLogger = () => logger
 
+/** 本次启动的日志目录(`<userData>/logs/<启动时间>`):内核的调试轨迹 trace.jsonl 也写在这里。initLogging 之前是 undefined。 */
+export const currentLogDir = (): string | undefined => run || undefined
+
 export function initLogging() {
   initRunDirectory()
   log.transports.file.maxSize = 5 * 1024 * 1024
@@ -59,9 +62,13 @@ export async function exportDebugLogs() {
     write("main", "exporting debug logs", { output })
     await writeZip(output, [
       { name: "manifest.json", data: Buffer.from(JSON.stringify(manifest(), null, 2)) },
+      // 日志目录里有内核的调试轨迹(trace.jsonl),照同样的 24 小时规则收进来
       ...collect(root, "desktop"),
       ...serverLogRoots().flatMap((dir, i) => collect(dir, `server-${i + 1}`)),
       ...collect(app.getPath("crashDumps"), "crashpad"),
+      // 最近 24 小时改过的会话:轨迹只有元数据,时间线要对着会话才读得懂(`npm run trace` 两样一起读)。
+      // 会话里有对话全文 —— 导出包是本机文件,给别人之前用户自己把关(manifest 里注明了)。
+      ...collect(sessionsDir(), "sessions"),
     ])
     shell.showItemInFolder(output)
     return output
@@ -146,7 +153,14 @@ function manifest() {
     crashDumps: app.getPath("crashDumps"),
     serverLogs: serverLogRoots(),
     netLog: netLogPath,
+    sessions: sessionsDir(),
+    note: "sessions/ 里是最近 24 小时改过的会话,含对话全文;desktop/<启动时间>/trace.jsonl 是内核的调试轨迹(只有元数据)",
   }
+}
+
+/** 会话目录(与 main/index.ts 交给内核的 sessionsRoot 同一处)。 */
+function sessionsDir() {
+  return join(app.getPath("userData"), "sessions")
 }
 
 function serverLogRoots() {

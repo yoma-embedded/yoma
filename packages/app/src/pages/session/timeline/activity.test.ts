@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest"
 import type { AssistantMessage, Part } from "@yoma-desktop/kernel"
-import { turnActivity } from "./activity"
+import { formatActivityElapsed, formatChars, kernelActivity, turnActivity } from "./activity"
 
 const message = (id: string, extra: Partial<AssistantMessage> = {}): AssistantMessage => ({
   id,
@@ -67,5 +67,41 @@ describe("正在跑的那一轮底下那一行", () => {
     const parts = { a: [tool("p1", "bash", "completed")], b: [reasoning("r1")], c: [text("x")] }
     const messages = [message("a"), message("b"), message("c", { synthetic: true })]
     expect(activity(parts, messages)).toEqual({ kind: "thinking" })
+  })
+})
+
+describe("内核说的阶段", () => {
+  test("等模型 / 思考 / 跑工具 / 等确认各带起点;工具名去重", () => {
+    expect(kernelActivity({ phase: "waiting", since: 5 })).toEqual({ kind: "waiting", since: 5 })
+    expect(kernelActivity({ phase: "thinking", since: 6 })).toEqual({ kind: "thinking", since: 6 })
+    expect(kernelActivity({ phase: "tools", since: 7, tools: ["bash", "grep", "bash"] })).toEqual({
+      kind: "tools",
+      names: ["bash", "grep"],
+      since: 7,
+    })
+    expect(kernelActivity({ phase: "confirm", since: 8, tool: "flash" })).toEqual({ kind: "confirm", tool: "flash", since: 8 })
+  })
+
+  test("写正文、写工具调用参数:不出字(正文与工具行自己在动)", () => {
+    expect(kernelActivity({ phase: "writing", since: 1 })).toBeUndefined()
+    expect(kernelActivity({ phase: "calling", since: 1, tool: "write" })).toBeUndefined()
+  })
+})
+
+describe("formatActivityElapsed", () => {
+  test("一分钟以内整秒;以上 min + 两位秒;时钟回拨按 0", () => {
+    expect(formatActivityElapsed(0)).toBe("0 s")
+    expect(formatActivityElapsed(45_900)).toBe("45 s")
+    expect(formatActivityElapsed(167_600)).toBe("2 min 47 s")
+    expect(formatActivityElapsed(1_896_000)).toBe("31 min 36 s")
+    expect(formatActivityElapsed(-3_000)).toBe("0 s")
+  })
+})
+
+describe("formatChars", () => {
+  test("千以内原样;一万以内一位小数的 k;以上整数 k", () => {
+    expect(formatChars(812)).toBe("812")
+    expect(formatChars(4_130)).toBe("4.1k")
+    expect(formatChars(39_316)).toBe("39k")
   })
 })

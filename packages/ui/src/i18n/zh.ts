@@ -49,6 +49,8 @@ export const dict = {
   "ui.sessionTurn.status.runningTools": "正在运行 {{names}}",
   "ui.sessionTurn.status.runningToolsMore": "正在运行 {{names}} 等 {{total}} 个",
   "ui.sessionTurn.status.toolSeparator": "、",
+  "ui.sessionTurn.status.waitingConfirm": "等待确认 {{tool}}",
+  "ui.sessionTurn.status.thoughtChars": "已想 {{chars}} 字",
   "ui.sessionTurn.status.thinkingWithTopic": "思考：{{topic}}",
   "ui.sessionTurn.status.gatheringThoughts": "正在整理思路",
   "ui.sessionTurn.status.consideringNextSteps": "正在考虑下一步",

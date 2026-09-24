@@ -1,0 +1,7 @@
+/* 状态行里的"已过时长 · 已想多少字"(docs/调试留痕-规划-20260924.md §2.2)。字号、字色随整行
+   (session-ui 的 session-turn.css:小一号、最淡);排在状态词后面、不换行、不被标题挤没,数字等宽免得一秒一跳时抖。 */
+[data-slot="session-turn-thinking"] [data-slot="session-turn-thinking-detail"] {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}

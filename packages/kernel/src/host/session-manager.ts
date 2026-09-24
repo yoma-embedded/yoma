@@ -84,6 +84,10 @@ import {
 import { installProgressEvent } from "./toolchain.ts"
 import { buildSystemPrompt } from "./system-prompt.ts"
 import { ConfirmDesk } from "./confirm.ts"
+import { ActivityTracker, contentKindOf } from "./activity.ts"
+import { traceHarness } from "./trace/harness.ts"
+import { NOOP_TRACE, type Trace } from "./trace/sink.ts"
+import { toolSummary } from "./trace/summary.ts"
 import { ToolProgressThrottle } from "./tool-progress.ts"
 import { confirmNeeded } from "./tools/contracts.ts"
 import { processImage } from "./domain/image/process.ts"
@@ -113,8 +117,10 @@ import type {
   AgentInfo,
   BtwView,
   ProviderInfo,
+  ModelRetry,
   QueuedItemView,
   Session as ViewSession,
+  SessionActivity,
   SessionStatus,
   TaskView,
   ToolConfirmView,
@@ -491,6 +497,11 @@ interface Entry {
   systemPrompt?: { build: () => Promise<string>; last?: string }
   /** /btw 顺便问一句:同一时间一条。新的一条先掐掉旧的;结果回来时这里已经不是同一个对象就作废。 */
   btw?: BtwAttempt
+  /**
+   * 忙时"此刻在干什么"(host/activity.ts)。subscribe 时新建一份,阶段一变就推一条带 activity 的 busy 状态 ——
+   * 界面的「思考中」那一行据此显示"等待模型 / 思考中 / 正在运行 bash"与已过时长。
+   */
+  activity?: ActivityTracker
 }
 
 export interface SessionManagerOptions {
@@ -560,6 +571,11 @@ export interface SessionManagerOptions {
    * 是两条调用路径,同一个包同时跑两路会往同一棵目录树里解压。**不传 = 两边各装各的**,所以桌面端必须传。
    */
   installRegistry?: InstallRegistry
+  /**
+   * 调试轨迹(host/trace;docs/调试留痕-规划-20260924.md §3)。不传 = 关着(测试与没配的宿主零影响)。
+   * 给了就记每个会话的轮次 / 模型请求 / 工具 / 确认 / 重试 / 压缩,并交给 resolveModel 套上 HTTP 探针。
+   */
+  trace?: Trace
   /** 子 agent(docs/子agent-设计方案-v0.4-20260918.md)。不传就是缺省:能后台、并发 10、不自动转后台。 */
   subagents?: {
     /**
@@ -609,6 +625,9 @@ export class SessionManager {
   /** 子 agent 的任务注册表与调度(host/tasks.ts)。它经 taskPort() 这个窄接口用我们,不碰 harness。 */
   private readonly taskManager: TaskManager
 
+  /** 调试轨迹。宿主没给就是关着的,write 什么都不做。 */
+  private readonly trace: Trace
+
   /**
    * 仓库目录操作(create / list / delete)的串行链。上游 JsonlSessionRepo 在同一进程里并发不安全:create 先列目录查
    * id 有没有被占(assertSessionIdAvailable),新会话文件则先写 `.jsonl.tmp` 再改名 —— 另一个 create / list 正好
@@ -628,6 +647,7 @@ export class SessionManager {
 
   constructor(options: SessionManagerOptions) {
     this.options = options
+    this.trace = options.trace ?? NOOP_TRACE
     this.desk = new ConfirmDesk({ emit: (confirm) => options.emit([{ type: "tool.confirm", confirm }]) })
     this.configDir = options.configDir ?? yomaConfigDir()
     this.env = new NodeExecutionEnv({ cwd: process.cwd() })
@@ -672,7 +692,7 @@ export class SessionManager {
         if (!this.options.resolveModels && !this.options.configDir) migrateLegacyPiAuth(this.configDir)
         const resolved = this.options.resolveModels
           ? await this.options.resolveModels()
-          : ((await resolveModel(this.configDir, { authContext: this.options.authContext })) as {
+          : ((await resolveModel(this.configDir, { authContext: this.options.authContext, trace: this.trace })) as {
               models: Models
               model: Model<string>
             })
@@ -1285,6 +1305,15 @@ export class SessionManager {
       entry.unsubscribes = [
         ...this.subscribe(entry, harness),
         ...(profile?.maxTurns ? this.maxTurnsHooks(entry, harness, profile.maxTurns) : []),
+        // 调试轨迹单独订阅(host/trace/harness.ts):只落盘,不碰状态与投影;轨迹关着时一个都不订。
+        ...traceHarness(harness, {
+          trace: this.trace,
+          sessionID: entry.id,
+          ...(entry.parentID ? { parentID: entry.parentID } : {}),
+          ...(entry.child?.agent ? { agent: entry.child.agent } : {}),
+          ...(entry.model ? { model: entry.model } : {}),
+          activity: () => entry.activity,
+        }),
       ]
       // 确认钩子**不**并进 unsubscribes:closeEntry 先摘订阅再 stop,而 desk.cancel 结算掉第一条之后,
       // 同一批里的第二条工具会立刻轮到 before_tool —— 钩子已摘,它就无人确认地起跑了。所以钩子
@@ -1769,12 +1798,15 @@ export class SessionManager {
     const progress = new ToolProgressThrottle((toolCallId, partial) =>
       apply((projection) => projection.updateToolProgress(toolCallId, partial)),
     )
+    // 忙时"此刻在干什么"(host/activity.ts):阶段一变就推一条带 activity 的 busy。一个 step 五到十次,不逐 delta。
+    const activity = (entry.activity = new ActivityTracker())
     return [
       () => progress.dispose(),
       harness.events.on("run_start", (event) => {
         entry.running = true
         entry.operationId = event.runId
-        emit(this.setStatus(entry, { type: "busy" }))
+        activity.runStart()
+        emit(this.setStatus(entry, busyStatus(undefined, activity.activity)))
         if (entry.parentID) this.taskManager.onRunStart(entry.id)
       }),
       harness.events.on("run_end", (event) => {
@@ -1782,6 +1814,7 @@ export class SessionManager {
         entry.running = false
         entry.operationId = undefined
         entry.updatedAt = Date.now()
+        activity.runEnd()
         emit([...this.setStatus(entry, { type: "idle" }), { type: "session.updated", session: toView(entry) }])
         // 这一轮结束了,refreshMachineEnv 退役掉的旧环境现在可以安全收子进程了。
         void this.cleanupRetiredEnvs(entry)
@@ -1812,30 +1845,44 @@ export class SessionManager {
         // Summary retries have their own compacting state; this is model generation only.
         if (entry.status.type !== "busy") return
         emit(
-          this.setStatus(entry, {
-            type: "busy",
-            retry: {
-              attempt: event.attempt,
-              maxAttempts: event.maxAttempts,
-              notBefore: event.notBefore,
-              error: event.errorMessage,
-              providerID: entry.model?.providerID ?? "unknown",
-            },
-          }),
+          this.setStatus(
+            entry,
+            busyStatus(
+              {
+                attempt: event.attempt,
+                maxAttempts: event.maxAttempts,
+                notBefore: event.notBefore,
+                error: event.errorMessage,
+                providerID: entry.model?.providerID ?? "unknown",
+              },
+              activity.activity,
+            ),
+          ),
         )
       }),
+      // 重试的下一次尝试开始了:回到"等模型"(退避期间界面上是重试那一行,状态行不出)。
+      harness.events.on("retry_start", () => {
+        if (activity.awaitModel()) this.pushActivity(entry)
+      }),
       harness.events.on("retry_end", () => {
-        if (entry.status.type === "busy" && entry.status.retry) emit(this.setStatus(entry, { type: "busy" }))
+        if (entry.status.type === "busy" && entry.status.retry) {
+          emit(this.setStatus(entry, busyStatus(undefined, activity.activity)))
+        }
       }),
       harness.events.on("message_start", (event) => {
         const message = event.message
         if (message.role !== "assistant") return
         apply((projection) => projection.startAssistant(message))
+        if (activity.llmStart()) this.pushActivity(entry)
       }),
       harness.events.on("message_update", (event) => {
         const message = event.message
         if (message.role !== "assistant") return
         apply((projection) => projection.applyStreamEvent(event.event, message))
+        const kind = contentKindOf(event.event.type)
+        if (kind && activity.content(kind, kind === "toolcall" ? streamingToolName(message, event.event) : undefined)) {
+          this.pushActivity(entry)
+        }
       }),
       // 消息在 message_end 才投影:那一刻 entryId 已经有了(navigate 要靠它),
       // 而用户/工具结果消息的 start 与 end 是同一批发出来的,不会晚。
@@ -1858,12 +1905,14 @@ export class SessionManager {
       harness.events.on("tool_start", (event) => {
         if (entry.parentID) this.taskManager.onTool(entry.id, event.toolName, event.args)
         apply((projection) => projection.markToolRunning(event.toolCallId))
+        if (activity.toolStart(event.toolCallId, event.toolName)) this.pushActivity(entry)
       }),
       harness.events.on("tool_update", (event) => {
         // 空快照(内核 bash 开跑先发一条 {content:[]})不进节流器:它会白白花掉前沿,真正的第一块输出
         // 就得等尾沿,每条 bash 的第一个字都晚一个间隔。
         const partial = event.partialResult
         if (partial.content.length === 0 && (partial.details === undefined || partial.details === null)) return
+        activity.toolOutput(event.toolCallId)
         progress.push(event.toolCallId, partial)
       }),
       // 这个调用做完了:先把还没发的进度尾沿丢掉,再让卡片当场收尾。结果消息要按调用顺序落定,只等它的话,
@@ -1871,6 +1920,7 @@ export class SessionManager {
       harness.events.on("tool_end", (event) => {
         progress.settle(event.toolCallId)
         apply((projection) => projection.finishTool(event.toolCallId, event.result, event.isError))
+        if (activity.toolEnd(event.toolCallId)) this.pushActivity(entry)
       }),
       harness.events.on("entry_added", (event) => {
         entry.updatedAt = Date.now()
@@ -1888,7 +1938,9 @@ export class SessionManager {
         emit(this.setStatus(entry, { type: "compacting" }))
       }),
       harness.events.on("compaction_end", () => {
-        emit(this.setStatus(entry, entry.running ? { type: "busy" } : { type: "idle" }))
+        // 轮中压缩做完:接着要请求模型,回到"等模型"。
+        if (entry.running) activity.awaitModel()
+        emit(this.setStatus(entry, entry.running ? busyStatus(undefined, activity.activity) : { type: "idle" }))
         // 手动压缩期间排进来的:压缩不是一轮,不会有 run_end 替它们叫醒。
         if (!entry.running && entry.queued?.length) this.wake(entry)
       }),
@@ -1958,6 +2010,15 @@ export class SessionManager {
     const backgroundReason = `Background sub-agents cannot ask the user for confirmation, so ${what} did not run. Report back that it needs to run and let the main agent ask. ${noBypass}`
     if (task?.background) return { block: { reason: backgroundReason } }
     const agent = task?.agent ?? entry.child?.agent
+    // 挂起期间状态行显示"等你确认";轨迹记下等了多久、怎么结的(docs/调试留痕-规划-20260924.md §3.2)。
+    if (entry.activity?.confirmWait(event.toolName)) this.pushActivity(entry)
+    const askedAt = Date.now()
+    this.trace.write("confirm.wait", {
+      s: entry.id,
+      tc: event.toolCallId,
+      tool: event.toolName,
+      summary: toolSummary(event.toolName, event.args),
+    })
     const settled = await this.desk.ask(
       {
         id: Identifier.ascending("confirm"),
@@ -1967,12 +2028,14 @@ export class SessionManager {
         label: contract.label,
         summary,
         input: event.args,
-        askedAt: Date.now(),
+        askedAt,
         ...(entry.parentID ? { ...(agent ? { agent } : {}), taskID: entry.id } : {}),
       },
       context.abortSignal,
       entry.id,
     )
+    this.trace.write("confirm.done", { s: entry.id, tc: event.toolCallId, outcome: settled, ms: Date.now() - askedAt })
+    if (entry.activity?.confirmDone()) this.pushActivity(entry)
     if (settled === "allowed") return undefined
     // 挂着的时候被转了后台:询问已撤,理由照后台说。
     if (settled === "cancelled" && entry.parentID && this.taskManager.task(entry.id)?.background) {
@@ -1998,13 +2061,19 @@ export class SessionManager {
   }
 
   private setStatus(entry: Entry, status: SessionStatus): KernelEvent[] {
-    if (
-      entry.status.type === status.type &&
-      (entry.status.type !== "busy" || status.type !== "busy" || entry.status.retry === status.retry)
-    )
-      return []
+    if (sameStatus(entry.status, status)) return []
     entry.status = status
     return [{ type: "session.status", sessionID: entry.id, status }]
+  }
+
+  /**
+   * 阶段变了(host/activity.ts):推一条带 activity 的 busy,retry 原样带着。只在 busy 时推 ——
+   * 压缩中与空闲时 activity 不上屏(压缩有自己那一行,压完 compaction_end 带着现状推一次)。
+   */
+  private pushActivity(entry: Entry): void {
+    if (entry.status.type !== "busy") return
+    const events = this.setStatus(entry, busyStatus(entry.status.retry, entry.activity?.activity))
+    if (events.length) this.options.emit(events)
   }
 
   /**
@@ -2019,6 +2088,9 @@ export class SessionManager {
     this.desk.cancel(entry.id)
     entry.running = false
     entry.operationId = undefined
+    // 没有 run_end 会来:阶段在这里清掉(轨迹的忙时心跳也按它判断这一轮是不是还活着)
+    entry.activity?.runEnd()
+    this.trace.write("run.failed", { s: entry.id, error: message })
     this.options.emit([
       { type: "kernel.error", sessionID: entry.id, message },
       ...this.setStatus(entry, { type: "idle" }),
@@ -2975,4 +3047,27 @@ function defaultTitle(entry: Entry): string {
 function textOf(content: string | Array<{ type: string; text?: string }>): string {
   if (typeof content === "string") return content
   return content.flatMap((block) => (block.type === "text" ? [block.text ?? ""] : [])).join("")
+}
+
+/** busy 状态:retry 与 activity 有就带上,没有就不写这个键(界面按 reconcile 归约,多一个 undefined 键也是一次变化)。 */
+function busyStatus(retry: ModelRetry | undefined, activity: SessionActivity | undefined): SessionStatus {
+  return { type: "busy", ...(retry ? { retry } : {}), ...(activity ? { activity } : {}) }
+}
+
+/**
+ * 两个状态看起来一样就不推。busy 之间按 retry 与 activity 的**引用**比:两者都是变化时才换新对象
+ * (retry 每次 retry_scheduled 新建,activity 由 ActivityTracker 保证),所以引用相同 = 没变。
+ */
+function sameStatus(a: SessionStatus, b: SessionStatus): boolean {
+  if (a.type !== b.type) return false
+  if (a.type !== "busy" || b.type !== "busy") return true
+  return a.retry === b.retry && a.activity === b.activity
+}
+
+/** 流式工具调用的工具名:toolcall_* 事件的 contentIndex 指着 partial 里的那个 toolCall 块。 */
+function streamingToolName(message: AgentMessage, event: object): string | undefined {
+  const index = "contentIndex" in event && typeof event.contentIndex === "number" ? event.contentIndex : undefined
+  if (message.role !== "assistant" || index === undefined) return undefined
+  const block = message.content[index]
+  return block?.type === "toolCall" ? block.name : undefined
 }

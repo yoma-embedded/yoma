@@ -28,6 +28,8 @@ import {
   toolchainStatus,
 } from "./toolchain.ts"
 import { VcsWatchers } from "./vcs-watch.ts"
+import { startLagMonitor } from "./trace/lag.ts"
+import { createTrace, traceFileFromEnv } from "./trace/sink.ts"
 import { forgetMemory, inspectProject, projectRoot, saveMemory, saveProfile } from "./domain/project/store.ts"
 import { checkProjectBuild } from "./domain/project/build.ts"
 
@@ -83,6 +85,12 @@ export interface KernelHostOptions {
    * 后台子 agent 会让 idle 说谎)。详见 SessionManagerOptions。
    */
   subagents?: SessionManagerOptions["subagents"]
+  /**
+   * 调试轨迹(docs/调试留痕-规划-20260924.md §3.1)。`file` 是宿主给的缺省位置 —— 桌面端是本次启动的日志目录下的
+   * `trace.jsonl`,于是 7 天清理与 "Export logs" 都白得。`YOMA_TRACE=off` 关掉、`YOMA_TRACE_FILE` 改位置
+   * (bench 与无头跑靠它,每轮子进程继承环境)。都没有就是关着的。
+   */
+  trace?: { file?: string }
   /** 成批推事件出去。host 已经做过合并,这里拿到的就是最终批次。 */
   onEvents(events: KernelEvent[]): void
 }
@@ -97,6 +105,17 @@ export interface KernelHost {
 export function createKernelHost(options: KernelHostOptions): KernelHost {
   const projectBuilds = new Map<string, { controller: AbortController; done: Promise<unknown> }>()
   const sink = new StreamSink({ flush: options.onEvents })
+  const trace = createTrace({ file: traceFileFromEnv(process.env, options.trace?.file) })
+  trace.write("kernel.start", {
+    version: options.version,
+    pid: process.pid,
+    platform: process.platform,
+    arch: process.arch,
+    node: process.versions.node,
+    electron: process.versions.electron,
+  })
+  // 内核是一个进程伺候所有会话:谁在事件循环里同步干重活,所有会话一起停 —— 从外面看和"模型卡住了"一样。
+  const stopLagMonitor = startLagMonitor(trace)
   // 一个包同时只装一次;取消走这里的 AbortController。设置页的 RPC 与 agent 的 toolchain 工具
   // 共用这一个 —— 两边同时装同一个包会往同一棵目录树里解压,所以它必须在 SessionManager 之前建好。
   const installs = createInstallRegistry()
@@ -114,6 +133,7 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     autoTitle: options.autoTitle,
     subagents: options.subagents,
     installRegistry: installs,
+    trace,
     emit: (events) => sink.push(events),
   })
   const projects = new ProjectStore(path.join(options.stateDir, "projects.json"))
@@ -312,6 +332,10 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
       // 进程正在退,renderer 的通道也在拆,推过去没人收。
       sink.close()
       await sessions.disposeAll()
+      // 轨迹最后关,并等攒着的那一批真写进文件 —— kernel-entry 在 dispose 之后紧接着 process.exit。
+      stopLagMonitor()
+      trace.write("kernel.stop")
+      await trace.close()
     },
   }
 }

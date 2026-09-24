@@ -51,6 +51,9 @@ export const dict: Record<string, string> = {
   "ui.sessionTurn.status.runningTools": "Running {{names}}",
   "ui.sessionTurn.status.runningToolsMore": "Running {{names}} and {{more}} more",
   "ui.sessionTurn.status.toolSeparator": ", ",
+  // 同一行:工具在等确认条;思考时跟在已过时长后面的"已想多少字"(内核给了阶段起点才出)。
+  "ui.sessionTurn.status.waitingConfirm": "Waiting for approval: {{tool}}",
+  "ui.sessionTurn.status.thoughtChars": "{{chars}} chars of reasoning",
   "ui.sessionTurn.status.thinkingWithTopic": "Thinking - {{topic}}",
   "ui.sessionTurn.status.gatheringThoughts": "Gathering thoughts",
   "ui.sessionTurn.status.consideringNextSteps": "Considering next steps",

@@ -141,8 +141,30 @@ export interface ModelRetry {
   providerID: string
 }
 
+/**
+ * 忙时这一刻在干什么(host/activity.ts;docs/调试留痕-规划-20260924.md §2.2)。**只在阶段变化时推**,不逐 delta ——
+ * 已过时长由界面按 `since` 自己走表。从前界面只有一行不带计时的「思考中」,bash 在跑时也是它:用户分不清是模型在想、
+ * 请求还没回来,还是某条命令跑了三分钟。
+ */
+export type SessionActivity =
+  /** 请求已发出(或这一批工具刚跑完),模型还没吐第一个字。API 排队、网络慢都落在这一段。 */
+  | { phase: "waiting"; since: number }
+  /** 推理在流。 */
+  | { phase: "thinking"; since: number }
+  /** 正文在流。 */
+  | { phase: "writing"; since: number }
+  /** 模型在写工具调用的参数(write 一个大文件时这一段可以很长)。 */
+  | { phase: "calling"; since: number; tool: string }
+  /** 工具在跑。`since` 是这一批里最早开跑的那个,`tools` 按开跑顺序。 */
+  | { phase: "tools"; since: number; tools: string[] }
+  /** 等用户在确认条上点。 */
+  | { phase: "confirm"; since: number; tool: string }
+
 // Retry stays busy: hosts must not mistake backoff for a completed turn.
-export type SessionStatus = { type: "idle" } | { type: "busy"; retry?: ModelRetry } | { type: "compacting" }
+export type SessionStatus =
+  | { type: "idle" }
+  | { type: "busy"; retry?: ModelRetry; activity?: SessionActivity }
+  | { type: "compacting" }
 
 // ---------------------------------------------------------------------------
 // 消息

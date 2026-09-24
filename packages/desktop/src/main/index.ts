@@ -20,7 +20,7 @@ import { spawnKernel, type KernelProcess } from "./kernel"
 import { createMailboxMain, type MailboxMain } from "./mailbox"
 import type { MailboxSettings } from "./mailbox-controller"
 import { getStore } from "./store"
-import { exportDebugLogs, initCrashReporter, initLogging, startNetLog, write as writeLog } from "./logging"
+import { currentLogDir, exportDebugLogs, initCrashReporter, initLogging, startNetLog, write as writeLog } from "./logging"
 import { flushRendererStorage } from "./renderer-storage"
 import { createMenu } from "./menu"
 import { preferAppEnv } from "./app-env"
@@ -333,9 +333,13 @@ const main = Effect.gen(function* () {
     sessionsRoot: join(app.getPath("userData"), "sessions"),
     stateDir: app.getPath("userData"),
     enginesDir: resolveEnginesDir(),
+    // 内核的调试轨迹 trace.jsonl 跟本次启动的日志放在一起(docs/调试留痕-规划-20260924.md §3.1)
+    logDir: currentLogDir(),
     onStdout: (message) => writeLog("kernel", "stdout", { message }),
     onStderr: (message) => writeLog("kernel", "stderr", { message }, "warn"),
     onExit: (code) => writeLog("kernel", "kernel exited", { code }, "warn"),
+    onUnresponsive: (silentMs) => writeLog("kernel", "kernel unresponsive", { silentMs }, "warn"),
+    onResponsive: (stalledMs) => writeLog("kernel", "kernel responsive again", { stalledMs }, "warn"),
   })
   kernelProcess.ready.catch((error: unknown) => {
     // 内核起不来不该让窗口开不出来 —— 前端还得能显示错误并引导去配置模型凭据。

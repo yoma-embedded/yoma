@@ -177,6 +177,35 @@ describe("timeline projection: 流式增量", () => {
     })
   })
 
+  // 忙时的阶段变化(内核在 busy 里带的 activity,docs/调试留痕-规划-20260924.md §2.2)只给底部那一行的组件读,
+  // 一个 step 五到十次;行的 memo 只订 status 的 type 与 retry —— 阶段怎么变都不该重建这一轮的行。
+  test("只变 activity 的 busy:一行都不重建", () => {
+    createRoot((dispose) => {
+      try {
+        const { status, timeline, tags } = setup(false)
+        expect(tags()).toEqual(["UserMessage", "Thinking"])
+        const rows = timeline.rows()
+        const spy = builds()
+        const phases: SessionStatus[] = [
+          { type: "busy", activity: { phase: "waiting", since: 1 } },
+          { type: "busy", activity: { phase: "thinking", since: 2 } },
+          { type: "busy", activity: { phase: "calling", since: 3, tool: "bash" } },
+          { type: "busy", activity: { phase: "tools", since: 4, tools: ["bash"] } },
+          { type: "busy", activity: { phase: "tools", since: 4, tools: ["bash", "grep"] } },
+          { type: "busy", activity: { phase: "waiting", since: 5 } },
+        ]
+        for (const next of phases) {
+          status(next)
+          timeline.rows()
+        }
+        expect(spy.mock.calls.length).toBe(0)
+        expect(timeline.rows()).toBe(rows)
+      } finally {
+        dispose()
+      }
+    })
+  })
+
   test("空白增量不会提前亮出一行,真正的字一到就亮", () => {
     createRoot((dispose) => {
       try {

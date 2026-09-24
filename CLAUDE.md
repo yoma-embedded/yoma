@@ -49,13 +49,13 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
 `kernel/src/host/domain/` 与 `host/tools/<名字>/{contract.ts,session.ts}`(住户:grep、find、ls、powershell、toolchain、flash、log、la、scope、gdb、datasheet、netlist、stm32config,以及子 agent 四件 agent、task_output、task_stop、send_message —— 清单的真源是 `TOOL_NAMES`,今天 21 个);
 **发动机** = `packages/{agent,ai,chord,telemetry}`(哈希锁定)。
 
-门就是 `packages/kernel/package.json` 的 `exports`,七道(外加 `./package.json`):
+门就是 `packages/kernel/package.json` 的 `exports`,八道(外加 `./package.json`):
 
 | 门 | 谁用 |
 |---|---|
 | `.`(`src/index.ts`) | 餐厅:视图模型 / 协议 / 客户端,**浏览器安全** |
 | `./host`(`src/host/index.ts`) | 厨房大门:desktop 的 `kernel-entry.ts` 与 bench |
-| `./host/datasheet-server`、`./host/models`、`./host/toolchain-schema`、`./host/engines` | 四道**叶子**门:desktop main 的手册库页、bench 的模型目录与信箱工具链清单、main 的信箱守护杀进程树(`killTree`)—— main 走大门等于把整个 host inline 进 `out/main/index.js` |
+| `./host/datasheet-server`、`./host/models`、`./host/toolchain-schema`、`./host/engines`、`./host/trace-report` | 五道**叶子**门:desktop main 的手册库页、bench 的模型目录与信箱工具链清单、main 的信箱守护杀进程树(`killTree`)、`npm run trace` 的会话分析(纯 JS,不拖发动机)—— main 走大门等于把整个 host inline 进 `out/main/index.js` |
 | `./tools/*/contract`(`src/host/tools/*/contract.ts`) | **契约门**:餐厅的工具卡片只从这里拿一个工具的名字 / 参数 / 结果格式 / 副标题函数,拿不到 `session.ts`。2026-09-11 起有住户了(flash) |
 | `./tools/contracts`(`src/host/tools/contracts.ts`) | **契约总表**:餐厅按工具名找契约(只 import 各 `contract.ts`);装配在 `host/tools/index.ts`,那是厨房 |
 
@@ -507,6 +507,7 @@ kernel 接它 —— 从前那份自有 harness(`agent-legacy` / `@yoma/agent`)�
 | `npm run e2e:renderer -w packages/desktop` | 最后一跳:真窗口 + 真 preload + **真 contextBridge**(含 mailbox 桥三条) |
 | `npm run e2e:paint -w packages/desktop` | 真窗口首屏 + 点一遍:Electron 跑构建产物 + 接 CDP,首页 / 会话页(含逻辑分析仪面板)/ 子 agent 卡片、完成通知行、「本轮改动」那一行、会话内查找(cmd+F)与子会话页(含连着的只读调用并成的那一行)/ 草稿页 / 手册库 / 调试台全点一遍,零 `exceptionThrown` 零 `console.error` / Log 错误(含资源 404)(窗口会在屏幕上闪几秒,别去点它) |
 | `npm run smoke:mailbox -w packages/desktop` | 调试台冒烟:Electron RUN_AS_NODE 对打包产物跑完整**本机演练**(假模型,零 key 零硬件) |
+| `npm run trace -- [会话文件 \| 会话 id 前缀] [--slow 秒] [--trace 文件]` | 一个会话的时间线与"卡在哪"的判断:读会话 JSONL + 同一 userData 下的调试轨迹(见「调试留痕」);不给会话就取最近改过的 |
 | `npm run e2e:mailbox -w packages/desktop` | main 托管端到端:真 kernel.js 的 `mailbox.setActive` 往返 + 假守护喂 `@@event` + 停止杀树 + 锁冲突人话 |
 | `tsx packages/bench/src/cli.ts check <job.json>` | 校验任务书 + 本机内核装配 |
 | `tsx packages/bench/src/cli.ts mailbox sim <job.json> --project <工程目录>` | 信箱闭环单机模拟(`init`/`runner`/`mother`/`status` 是生产形态的四个子命令;工程目录是本机事实,任务书里没有) |
@@ -1006,6 +1007,50 @@ app 的 `test-browser/subagent-ui.test.ts`,以及 `e2e:paint` 的子 agent 一�
 测试:`host/btw.test.ts`(纯函数)、`host/session-btw.test.ts`(逐字对齐、跑到一半、压缩后、附件、取消与顶替、失败、想调工具、fork 的
 继承 / 拦截 / 通知)、`host/projector.test.ts` 的 fork 一条、app 的 `components/prompt-input/btw.test.ts`、`context/server-session.test.ts`
 的 /btw 一组、`test-browser/btw-dock.test.ts`、`i18n/parity.test.ts` 的两个前缀。
+
+### 调试留痕(`host/activity.ts` + `host/trace/` + `npm run trace`,2026-09-24)
+
+起因与方案在 `docs/调试留痕-规划-20260924.md`。用户用 DeepSeek 时常觉得"卡住了"而分不清是模型还是我们:本机会话量出来
+没有一次重试或流中断,慢的是 max 档一轮推理 2–4 万字(流一直在走)和 bash 递归扫大目录(`du -sh`、不排除 node_modules
+的 `grep -rn`,最长 31 分钟);而界面只有一行不带计时的「思考中」,bash 在跑时也是它,内核几乎不写日志。四件事:
+
+- **找文件守则**(`system-prompt.ts` 的 `fileSearchGuideline`):手上有 grep / find / ls 又有 shell 时,守则里明说用它们找文件、
+  别在 shell 里递归扫 node_modules / 构建产物 / 整个盘(按实际装配的工具名拼,子 agent 同样带)。bash 本身不改(用户定,不加缺省超时)。
+- **状态行**:session.status 的 busy 带 `activity`(`SessionActivity`:waiting / thinking / writing / calling / tools / confirm
+  + `since`),由 `host/activity.ts` 的 `ActivityTracker` 从 harness 事件折出来,**只在阶段变化时推**(一个 step 五到十次)。
+  界面那一行是 tool-display 做的「按阶段说话」(`timeline/activity.ts` + `activity-row.tsx`:真在出思考才说思考中、正在运行 …、
+  等待模型,写正文与写调用参数时不出字),阶段**优先用内核给的**(`kernelActivity`,带起点)—— 于是后面跟得上已过时长
+  (一秒一跳)、思考时跟已想多少字、工具在等确认条时说「等待确认 …」;内核没给时按 part 推断(`turnActivity`,不走表)。
+  行的结构不变(rows.ts 不读 activity,`timeline-projection.test.ts` 钉着"只变 activity 一行不重建")。
+- **轨迹**:`host/trace/` —— `sink.ts`(一行一个 JSON、250 ms 攒批、20 MB 轮转、写失败停写不抛)、`harness.ts`(独立订阅
+  harness:run / llm / tool / retry / compaction / 忙时 30 s 心跳)、`model-probe.ts`(HTTP 探针:发出 / 响应头 / 第一行 data: /
+  keep-alive / 收尾)、`lag.ts`(事件循环被堵 ≥ 1 s)、`summary.ts`(工具一行摘要,走契约的 `summary`)。桌面端写
+  `<userData>/logs/<启动时间>/trace.jsonl`(main 在 start 命令里给 `logDir`);`YOMA_TRACE=off` 关、`YOMA_TRACE_FILE` 改位置。
+  **只记元数据**,不记正文与工具输出。main 另有内核心跳(`main/kernel-heartbeat.ts`,20 s 没心跳在 kernel.log 记
+  "kernel unresponsive")。"Export logs" 多收 24 小时内的会话(含对话全文,manifest 里注明)。
+- **分析**:`npm run trace` → `scripts/trace.ts` + 叶子门 `@yoma-desktop/kernel/host/trace-report`(`host/trace/report.ts`,纯 JS):
+  读会话 JSONL(自己按行解析,**不经 JsonlSessionRepo** —— 它打开尾行撕裂的会话会改写文件)+ 轨迹,打时间线与判断
+  (排队 / 首字慢 / 想得多 / 递归扫描 / 内核被堵 / 卡着被关掉)。
+
+几条会再踩的:
+
+1. **HTTP 探针必须套在看门狗里面**(`models.ts` 的 `guardModels`):看门狗只在调用方没给 fetch 时注入,探针在外层会先占住
+   `options.fetch`,看门狗就不注入了 —— 流静默断掉时又回到"内核等 15 分钟"。`test/model-probe.test.ts` 用一条沉默的流钉着。
+2. **busy 之间按引用去重**(`sameStatus`):retry 与 activity 都是变了才换新对象。StreamSink 只合**同一会话相邻的 busy → busy**,
+   idle 一条都不许吞(通知与 bench 的收工判据都认它)。按类型断言状态序列的测试要先把相邻相同的折掉(`host.test.ts` 的
+   `statusesOf`)—— 忙时的阶段变化不是状态机的转移。
+3. **被确认门拒掉的调用发动机照样发 `tool_start` / `tool_end`**(拒绝理由就是它的结果),所以确认之后有一段极短的 tools;
+   faux 带工具调用的回复 `stopReason` 是 `stop` 不是 `toolUse` —— 测试别钉它。
+4. 块注释里写 `du -sh */` 会把注释提前闭合(这次栽了两回);注释里描述这类命令换个说法。
+5. 这一行同一天两边各做过一版:tool-display 那版按 part 推断、不走表,这边那版走表、文案另起一套。合并时以那边的文案和
+   "什么时候不出字"为准,数据换成内核的阶段(用户定);两边还各新建了一个 `timeline/activity.ts`,rebase 时撞成 add/add。
+   以后给这一行加东西,改的是 `activity.ts` / `activity-row.tsx` 这一对。"在跑的工具卡片显示命令并走表"归 tool-display
+   (紧凑工具行、完成后的耗时、未完成标记)。
+
+测试:`host/activity.test.ts`、`host/activity-trace.test.ts`(faux 真跑:阶段序列、轨迹序列、确认、报告读真会话)、
+`host/trace/{sink,report}.test.ts`、`host/stream.test.ts` 的合并一条、`test/model-probe.test.ts`、`test/system-prompt.test.ts`
+的找文件守则一组、app 的 `timeline/activity.test.ts` 与 `test-browser/activity-row.test.ts`、`timeline-projection.test.ts` 的
+activity 一条、desktop 的 `main/kernel-heartbeat.test.ts`、scripts 的 `test/trace-lookup.test.ts`。
 
 ### 调试台(`packages/bench`)
 

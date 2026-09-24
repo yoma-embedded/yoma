@@ -123,6 +123,29 @@ describe("StreamSink", () => {
     expect((batches[0]![2] as { bytes?: number }).bytes).toBe(20)
   })
 
+  test("同一会话相邻的 busy 合成后一条;idle 不合、别的会话不合", () => {
+    const busy = (sessionID: string, since: number): KernelEvent => ({
+      type: "session.status",
+      sessionID,
+      status: { type: "busy", activity: { phase: "waiting", since } },
+    })
+    const idle = (sessionID: string): KernelEvent => ({ type: "session.status", sessionID, status: { type: "idle" } })
+
+    const { sink: s, batches } = sink()
+    s.push([busy("a", 1), busy("a", 2), busy("a", 3)])
+    s.flushNow()
+    expect(batches[0]).toEqual([busy("a", 3)])
+
+    // busy → idle → busy:idle 是"一轮跑完"(通知、bench 的收工判据都认它),一条都不能吞
+    s.push([busy("a", 1), idle("a"), busy("a", 2)])
+    s.flushNow()
+    expect(batches[1]).toEqual([busy("a", 1), idle("a"), busy("a", 2)])
+
+    s.push([busy("a", 1), busy("b", 2)])
+    s.flushNow()
+    expect(batches[2]).toEqual([busy("a", 1), busy("b", 2)])
+  })
+
   test("close 之后不再接收事件", () => {
     const { sink: s, batches } = sink()
     s.push(delta("p1", "m1", "a"))

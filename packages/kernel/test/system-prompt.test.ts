@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { TOOL_NAMES } from "../src/types.ts";
 import { toolGuidelines } from "../src/host/tools/contracts.ts";
-import { buildSystemPrompt } from "../src/host/system-prompt.ts";
+import { buildSystemPrompt, fileSearchGuideline } from "../src/host/system-prompt.ts";
 
 describe("buildSystemPrompt", () => {
 	describe("empty tools", () => {
@@ -188,6 +188,42 @@ describe("全装配面的提示词", () => {
 		for (const name of TOOL_NAMES) expect(prompt).toContain(`- ${name}`);
 		for (const guideline of toolGuidelines(TOOL_NAMES)) expect(prompt).toContain(guideline);
 		expect(toolGuidelines(TOOL_NAMES).length).toBeGreaterThan(2);
+	});
+});
+
+// 找文件守则(docs/调试留痕-规划-20260924.md §2.1):本机会话里"卡在工具上"的全是 shell 递归扫大目录。
+describe("找文件守则", () => {
+	it("全装配面:有 grep / find / ls 与 bash / powershell 时进守则,点名那几种递归扫描", () => {
+		const prompt = buildSystemPrompt({ cwd: "/p", selectedTools: [...TOOL_NAMES] });
+		expect(prompt).toContain("- Search and list files with the grep/find/ls tools, not bash or powershell:");
+		expect(prompt).toContain("(du, grep -r, find, ls -R, Get-ChildItem -Recurse) over node_modules");
+		expect(prompt).toContain("pass a timeout");
+	});
+
+	it("按实际装配的工具拼:只有 bash 与 grep 时不提 powershell / find / ls", () => {
+		const text = fileSearchGuideline(["read", "bash", "grep"]);
+		expect(text).toContain("with the grep tool, not bash:");
+		expect(text).not.toContain("powershell");
+		expect(text).not.toContain("grep/find");
+	});
+
+	it("没有 grep / find / ls 时仍是旧的那条;没有 shell 时两条都不出", () => {
+		expect(fileSearchGuideline(["read", "bash", "edit", "write"])).toBeUndefined();
+		const old = buildSystemPrompt({ cwd: "/p", selectedTools: ["read", "bash", "edit", "write"] });
+		expect(old).toContain("- Use bash for file operations like ls, rg, find");
+		expect(old).not.toContain("Search and list files");
+		const noShell = buildSystemPrompt({ cwd: "/p", selectedTools: ["read", "grep", "find", "ls"] });
+		expect(noShell).not.toContain("Search and list files");
+		expect(noShell).not.toContain("Use bash for file operations");
+	});
+
+	it("子 agent 的提示词同样带上(那个跑了 33 分钟的 grep -rn 出在 general-purpose 子 agent 里)", () => {
+		const prompt = buildSystemPrompt({
+			agentPrompt: "You are an agent.",
+			selectedTools: ["read", "bash", "grep", "find", "ls"],
+			cwd: "/p",
+		});
+		expect(prompt).toContain("- Search and list files with the grep/find/ls tools, not bash:");
 	});
 });
 
