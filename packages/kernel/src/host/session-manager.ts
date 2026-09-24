@@ -31,6 +31,8 @@ import {
   createWriteTool,
   formatSkillInvocation,
   value,
+  withAbortSignal,
+  type AgentHarnessToolInvocation,
   type AgentLane,
   type AgentMessage,
   type Branch,
@@ -72,8 +74,15 @@ import { ToolProgressThrottle } from "./tool-progress.ts"
 import { confirmNeeded } from "./tools/contracts.ts"
 import { processImage } from "./domain/image/process.ts"
 import { createRegisteredTools, type RegisteredTool, type RegisteredToolOptions } from "./tools/index.ts"
+import { withFriendlyArguments } from "./tools/arguments.ts"
+import { createLogTool, type LogTool } from "./tools/log/session.ts"
+import { listSerialPorts } from "./tools/log/serial.ts"
+import { createGdbTool, type GdbTool } from "./tools/gdb/session.ts"
+import { withOverwrittenContent } from "./write-before.ts"
 import { configurableProviders, resolveModel } from "./models.ts"
 import { discoverSkills, loadContextFiles } from "./resources.ts"
+import { readSessionName } from "./session-names.ts"
+import { autoTitleDisabled, fallbackTitle, generateTitle, pickTitleModel, TITLE_TIMEOUT_MS } from "./session-title.ts"
 import { projectContext } from "./domain/project/context.ts"
 import {
   clampThinkingLevel,
@@ -84,7 +93,7 @@ import {
   type Models,
 } from "@earendil-works/pi-ai"
 
-import type { KernelEvent, PromptInput } from "../protocol.ts"
+import type { InstrumentResult, KernelEvent, KernelParams, PromptInput } from "../protocol.ts"
 import type {
   AgentInfo,
   ProviderInfo,
@@ -115,6 +124,15 @@ function envNumber(name: string): number | undefined {
   if (!raw) return undefined
   const parsed = Number(raw)
   return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : undefined
+}
+
+/** 最多 limit 个一起跑(列表读会话名:几百个会话文件别同时打开)。 */
+async function eachLimit<T>(items: readonly T[], limit: number, run: (item: T) => Promise<void>): Promise<void> {
+  let next = 0
+  const worker = async () => {
+    while (next < items.length) await run(items[next++]!)
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
 }
 
 /** 本地日期 YYYY-MM-DD(子 agent 的 env 块;CC getLocalISODate 同款,不是 UTC)。 */
@@ -204,7 +222,8 @@ export function createAgentTools(
       },
     }),
     createEditTool(),
-    createWriteTool(),
+    // 上游的 write 不交代它覆盖掉了什么;时间线的「本轮改动」靠这一层把旧内容记进 details。
+    withOverwrittenContent(createWriteTool()),
     ...createRegisteredTools(options),
   ]
   if (!options.invocationEnv) return tools
@@ -265,6 +284,13 @@ interface Entry {
   unhook?: () => void
   /** 这个会话的装配面。留着是为了关会话时收长驻工具(log 的采集器握着串口)。 */
   tools?: RegisteredTool[]
+  instruments?: { log: LogTool; gdb: GdbTool }
+  environmentOpening?: Promise<void>
+  manualRuns?: Map<AbortController, Promise<InstrumentResult>>
+  /** A manual request has taken ownership of the shared instruments/environment. */
+  manualOwned?: boolean
+  /** Covers teardown AND repository deletion; readers must not reopen this entry. */
+  deleting?: Promise<void>
   /**
    * prompt() 在 accept 之前的准备期(压缩附件图片,可能要几秒)。这段时间 lane 还是 idle,
    * stop() 找不到任何在飞的操作 —— 没有这个标记,用户按下的"停止"会被整个吞掉。
@@ -327,6 +353,13 @@ interface Entry {
   maxTurnsHit?: Set<string>
   /** yoma/subagent 值的读—改—写串行链:通知与落定几乎同时写它。 */
   metaWrites?: Promise<void>
+  /**
+   * 自动起名在飞(host/session-title.ts)。`placeholder` 是第一句话的开头,标题到之前界面先显示它;起名结束、
+   * 用户改名、删会话都会把它摘掉 —— 起名的结果只在它还挂着**同一个对象**时才算数。
+   */
+  titling?: { controller: AbortController; placeholder?: string }
+  /** list() 正在从 JSONL 里扫它的会话名。同时进来的另一次 list() 要等它 —— 见 list()。 */
+  naming?: Promise<void>
 }
 
 export interface SessionManagerOptions {
@@ -384,6 +417,13 @@ export interface SessionManagerOptions {
    * 确认台的十分钟超时,而 bench 判一轮结束看的是 idle 700ms,中间这十分钟没有任何人在看。
    */
   confirmTools?: boolean
+  /**
+   * 没名字的主会话收到第一句话时自动起名(host/session-title.ts)。**不传 = 不起**。
+   *
+   * 桌面端传 true。bench 不传:它建会话时就用任务书的标题命名,而且起名是一次额外的模型调用 —— 测试与演练用的
+   * faux 模型按脚本逐条应答,多出来的那一次会吃掉脚本里本该给正文那一轮的一条。
+   */
+  autoTitle?: boolean
   /**
    * 工具链安装的在飞注册表,与设置页的 `toolchain.install` RPC 共用同一个 —— agent 自己装和用户点着装
    * 是两条调用路径,同一个包同时跑两路会往同一棵目录树里解压。**不传 = 两边各装各的**,所以桌面端必须传。
@@ -709,18 +749,13 @@ export class SessionManager {
 
   async list(directory?: string): Promise<ViewSession[]> {
     const metas = await this.repoLocked(() => this.repo.list(directory ? { cwd: directory } : {}, this.context))
-    const out: ViewSession[] = []
+    const fresh: Entry[] = []
     for (const meta of metas) {
-      const existing = this.entries.get(meta.id)
-      if (existing) {
-        out.push(toView(existing))
-        continue
-      }
+      if (this.entries.has(meta.id)) continue
       const entry: Entry = {
         id: meta.id,
         cwd: meta.cwd,
-        // 标题懒加载:repo.list() 只读 JSONL 的头一行,拿不到后来写进去的会话名。
-        // 真名在 open() 时补上,列表先用占位,避免为了画一个列表把每个会话文件全读一遍。
+        // repo.list() 只读 JSONL 的头一行,拿不到后来写进去的会话名:主会话的名字下面按字节扫出来,子会话的等打开时补。
         title: "",
         createdAt: meta.createdAt,
         updatedAt: meta.modifiedAt,
@@ -731,9 +766,27 @@ export class SessionManager {
         ...(meta.parentSessionId ? { parentID: meta.parentSessionId } : {}),
       }
       this.entries.set(meta.id, entry)
-      out.push(toView(entry))
+      if (!entry.parentID) fresh.push(entry)
     }
-    return out.sort((a, b) => b.time.updated - a.time.updated)
+    // 从前这里只给占位(工程目录名),真名等打开时才补 —— 于是重启之后侧栏里个个同名,自动起的名字也等于白起。
+    // 现在按字节扫会话名那一行(host/session-names.ts,不解析整个会话),每个文件在一个进程里只扫一次(扫过就进了
+    // entries);实测 26 个会话 40 MB 共 30 ms。子会话不扫:它们不进侧栏,一条消息就能派出十几个,名字由 fillListed 补。
+    const naming = eachLimit(fresh, 8, async (entry) => {
+      const name = await readSessionName(entry.meta.path)
+      // 扫的这几毫秒里它可能已经被打开(fillListed 读了真名)或者被改了名:那边的更新。
+      if (name && !entry.title) entry.title = name
+    })
+    for (const entry of fresh) entry.naming = naming
+    // 同时进来的另一次 list()(首屏好几处一起拉同一个目录)看到这些会话已经在 entries 里,不会再扫 —— 它也得等这一次
+    // 扫完再回:不等的话它先带着占位回去,界面按到达的先后归约,名字就被它盖掉了。
+    await Promise.all(new Set(metas.flatMap((meta) => this.entries.get(meta.id)?.naming ?? [])))
+    for (const entry of fresh) if (entry.naming === naming) entry.naming = undefined
+    return metas
+      .flatMap((meta) => {
+        const entry = this.entries.get(meta.id)
+        return entry ? [toView(entry)] : []
+      })
+      .sort((a, b) => b.time.updated - a.time.updated)
   }
 
   async create(directory: string, title?: string): Promise<ViewSession> {
@@ -764,18 +817,22 @@ export class SessionManager {
   async delete(sessionID: string): Promise<void> {
     const entry = this.entries.get(sessionID)
     if (!entry) return
-    if (entry.parentID) await this.taskManager.forgetTask(sessionID)
-    else {
-      await this.taskManager.forgetParent(sessionID)
-      // 子会话与父同一个 cwd;list 把还没进内存的也补进 entries。
-      await this.list(entry.cwd)
-      const children = [...this.entries.values()].filter((item) => item.parentID === sessionID)
-      for (const child of children) await this.deleteEntry(child)
-    }
-    await this.deleteEntry(entry)
+    entry.deleting ??= (async () => {
+      if (entry.parentID) await this.taskManager.forgetTask(sessionID)
+      else {
+        await this.taskManager.forgetParent(sessionID)
+        // 子会话与父同一个 cwd;list 把还没进内存的也补进 entries。
+        await this.list(entry.cwd)
+        const children = [...this.entries.values()].filter((item) => item.parentID === sessionID)
+        for (const child of children) await this.delete(child.id)
+      }
+      await this.deleteEntry(entry)
+    })().finally(() => { entry.deleting = undefined })
+    return entry.deleting
   }
 
   private async deleteEntry(entry: Entry): Promise<void> {
+    this.cancelAutoTitle(entry)
     await this.dispose(entry)
     await this.repoLocked(() => this.repo.delete(entry.meta, this.context))
     this.entries.delete(entry.id)
@@ -785,6 +842,8 @@ export class SessionManager {
   /** 标题写回 JSONL(会话名是内核的绑定值),不是只存在内存里。 */
   async rename(sessionID: string, title: string): Promise<ViewSession> {
     const entry = await this.ensureOpen(sessionID)
+    // 人改的名字压过自动起的:在飞的那次作废。必须在写之前摘 —— 摘晚了,它可能恰好在这中间落定,把刚改的名字盖回去。
+    this.cancelAutoTitle(entry)
     await entry.harness!.setName(title, this.context)
     entry.title = title
     entry.updatedAt = Date.now()
@@ -826,12 +885,13 @@ export class SessionManager {
       await this.list()
       found = this.entries.get(sessionID)
     }
-    if (!found) throw sessionNotFound(sessionID)
+    if (!found || found.deleting) throw sessionNotFound(sessionID)
     // 闭包(toolContext)要一个确定非空的引用,所以先定住。
     const entry = found
     entry.touched = Date.now()
     // 正在销毁:它会把 lane/projection 逐个清掉,这中间交出去的 entry 是半关的。
     if (entry.closing) await entry.closing.catch(() => {})
+    if (entry.deleting || this.entries.get(sessionID) !== entry) throw sessionNotFound(sessionID)
     if (entry.opening) {
       const preparation = entry.preparing
       try {
@@ -842,6 +902,7 @@ export class SessionManager {
         if (!readOnly || !preparation?.cancelled) throw error
       }
     }
+    if (entry.deleting || this.entries.get(sessionID) !== entry) throw sessionNotFound(sessionID)
     if (isOpen(entry) || (readOnly && entry.projection)) return entry
     entry.opening ??= (readOnly ? this.readEntry(entry) : this.openEntry(entry)).finally(() => {
       entry.opening = undefined
@@ -870,20 +931,15 @@ export class SessionManager {
     // 不能像 loadContextFiles/discoverSkills 那样并进它们那个 Promise.all —— 那两个
     // 的入参正是 env,而 env 本身要等这次解析完才能造出来,凑一起就是循环依赖。
     // 真正同类(不依赖 env、建会话时只读一次的快照)又能安全并发的是 ensureModels()。
-    const baseEnv = this.baseShellEnv(await this.machineDirs())
-    const [{ models, model }, toolchain] = await Promise.all([
-      this.ensureModels(),
-      this.resolveToolchainSafe(entry, baseEnv),
-    ])
+    const [{ models, model }] = await Promise.all([this.ensureModels(), this.ensureToolEnvironment(entry)])
+    const toolchain = entry.toolchain!
 
     const session = entry.session ?? (await this.repo.open(entry.meta, this.context))
     entry.session = session
     await this.fillListed(entry, session)
-    entry.toolchain = toolchain
     // engines/bin 前置进 PATH:bash 工具里要有 rg(在例程语料里 grep 全靠它,Windows
     // 没有内置 grep)。机器级目录(Yoma 装的 + 用户手指的)夹在中间:项目清单解析到的
     // 赢过它们,它们赢过 process.env 里原有的。
-    entry.shellEnv = this.sessionShellEnv(toolchain, baseEnv)
     const env = this.toolEnv(entry)
     let harness: AgentHarness<ExecutionToolContext> | undefined
     try {
@@ -930,6 +986,7 @@ export class SessionManager {
       // 东西,系统提示词字节不变。
 
       const allTools = createAgentTools({
+        instruments: this.instrumentTools(entry),
         project: { sessionID: entry.id },
         enginesDir: this.options.enginesDir,
         configDir: this.configDir,
@@ -1094,14 +1151,19 @@ export class SessionManager {
       entry.projection = undefined
       for (const unsubscribe of entry.unsubscribes ?? []) unsubscribe()
       entry.unsubscribes = undefined
-      await env.cleanup(this.context).catch(() => {})
+      if (!entry.manualOwned) {
+        for (const tool of Object.values(entry.instruments ?? {})) await tool.dispose?.().catch(() => {})
+        entry.instruments = undefined
+        await env.cleanup(this.context).catch(() => {})
+        entry.env = undefined
+        entry.shellEnv = undefined
+        entry.toolchain = undefined
+      }
       if (harness) await harness.close(this.context).catch(() => {})
       else await session.close(this.context).catch(() => {})
       entry.harness = undefined
       entry.session = undefined
-      entry.env = undefined
-      entry.shellEnv = undefined
-      entry.toolchain = undefined
+      entry.tools = undefined
       throw error
     }
 
@@ -1328,6 +1390,75 @@ export class SessionManager {
     return withEnginesOnPath(shellEnvFor(toolchain, baseEnv), this.options.enginesDir)
   }
 
+  /** Model-free preparation, shared by manual instruments and agent harness assembly. */
+  private async ensureToolEnvironment(entry: Entry): Promise<void> {
+    if (entry.shellEnv) return
+    entry.environmentOpening ??= (async () => {
+      const baseEnv = this.baseShellEnv(await this.machineDirs())
+      const toolchain = await this.resolveToolchainSafe(entry, baseEnv)
+      entry.toolchain = toolchain
+      entry.shellEnv = this.sessionShellEnv(toolchain, baseEnv)
+    })().finally(() => { entry.environmentOpening = undefined })
+    await entry.environmentOpening
+  }
+
+  private instrumentTools(entry: Entry): { log: LogTool; gdb: GdbTool } {
+    return entry.instruments ??= {
+      log: withFriendlyArguments(createLogTool()),
+      gdb: withFriendlyArguments(createGdbTool()),
+    }
+  }
+
+  async serialPorts() {
+    return listSerialPorts(process.platform, this.baseShellEnv(await this.machineDirs()))
+  }
+
+  /** Explicit user actions only. Never opens a model or appends a synthetic chat prompt. */
+  async executeInstrument(params: KernelParams<"instrument.execute">): Promise<InstrumentResult> {
+    if (params.tool !== "log" && params.tool !== "gdb") throw new Error("Unsupported manual instrument")
+    // Instruments need the session identity and cwd, not a transcript or an agent harness.
+    // In particular, a pending/failed model initialization must never block Disconnect.
+    let entry = this.entries.get(params.sessionID)
+    if (!entry) { await this.list(); entry = this.entries.get(params.sessionID) }
+    if (!entry || entry.deleting) throw sessionNotFound(params.sessionID)
+    if (entry.parentID) throw new Error("Open the parent session to control its instruments")
+    if (entry.closing) await entry.closing.catch(() => {})
+    if (entry.deleting || this.entries.get(params.sessionID) !== entry) throw sessionNotFound(params.sessionID)
+    entry.touched = Date.now()
+    entry.manualOwned = true
+    const controller = new AbortController()
+    const runs = entry.manualRuns ??= new Map()
+    const run = (async () => {
+      await this.ensureToolEnvironment(entry)
+      controller.signal.throwIfAborted()
+      const instruments = this.instrumentTools(entry)
+      const tool: RegisteredTool = instruments[params.tool]
+      const input = (tool.prepareArguments ? tool.prepareArguments(params.input) : params.input) as Record<string, unknown>
+      if (params.tool === "log" && input.action === "status") {
+        const details = instruments.log.snapshot()
+        return { text: `${details.running ? "Receiving" : "Disconnected"}${details.source ? ` — ${details.source}` : ""}`, details: { ...details } }
+      }
+      if (params.tool === "log" && input.action === "write") {
+        const result = await instruments.log.sendSerial(input as import("./tools/log/contract.ts").LogInput)
+        return { text: result.content.filter((part) => part.type === "text").map((part) => part.text).join("\n"), details: { ...result.details } }
+      }
+      if (params.tool === "log" && input.action === "stop") await instruments.log.stopCapture()
+      const id = `manual-${crypto.randomUUID()}`
+      const invocation: AgentHarnessToolInvocation = {
+        invocationId: id, operationId: id, turnId: id,
+        getMemo: async () => undefined, setMemo: async () => {},
+      }
+      const result = await tool.execute(id, input, () => {}, { env: this.toolEnv(entry) }, invocation,
+        withAbortSignal(controller.signal, this.context))
+      return {
+        text: result.content.filter((part) => part.type === "text").map((part) => part.text).join("\n"),
+        ...(result.details && typeof result.details === "object" ? { details: result.details as Record<string, unknown> } : {}),
+      }
+    })()
+    runs.set(controller, run)
+    try { return await run } finally { runs.delete(controller) }
+  }
+
   /** 会话当前的执行环境。shellEnv 换过之后(refreshMachineEnv)这里会重建一个。 */
   private toolEnv(entry: Entry): NodeExecutionEnv {
     if (!entry.env) {
@@ -1368,10 +1499,10 @@ export class SessionManager {
     const generation = ++this.envRefreshGeneration
     const baseEnv = this.baseShellEnv(await this.machineDirs())
     for (const entry of this.entries.values()) {
-      if (!isOpen(entry)) continue
+      if (entry.closing || (!isOpen(entry) && !entry.shellEnv)) continue
       const toolchain = await this.resolveToolchainSafe(entry, baseEnv)
       if (generation !== this.envRefreshGeneration) return
-      if (!isOpen(entry)) continue
+      if (entry.closing || (!isOpen(entry) && !entry.shellEnv)) continue
       // Publish the resolution and its environment together; a slower old refresh cannot
       // overwrite a newer settings change after its probe finally exits.
       entry.toolchain = toolchain
@@ -1793,12 +1924,84 @@ export class SessionManager {
     const request: OperationRequest = images.length
       ? { kind: "prompt", prompt: text, images }
       : { kind: "prompt", prompt: text }
+    // 要不要拿这句话起名,得在 accept 之前看:accept 之后它自己就是历史里的第一条了。
+    const titleFrom = await this.titleSource(entry, input.text)
     entry.pendingUser = { id: messageID, text }
     const accepted = await this.runOperation(entry, request)
     // accept 的事件(含这条用户消息的 message_end)在它 resolve 之前就送达了;没认领上的也别留到下一轮。
     entry.pendingUser = undefined
     if (!accepted.ok) throw laneError(accepted.error)
+    if (titleFrom) this.startAutoTitle(entry, titleFrom)
     return { messageID }
+  }
+
+  // -------------------------------------------------------------------------
+  // 自动起名(host/session-title.ts)
+  // -------------------------------------------------------------------------
+
+  /**
+   * 这句话该不该拿来给会话起名:宿主开了自动起名、主会话、还没有名字、没在起,而且它是这个会话的第一条消息 ——
+   * 照 opencode / Claude Code 只看第一句。接着聊的旧会话不补起:半路的一句话代表不了整段对话(Claude Code 对
+   * 恢复的会话同样不起)。用的是用户打的原文,不带附件图片的处理说明;只发了图没打字的给不出名字。
+   */
+  private async titleSource(entry: Entry, text: string): Promise<string | undefined> {
+    if (!this.options.autoTitle || autoTitleDisabled() || entry.parentID || entry.title || entry.titling) return undefined
+    const source = text.trim()
+    if (!source || !entry.lane) return undefined
+    try {
+      const earlier = await entry.lane.findEntries({ type: "message", order: "oldestFirst", limit: 1 }, this.context)
+      return earlier.length === 0 ? source : undefined
+    } catch {
+      // 起名是锦上添花:这一步出任何问题都不能让用户这句话发不出去。
+      return undefined
+    }
+  }
+
+  /** 先把第一句话的开头当名字亮出来,再另起一次调用去起真名。不 await:这一轮已经开跑,起名与它并行。 */
+  private startAutoTitle(entry: Entry, text: string): void {
+    const attempt = { controller: new AbortController(), placeholder: fallbackTitle(text) }
+    entry.titling = attempt
+    if (attempt.placeholder) this.options.emit([{ type: "session.updated", session: toView(entry) }])
+    void this.finishAutoTitle(entry, attempt, text)
+  }
+
+  private async finishAutoTitle(entry: Entry, attempt: NonNullable<Entry["titling"]>, text: string): Promise<void> {
+    let generated: string | undefined
+    try {
+      const { models, model: fallback } = await this.ensureModels()
+      // 跟着这个会话此刻选的模型走(界面在发这句话之前刚 setModel 过);它不在注册表里了就用默认那个。
+      const current = entry.model
+        ? (models.getModel(entry.model.providerID, entry.model.modelID) as Model<string> | undefined)
+        : undefined
+      generated = await generateTitle({
+        models,
+        model: pickTitleModel(models, current ?? fallback),
+        text,
+        signal: AbortSignal.any([attempt.controller.signal, AbortSignal.timeout(TITLE_TIMEOUT_MS)]),
+      })
+    } catch {
+      // 起不出来就把占位定下来。不报 kernel.error:界面会把它当成这个会话出了错,弹系统通知、标红。
+    }
+    // 起名期间用户改了名、会话被删了、内核在退:这次作废,什么都不写。
+    if (entry.titling !== attempt || this.entries.get(entry.id) !== entry) return
+    entry.titling = undefined
+    const title = generated ?? attempt.placeholder
+    if (!title) return
+    // 先改内存、先推事件,再落盘 —— 落盘要 await,这中间用户改的名字得能照常压过它(rename 写在它后面,后写的赢)。
+    entry.title = title
+    this.options.emit([{ type: "session.updated", session: toView(entry) }])
+    // 会话被 LRU 关掉了就只留在内存里:为了写一个名字重开它,可能撞上正在进行的删除(repo 不许删开着的会话)。
+    // 这种情况下重启之后它没有名字,不影响用。
+    const session = entry.closing ? undefined : entry.session
+    await session?.setName(title, this.context).catch(() => {})
+  }
+
+  /** 改名 / 删会话 / 退出时,在飞的起名作废,请求也掐掉(不白花 token)。 */
+  private cancelAutoTitle(entry: Entry): void {
+    const attempt = entry.titling
+    if (!attempt) return
+    entry.titling = undefined
+    attempt.controller.abort()
   }
 
   /** 这个会话有一轮在飞(accept 过、run_end 还没来)。手动压缩不算:它不是一轮,不在工具边界取收件箱。 */
@@ -2293,10 +2496,15 @@ export class SessionManager {
     this.desk.cancel(entry.id)
     // 装配还在飞就先等它:不等的话那次 open 会在我们关完之后把 lane 又挂回去。
     if (entry.opening) await entry.opening.catch(() => {})
+    for (const controller of entry.manualRuns?.keys() ?? []) controller.abort()
     for (const unsubscribe of entry.unsubscribes ?? []) unsubscribe()
     entry.unsubscribes = undefined
     // 在飞轮次先中断:**硬件安全**优先,别把板子停在半条命令上。
     if (entry.lane) await this.stop(entry).catch(() => {})
+    // Manual calls may be queued behind an agent tool. Abort the lane before waiting for that queue.
+    await Promise.allSettled(entry.manualRuns?.values() ?? [])
+    entry.manualRuns = undefined
+    if (entry.environmentOpening) await entry.environmentOpening.catch(() => {})
     // 钩子在 stop 之后才摘:中断落地前再挂起的询问仍要过门,它们会被 stop 的取消信号结算掉。
     entry.unhook?.()
     entry.unhook = undefined
@@ -2304,8 +2512,12 @@ export class SessionManager {
     if (entry.harness) await entry.harness.close(this.context).catch(() => {})
     else if (entry.session) await entry.session.close(this.context).catch(() => {})
     // 长驻工具先收:log 的采集器握着串口,会话关了它就该还回去,不能等到内核进程退出。
-    for (const tool of entry.tools ?? []) await tool.dispose?.().catch(() => {})
+    // Agent tools wrap the instrument object, so deduplicate by name rather than wrapper identity.
+    const tools = new Map([...(entry.tools ?? []), ...Object.values(entry.instruments ?? {})].map((tool) => [tool.name, tool]))
+    for (const tool of tools.values()) await tool.dispose?.().catch(() => {})
     entry.tools = undefined
+    entry.instruments = undefined
+    entry.manualOwned = undefined
     // 当前的和 refreshMachineEnv 退役掉的一起收:遗留子进程一个都不许活过会话。
     await this.cleanupRetiredEnvs(entry)
     await entry.env?.cleanup(this.context).catch(() => {})
@@ -2335,6 +2547,8 @@ export class SessionManager {
   async disposeAll(): Promise<void> {
     // 不再派生、不再投通知;排队中的任务直接落定。
     this.taskManager.shutdown()
+    // 在飞的起名掐掉:进程要退了,再写会话名只会撞上正在关的会话。
+    for (const entry of this.entries.values()) this.cancelAutoTitle(entry)
     // 主会话先关:它们的停止顺着前台 agent 调用的中止停掉子 agent。反过来的话子 agent 先被停,主会话拿着
     // "子 agent 被停"的工具结果会再请求一次模型 —— 退出途中多跑一轮,而那一轮可能是一条烧录。
     const entries = [...this.entries.values()]
@@ -2380,7 +2594,8 @@ function toView(entry: Entry): ViewSession {
   return {
     id: entry.id,
     directory: entry.cwd,
-    title: entry.title || defaultTitle(entry),
+    // 自动起名还没回来时先显示第一句话的开头(entry.titling.placeholder),好过一排同名的工程目录。
+    title: entry.title || entry.titling?.placeholder || defaultTitle(entry),
     time: { created: entry.createdAt, updated: entry.updatedAt },
     ...(entry.model ? { model: entry.model } : {}),
     ...(entry.parentID ? { parentID: entry.parentID } : {}),

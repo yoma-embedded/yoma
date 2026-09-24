@@ -1,4 +1,4 @@
-import { ACCEPTED_FILE_TYPES, ACCEPTED_IMAGE_TYPES } from "@/constants/file-picker"
+import { ACCEPTED_FILE_TYPES, ACCEPTED_IMAGE_TYPES, IMAGE_EXTENSION_MIME } from "@/constants/file-picker"
 
 export { ACCEPTED_FILE_TYPES }
 
@@ -6,7 +6,6 @@ type AttachmentPicker = (
   options: {
     defaultPath?: string
     multiple?: boolean
-    accept?: string[]
   },
   onFile: (file: File) => Promise<unknown>,
 ) => Promise<void>
@@ -27,7 +26,6 @@ export function pickAttachmentFiles(input: {
       {
         defaultPath: input.directory(),
         multiple: true,
-        accept: ACCEPTED_FILE_TYPES,
       },
       input.onFile,
     )
@@ -35,13 +33,6 @@ export function pickAttachmentFiles(input: {
 }
 
 const IMAGE_MIMES = new Set(ACCEPTED_IMAGE_TYPES)
-const IMAGE_EXTS = new Map([
-  ["gif", "image/gif"],
-  ["jpeg", "image/jpeg"],
-  ["jpg", "image/jpeg"],
-  ["png", "image/png"],
-  ["webp", "image/webp"],
-])
 const TEXT_MIMES = new Set([
   "application/json",
   "application/ld+json",
@@ -82,13 +73,27 @@ function textBytes(bytes: Uint8Array) {
   return count / bytes.length <= 0.3
 }
 
+// 模型收不了、内核的 read 也解不开的图片格式。BMP 不在里面:read 会先把它转成 PNG;SVG 是文本,也不在。
+const UNREADABLE_IMAGE_EXTS = new Set(["heic", "heif", "avif", "tif", "tiff", "ico", "psd", "raw", "cr2", "nef", "dng"])
+const READABLE_IMAGE_MIMES = new Set([...ACCEPTED_IMAGE_TYPES, "image/bmp", "image/svg+xml"])
+
+/**
+ * 这是一张图、但谁都看不了的那种(HEIC / AVIF / TIFF…)。有路径也不能转成 @path:那颗 pill 看着像成功了,
+ * 模型却什么都看不到,agent 去 read 它只会读出一屏乱码。这类要明说。
+ */
+export function unreadableImage(file: File) {
+  const type = kind(file.type)
+  if (type.startsWith("image/")) return !READABLE_IMAGE_MIMES.has(type)
+  return UNREADABLE_IMAGE_EXTS.has(ext(file.name))
+}
+
 export async function attachmentMime(file: File) {
   const type = kind(file.type)
   if (IMAGE_MIMES.has(type)) return type
   if (type === "application/pdf") return type
 
   const suffix = ext(file.name)
-  const fallback = IMAGE_EXTS.get(suffix) ?? (suffix === "pdf" ? "application/pdf" : undefined)
+  const fallback = IMAGE_EXTENSION_MIME.get(suffix) ?? (suffix === "pdf" ? "application/pdf" : undefined)
   if ((!type || type === "application/octet-stream") && fallback) return fallback
 
   if (textMime(type)) return "text/plain"

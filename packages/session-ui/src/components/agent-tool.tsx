@@ -333,6 +333,9 @@ export function TaskNotificationDisplay(props: MessagePartProps) {
         icon="mcp"
         status="completed"
         defaultOpen={props.defaultOpen}
+        // 展开状态交给时间线记(和工具卡一样):虚拟列表滚出去再回来不丢,会话内查找跳到结果里的命中时也打得开。
+        open={props.onToolOpenChange ? (props.toolOpen ?? props.defaultOpen ?? false) : undefined}
+        onOpenChange={props.onToolOpenChange}
         trigger={
           <AgentTriggerRow
             model={{

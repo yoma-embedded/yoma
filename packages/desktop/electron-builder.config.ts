@@ -122,7 +122,18 @@ const getBase = (appId: string, releaseRepo?: string): Configuration => ({
     // 不能拿 package.json 的 homepage 顶 —— beta 渠道的 Release 不在那个仓库里。dev 渠道没有发布仓库。
     yoma: { macDeveloperId, ...(releaseRepo ? { releaseRepo } : {}) },
   },
-  files: ["out/**/*", "resources/**/*"],
+  files: [
+    "out/**/*",
+    "resources/**/*",
+    // 类型声明与 source map 没有任何东西会去执行,而 asar 里每多一个条目启动就多花一点:main 在跑第一行
+    // JS 之前要先把整个 asar 头解析完。光 effect 一个包,2138 个文件里就有 1261 个是这两样。
+    // 只管 node_modules;我们自己 out/ 里的 source map 不动。
+    "!**/node_modules/**/*.d.{ts,cts,mts}",
+    "!**/node_modules/**/*.d.{ts,cts,mts}.map",
+    "!**/node_modules/**/*.{js,cjs,mjs}.map",
+    // effect 的 exports 全部指向 dist,src 是给编辑器跳转用的(又是 413 个文件)。
+    "!**/node_modules/effect/src{,/**/*}",
+  ],
   // 信箱守护的两个 node 入口必须从 asar 里解出来:它们由 main 用
   // spawn(execPath, [.mjs]) + ELECTRON_RUN_AS_NODE 起,node 的 ESM 加载器
   // 读不了 asar 内的文件。运行时路径由 main/index.ts 做 app.asar → unpacked 替换。

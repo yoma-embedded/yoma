@@ -86,8 +86,7 @@ export function PreflightBanner() {
     return list
   }
 
-  // 「还不能上板」只在硬缺口(key / 引擎)成立;只剩工具链软提醒时换软标题 ——
-  // 工具全在 PATH 上的机器不配也能跑,不该被横幅宣判成不能干活。
+  // 模型配置只影响 Agent；手动串口与 GDB 不依赖 API key。
   const title = () =>
     language.t(items().some((item) => item.id !== "toolchain") ? "preflight.title" : "preflight.toolchain.title")
 

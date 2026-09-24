@@ -1,7 +1,9 @@
 // @refresh reload
 
 import {
-  ACCEPTED_FILE_EXTENSIONS,
+  INLINE_ATTACHMENT_EXTENSIONS,
+  createNamespaceStorage,
+  type NamespaceStorage,
   AppBaseProviders,
   AppInterface,
   handleNotificationClick,
@@ -13,7 +15,6 @@ import {
   useCommand,
 } from "@yoma-desktop/app"
 import type { UpdaterState } from "@yoma-desktop/app/updater"
-import type { AsyncStorage } from "@solid-primitives/storage"
 import { createMemoryHistory, MemoryRouter, type BaseRouterProps } from "@solidjs/router"
 import { createEffect, createMemo, createResource, createSignal, onCleanup, onMount, Show } from "solid-js"
 import { render } from "solid-js/web"
@@ -86,30 +87,26 @@ const createPlatform = (): Platform => {
     return window.api.runDesktopMenuAction(action)
   }
 
+  // 每个名字空间在渲染器里留一份内存副本:只读一次,写攒成批(app 的 namespace-storage.ts)。
   const storage = (() => {
-    const cache = new Map<string, AsyncStorage>()
-
-    const createStorage = (name: string) => {
-      const api: AsyncStorage = {
-        getItem: (key: string) => window.api.storeGet(name, key),
-        setItem: (key: string, value: string) => window.api.storeSet(name, key, value),
-        removeItem: (key: string) => window.api.storeDelete(name, key),
-        clear: () => window.api.storeClear(name),
-        key: async (index: number) => (await window.api.storeKeys(name))[index],
-        getLength: () => window.api.storeLength(name),
-        get length() {
-          return api.getLength()
-        },
-      }
-      return api
-    }
+    const namespaces = new Map<string, NamespaceStorage>()
+    const driver = { items: window.api.storeItems, update: window.api.storeUpdate, clear: window.api.storeClear }
+    const flushAll = () => Promise.all([...namespaces.values()].map((namespace) => namespace.flush()))
+    // 攒着的改动的落盘边界:窗口退到后台,以及页面要走(关窗、退出、reload)。flush 是同步把这一批交给 IPC 的,
+    // 页面消失之前消息已经发出去了,主进程照常处理。
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") void flushAll()
+    })
+    window.addEventListener("pagehide", () => void flushAll())
+    // relaunch 是 app.exit(0),页面收不到 pagehide:主进程走之前会来要一次(main/renderer-storage.ts)。
+    window.api.onStorageFlush(flushAll)
 
     return (name = "default.dat") => {
-      const cached = cache.get(name)
+      const cached = namespaces.get(name)
       if (cached) return cached
-      const api = createStorage(name)
-      cache.set(name, api)
-      return api
+      const next = createNamespaceStorage(driver, name)
+      namespaces.set(name, next)
+      return next
     }
   })()
 
@@ -130,12 +127,16 @@ const createPlatform = (): Platform => {
         multiple: opts?.multiple ?? false,
         title: opts?.title ?? t("desktop.dialog.chooseFile"),
         defaultPath: opts?.defaultPath,
-        extensions: opts?.extensions ?? ACCEPTED_FILE_EXTENSIONS,
+        // 不设类型过滤:有真实路径的文件一律能交给 agent(固件产物 .elf / .bin / .hex 也是)。
+        extensions: opts?.extensions,
+        inlineExtensions: INLINE_ATTACHMENT_EXTENSIONS,
       })
       if (!result) return
       try {
         for (const file of result.files) {
-          const selected = new File([await window.api.readPickedFile(result.token, file.path)], file.name)
+          // 只有图片的字节要进渲染器;其余只是一个带名字和路径的空壳,attachments 会把它转成 @path。
+          const bytes = file.inline ? [await window.api.readPickedFile(result.token, file.path)] : []
+          const selected = new File(bytes, file.name)
           attachmentPaths.set(selected, file.path)
           await onFile(selected)
         }

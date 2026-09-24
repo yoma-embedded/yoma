@@ -12,13 +12,17 @@ import {
   type JSX,
 } from "solid-js"
 import { createStore, produce } from "solid-js/store"
-import { Dynamic } from "solid-js/web"
 import { useNavigate } from "@solidjs/router"
 import { useMutation } from "@tanstack/solid-query"
 import { createVirtualizer, defaultRangeExtractor, elementScroll, type VirtualItem } from "@tanstack/solid-virtual"
-import { Accordion } from "@yoma-desktop/ui/accordion"
-import { Message, MessageDivider, Part as MessagePart, partDefaultOpen } from "@yoma-desktop/session-ui/message-part"
-import { DiffChanges } from "@yoma-desktop/ui/diff-changes"
+import {
+  groupRefs,
+  Message,
+  MessageDivider,
+  Part as MessagePart,
+  partDefaultOpen,
+  type PartRef,
+} from "@yoma-desktop/session-ui/message-part"
 import { FileIcon } from "@yoma-desktop/ui/file-icon"
 import { Icon as IconV2 } from "@yoma-desktop/ui/v2/icon"
 import { IconButtonV2 } from "@yoma-desktop/ui/v2/icon-button-v2"
@@ -27,14 +31,11 @@ import { DialogFooter, DialogHeader, DialogTitleGroup, DialogV2 } from "@yoma-de
 import { InlineInput } from "@yoma-desktop/ui/inline-input"
 import { ButtonV2 } from "@yoma-desktop/ui/v2/button-v2"
 import { ScrollView } from "@yoma-desktop/ui/scroll-view"
-import { StickyAccordionHeader } from "@yoma-desktop/ui/sticky-accordion-header"
 import { TextReveal } from "@yoma-desktop/ui/text-reveal"
 import { TextShimmer } from "@yoma-desktop/ui/text-shimmer"
 import type { AssistantMessage, Message as MessageType, Part as PartType, UserMessage } from "@yoma-desktop/kernel"
 import { showToast } from "@/utils/toast"
-import { getDirectory, getFilename } from "@yoma-desktop/util/path"
-import { normalize } from "@yoma-desktop/session-ui/session-diff"
-import { useFileComponent } from "@yoma-desktop/ui/context/file"
+import { getFilename } from "@yoma-desktop/util/path"
 import { shouldMarkBoundaryGesture, normalizeWheelDelta } from "@/pages/session/message-gesture"
 import { SessionContextUsage } from "@/components/session-context-usage"
 import { useDialog } from "@yoma-desktop/ui/context/dialog"
@@ -45,8 +46,12 @@ import { useDrafts } from "@/context/drafts"
 import { sessionHref } from "@/utils/session-href"
 import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
+import { useCommand } from "@/context/command"
 import { sessionTitle } from "@/utils/session-title"
 import { scheduleConnectedMeasure } from "./measure"
+import { ContextGroupRow } from "./context-group-row"
+import { TurnChangesRow } from "./turn-changes-row"
+import { TimelineSearch } from "./timeline-search"
 import { createTimelineProjection } from "./projection"
 import { MessageComment, TimelineRow, TimelineRowMap } from "./rows"
 import { ModelRequestStatus } from "./model-request-status"
@@ -125,6 +130,10 @@ export function MessageTimeline(props: {
   userMessages: UserMessage[]
   anchor: (id: string) => string
   setRevealMessage?: (fn: (id: string) => void) => void
+  /** 会话内搜索跳到一处时叫:不停掉跟随到底的话,流式输出会立刻把视口拽回底部。 */
+  onPauseAutoScroll?: () => void
+  /** 更早的消息还没加载:搜索条要说一声"只搜了已加载的"。 */
+  historyMore?: boolean
   setScrollToEnd?: (fn: () => void) => void
   setHistoryAnchor?: (handlers: { capture: () => void; restore: (done: boolean) => void }) => void
 }) {
@@ -319,6 +328,56 @@ export function MessageTimeline(props: {
     props.setScrollToEnd?.(() => virtualizer.scrollToEnd())
     props.setHistoryAnchor?.({ capture: capturePrependAnchor, restore: restorePrependAnchor })
   })
+
+  // ---- 会话内搜索(cmd+F)。条本身、索引、高亮都在 TimelineSearch 里,只在开着的时候挂载;这里只管开关、
+  // "可搜的 part 从上到下是哪些 / 各在第几行",以及跳到一处时要动时间线的那几下(滚动、展开卡片)。
+  const command = useCommand()
+  const [search, setSearch] = createStore({ open: false, focusTick: 0 })
+  command.register("session.search", () => [
+    {
+      id: "session.search",
+      title: language.t("session.search.placeholder"),
+      keybind: "mod+f",
+      hidden: true,
+      onSelect: () => setSearch({ open: true, focusTick: search.focusTick + 1 }),
+    },
+  ])
+  // 可搜的就是画得出来的:照着行收 part,所以顺序 = 屏幕上从上到下,每个 part 都有行号可滚。
+  const searchable = createMemo(() => {
+    const parts: PartType[] = []
+    const where = new Map<string, { row: number; groupKey?: string }>()
+    if (!search.open) return { parts, where }
+    timelineRows().forEach((row, index) => {
+      if (row._tag === "UserMessage") {
+        const shown = getMsgParts(row.userMessageID).find((part) =>
+          part.type === "task" ? true : part.type === "text" && !part.synthetic,
+        )
+        if (!shown) return
+        parts.push(shown)
+        where.set(shown.id, { row: index })
+        return
+      }
+      if (row._tag !== "AssistantPart") return
+      for (const ref of groupRefs(row.group)) {
+        const part = getMsgPart(ref.messageID, ref.partID)
+        if (!part) continue
+        parts.push(part)
+        where.set(part.id, { row: index, groupKey: row.group.type === "context" ? row.group.key : undefined })
+      }
+    })
+    return { parts, where }
+  })
+  const revealSearchMatch = (partID: string) => {
+    const at = searchable().where.get(partID)
+    if (!at) return
+    props.onPauseAutoScroll?.()
+    // 命中在收着的卡片里:把卡片(和它所在的「已探索」组)打开,字才画得出来、才圈得上。
+    if (at.groupKey) setToolOpen(at.groupKey, true)
+    // 工具卡和后台任务的通知行都是收着的:正文(输出 / 结果全文)要打开才画得出来。
+    const type = searchable().parts.find((part) => part.id === partID)?.type
+    if (type === "tool" || type === "task") setToolOpen(partID, true)
+    virtualizer.scrollToIndex(at.row, { align: "center" })
+  }
 
   let overscanFrame: number | undefined
   onMount(() => {
@@ -628,9 +687,13 @@ export function MessageTimeline(props: {
     }
   }
 
-  const renderAssistantPartGroup = (row: Accessor<TimelineRowMap["AssistantPart"]>, onSizeChange?: () => void) => {
-    const message = createMemo(() => messageByID().get(row().group.ref.messageID))
-    const part = createMemo(() => getMsgPart(row().group.ref.messageID, row().group.ref.partID))
+  const renderAssistantPart = (
+    row: Accessor<TimelineRowMap["AssistantPart"]>,
+    ref: Accessor<PartRef>,
+    onSizeChange?: () => void,
+  ) => {
+    const message = createMemo(() => messageByID().get(ref().messageID))
+    const part = createMemo(() => getMsgPart(ref().messageID, ref().partID))
     const defaultOpen = createMemo(() => {
       const item = part()
       if (!item) return
@@ -658,6 +721,33 @@ export function MessageTimeline(props: {
             )}
           </Show>
         )}
+      </Show>
+    )
+  }
+
+  const renderAssistantPartGroup = (row: Accessor<TimelineRowMap["AssistantPart"]>, onSizeChange?: () => void) => {
+    const refs = createMemo(() => groupRefs(row().group))
+    const parts = createMemo(() =>
+      refs().flatMap((ref) => {
+        const part = getMsgPart(ref.messageID, ref.partID)
+        return part?.type === "tool" ? [part] : []
+      }),
+    )
+
+    // 组的类型跟着 key 走(`part:` / `context:`),同一行不会变;「找东西」的那一行只有一个工具时也走 ContextGroupRow。
+    return (
+      <Show
+        when={row().group.type === "context"}
+        fallback={renderAssistantPart(row, () => refs()[0]!, onSizeChange)}
+      >
+        <ContextGroupRow
+          groupKey={row().group.key}
+          refs={refs()}
+          parts={parts()}
+          isOpen={(key) => toolOpen[key]}
+          onOpenChange={setToolOpen}
+          renderCard={(ref) => renderAssistantPart(row, ref, onSizeChange)}
+        />
       </Show>
     )
   }
@@ -753,6 +843,8 @@ export function MessageTimeline(props: {
                       message={message()}
                       parts={getMsgParts(userMessageRow().userMessageID)}
                       useV2Actions
+                      partOpen={(partID) => toolOpen[partID]}
+                      onPartOpenChange={setToolOpen}
                     />
                   </div>
                 </div>
@@ -805,6 +897,40 @@ export function MessageTimeline(props: {
           </TimelineRowFrame>
         )
       }
+      case "Compacting": {
+        const compactingRow = row as Accessor<TimelineRowByTag<"Compacting">>
+        return (
+          <TimelineRowFrame row={compactingRow}>
+            <div data-slot="session-turn-message-container" class="w-full px-4 md:px-5">
+              <div data-slot="session-turn-thinking" data-compacting>
+                <TextShimmer text={language.t("ui.sessionTurn.status.compacting")} />
+              </div>
+            </div>
+          </TimelineRowFrame>
+        )
+      }
+      case "TurnChanges": {
+        const changesRow = row as Accessor<TimelineRowByTag<"TurnChanges">>
+        const parts = createMemo(() =>
+          changesRow().refs.flatMap((ref) => {
+            const part = getMsgPart(ref.messageID, ref.partID)
+            return part ? [part] : []
+          }),
+        )
+        return (
+          <TimelineRowFrame row={changesRow}>
+            <div data-slot="session-turn-message-container" class="w-full px-4 md:px-5">
+              <TurnChangesRow
+                rowKey={TimelineRow.key(changesRow())}
+                parts={parts()}
+                directory={sdk().directory}
+                isOpen={(key) => toolOpen[key]}
+                onOpenChange={setToolOpen}
+              />
+            </div>
+          </TimelineRowFrame>
+        )
+      }
       case "ModelRequest": {
         const requestRow = row as Accessor<TimelineRowByTag<"ModelRequest">>
         return (
@@ -838,6 +964,7 @@ export function MessageTimeline(props: {
     const asyncFile = () => {
       const value = row()
       if (value._tag !== "AssistantPart") return false
+      if (value.group.type !== "part") return false
       const part = getMsgPart(value.group.ref.messageID, value.group.ref.partID)
       return part?.type === "tool" && ["edit", "write"].includes(part.tool)
     }
@@ -894,6 +1021,21 @@ export function MessageTimeline(props: {
 
   return (
     <div class="relative w-full h-full min-w-0">
+      <Show when={search.open}>
+        <div class="contents" style={{ "--timeline-search-top": showHeader() ? "52px" : "8px" }}>
+          <TimelineSearch
+            parts={searchable().parts}
+            rowOf={(partID) => searchable().where.get(partID)?.row}
+            firstVisibleRow={() => virtualizer.range?.startIndex ?? 0}
+            showReasoning={settings.general.showReasoningSummaries()}
+            root={listRoot()}
+            partial={props.historyMore ?? false}
+            focusTick={search.focusTick}
+            onReveal={revealSearchMatch}
+            onClose={() => setSearch("open", false)}
+          />
+        </div>
+      </Show>
       <div
         class="absolute left-1/2 -translate-x-1/2 z-[60] pointer-events-none transition-all duration-200 ease-out"
         classList={{

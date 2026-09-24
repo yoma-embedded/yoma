@@ -31,7 +31,6 @@ type OpenDirectoryPickerOptions = { title?: string; multiple?: boolean }
 type OpenAttachmentPickerOptions = {
   title?: string
   multiple?: boolean
-  accept?: string[]
   extensions?: string[]
   defaultPath?: string
 }

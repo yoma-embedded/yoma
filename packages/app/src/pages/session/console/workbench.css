@@ -1,0 +1,171 @@
+[data-component="workbench-launcher"] {
+  --bench-ink: var(--text-strong);
+  --bench-muted: var(--text-base);
+}
+[data-component="workbench-launcher"] button:focus-visible {
+  outline: 2px solid var(--bench-active);
+  outline-offset: 2px;
+}
+[data-component="workbench-launcher"] {
+  padding-bottom: 28px;
+}
+[data-component="workbench-launcher"] [data-slot="eyebrow"] {
+  font-family: var(--bench-mono);
+  color: var(--bench-active);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  margin-bottom: 10px;
+}
+[data-component="workbench-launcher"] h1 {
+  margin: 0;
+  font-size: 27px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  color: var(--bench-ink);
+}
+[data-component="workbench-launcher"] p {
+  margin: 8px 0 20px;
+  color: var(--bench-muted);
+  font-size: 13px;
+}
+[data-component="workbench-launcher"] [data-slot="tools"] {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+[data-component="workbench-launcher"] button {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+  text-align: left;
+  min-height: 128px;
+  padding: 17px 14px;
+  border: 1px solid var(--bench-line);
+  border-radius: 8px;
+  background: var(--bench-surface);
+  cursor: pointer;
+  transition:
+    border-color 120ms,
+    background 120ms;
+}
+[data-component="workbench-launcher"] button:hover {
+  border-color: var(--bench-active);
+  background: var(--bench-surface-raised);
+}
+[data-component="workbench-launcher"] button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+[data-component="workbench-launcher"] button > svg {
+  color: var(--bench-active);
+  margin-bottom: 5px;
+}
+[data-component="workbench-launcher"] button strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--bench-ink);
+}
+[data-component="workbench-launcher"] button > span {
+  color: var(--bench-muted);
+  font-size: 11px;
+}
+[data-component="workbench-launcher"] button [data-slot="open"] {
+  position: absolute;
+  top: 14px;
+  right: 13px;
+}
+[data-component="workbench-launcher"] [data-slot="error"] {
+  color: var(--bench-fail);
+}
+[data-component="workbench-launcher"] [data-slot="project-hint"] {
+  margin-bottom: 0;
+}
+[data-component="session-new-design"] {
+  height: 100%;
+  overflow: auto;
+  padding: clamp(24px, 5vh, 64px) 28px 24px;
+  background: var(--background-base);
+}
+[data-component="session-new-design"] > [data-slot="content"] {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+}
+[data-component="session-new-design"] [data-slot="eyebrow"] {
+  color: var(--text-interactive-base);
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+}
+[data-component="session-new-design"] {
+  container-type: inline-size;
+}
+[data-component="session-new-design"] h1 {
+  /* 窄栏里标题会折好几行:字号跟着栏宽缩,行高给足,折行时上下两行不压在一起。 */
+  font-size: clamp(18px, 5cqi, 24px);
+  line-height: 1.35;
+  font-weight: 600;
+  margin: 10px 0;
+  color: var(--text-strong);
+  overflow-wrap: anywhere;
+}
+[data-component="session-new-design"] p {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-weak);
+  margin: 0 0 22px;
+  max-width: 52ch;
+}
+[data-component="workbench-draft"] {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+[data-component="workbench-draft"] > [data-slot="main"] {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  padding: 8px;
+  gap: 8px;
+}
+[data-component="workbench-draft"] [data-slot="composer"] {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--background-base);
+}
+@media (max-width: 767px) {
+  [data-component="workbench-launcher"] [data-slot="tools"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* 左侧栏里的仪器入口(workbench-toolbar.tsx 画进侧栏那一格)。行本身的样子用侧栏共用的类,这里只管标题、图标与灯。 */
+[data-component="workbench-nav"] {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 10px;
+}
+[data-component="workbench-nav"] [data-slot="heading"] {
+  padding: 4px 8px 2px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--v2-text-text-faint, var(--text-weaker));
+}
+[data-component="workbench-nav"] button svg {
+  flex: none;
+  color: var(--v2-icon-icon-muted, var(--icon-base));
+}
+[data-component="workbench-nav"] button[aria-pressed="true"] svg {
+  color: var(--bench-active);
+}
+[data-component="workbench-nav"] [data-component="bench-led"] {
+  margin-right: 2px;
+}

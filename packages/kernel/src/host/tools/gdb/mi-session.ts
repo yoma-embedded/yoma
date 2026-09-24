@@ -90,6 +90,9 @@ export interface TrackedBreakpoint {
   addr?: string
   /** 占几个硬件单元:`<MULTIPLE>` 的每个 location 各算一个。 */
   units: number
+  /** 插入时 gdb 报的源文件。fullname 优先,没有就用 location 里的 `file:line`。 */
+  file?: string
+  line?: number
 }
 
 /**
@@ -122,6 +125,14 @@ export class GdbSession {
    * 模型会以为目标跑起来了。
    */
   readonly breakpoints = new Map<number, TrackedBreakpoint>()
+  /** ELF 里本机真存在的源文件(`-file-list-exec-source-files`),给界面的文件选择用。一个会话问一次。 */
+  sourceFiles?: string[]
+  /**
+   * 除 status 以外的每个动作(agent 的也算)前后各 +1:eval 里的 `set var` 不产生新的停止,但值变了。
+   * 界面快照的缓存键里带着它,停住不动时轮询就不再发 MI(否则每 2.5 秒几十条命令,刷满会话日志)。
+   */
+  inspectVersion = 0
+  inspectCache?: { key: string; value: unknown }
 
   constructor(private readonly options: GdbSessionOptions) {}
 

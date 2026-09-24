@@ -60,7 +60,7 @@ import {
   type PromptHistoryStoredEntry,
   promptLength,
 } from "./prompt-input/history"
-import { createPromptSubmit, type FollowupDraft } from "./prompt-input/submit"
+import { createPromptSubmit } from "./prompt-input/submit"
 import { PromptPopover, type AtOption, type SlashCommand } from "./prompt-input/slash-popover"
 import {
   entryOptions,
@@ -147,16 +147,11 @@ export interface PromptInputProps {
   submission?: PromptInputSubmission
   controls: PromptInputControls
   ref?: (el: HTMLDivElement) => void
-  edit?: { id: string; prompt: Prompt; context: FollowupDraft["context"] }
-  onEditLoaded?: () => void
-  shouldQueue?: () => boolean
-  onQueue?: (draft: FollowupDraft) => void
   /**
    * 空输入框里按 ↑:会话忙时排着的消息先撤回来改(照 CC),没有排队的才翻历史。
    * 返回 true = 接住了(有东西可撤),这一下 ↑ 不再翻历史。
    */
   onRetractQueued?: () => boolean
-  onAbort?: () => void
   onSubmit?: () => void
   toolbar?: JSX.Element
 }
@@ -871,11 +866,11 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       return
     }
 
-    const atMatch = rawText.substring(0, cursorPosition).match(/@(\S*)$/)
+    const mention = atMentionRange(rawText, cursorPosition)
     const slashMatch = rawText.match(/^\/(\S*)$/)
 
-    if (atMatch) {
-      atOnInput(atMatch[1])
+    if (mention) {
+      atOnInput(rawText.slice(mention.start + 1, mention.end))
       setStore("popover", "at")
     } else if (slashMatch) {
       slashOnInput(slashMatch[1])
@@ -1019,44 +1014,6 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     history.add(prompt, historyComments())
   }
 
-  createEffect(
-    on(
-      () => props.edit?.id,
-      (id) => {
-        const edit = props.edit
-        if (!id || !edit) return
-
-        for (const item of prompt.context.items()) {
-          prompt.context.remove(item.key)
-        }
-
-        for (const item of edit.context) {
-          prompt.context.add({
-            type: item.type,
-            path: item.path,
-            selection: item.selection,
-            comment: item.comment,
-            commentID: item.commentID,
-            commentOrigin: item.commentOrigin,
-            preview: item.preview,
-          })
-        }
-
-        setStore("popover", null)
-        setStore("historyIndex", -1)
-        setStore("savedPrompt", null)
-        prompt.set(edit.prompt, promptLength(edit.prompt))
-        requestAnimationFrame(() => {
-          editorRef.focus()
-          setCursorPosition(editorRef, promptLength(edit.prompt))
-          queueScroll()
-        })
-        props.onEditLoaded?.()
-      },
-      { defer: true },
-    ),
-  )
-
   const navigateHistory = (direction: "up" | "down") => {
     const result = navigatePromptHistory({
       direction,
@@ -1121,9 +1078,6 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
         resetHistoryNavigation(true)
       },
       setPopover: (popover) => setStore("popover", popover),
-      shouldQueue: props.shouldQueue,
-      onQueue: props.onQueue,
-      onAbort: props.onAbort,
       onSubmit: props.onSubmit,
     })
 
@@ -1278,7 +1232,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     (p) => p,
   )
 
-  const designPlaceholder = () => "Ask anything, / for commands, @ for context..."
+  const designPlaceholder = () => language.t("session.workbench.prompt")
 
   const modelControlState = createMemo<ComposerModelControlState>(() => ({
     loading: providersLoading(),

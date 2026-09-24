@@ -18,7 +18,6 @@ export interface SoundSettings {
 export interface Settings {
   general: {
     autoSave: boolean
-    followup: "queue" | "steer"
     showFileTree: boolean
     showSearch: boolean
     showReasoningSummaries: boolean
@@ -80,7 +79,6 @@ export function sansFontFamily(font: string | undefined) {
 const defaultSettings: Settings = {
   general: {
     autoSave: true,
-    followup: "steer",
     showFileTree: false,
     showSearch: false,
     showReasoningSummaries: false,
@@ -126,11 +124,6 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
       root.style.setProperty("--font-family-sans", sansFontFamily(store.appearance?.sans))
     })
 
-    createEffect(() => {
-      if (store.general?.followup !== "queue") return
-      setStore("general", "followup", "steer")
-    })
-
     return {
       ready,
       get current() {
@@ -140,13 +133,6 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
         autoSave: withFallback(() => store.general?.autoSave, defaultSettings.general.autoSave),
         setAutoSave(value: boolean) {
           setStore("general", "autoSave", value)
-        },
-        followup: withFallback(
-          () => (store.general?.followup === "queue" ? "steer" : store.general?.followup),
-          defaultSettings.general.followup,
-        ),
-        setFollowup(value: "queue" | "steer") {
-          setStore("general", "followup", value === "queue" ? "steer" : value)
         },
         showFileTree,
         setShowFileTree(value: boolean) {

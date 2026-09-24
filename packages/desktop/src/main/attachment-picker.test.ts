@@ -5,6 +5,7 @@ import { join } from "node:path"
 import {
   assertAttachmentBudget,
   createPickedFileAuthorizations,
+  inlineAttachment,
   MAX_ATTACHMENT_BYTES,
   readAttachment,
 } from "./attachment-picker"
@@ -41,6 +42,28 @@ describe("assertAttachmentBudget", () => {
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
+  })
+})
+
+describe("inlineAttachment", () => {
+  const images = ["gif", "jpeg", "jpg", "png", "webp"]
+
+  test("只有清单里的扩展名要读内容,大小写不敏感", () => {
+    expect(inlineAttachment("board.png", images)).toBe(true)
+    expect(inlineAttachment("BOARD.JPG", images)).toBe(true)
+  })
+
+  test("固件产物、PDF、没有扩展名的文件只交路径", () => {
+    expect(inlineAttachment("firmware.elf", images)).toBe(false)
+    expect(inlineAttachment("app.bin", images)).toBe(false)
+    expect(inlineAttachment("schematic.pdf", images)).toBe(false)
+    expect(inlineAttachment("Makefile", images)).toBe(false)
+    // 扩展名只看最后一段:名字里带 png 不算
+    expect(inlineAttachment("png.elf", images)).toBe(false)
+  })
+
+  test("渲染器没报清单时全都要读(保守缺省,预算照旧管所有文件)", () => {
+    expect(inlineAttachment("firmware.elf", undefined)).toBe(true)
   })
 })
 

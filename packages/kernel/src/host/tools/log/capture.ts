@@ -25,6 +25,7 @@
 import { type ChildProcess, spawn } from "node:child_process"
 import { closeSync, createWriteStream, type WriteStream } from "node:fs"
 import net from "node:net"
+import { SerialOutput } from "./serial-output.ts"
 
 import { killOnHostExit, killTree, unrefStream } from "../../domain/engines.ts"
 import {
@@ -68,6 +69,8 @@ export type LogSource =
        * **所有权从构造那一刻起就归 LogCapture**,调用方不要再自己 close。
        */
       hold?: number
+      serial?: { port: string; baud: number }
+      writeFd?: number
     }
   /** gdb server 的 RTT/telnet 口这类 TCP 流:进程内 net.Socket,没有子进程要杀。 */
   | { kind: "tcp"; host: string; port: number }
@@ -116,6 +119,8 @@ export class LogCapture {
   private pendingErr = ""
   private readonly maxBufferLines: number
   private hold?: number
+  private serialOutput?: SerialOutput
+  private protocolBuffer = ""
   private waiters = new Set<() => void>()
   private ended = false
   private forced = false
@@ -141,6 +146,7 @@ export class LogCapture {
     this.env = { ...(options?.env ?? process.env) }
     this.maxBufferLines = options?.maxBufferLines ?? DEFAULT_BUFFER_LINES
     this.hold = source.kind === "child" ? source.hold : undefined
+    if (source.kind === "child" && source.serial) this.serialOutput = new SerialOutput(source.writeFd)
   }
 
   /** 子进程已经把 fd 复制走了(fork 那一刻),父进程这一份立刻还回去。 */
@@ -188,7 +194,7 @@ export class LogCapture {
     })
     if (this.source.kind === "tcp") await this.startTcp(this.source)
     else await this.startChild(this.source.argv)
-    liveCaptures.add(this)
+    if (!this.finished) liveCaptures.add(this)
     // 让位:宿主自己处理了信号就不接管(见 killOnHostExit)。
     killOnHostExit(liveCaptures, { yieldToHost: true })
   }
@@ -199,7 +205,7 @@ export class LogCapture {
       child = spawn(argv[0]!, argv.slice(1), {
         cwd: this.cwd,
         env: this.env,
-        stdio: [this.hold ?? "ignore", "pipe", "pipe"],
+        stdio: [this.hold ?? (this.serialOutput ? "pipe" : "ignore"), "pipe", "pipe"],
         // 自成进程组,stop 才能连孙子进程一起收掉(见 killTree)。
         detached: process.platform !== "win32",
         // 桌面端是 GUI 进程:PowerShell 等源起来时不要闪一个控制台窗口。
@@ -209,6 +215,7 @@ export class LogCapture {
       this.releaseHold()
     }
     this.child = child
+    if (this.serialOutput && child.stdin) this.serialOutput.attach(child.stdin)
 
     await new Promise<void>((resolve, reject) => {
       child.once("spawn", () => resolve())
@@ -224,7 +231,16 @@ export class LogCapture {
     child.stdout?.setEncoding("utf8")
     child.stderr?.setEncoding("utf8")
     child.stdout?.on("data", (chunk: string) => this.consume(chunk, false))
-    child.stderr?.on("data", (chunk: string) => this.consume(chunk, true))
+    child.stderr?.on("data", (chunk: string) => {
+      if (!this.serialOutput || this.source.kind !== "child" || this.source.writeFd !== undefined) { this.consume(chunk, true); return }
+      this.protocolBuffer += chunk
+      let newline: number
+      while ((newline = this.protocolBuffer.indexOf("\n")) >= 0) {
+        const line = this.protocolBuffer.slice(0, newline).replace(/\r$/, "")
+        this.protocolBuffer = this.protocolBuffer.slice(newline + 1)
+        if (!this.serialOutput.acknowledge(line)) this.consume(line + "\n", true)
+      }
+    })
     child.on("exit", (code, signal) => {
       this.exited = { code, signal, at: Date.now() }
       this.flushPending()
@@ -237,6 +253,8 @@ export class LogCapture {
     child.unref()
     unrefStream(child.stdout)
     unrefStream(child.stderr)
+    unrefStream(child.stdin)
+    if (this.serialOutput) await this.serialOutput.waitReady()
   }
 
   private async startTcp(source: { host: string; port: number }): Promise<void> {
@@ -452,6 +470,7 @@ export class LogCapture {
   }
 
   async stop(): Promise<void> {
+    this.serialOutput?.close()
     // TCP 源:destroy 触发 'close',终态与 finish 都在那个处理器里落。
     if (this.socket && !this.ended) {
       this.socket.destroy()
@@ -486,12 +505,19 @@ export class LogCapture {
     killTree(this.child, "SIGKILL")
   }
 
+  async writeSerial(data: Buffer): Promise<number> {
+    if (!this.running || !this.serialOutput) throw new Error("Connect a serial port before sending (TCP and command logs are read-only)")
+    return this.serialOutput.write(data)
+  }
+
   private finish(): void {
     if (this.ended) return
     this.ended = true
     this.endedAt = Date.now()
     // 采集结束 = 串口该还回去了。stop / 源自己退 / spawn 失败三条路都汇到这里。
     this.releaseHold()
+    this.serialOutput?.close()
+    if (this.protocolBuffer) { this.consume(this.protocolBuffer, true); this.protocolBuffer = "" }
     // 先断源再收尾:stop() 之后哪怕子进程还活着(比如被孤儿孙进程握着管道),
     // 也不能再往缓冲和文件里塞行 —— 否则 running=false 却还在长。
     this.child?.stdout?.removeAllListeners("data")

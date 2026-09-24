@@ -39,8 +39,10 @@ import { resolveElectron } from "./electron-bin.ts"
 import {
   BACKGROUND_ANSWER,
   BACKGROUND_DESCRIPTION,
+  EXPLORE_FILE,
   moveSeededSessions,
   seedSubagentSession,
+  CHANGED_NEW_FILE,
   SUBAGENT_ANSWER,
   SUBAGENT_DESCRIPTION,
   SUBAGENT_PARENT_TITLE,
@@ -91,8 +93,10 @@ function resolveDebugPort(): number {
   const candidates = [mainEntry, join(desktop, "src", "main", "index.ts")]
   for (const file of candidates) {
     if (!existsSync(file)) continue
-    const hit = readFileSync(file, "utf8").match(/remote-debugging-port"\s*,\s*"(\d+)"/)
-    if (hit?.[1]) return Number(hit[1])
+    // `appendSwitch("remote-debugging-port", process.env.YOMA_DEBUG_PORT || "9222")`:缺省值是引号里那个数,
+    // 环境变量给了就用环境变量(这条闸门的子进程继承同一份环境)。
+    const hit = readFileSync(file, "utf8").match(/remote-debugging-port"[^"\n]*"(\d+)"/)
+    if (hit?.[1]) return Number(process.env.YOMA_DEBUG_PORT || hit[1])
   }
   throw new Error(
     `没在 ${candidates.join("、")} 里找到 remote-debugging-port —— main 改了开关写法的话,这条闸门要跟着改`,
@@ -583,6 +587,19 @@ try {
     return (editor.textContent ?? "").trim()
   })()`)
   check("prompt 编辑器收得下打的字", typed === TYPED_TEXT, typed)
+  // 持久化的写现在先落在渲染器的内存副本里、攒 100 ms 才发给主进程(app 的 namespace-storage.ts)。落盘边界是
+  // pagehide:打完字**立刻** reload(两次求值之间只隔一个 CDP 往返,远小于 100 ms),草稿得还在 —— 丢了就是
+  // 那一批没赶在页面消失之前交出去。
+  await evaluate(`location.reload()`)
+  // reload 之后应用自己回到这个会话页(路由是记着的),不经过首页。
+  check(
+    "草稿还在:攒着没发的那一批在页面消失之前落盘了",
+    await waitFor(
+      `(document.querySelector('[data-component="prompt-input"]')?.textContent ?? "").trim() === ${json(TYPED_TEXT)}`,
+      MOUNT_TIMEOUT_MS,
+    ),
+    await evaluate<string>(`(document.querySelector('[data-component="prompt-input"]')?.textContent ?? "<没有编辑器>").trim()`),
+  )
   // 状态条现在住在会话页最底下那条**状态栏**里(v2-console:目标板状态永远在场,不用点)。
   check(
     "会话页底部状态栏在位(session-status-bar)",
@@ -636,9 +653,33 @@ try {
       && level("HardFault") === "error" && level("sched: tick") === "debug"
   })()`),
   )
+  // 2026-09-23:只有日志一台文本仪器时控制台不画自己的页签行,最大化 / 关闭挂在串口那一行工具条右端;
+  // 没连串口时发送行不出现。量的是"日志第一行上面压着多少壳":从前是页签行 + 连接行 + 状态行 ≈ 90px。
+  const consoleChrome = await evaluate<{ head: boolean; close: boolean; send: boolean; above: number }>(`(() => {
+    const root = document.querySelector('[data-component="session-console"]')
+    const lines = root?.querySelector('[data-component="bench-log-panel"] [data-slot="lines"]')
+    return {
+      head: !!root?.querySelector('[data-slot="head"]'),
+      close: !!root?.querySelector('[data-component="serial-controls"] [data-slot="toolbar"] [data-slot="actions"] button:last-child'),
+      send: !!root?.querySelector('[data-slot="send-bar"]'),
+      above: root && lines ? Math.round(lines.getBoundingClientRect().top - root.getBoundingClientRect().top) : -1,
+    }
+  })()`)
+  check(
+    "底部控制台只有日志一台时没有自己的页签行,关闭按钮在串口工具条上,没连串口时没有发送行",
+    !consoleChrome.head && consoleChrome.close && !consoleChrome.send,
+    JSON.stringify(consoleChrome),
+  )
+  check(
+    "日志第一行上面只压着一行工具条(≤ 56px)",
+    consoleChrome.above > 0 && consoleChrome.above <= 56,
+    `${consoleChrome.above}px`,
+  )
   // 收回去:下面那一串示波器操作要按坐标点画布,右栏高度与从前一致时最稳。
-  // 顺手也把"关得掉"这一半验了 —— 开合是同一个按钮。
+  // 顺手也把"关得掉"这一半验了 —— 用的是工具条上那颗关闭(页签行没了之后它是控制台里唯一的关闭)。
   await evaluate(`(() => {
+    const close = document.querySelector('[data-component="session-console"] [data-slot="actions"] button:last-child')
+    if (close) { close.click(); return true }
     const toggle = document.querySelector('[data-component="session-status-bar"] button[data-slot="console-toggle"]')
     if (toggle && toggle.getAttribute("aria-pressed") === "true") toggle.click()
     return true
@@ -647,31 +688,53 @@ try {
     "底部控制台关得掉",
     await waitFor(`!document.querySelector('[data-component="session-console"]')`, APPEAR_TIMEOUT_MS),
   )
-  // 逻辑分析仪现在**按需**露出(仪器注册表:核心 ∪ 本会话用过 ∪ 磁盘上有数据 ∪ 用户钉住)。
-  // 这份种出来的工程只有示波器采集,所以 LA 默认藏在"+ 仪器"里 —— 先钉住它再断言面板。
-  // 钉住是落 localStorage 的,所以第二次跑时它已经在了,两种情形都得认。
-  const pinnedLa = await evaluate<string>(`(() => {
-    const tab = document.querySelector('[data-component="instrument-rail"] button[data-slot="tab"][data-instrument="la"]')
-    if (tab) { tab.click(); return "already" }
-    const button = document.querySelector('[data-component="bench-instrument-picker"] button[data-instrument="la"]')
+  // 右栏的仪器只从左侧栏的「仪器」挑(2026-09-23 起右栏不再有自己那排页签与「+ 仪器」):
+  // f152305 起右栏缺省收着,点左侧栏的示波器把它打开。已经开着就不动 —— 同一个按钮再点一次是收起。
+  await evaluate(`(() => {
+    if (!document.querySelector('[data-component="scope-body"]'))
+      document.querySelector('[data-component="workbench-nav"] button[data-instrument="scope"]')?.click()
+    return true
+  })()`)
+  check(
+    "左侧栏的仪器入口打得开右栏(instrument-rail)",
+    await waitFor(`!!document.querySelector('[data-component="instrument-rail"]')`, APPEAR_TIMEOUT_MS),
+  )
+  check(
+    "右栏不再有自己的仪器页签与「+ 仪器」",
+    await evaluate<boolean>(`(() => {
+      const rail = document.querySelector('[data-component="instrument-rail"]')
+      return !!rail && !rail.querySelector('[data-slot="tablist"], [data-component="bench-instrument-picker"]')
+    })()`),
+  )
+  check(
+    "右栏顶上那一行写着当前仪器的名字",
+    await waitFor(
+      `!!document.querySelector('#review-panel button[aria-label="仪器"], #review-panel button[aria-label="Instruments"]')?.textContent?.match(/示波器|Oscilloscope/)`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  // 逻辑分析仪按需露出(这份种出来的工程只有示波器采集),左侧栏的入口总在,点它就钉住并摊开。
+  const pickedLa = await evaluate<string>(`(() => {
+    if (document.querySelector('[data-component="la-body"]')) return "already"
+    const button = document.querySelector('[data-component="workbench-nav"] button[data-instrument="la"]')
     if (!button) return "no-button"
     button.click()
     return "clicked"
   })()`)
-  check("「+ 仪器」里钉得住逻辑分析仪", pinnedLa !== "no-button", pinnedLa)
+  check("左侧栏切得到逻辑分析仪", pickedLa !== "no-button", pickedLa)
   check(
     "右栏逻辑分析仪仪器体在位(la-body)",
     await waitFor(`!!document.querySelector('[data-component="la-body"]')`, APPEAR_TIMEOUT_MS),
   )
-  // 右栏一次只显示一台波形仪器(页内小页签),所以断言示波器之前先切回去。
+  // 右栏一次只显示一台波形仪器,所以断言示波器之前先切回去。
   const pickedScope = await evaluate<string>(`(() => {
     if (document.querySelector('[data-component="scope-body"]')) return "already"
-    const tab = document.querySelector('[data-component="instrument-rail"] button[data-slot="tab"][data-instrument="scope"]')
-    if (!tab) return "no-tab"
-    tab.click()
+    const button = document.querySelector('[data-component="workbench-nav"] button[data-instrument="scope"]')
+    if (!button) return "no-button"
+    button.click()
     return "clicked"
   })()`)
-  check("右栏页签切得回示波器", pickedScope !== "no-tab", pickedScope)
+  check("左侧栏切得回示波器", pickedScope !== "no-button", pickedScope)
   check(
     "示波器历史采集面板读取离线证据",
     await waitFor(
@@ -850,6 +913,44 @@ try {
       APPEAR_TIMEOUT_MS,
     ),
   )
+  // 「本轮改动」:主会话那一轮里 write 新建了一个文件、edit 改了一个。数据是从工具结果的 details 合成的
+  // (edit 的 patch、write 的 before),所以这两条同时也在验内核给 write 补的那一层真的接上了。
+  const changesRow = `document.querySelector('[data-component="session-turn-diffs-group"]')`
+  const changedFile = (file: string) =>
+    `${changesRow}?.querySelector('[data-slot="accordion-item"][data-file=' + JSON.stringify(${json(file)}) + ']')`
+  check(
+    "主会话那一轮底下有「本轮改动」:新建的文件 +3,改过的文件 +2",
+    await waitFor(
+      `(() => {
+        const counts = (item) => [...(item?.querySelectorAll('[data-component="diff-changes"] span') ?? [])].map((el) => el.textContent).join(" ")
+        const created = ${changedFile(CHANGED_NEW_FILE)}
+        const edited = ${changedFile(EXPLORE_FILE)}
+        return ${changesRow}?.querySelectorAll('[data-slot="accordion-item"]').length === 2
+          && counts(created) === "+3 -0" && !!created.querySelector('[data-slot="session-turn-diff-note"]')
+          && counts(edited) === "+2 -0" && !edited.querySelector('[data-slot="session-turn-diff-note"]')
+          && !${changesRow}.querySelector('[data-slot="session-turn-diff-view"]')
+      })()`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  await evaluate(`${changedFile(EXPLORE_FILE)}?.querySelector('[data-slot="accordion-trigger"]')?.click()`)
+  check(
+    "点开改过的文件:diff 画出来了(有高度),另一个文件仍收着",
+    await waitFor(
+      `(() => {
+        const views = [...(${changesRow}?.querySelectorAll('[data-slot="session-turn-diff-view"]') ?? [])]
+        return views.length === 1 && views[0].getBoundingClientRect().height > 20
+          && !!${changedFile(EXPLORE_FILE)}?.contains(views[0])
+      })()`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  if (process.env.YOMA_PAINT_SCREENSHOT_CHANGES) {
+    await evaluate(`${changesRow}?.scrollIntoView({ block: "center" })`)
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    const shot = await send("Page.captureScreenshot", { format: "png" })
+    writeFileSync(process.env.YOMA_PAINT_SCREENSHOT_CHANGES, Buffer.from(shot.result!.data as string, "base64"))
+  }
   if (process.env.YOMA_PAINT_SCREENSHOT_SUBAGENT) {
     // 两张卡都展开着,滚到前台那张上 —— 这一张是给人看子 agent 卡片长相的。
     await evaluate(`${agentCard}?.scrollIntoView({ block: "center" })`)
@@ -873,6 +974,46 @@ try {
       APPEAR_TIMEOUT_MS,
     ),
   )
+  // 子 agent 回答之前连着做了三次只读调用(ls + 两次 read,其中一次读不到):时间线上并成一行,折叠着就说得出
+  // 「几次读取、几个列表、几次失败」,点开才是逐张卡片。文字跟语言走,这里只认数字与结构。
+  const contextGroup = `document.querySelector('[data-component="context-tool-group"]')`
+  check(
+    "连着的只读调用并成一行,失败的折叠着也看得见",
+    await waitFor(
+      `(() => {
+        const group = ${contextGroup}
+        if (!group) return false
+        const subtitle = group.querySelector('[data-slot="basic-tool-tool-subtitle"]')?.textContent ?? ""
+        const failed = group.querySelector('[data-slot="basic-tool-tool-arg"]')?.textContent ?? ""
+        return group.dataset.timelinePartIds?.split(",").length === 3
+          && group.dataset.failed === "true"
+          && /^2 .+ · 1 /.test(subtitle)
+          && /^1 /.test(failed)
+          && !group.querySelector('[data-slot="context-tool-group-list"]')
+          && document.querySelectorAll('[data-component="tool-part-wrapper"]').length === 0
+      })()`,
+      APPEAR_TIMEOUT_MS,
+    ),
+    await evaluate<string>(`${contextGroup}?.textContent ?? "(没有这一行)"`),
+  )
+  await evaluate(`${contextGroup}?.querySelector('[data-component="tool-trigger"]')?.click()`)
+  check(
+    "点开是逐张卡片(三张,读不到的那张是错误卡)",
+    await waitFor(
+      `(() => {
+        const list = ${contextGroup}?.querySelector('[data-slot="context-tool-group-list"]')
+        return list?.querySelectorAll('[data-component="tool-part-wrapper"]').length === 3
+          && (list?.textContent ?? "").includes(${json(EXPLORE_FILE)})
+      })()`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  if (process.env.YOMA_PAINT_SCREENSHOT_CONTEXT) {
+    await evaluate(`${contextGroup}?.scrollIntoView({ block: "center" })`)
+    await sleep(300)
+    const shot = await send("Page.captureScreenshot", { format: "png" })
+    writeFileSync(process.env.YOMA_PAINT_SCREENSHOT_CONTEXT, Buffer.from(shot.result!.data as string, "base64"))
+  }
   check("子会话页没崩到错误页", (await evaluate<boolean>(CRASHED)) === false)
   drain("子会话页")
   await evaluate(`document.querySelector('[data-component="subagent-back"] button')?.click()`)
@@ -885,6 +1026,99 @@ try {
   )
   check("主会话页没崩到错误页", (await evaluate<boolean>(CRASHED)) === false)
   drain("回到主会话")
+
+  // 会话内查找(cmd+F)。快捷键走 CDP 的真按键(不是往 DOM 上派事件)—— 同时也在验 Electron 的菜单没把它吞掉。
+  // 时间线是虚拟列表,计数来自数据层、高亮来自眼前的 DOM,两样都要看;命中在收着的卡片里时卡片得自己打开。
+  const MOD = process.platform === "darwin" ? 4 : 2
+  const pressKey = async (key: string, code: string, vk: number, modifiers = 0) => {
+    for (const type of ["keyDown", "keyUp"]) {
+      await send("Input.dispatchKeyEvent", { type, key, code, modifiers, windowsVirtualKeyCode: vk })
+    }
+  }
+  const searchInput = `document.querySelector('[data-component="timeline-search"] [data-slot="timeline-search-input"]')`
+  const searchCount = `(document.querySelector('[data-slot="timeline-search-count"]')?.textContent ?? "")`
+  const typeQuery = (value: string) =>
+    evaluate(`(() => { const input = ${searchInput}; input.focus(); input.select(); document.execCommand("insertText", false, ${json(value)}) })()`)
+  const painted = (name: string) =>
+    `[...(CSS.highlights.get(${json(name)}) ?? [])].map((range) => range.toString().toLowerCase())`
+  // 同一页上有两个「查找」:右栏开着文件页签时 cmd+F 原本归文件内查找(file-tabs.tsx 在 window 捕获阶段接),
+  // 焦点在对话这一栏里才归会话内查找。这里把焦点放到时间线上再按 —— 这条闸门头一次跑就是栽在这个归属上。
+  await evaluate(`document.querySelector('[data-find-scope="session"] .scroll-view__viewport')?.focus()`)
+  await pressKey("f", "KeyF", 70, MOD)
+  check(
+    "cmd+F 打开会话内查找,焦点在输入框里",
+    await waitFor(`!!${searchInput} && document.activeElement === ${searchInput}`, APPEAR_TIMEOUT_MS),
+  )
+  // write 卡片缺省收着。先记下这一点:后面的查找会跳进它里面,那时它得自己打开。
+  const writeCard = `[...document.querySelectorAll('[data-component="tool-part-wrapper"]')].find((el) => (el.querySelector('[data-slot="basic-tool-tool-subtitle"]')?.textContent ?? "").includes(${json(CHANGED_NEW_FILE)}))`
+  check("查找之前 write 卡片是收着的", await evaluate<boolean>(`!!${writeCard} && !${writeCard}.querySelector('[data-component="tool-output"]')`))
+  await typeQuery("STM32F405RGTX")
+  check(
+    "查找:计数来自整个会话(子 agent 的结果 + write 的内容 + 回复,共 3 处),眼前的命中上了色",
+    await waitFor(
+      `/^[1-3]\\/3$/.test(${searchCount}) && ${painted("timeline-search-hit-active")}.length === 1
+        && [...${painted("timeline-search-hit")}, ...${painted("timeline-search-hit-active")}].every((text) => text === "stm32f405rgtx")`,
+      APPEAR_TIMEOUT_MS,
+    ),
+    await evaluate<string>(searchCount),
+  )
+  const before = await evaluate<string>(searchCount)
+  await pressKey("Enter", "Enter", 13)
+  check(
+    "回车跳到下一处",
+    await waitFor(`${searchCount} !== ${json(before)} && /^[1-3]\\/3$/.test(${searchCount})`, APPEAR_TIMEOUT_MS),
+    `${before} → ${await evaluate<string>(searchCount)}`,
+  )
+  // 只在 write 卡片的输出里出现的词:跳过去时卡片得开着,字才画得出来、才圈得上。
+  await typeQuery("successfully wrote")
+  check(
+    "命中在收着的卡片里:卡片自己打开,当前那一处圈在它的输出上",
+    await waitFor(
+      `${searchCount} === "1/1" && !!${writeCard}?.querySelector('[data-component="tool-output"]')
+        && ${painted("timeline-search-hit-active")}[0] === "successfully wrote"`,
+      APPEAR_TIMEOUT_MS,
+    ),
+    await evaluate<string>(searchCount),
+  )
+  if (process.env.YOMA_PAINT_SCREENSHOT_SEARCH) {
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    const shot = await send("Page.captureScreenshot", { format: "png" })
+    writeFileSync(process.env.YOMA_PAINT_SCREENSHOT_SEARCH, Buffer.from(shot.result!.data as string, "base64"))
+  }
+  // 后台任务的通知行也是收着的,结果全文在里面:跳到那儿的命中时它得自己打开(展开状态现在和工具卡一样记在时间线上)。
+  await evaluate(`(() => { const n = ${notice}; if (n?.querySelector('[data-component="agent-result"]')) n.querySelector('[data-component="tool-trigger"]')?.click() })()`)
+  check("查找之前通知行是收着的", await waitFor(`!!${notice} && !${notice}.querySelector('[data-component="agent-result"]')`, APPEAR_TIMEOUT_MS))
+  await typeQuery("RM0090")
+  const inNotice = `(() => {
+    const range = [...(CSS.highlights.get("timeline-search-hit-active") ?? [])][0]
+    return !!range && !!${notice}?.querySelector('[data-component="agent-result"]')?.contains(range.startContainer)
+  })()`
+  await waitFor(`/^\\d+\\/\\d+$/.test(${searchCount})`, APPEAR_TIMEOUT_MS)
+  for (let i = 0; i < 3 && !(await evaluate<boolean>(inNotice)); i++) {
+    await pressKey("Enter", "Enter", 13)
+    await waitFor(inNotice, 1_500)
+  }
+  check("命中在收着的通知行里:通知行自己打开,当前那一处圈在结果全文上", await evaluate<boolean>(inNotice), await evaluate<string>(searchCount))
+  // 计数和高亮是同一个口径:界面上有、数据层没有的字(卡片标题里翻译过的那句「调用了」)搜不到,也不上色 ——
+  // 头一版 DOM 层自己圈,会出现计数写着"无结果"、屏幕上却一片高亮。
+  await typeQuery("调用了")
+  check(
+    "只在界面标签里出现的词:计数说没有,屏幕上也不圈",
+    await waitFor(
+      `${searchCount}.length > 0 && !/\\d/.test(${searchCount}) && ${painted("timeline-search-hit")}.length === 0 && ${painted("timeline-search-hit-active")}.length === 0`,
+      APPEAR_TIMEOUT_MS,
+    ),
+    await evaluate<string>(searchCount),
+  )
+  await pressKey("Escape", "Escape", 27)
+  check(
+    "Esc 关掉查找,高亮清干净",
+    await waitFor(
+      `!document.querySelector('[data-component="timeline-search"]') && !CSS.highlights.has("timeline-search-hit") && !CSS.highlights.has("timeline-search-hit-active")`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  drain("会话内查找")
 
   // ------------------------------------------------------------------ 5. 草稿页
   const clickedNew = await clickText(["新对话", "New chat"])

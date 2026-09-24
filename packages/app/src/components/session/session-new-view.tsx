@@ -1,8 +1,8 @@
 import { Show, createMemo } from "solid-js"
-import { DateTime } from "luxon"
 import { useSync } from "@/context/sync"
 import { useSDK } from "@/context/sdk"
 import { useLanguage } from "@/context/language"
+import { formatRelative } from "@/utils/time"
 import { Icon } from "@yoma-desktop/ui/icon"
 import { Mark } from "@yoma-desktop/ui/logo"
 import { getDirectory, getFilename } from "@yoma-desktop/util/path"
@@ -52,11 +52,7 @@ export function NewSessionView() {
                 <div class="flex items-start justify-center gap-3 min-h-5">
                   <div class="text-12-medium text-text-weak leading-5 min-w-0 max-w-160 break-words text-center">
                     {language.t("session.new.lastModified")}&nbsp;
-                    <span class="text-text-strong">
-                      {DateTime.fromMillis(project().lastOpened)
-                        .setLocale(language.intl())
-                        .toRelative()}
-                    </span>
+                    <span class="text-text-strong">{formatRelative(project().lastOpened, language.intl())}</span>
                   </div>
                 </div>
               )}

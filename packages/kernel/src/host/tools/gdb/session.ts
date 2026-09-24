@@ -43,6 +43,7 @@ import {
   miString,
   miTuple,
   shortenPath,
+  sourcePoint,
   unwrapList,
 } from "../../domain/gdb/index.ts"
 import { resolveToCwd } from "../../domain/paths.ts"
@@ -77,6 +78,8 @@ import {
   elfMachineOf,
   fixSourcePaths,
   INTERRUPT_GRACE_MS,
+  captureInspect,
+  WATCH_LIMIT,
   locationOf,
   probeCore,
   renderBanner,
@@ -460,7 +463,11 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
       core = await probeCore(started)
       const sourceNote = await fixSourcePaths(started, cwd)
       if (sourceNote) notes.push(sourceNote)
-      const image = await verifyImage(cwd, elf)
+      // QEMU 是用这份 ELF 自己起的(-kernel),跑的必然是它;烧录记录说的是真板子,拿来比只会误拒。
+      const image =
+        kind === "qemu"
+          ? { ok: true, note: "image: loaded by QEMU from this ELF — the flash record is for real hardware and does not apply" }
+          : await verifyImage(cwd, elf)
       notes.push(image.note)
       if (!image.ok && !params.allowUnverified) {
         const text = `${banner(cwd)}\n${image.note}`
@@ -573,7 +580,10 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
     const flags = [params.temporary ? "-t" : "", params.condition ? `-c "${escapeCString(params.condition)}"` : ""]
       .filter(Boolean)
       .join(" ")
-    const r = await s.send(`-break-insert ${flags} ${params.at}`.replace(/\s+/g, " ").trim())
+    // 位置带空格(工程目录在 "Zhang San" 底下)就整个加引号:MI 按空白切参数,不加的话 gdb 收到两个位置。
+    const at = params.at!.trim()
+    const location = /\s/.test(at) ? `"${escapeCString(at)}"` : at
+    const r = await s.send(["-break-insert", flags, location].filter(Boolean).join(" "))
     if (r.class === "error") {
       const msg = miString(r.results?.msg) ?? "unknown"
       if (s.state === "running") {
@@ -592,7 +602,19 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
     const addr = miString(bkpt?.addr)
     const locations = unwrapList(bkpt?.locations).length
     const units = Math.max(1, locations)
-    if (number !== undefined) s.breakpoints.set(number, { kind: "break", location: params.at!, addr, units })
+    const point = sourcePoint(params.at)
+    const file = miString(bkpt?.fullname) ?? miString(bkpt?.file) ?? point.file
+    const line = miNumber(bkpt?.line) ?? point.line
+    if (number !== undefined) {
+      s.breakpoints.set(number, {
+        kind: "break",
+        location: params.at!,
+        addr,
+        units,
+        ...(file ? { file } : {}),
+        ...(line ? { line } : {}),
+      })
+    }
     const multi =
       locations > 1
         ? `\n⚠ this location resolved to ${locations} addresses (inlined or identical-code-folded) and therefore uses ${locations} hardware units.`
@@ -776,7 +798,7 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
   }
 
   /** 不排队(见 execute):exec 等停止的那几十秒正是用户最想问"现在在哪"的时候。 */
-  async function status(cwd: string): Promise<GdbResult> {
+  async function status(cwd: string, params: GdbInput): Promise<GdbResult> {
     if (starting) {
       return textResult("[gdb starting] a start is in progress — attaching to the target.", detailsOf("status"))
     }
@@ -804,7 +826,18 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
       `session log: ${s.file}`,
       serverLine,
     ]
-    return textResult(lines.filter(Boolean).join("\n"), withLocation("status"))
+    const base = withLocation("status")
+    if (!s.running) return textResult(lines.filter(Boolean).join("\n"), base)
+    const frame =
+      typeof params.frame === "number" && Number.isFinite(params.frame) ? clamp(params.frame, 0, 0, 64) : undefined
+    const watch = Array.isArray(params.watchlist)
+      ? params.watchlist.filter((item): item is string => typeof item === "string").slice(0, WATCH_LIMIT)
+      : []
+    const inspect = await captureInspect(s, core, frame, watch)
+    const selected = inspect.frames.find((item) => item.level === inspect.selectedFrame)
+    const focused =
+      s.state === "halted" && selected?.path && selected.line ? { path: selected.path, line: selected.line } : {}
+    return textResult(lines.filter(Boolean).join("\n"), { ...base, ...focused, inspect })
   }
 
   async function stop(params: GdbInput): Promise<GdbResult> {
@@ -844,6 +877,26 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
     if (merged.aborted && params.action !== "status" && params.action !== "stop") {
       throw new Error(`gdb ${params.action} was aborted before it ran`)
     }
+    // 界面快照的缓存靠它作废:eval 的 `set var` 不产生停止,值却变了。动作前后各记一次,
+    // 挡住"status 读到一半、这个动作插进来"那种半新半旧的缓存。
+    if (params.action !== "status") {
+      if (session) session.inspectVersion++
+      try {
+        return await dispatch(params, cwd, onUpdate, merged, env)
+      } finally {
+        if (session) session.inspectVersion++
+      }
+    }
+    return dispatch(params, cwd, onUpdate, merged, env)
+  }
+
+  async function dispatch(
+    params: GdbInput,
+    cwd: string,
+    onUpdate: Update,
+    merged: AbortSignal,
+    env: NodeJS.ProcessEnv,
+  ): Promise<GdbResult> {
     switch (params.action) {
       case "start":
         starting = true
@@ -859,7 +912,7 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
       case "eval":
         return evalAction(params, cwd)
       case "status":
-        return status(cwd)
+        return status(cwd, params)
       case "stop":
         return stop(params)
     }

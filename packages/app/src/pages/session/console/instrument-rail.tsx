@@ -1,23 +1,21 @@
 /**
- * 右栏的「按需仪器页」—— 波形类仪器(逻辑分析仪、示波器,将来的功耗曲线)的家。
+ * 右栏的「按需仪器页」—— 示波器、逻辑分析仪,以及调试器的家。
  *
- * 与 foundation 那份 `BenchPanel` 的三点不同:
- * 1. **只收 `surface === "wave"` 的那些。** 文本流去了底部控制台 —— 一条 480px 宽的右栏对
- *    日志和 gdb 报告来说太窄,对一张横轴是时间的图来说却正合适。
- * 2. **不堆叠。** 两台以上时用页内小页签换,而不是上下顶着 —— 堆叠的代价是每台都只剩半屏,
- *    而你同时只看得懂一张波形。
- * 3. **一台都不该露面时是安静的空态**,不是两个不亮的大窗口。露面的规则仍是注册表那一条
- *    (核心 ∪ 本会话用过 ∪ 磁盘上有数据 ∪ 钉住),这里一个字都没重写。
+ * 一次只摊开一台:**点名要的那一台**(`consoleUI.rail()`,由左侧栏的「仪器」、状态栏的格子、
+ * 时间线卡片上的「在面板中打开」决定)。
+ *
+ * 从前这里自己还有一排页签和底部的「+ 仪器」:页签按"本会话用过 ∪ 磁盘上有采集 ∪ 钉住"露面,于是
+ * 工程里存过示波器采集,示波器就自己挂在上面 —— 用户没开过,却占着一行(2026-09-23 用户指出)。
+ * 左侧栏已经列着全部仪器、带着灯和"有新东西"的点,这里再列一遍只是重复,删掉了。
+ * 当前是哪一台写在右栏顶上那一行的模式按钮里(session-side-panel.tsx)。
  */
-import { createEffect, createMemo, For, on, Show, Suspense } from "solid-js"
+import { createMemo, Show, Suspense } from "solid-js"
 import { Dynamic } from "solid-js/web"
-import { Icon } from "@yoma-desktop/ui/icon"
 import { useLanguage } from "@/context/language"
 import { useBench } from "../bench/bench-context"
-import { EvidenceDot } from "../bench/evidence-dot"
-import { benchPins, hiddenOnSurface, visibleOnSurface, type InstrumentDef } from "../bench/instruments"
+import { visibleOnSurface, type InstrumentDef } from "../bench/instruments"
 import { consoleUI } from "./console-state"
-import { useMarkSeen, useUnseenSet } from "./evidence-view"
+import { useMarkSeen } from "./evidence-view"
 import "./console.css"
 
 export function InstrumentRail() {
@@ -26,50 +24,20 @@ export function InstrumentRail() {
   const bench = useBench()
 
   const visible = createMemo(() => visibleOnSurface("wave", bench.ctx()))
-  const hidden = createMemo(() => hiddenOnSurface("wave", bench.ctx()))
 
+  // 只显示点名要的那一台。没有记录、或者那台这会儿不该露面,就是空态,
+  // 不拿登记序里的第一台顶上 —— 打开日志不该把调试器或示波器一起打开。
   const active = createMemo<InstrumentDef | undefined>(() => {
-    const list = visible()
-    return list.find((instrument) => instrument.id === consoleUI.rail()) ?? list[0]
+    const want = consoleUI.rail()
+    return want ? visible().find((instrument) => instrument.id === want) : undefined
   })
 
-  // 存着的那台不在了(换了会话 / 取消了钉住)就把选择挪到还在的那台上。
-  createEffect(
-    on(active, (instrument) => {
-      if (instrument && instrument.id !== consoleUI.rail()) consoleUI.setRail(instrument.id)
-    }),
-  )
-
-  // 提示点:这一页开着就算看过了(这个组件只在右栏展开且停在「调试」档时才挂上,
+  // 提示点:这一页开着就算看过了(这个组件只在右栏展开且停在「仪器」档时才挂上,
   // 所以"右栏收着的时候证据继续积累"是白得的)。
   useMarkSeen(() => active()?.id)
-  const unseen = useUnseenSet()
 
   return (
     <div class="ybench" data-component="instrument-rail">
-      {/* 一台的时候不出页签行 —— 一个孤零零的页签只是噪声,名字在仪器自己的名牌上。 */}
-      <Show when={visible().length > 1}>
-        <div data-slot="tablist" role="tablist" aria-label={t("session.rail.label")}>
-          <For each={visible()}>
-            {(instrument) => (
-              <button
-                type="button"
-                role="tab"
-                data-slot="tab"
-                data-instrument={instrument.id}
-                aria-selected={active()?.id === instrument.id ? "true" : "false"}
-                onClick={() => consoleUI.setRail(instrument.id)}
-              >
-                <span data-component="bench-led" data-state={instrument.status(bench.ctx())} />
-                <Icon name={instrument.icon} size="small" />
-                {t(instrument.labelKey)}
-                <EvidenceDot when={unseen().has(instrument.id)} />
-              </button>
-            )}
-          </For>
-        </div>
-      </Show>
-
       <Show
         when={active()}
         fallback={
@@ -78,52 +46,17 @@ export function InstrumentRail() {
               {t("session.rail.empty")}
               <span data-slot="hint">{t("session.rail.emptyHint")}</span>
             </div>
-            <Picker instruments={hidden()} />
           </div>
         }
       >
         {(instrument) => (
-          <>
-            <div data-slot="body" role="tabpanel">
-              <Suspense fallback={<div data-slot="pending">{t("session.bench.loading")}</div>}>
-                <Dynamic component={instrument().component} />
-              </Suspense>
-            </div>
-            <Show when={hidden().length > 0}>
-              <div data-slot="footer">
-                <Picker instruments={hidden()} />
-              </div>
-            </Show>
-          </>
+          <div data-slot="body" role="region" aria-label={t(instrument().labelKey)}>
+            <Suspense fallback={<div data-slot="pending">{t("session.bench.loading")}</div>}>
+              <Dynamic component={instrument().component} />
+            </Suspense>
+          </div>
         )}
       </Show>
     </div>
-  )
-}
-
-/** 「+ 仪器」。钉住之后顺手切过去 —— 点了它却什么都没变才是最让人困惑的。 */
-function Picker(props: { instruments: InstrumentDef[] }) {
-  const language = useLanguage()
-  const t = (key: string) => language.t(key as Parameters<typeof language.t>[0])
-  return (
-    <Show when={props.instruments.length > 0}>
-      <div data-component="bench-instrument-picker">
-        <span>{t("session.bench.add")}</span>
-        <For each={props.instruments}>
-          {(instrument) => (
-            <button
-              type="button"
-              data-instrument={instrument.id}
-              onClick={() => {
-                benchPins.pin(instrument.id)
-                consoleUI.setRail(instrument.id)
-              }}
-            >
-              {t(instrument.labelKey)}
-            </button>
-          )}
-        </For>
-      </div>
-    </Show>
   )
 }

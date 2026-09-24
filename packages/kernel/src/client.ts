@@ -56,6 +56,10 @@ export interface KernelClient {
     info(): Promise<KernelResult<"app.info">>
     preflight(): Promise<KernelResult<"app.preflight">>
   }
+  instrument: {
+    execute(params: KernelParams<"instrument.execute">): Promise<KernelResult<"instrument.execute">>
+    ports(): Promise<KernelResult<"instrument.ports">>
+  }
   session: {
     /** 回答一条工具确认。`accepted:false` = 这条询问已经不在了(超时 / 会话关了),不是错误。 */
     confirmReply(params: { id: string; allow: boolean }): Promise<{ accepted: boolean }>
@@ -174,6 +178,10 @@ export function createKernelClient(transport: KernelTransport): KernelClient {
       compact: (sessionID) => call("session.compact", { sessionID }),
       navigate: (sessionID, messageID) => call("session.navigate", { sessionID, messageID }),
       setModel: (params) => call("session.setModel", params),
+    },
+    instrument: {
+      execute: (params) => call("instrument.execute", params),
+      ports: () => call("instrument.ports", undefined),
     },
     task: {
       list: (params) => call("task.list", params),

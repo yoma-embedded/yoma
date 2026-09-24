@@ -14,7 +14,8 @@ import { createRoot, createSignal } from "solid-js"
 export type DockMode = "tabs" | "debug" | "file"
 
 export const debug = createRoot(() => {
-  const [opened, setOpened] = createSignal(true)
+  // 缺省收着。打开日志 / 调试器只该展开底部控制台;波形页要等用户点示波器或逻辑分析仪。
+  const [opened, setOpened] = createSignal(false)
   const [fullscreen, setFullscreen] = createSignal(false)
   const [mode, setMode] = createSignal<DockMode>("debug")
 

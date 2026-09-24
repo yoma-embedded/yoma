@@ -43,6 +43,17 @@ import type { MemoryInput, ProjectContextView, ProjectProfile } from "./project-
 // 请求
 // ---------------------------------------------------------------------------
 
+/** A direct instrument operation result, separate from the agent transcript. */
+export interface InstrumentResult {
+  text: string
+  details?: Record<string, unknown>
+}
+
+export interface SerialPortView {
+  path: string
+  description?: string
+}
+
 /** 一次拉取到的 transcript 分页。 */
 export interface MessagePage {
   items: Array<{ info: Message; parts: Part[] }>
@@ -97,6 +108,12 @@ export interface KernelMethods {
   /** 主会话列表。子 agent 的会话不在里面(它们带 `parentID`,从 agent 卡片与任务面板按 id 打开)。 */
   "session.list": { params: { directory?: string }; result: Session[] }
   "session.get": { params: { sessionID: string }; result: Session }
+  /** Manual instruments share their session's tool instances; no model request is made. */
+  "instrument.execute": {
+    params: { sessionID: string; tool: "log" | "gdb"; input: Record<string, unknown> }
+    result: InstrumentResult
+  }
+  "instrument.ports": { params: void; result: SerialPortView[] }
   "session.create": { params: { directory: string; title?: string }; result: Session }
   "session.delete": { params: { sessionID: string }; result: void }
   "session.rename": { params: { sessionID: string; title: string }; result: Session }

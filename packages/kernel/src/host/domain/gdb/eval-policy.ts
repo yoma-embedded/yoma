@@ -75,6 +75,44 @@ export function expressionWrites(expression: string): boolean {
   return /(^|[^=!<>+\-*/%&|^])=(?!=)|\+\+|--|[+\-*/%&|^]=|<<=|>>=/.test(bare)
 }
 
+/** 看着像函数调用、其实不是的:编译期运算符。`$_streq(...)` 这类 gdb 自带函数以 `$` 开头,另外放行。 */
+const NOT_A_CALL = new Set(["sizeof", "_Alignof", "alignof", "__alignof__", "typeof", "__typeof__", "_Generic"])
+/** `(uint32_t *)(addr)` 这种类型转换:括号里只有一个类型名(可带限定词和星号)。`(*fp)(1)` / `(s.cb)(1)` 不算。 */
+const CAST_BODY = /^\s*(?:(?:const|volatile|struct|union|enum|unsigned|signed)\s+)*[A-Za-z_]\w*(?:\s+(?:const|volatile))*(?:\s*\*\s*(?:const|volatile)?)*\s*$/
+
+/**
+ * 表达式里有没有函数调用。gdb 求值时会**在目标上真的执行**那个函数(inferior call):
+ * 函数卡住(等一个被调试器冻住的外设)整个 gdb 会话就跟着卡死,撞上断点则会留下一次"停止"、把选中帧挪走。
+ * 监视列表每次停住都要重新求值,这种表达式绝不能进去。字符串与字符字面量先剥掉。
+ */
+export function expressionCalls(expression: string): boolean {
+  const bare = expression.replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, "")
+  for (const match of bare.matchAll(/([A-Za-z_$][\w$]*)\s*\(/g)) {
+    const name = match[1]!
+    if (name.startsWith("$") || NOT_A_CALL.has(name)) continue
+    return true
+  }
+  // `)(` / `](`:经函数指针调用;但 `(T *)(x)` 是类型转换,不是调用。
+  for (const match of bare.matchAll(/[)\]]\s*\(/g)) {
+    const close = match.index!
+    if (bare[close] === "]") return true
+    let depth = 0
+    let open = -1
+    for (let i = close; i >= 0; i--) {
+      if (bare[i] === ")") depth++
+      else if (bare[i] === "(") {
+        depth--
+        if (depth === 0) {
+          open = i
+          break
+        }
+      }
+    }
+    if (open < 0 || !CAST_BODY.test(bare.slice(open + 1, close))) return true
+  }
+  return false
+}
+
 export function classifyEval(command: string): EvalVerdict {
   const trimmed = command.trim()
   if (trimmed === "") return { kind: "blocked", reason: "empty command" }

@@ -7,6 +7,7 @@
   "exports": {
     "./*": "./src/components/*.tsx",
     "./session-diff": "./src/components/session-diff.ts",
+    "./turn-changes": "./src/components/turn-changes.ts",
     "./message-file": "./src/components/message-file.ts",
     "./message-part-text": "./src/components/message-part-text.ts",
     "./markdown-stream": "./src/components/markdown-stream.ts",
@@ -31,7 +32,6 @@
   "devDependencies": {
     "@tsconfig/node22": "22.0.2",
     "@types/katex": "0.16.7",
-    "@types/luxon": "3.7.1",
     "@typescript/native-preview": "7.0.0-dev.20251207.1",
     "typescript": "5.8.2",
     "vite": "7.1.4",
@@ -54,7 +54,6 @@
     "dompurify": "3.3.1",
     "fuzzysort": "3.1.0",
     "katex": "0.16.27",
-    "luxon": "3.6.1",
     "marked": "17.0.1",
     "marked-katex-extension": "5.1.6",
     "marked-shiki": "1.2.1",

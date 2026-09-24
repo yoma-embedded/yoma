@@ -154,9 +154,6 @@ type PromptSubmitInput = {
   addToHistory: (prompt: Prompt) => void
   resetHistoryNavigation: () => void
   setPopover: (popover: "at" | "slash" | null) => void
-  shouldQueue?: Accessor<boolean>
-  onQueue?: (draft: FollowupDraft) => void
-  onAbort?: () => void
   onSubmit?: () => void
 }
 
@@ -186,8 +183,6 @@ export function createPromptSubmit(input: PromptSubmitInput) {
   const abort = async () => {
     const sessionID = params.id
     if (!sessionID) return Promise.resolve()
-
-    input.onAbort?.()
 
     const key = pendingKey(sessionID)
     const queued = pending.get(key)
@@ -225,12 +220,6 @@ export function createPromptSubmit(input: PromptSubmitInput) {
         commentOrigin: item.commentOrigin,
         preview: item.preview,
       })
-    }
-  }
-
-  const clearContext = (target: ReturnType<ReturnType<typeof usePrompt>["capture"]>) => {
-    for (const item of target.context.items()) {
-      target.context.remove(item.key)
     }
   }
 
@@ -346,13 +335,6 @@ export function createPromptSubmit(input: PromptSubmitInput) {
         input.queueScroll()
       })
       return true
-    }
-
-    if (!isNewSession && input.shouldQueue?.()) {
-      input.onQueue?.(draft)
-      clearContext(submission.target())
-      clearInput()
-      return
     }
 
     input.onSubmit?.()

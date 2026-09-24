@@ -135,6 +135,18 @@ const gdbParameters = Type.Object({
   count: Type.Optional(
     Type.Number({ description: `exec step/next/stepi: repeat this many times (max ${MAX_STEP_COUNT}).` }),
   ),
+  frame: Type.Optional(
+    Type.Number({
+      description:
+        "status: select this stack frame (0 is the newest stop) before reading locals and registers. Omit to leave the current frame alone.",
+    }),
+  ),
+  watchlist: Type.Optional(
+    Type.Array(Type.String(), {
+      description:
+        "status: also evaluate these read-only expressions in the selected frame (the manual debugger's watch list). Expressions that would write the target or call a function on it are refused, not evaluated.",
+    }),
+  ),
   command: Type.Optional(
     Type.String({
       description: 'eval: a gdb command or expression, e.g. "p/x *cfg", "info registers", "x/16xw 0x20000000".',
@@ -148,7 +160,8 @@ const gdbParameters = Type.Object({
   ),
   keepServer: Type.Optional(
     Type.Boolean({
-      description: "stop: leave an OpenOCD/QEMU server running for manual handover. Not supported for managed J-Link, which exits on disconnect to clean hardware breakpoints; keep that session open or use an externally managed server with connect.",
+      description:
+        "stop: leave an OpenOCD/QEMU server running for manual handover. Not supported for managed J-Link, which exits on disconnect to clean hardware breakpoints; keep that session open or use an externally managed server with connect.",
     }),
   ),
 })
@@ -156,6 +169,75 @@ const gdbParameters = Type.Object({
 export type GdbInput = Static<typeof gdbParameters>
 
 export type GdbTargetState = "halted" | "running" | "exited" | "connection-lost"
+
+/** 界面上的一帧。path 只在本机文件真的存在时填,和 details.path 同一条规矩。 */
+export interface GdbFrameView {
+  level: number
+  func?: string
+  file?: string
+  line?: number
+  addr?: string
+  path?: string
+}
+
+/** 标量有 value。结构体只有 type。`<optimized out>` 留在 value 里,不要当成空。 */
+export interface GdbLocalView {
+  name: string
+  value?: string
+  type?: string
+  /** 结构体 / 数组的整段取值(gdb 的 `{a = 1, b = {…}}` 文本),界面自己拆成树。截断时以 `…` 结尾。 */
+  detail?: string
+}
+
+export interface GdbBreakpointView {
+  number: number
+  kind: "break" | "watch"
+  location: string
+  addr?: string
+  file?: string
+  line?: number
+  enabled: boolean
+}
+
+export interface GdbRegisterView {
+  name: string
+  value: string
+}
+
+/** 一条反汇编。func / offset 在没有符号的地址上缺席。 */
+export interface GdbAsmLine {
+  address: string
+  func?: string
+  offset?: number
+  inst: string
+}
+
+/** 监视表达式的结果:value 与 error 二选一。 */
+export interface GdbWatchView {
+  expr: string
+  value?: string
+  error?: string
+}
+
+export interface GdbInspect {
+  frames: GdbFrameView[]
+  locals: GdbLocalView[]
+  selectedFrame: number
+  breakpoints: GdbBreakpointView[]
+  registers: GdbRegisterView[]
+  /** total 缺着就是预算未知(QEMU 的 FPB 读出来是 0),不要显示成 0。 */
+  breakpointBudget?: { used: number; total?: number }
+  /** ELF 里、本机存在的源文件绝对路径。界面拿它开任意文件下断点。 */
+  sources?: string[]
+  /** xPSR 的 IPSR 段:停在哪个异常里。0 是线程模式。 */
+  exception?: { number: number; name: string }
+  /** 选中帧的 PC(第 0 帧就是真 PC;往上是返回地址)。 */
+  pc?: string
+  /** 选中帧所在函数的反汇编,以 pc 为中心截一段。 */
+  disassembly?: GdbAsmLine[]
+  /** status 带了 watchlist 时,逐条的结果(同序)。 */
+  watches?: GdbWatchView[]
+}
 
 export interface GdbDetails {
   action: GdbAction
@@ -170,6 +252,8 @@ export interface GdbDetails {
   /** 停在有源码的位置时给编辑器用;文件在本机不存在时**不填**,否则每次停止都让编辑器去开一个不存在的文件。 */
   path?: string
   line?: number
+  /** status 在目标停住时附上。模型仍读正文;这是手动调试界面用的。 */
+  inspect?: GdbInspect
 }
 
 const GDB_DESCRIPTION = `Drives a live GDB session against embedded firmware — breakpoints, run control, expression evaluation, and automatic fault analysis. Works with OpenOCD, J-Link, QEMU, or any gdb server already listening on a port.

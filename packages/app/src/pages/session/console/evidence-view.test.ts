@@ -34,14 +34,16 @@ const busy = () =>
 describe("回落规则只有一份", () => {
   test("记着的那台还在就用它", () => {
     expect(activeOnSurface("wave", busy(), "la")).toBe("la")
-    expect(activeOnSurface("text", busy(), "gdb")).toBe("gdb")
+    expect(activeOnSurface("wave", busy(), "gdb")).toBe("gdb")
+    expect(activeOnSurface("text", busy(), "log")).toBe("log")
   })
 
-  test("记着的那台不在了就回落到第一台,而不是显示一块空白", () => {
+  test("文本流回落到日志;波形没有记录就不打开示波器", () => {
     // 这个会话没连过 gdb:文本流只剩日志。
     expect(activeOnSurface("text", ctx(), "gdb")).toBe("log")
-    // 一台都没有(波形那边什么都没发生)时谁都不是 —— 那是空态,不是回落。
+    // 一台都没有时谁都不是。有示波器数据、但没人点过它,同样不打开。
     expect(activeOnSurface("wave", ctx(), "la")).toBeUndefined()
+    expect(activeOnSurface("wave", busy(), undefined)).toBeUndefined()
   })
 })
 
@@ -49,6 +51,7 @@ describe("此刻用户正看着哪几台", () => {
   beforeEach(() => {
     localStorage.clear()
     consoleUI.reset()
+    consoleUI.close()
     dock.close()
     dock.setMode("debug")
   })
@@ -58,10 +61,16 @@ describe("此刻用户正看着哪几台", () => {
   })
 
   test("控制台开着 = 它停着的那一页算开着,另一页不算", () => {
-    consoleUI.open("gdb")
-    expect([...openInstruments(busy())]).toEqual(["gdb"])
+    consoleUI.open("log")
+    expect([...openInstruments(busy())]).toEqual(["log"])
     consoleUI.setTab("log")
     expect([...openInstruments(busy())]).toEqual(["log"])
+  })
+
+  test("调试器在右栏:展开调试档并选中它才算开着", () => {
+    dock.open()
+    consoleUI.setRail("gdb")
+    expect([...openInstruments(busy())]).toEqual(["gdb"])
   })
 
   test("右栏展开且停在「调试」档 = 页签选中的那一台算开着", () => {
@@ -84,18 +93,16 @@ describe("此刻用户正看着哪几台", () => {
     expect([...openInstruments(busy())].sort()).toEqual(["log", "scope"])
   })
 
-  test("右栏记着的那台在这个会话里不露面时,算开着的是回落到的那一台", () => {
+  test("右栏记着的那台在这个会话里不露面时,不拿另一台顶上", () => {
     dock.open()
     consoleUI.setRail("scope")
-    // 只有 LA 有采集:右栏实际画的是 LA。
-    expect([...openInstruments(ctx({ disk: { laCaptures: 1 } }))]).toEqual(["la"])
+    // 只有 LA 有采集。示波器不在场,右栏是空态,不改画逻辑分析仪。
+    expect([...openInstruments(ctx({ disk: { laCaptures: 1 } }))]).toEqual([])
   })
 
-  test("右栏没记过谁时算开着的是第一台 —— 开个会话就把它看过了,这是有意的", () => {
-    // 首次进会话时右栏就画着波形里的第一台(登记序:示波器在逻辑分析仪前面),
-    // 那一台于是"看过了"。截图脚本里 05/06 两步能同时点着 LA 的点,正是因为这一条。
+  test("右栏没记过谁时波形一台都没开 —— 打开日志不把示波器算成正在看", () => {
     dock.open()
-    expect([...openInstruments(busy())]).toEqual(["scope"])
+    expect([...openInstruments(busy())]).toEqual([])
   })
 })
 

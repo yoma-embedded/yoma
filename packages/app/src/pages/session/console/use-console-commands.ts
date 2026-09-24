@@ -10,7 +10,7 @@
  */
 import { useCommand, type CommandOption } from "@/context/command"
 import { useLanguage } from "@/context/language"
-import { useSessionKey } from "@/pages/session/session-layout"
+import { useSDK } from "@/context/sdk"
 import { INSTRUMENTS, benchPins, isVisible } from "../bench/instruments"
 import { useBenchStatus } from "../bench/use-bench-status"
 import { EMPTY_BENCH_DISK } from "../bench/instruments"
@@ -19,7 +19,7 @@ import { consoleUI } from "./console-state"
 export function useConsoleCommands() {
   const command = useCommand()
   const language = useLanguage()
-  const { params } = useSessionKey()
+  const sdk = useSDK()
   const status = useBenchStatus()
 
   const category = () => language.t("command.category.view")
@@ -38,7 +38,7 @@ export function useConsoleCommands() {
         title: language.t("session.console.toggle"),
         category: category(),
         keybind: "mod+j",
-        disabled: !params.id,
+        disabled: !sdk().directory,
         onSelect: () => consoleUI.toggle(),
       },
     ]
@@ -51,7 +51,7 @@ export function useConsoleCommands() {
           name: language.t(instrument.labelKey as Parameters<typeof language.t>[0]),
         }),
         category: category(),
-        disabled: !params.id,
+        disabled: !sdk().directory,
         onSelect: () => {
           if (!isVisible(instrument, ctx())) benchPins.pin(instrument.id)
           consoleUI.open(instrument.id)

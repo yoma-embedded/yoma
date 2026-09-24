@@ -13,8 +13,9 @@
  * - 用过:agent 这一轮碰过示波器,面板就该自己出现,不该让用户去找。
  * - 有数据:上一轮存下的波形,重开会话照样看得见(`la.captures` / `scope.captures` 读的是磁盘)。
  * - 钉住:用户明说"我要一直看着它"。
+ * 调试器和波形仪器不是核心:打开日志不该把示波器一起顶到右栏。
  */
-import { createRoot, createSignal, lazy, type Component } from "solid-js"
+import { createRoot, createSignal, lazy, type Component, type JSX } from "solid-js"
 import type { IconProps } from "@yoma-desktop/ui/icon"
 import type { BenchStatus, InstrumentId } from "./bench-status"
 import { gdbStateLabel, INSTRUMENT_IDS, logCaptureLabel } from "./bench-status"
@@ -30,10 +31,9 @@ export type InstrumentTier = "core" | "frequent" | "occasional"
 /**
  * **数据的形状** —— 决定这台仪器该往哪种容器里摆。
  *
- * - `text`:一行一行往下滚的文本流(日志、GDB,将来的上位机控制台)。它要的是**宽度**,
- *   摆进一条窄的右栏就是每行都在折行。
- * - `wave`:横轴是时间的图(逻辑分析仪、示波器,将来的功耗曲线)。它要的是**高度**,
- *   压进一条 160px 高的底栏就什么都看不出来。
+ * - `text`:底部控制台。一行一行往下滚的文本流(日志,将来的上位机控制台)。它要的是**宽度**。
+ * - `wave`:右栏。示波器、逻辑分析仪,以及调试器。调试器不是时序图,但源码视图要**高度**,
+ *   所以跟波形放在同一侧。名字仍叫 `wave`:路由只认这个字符串,不要另起一个 surface。
  *
  * 不按这一档分家的布局(比如 foundation 那份全堆一列的 `BenchPanel`)忽略它即可。
  */
@@ -60,6 +60,17 @@ export interface InstrumentContext {
   pinned: ReadonlySet<InstrumentId>
 }
 
+/**
+ * 紧凑装配的参数。`chrome` 是容器**没有**画自己页签行时递进来的那几颗按钮(最大化 / 关闭):
+ * 仪器把它和自己的 `controls` 一起挂在自己最上面那一行,容器就不必为一台仪器再占一整行。
+ *
+ * **给的是一个画按钮的函数,不是画好的元素。** Solid 的 JSX 属性是 getter,读一次就新建一整棵按钮
+ * (连同它们的 effect);仪器要先问"有没有 chrome"再决定怎么排,传元素的话光是问一句就多造一份。
+ */
+export interface CompactProps {
+  chrome?: () => JSX.Element
+}
+
 export interface InstrumentDef {
   id: InstrumentId
   /** i18n 键(`session.bench.instrument.<id>`)。两份词典都得有,缺键渲染出的是 `undefined`。 */
@@ -74,7 +85,7 @@ export interface InstrumentDef {
    * 容器**自己带了名牌与工具条**(底部控制台的页签行就是)时渲染的正文。不给就退回 `component` ——
    * 代价只是名牌出现两遍,不是坏掉。
    */
-  compact?: Component
+  compact?: Component<CompactProps>
   /** 紧凑装配时挂到容器页签行右侧的控件(日志的过滤框 / 跟随开关)。 */
   controls?: Component
   /** 紧凑装配时名牌右侧那一行读数(`已停止 sh tools/uart-sim.sh`)。 */
@@ -89,14 +100,13 @@ const LogPanel = lazy(() => import("./log-panel").then((m) => ({ default: m.LogP
 const LogCompact = lazy(() => import("./log-panel").then((m) => ({ default: m.LogCompact })))
 const LogControls = lazy(() => import("./log-panel").then((m) => ({ default: m.LogControls })))
 const GdbPanel = lazy(() => import("./gdb-panel").then((m) => ({ default: m.GdbPanel })))
-const GdbBody = lazy(() => import("./gdb-panel").then((m) => ({ default: m.GdbBody })))
 // 这两台的面板早就在了(dock 的"调试"档一直在用),注册表只是把它们收编进同一套壳。
 const ScopeBody = lazy(() => import("../debug/scope-body").then((m) => ({ default: m.ScopeBody })))
 const LaBody = lazy(() => import("../debug/la-waveform").then((m) => ({ default: m.LaBody })))
 
 /**
- * 登记顺序 = 堆叠顺序:日志(一直在看的)→ 调试器(停在哪)→ 示波器 → 逻辑分析仪。
- * 波形类排在后面是因为它们高、而且通常是"出了事才去看"。
+ * 登记顺序 = 露面顺序。日志在底部控制台。右栏按这条顺序排:
+ * 调试器(源码要高度)→ 示波器 → 逻辑分析仪。
  */
 export const INSTRUMENTS: readonly InstrumentDef[] = [
   {
@@ -131,9 +141,8 @@ export const INSTRUMENTS: readonly InstrumentDef[] = [
     labelKey: "session.bench.instrument.gdb",
     icon: "debug",
     tier: "frequent",
-    surface: "text",
+    surface: "wave",
     component: GdbPanel,
-    compact: GdbBody,
     headline: (ctx, t) =>
       [gdbStateLabel(ctx.status.gdb, t), ctx.status.gdb?.location, ctx.status.gdb?.connection]
         .filter(Boolean)

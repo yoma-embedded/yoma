@@ -113,9 +113,9 @@ export function ScrollView(props: ScrollViewProps) {
       local.viewportRef(viewportRef)
     }
 
+    // 观察器开始观察时会在布局之后为每个目标各回调一次,第一次测量交给它;
+    // 这里再同步量一次,就是页面还在渲染时每个 ScrollView 各强制一次同步布局。
     createResizeObserver([viewportRef, viewportRef.firstElementChild], updateThumb)
-
-    updateThumb()
   })
 
   const onThumbPointerDown = (e: PointerEvent) => {
