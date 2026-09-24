@@ -525,6 +525,23 @@ try {
   await send("Runtime.enable")
   await send("Log.enable")
   await send("Page.enable")
+  // 本机模拟 CI 的 Windows 岗:GitHub 的 Windows runner 屏幕是 1024×768(窗口被夹到这么小),滚动条还占宽度。
+  // YOMA_PAINT_VIEWPORT=1008x690 把视口压到那个尺寸,YOMA_PAINT_CLASSIC_SCROLLBARS=1 让滚动条像 Windows 那样占地方。
+  const viewport = /^(\d+)x(\d+)$/.exec(process.env.YOMA_PAINT_VIEWPORT ?? "")
+  if (viewport) {
+    await send("Emulation.setDeviceMetricsOverride", {
+      width: Number(viewport[1]),
+      height: Number(viewport[2]),
+      deviceScaleFactor: 1,
+      mobile: false,
+    })
+  }
+  if (process.env.YOMA_PAINT_CLASSIC_SCROLLBARS === "1") {
+    await send("Page.addScriptToEvaluateOnNewDocument", {
+      source: `addEventListener("DOMContentLoaded", () => { const s = document.createElement("style"); s.textContent = "::-webkit-scrollbar{width:17px;height:17px}::-webkit-scrollbar-thumb{background:#999}"; document.head.appendChild(s) })`,
+    })
+    await evaluate(`(() => { const s = document.createElement("style"); s.textContent = "::-webkit-scrollbar{width:17px;height:17px}::-webkit-scrollbar-thumb{background:#999}"; document.head.appendChild(s); return true })()`)
+  }
 
   // ------------------------------------------------------------------ 1. 首屏
   check("首页挂载(侧栏 + 会话搜索)", await waitFor(HOME_MOUNTED, MOUNT_TIMEOUT_MS))
@@ -754,6 +771,35 @@ try {
     scopeData.channels[0].points.some((point) => point.max > 3),
   )
   await evaluate(`document.querySelector('[data-component="scope-waveform"]').scrollIntoView({block:'center'})`)
+  // 诊断(Windows 岗上这一步在等的 15 秒里波形被卸掉了,本机复现不出来):每 250 ms 记一次右栏的样子,只记变化。
+  await evaluate(`(() => {
+    const trace = (window.__scopeTrace = [])
+    const t0 = performance.now()
+    let last = ""
+    const snap = () => {
+      const q = (s) => document.querySelector(s)
+      const wave = q('[data-component="scope-waveform"]')
+      const zoom = wave?.querySelector('button[aria-label="放大波形"]')
+      const state = JSON.stringify({
+        panel: !!q('#review-panel'),
+        mode: [...document.querySelectorAll('#review-panel button[aria-pressed="true"]')].map((b) => b.getAttribute("aria-label")).join(","),
+        rail: q('[data-component="instrument-rail"]') ? (q('[data-component="instrument-rail"] [data-slot="empty"]') ? "empty" : "body") : "none",
+        scopeBody: !!q('[data-component="scope-body"]'),
+        wave: !!wave,
+        zoom: zoom ? (zoom.disabled ? "disabled" : "enabled") : "none",
+        busy: wave?.querySelector('[data-slot="plot"]')?.getAttribute("aria-busy"),
+        err: q('[data-component="scope-body"] [role="alert"]')?.textContent?.slice(0, 120),
+        pick: q('[data-component="scope-body"] select')?.value?.slice(-40),
+        nav: [...document.querySelectorAll('[data-component="workbench-nav"] button')].map((b) => b.dataset.instrument + (b.getAttribute("aria-pressed") === "true" ? "*" : "")).join(" "),
+        canvas: wave?.querySelector("canvas")?.clientWidth,
+      })
+      if (state !== last) trace.push(Math.round(performance.now() - t0) + "ms " + state)
+      last = state
+    }
+    snap()
+    window.__scopeTraceTimer = setInterval(snap, 250)
+    return true
+  })()`)
   check(
     "波形放大按钮可操作",
     await waitFor(
@@ -764,6 +810,19 @@ try {
       APPEAR_TIMEOUT_MS,
     ),
   )
+  const trace = await evaluate<string[]>(`(() => { clearInterval(window.__scopeTraceTimer); return window.__scopeTrace ?? [] })()`)
+  if (process.env.CI || (JSON.parse(await evaluate<string>(`JSON.stringify(!!document.querySelector('[data-component="scope-waveform"] button[aria-label="放大波形"]:not([disabled])'))`)) as boolean) === false)
+    for (const line of trace) console.log(`  (波形轨迹) ${line}`)
+  const zoomState = await evaluate<string>(`JSON.stringify({
+    waveform: !!document.querySelector('[data-component="scope-waveform"]'),
+    rail: !!document.querySelector('[data-component="instrument-rail"]'),
+    railEmpty: !!document.querySelector('[data-component="instrument-rail"] [data-slot="empty"]'),
+    scopeBody: !!document.querySelector('[data-component="scope-body"]'),
+    panel: !!document.querySelector('#review-panel'),
+    zoom: document.querySelector('[data-component="scope-waveform"] button[aria-label="放大波形"]')?.disabled,
+    size: [innerWidth, innerHeight],
+  })`)
+  if ((JSON.parse(zoomState) as { zoom?: boolean }).zoom !== false) console.log(`  (诊断) ${zoomState}`)
   await evaluate(`document.querySelector('[data-component="scope-waveform"] button[aria-label="放大波形"]').click()`)
   await waitFor(
     `document.querySelector('[data-component="scope-waveform"] [data-slot="plot"]')?.getAttribute('aria-busy') === 'false'`,
