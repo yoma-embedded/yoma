@@ -222,6 +222,21 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
   6. **失败的输出不是版本。** `esptool --version` 打印 usage 后失败,而 usage 里有一段 "1.8"(flash 电压选项),
      账本里于是记着 `version: "1.8"`(真实 4.10.0)—— 清单一写版本范围就是一条假的 VERSION MISMATCH。退出码非 0 时
      不取版本;问法按工具来(`versionArgs`,esptool 是子命令 `version`)。
+     **2026-09-24 同一类又撞了两家**,全部预设工具在 Windows 开发机上逐个真跑核过,只有这两家有问题:
+     - J-Link Commander 没有任何参数能正常退出(`--version` / `-?` / `-h` 都是打完 "SEGGER J-Link Commander V9.58" 横幅再报
+       unknown option、退出 1),装得好好的 J-Link 永远"入口待验证"、设置页一直叫人去 segger.com 装。没改用同目录的
+       GDB Server(它认 `--version`):它不认识的参数会去连探针、开端口,旧版本 / macOS 上认不认没核过,而核账每次开会话都跑。
+     - Keil 三条:armcc 不认 `--version`(C3900U,退出 1;`--vsn` 两代编译器都认);两代编译器第一行都是
+       "Product: MDK Professional 5.43",版本被记成 MDK 的 5.43(清单写 ">=6.18" 就是假的 VERSION MISMATCH);用户贴的是
+       `Keil_v5\UV4`,编译器在旁边的 `ARM\ARMCLANG\bin` / `ARM\ARM_Compiler_5.06u7\bin`,而入口只查 [目录, 目录\bin]。
+     由此多了两个字段:`versionPattern`(带程序名的正则,第 1 组是版本;声明了就只从它取版本,退出码非 0 而它命中也算跑起来)
+     与 `binDirs`(exe 型的安装布局,记录落在安装树任何一层都往上找回来,`entries.ts` 的 `layoutDirs`;已知位置表与注册表
+     两档也过它,所以位置表对 Keil 只写安装根,布局只写一处)。顺带修了 `findOnPath`:裸名字候选在 Windows 上不分大小写,
+     `ARM\` 下那个叫 `ARMCLANG` 的**目录**被当成 armclang 返回、扫描就此停下。
+     **拿空账本测"新电脑"才看得见的**:注册表那一档只认 `InstallLocation`,而实机上只有 J-Link 的安装器写了它,
+     STM32CubeProgrammer / Keil / CubeMX 都是空的 —— 装在 D 盘的 CubeProgrammer 在新电脑上直接 MISSING。现在空的时候从
+     `UninstallString` 反推(`locations.ts` 的 `uninstallerDir`,卸载程序在 `Uninstall*` 子目录里再上一层)。另外
+     `reg query /f <词> /d` 只打印**内容里含搜索词的值**(从前注释写的"全部值整块打印"不对),所以这一档只看得见路径里带产品名的安装。
   7. **`set` 的回复带记完之后的状态。** 从前恒为 "Recorded … finds it automatically",而核出来可能是 RECORDED ——
      一句必然成功的话让模型多跑一次 check 才发现没成,然后原地重试。三个 set 入口(agent、设置页项目级、设置页平台级)
      现在都把 `spec` 递给 `recordToolchainPath`,分档在那一处按 `pathKind` 定,不可能再分叉。

@@ -40,7 +40,7 @@ import type { Ledger, LedgerEntry } from "./ledger.ts";
 import { findEnvKey, findOnPath, type LocationTable, registryCandidates, wellKnownCandidates, withPath } from "./locations.ts";
 import { installHint, manifestForSide, MANIFEST_RELATIVE, parseManifest } from "./schema.ts";
 import type { ToolchainManifest, ToolSpec } from "./schema.ts";
-import { directoryRoot, executableEntries } from "./entries.ts";
+import { directoryRoot, executableEntries, layoutDirs } from "./entries.ts";
 import { probeExecutable, satisfies } from "./version.ts";
 
 export type ToolStatus = "ok" | "configured" | "recorded" | "unverified" | "version-mismatch" | "ambiguous" | "missing";
@@ -247,7 +247,8 @@ function wellKnownHits(tool: ToolSpec, platform: string, env: NodeJS.ProcessEnv,
 	// from 是键回落(见 locations.ts 的 tableLookup):清单常给工具起项目内短名
 	// (id "arm-gcc"),厂商身份在 from("arm-gnu-toolchain"),而表键是厂商名。
 	for (const dir of wellKnownCandidates(tool.id, platform, { from: tool.from, table })) {
-		const bin = resolveNamesInDirs(names, [dir], env);
+		// 声明了安装布局的(Keil)表里写的是安装根,编译器在哪由 binDirs 说 —— 布局只写一处。
+		const bin = resolveNamesInDirs(names, [dir, ...layoutDirs(tool, dir, env)], env);
 		if (bin) hits.push(bin);
 	}
 	return hits;
@@ -261,8 +262,9 @@ function registryHits(tool: ToolSpec, platform: string, env: NodeJS.ProcessEnv):
 	const hits: Hit[] = [];
 	for (const dir of registryCandidates(tool.id, platform as NodeJS.Platform, { from: tool.from })) {
 		// InstallLocation 有的厂商就是可执行文件所在目录(SEGGER 的 J-Link),有的是
-		// 装了一堆子目录的安装根、可执行文件在它的 bin\ 下 —— 两种都试,不猜是哪种。
-		const bin = resolveNamesInDirs(names, [dir, path.join(dir, "bin")], env);
+		// 装了一堆子目录的安装根、可执行文件在它的 bin\ 下 —— 两种都试,不猜是哪种;
+		// 声明了安装布局的(Keil,编译器在 ARM\ARMCLANG\bin)再按 binDirs 找。
+		const bin = resolveNamesInDirs(names, [dir, path.join(dir, "bin"), ...layoutDirs(tool, dir, env)], env);
 		if (bin) hits.push(bin);
 	}
 	return hits;
@@ -372,7 +374,7 @@ async function resolveTool(tool: ToolSpec, ctx: ResolveCtx): Promise<ResolvedToo
 				const results = await Promise.all(
 					ordered.map(async (name) => ({
 						name,
-						...(await probeExecutable(bin[name]!, probeEnv(tool, all ? bin : { [name]: bin[name]! }, ctx.env), tool.versionArgs)),
+						...(await probeExecutable(bin[name]!, probeEnv(tool, all ? bin : { [name]: bin[name]! }, ctx.env), tool.versionArgs, tool.versionPattern)),
 					})),
 				);
 				// all 的版本范围指向主入口(如 gcc),而非 objcopy 等使用独立版本号的伴随工具。

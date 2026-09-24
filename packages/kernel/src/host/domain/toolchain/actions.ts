@@ -145,7 +145,7 @@ export async function recordToolchainPath(opts: {
 
 	let version: string | undefined;
 	if (!statSync(primary).isDirectory()) {
-		version = await probeVersion(primary, opts.env, opts.spec?.versionArgs);
+		version = await probeVersion(primary, opts.env, opts.spec?.versionArgs, opts.spec?.versionPattern);
 	}
 
 	await writeLedgerEntry({ id: opts.id, bin, version, confirmedAt: Date.now(), by: "user" }, opts.configDir);

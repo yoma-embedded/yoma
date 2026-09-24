@@ -21,6 +21,7 @@ import {
 	withPath,
 	parseInstallLocations,
 	registryCandidates,
+	uninstallerDir,
 	tableLookup,
 	WELL_KNOWN_LOCATIONS,
 	wellKnownCandidates,
@@ -343,6 +344,72 @@ describe("parseInstallLocations", () => {
 	it("不会把 DisplayName 之类别的字段误当 InstallLocation,哪怕它的值里出现这几个字", () => {
 		const stdout = "    DisplayName    REG_SZ    Something InstallLocation-ish but not the field";
 		expect(parseInstallLocations(stdout)).toEqual([]);
+	});
+
+	// 下面两段逐字抄自 2026-09-24 那台 Windows 开发机的 `reg query … /s /f <词> /d`:InstallLocation 都不在
+	// (/d 只打印内容里含搜索词的值,而且这两家根本没写它),卸载程序的路径才是唯一的线索。
+	it("STM32CubeProgrammer:没有 InstallLocation,从 Uninstaller\\unscript.bat 反推安装根", () => {
+		const stdout = [
+			"",
+			"HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\STM32CubeProgrammer",
+			"    DisplayName    REG_SZ    STM32CubeProgrammer",
+			"    DisplayIcon    REG_SZ    D:\\Program Files\\STMicroelectronics\\STM32Cube\\STM32CubeProgrammer\\util\\Programmer.ico",
+			'    UninstallString    REG_SZ    "D:\\Program Files\\STMicroelectronics\\STM32Cube\\STM32CubeProgrammer\\Uninstaller\\unscript.bat"',
+			"",
+			"End of search: 3 match(es) found.",
+		].join("\r\n");
+		expect(parseInstallLocations(stdout)).toEqual(["D:\\Program Files\\STMicroelectronics\\STM32Cube\\STM32CubeProgrammer"]);
+	});
+
+	it("Keil:卸载键叫 Keil μVision4,Uninstall.exe 在安装根上;驱动包那几个键的卸载程序在 DIFX 里,只是无害的候选", () => {
+		const stdout = [
+			"",
+			"HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\54D3313C65675EDD5FC15BEE546C5E6E20229BE8",
+			"    DisplayName    REG_SZ    Windows 驱动程序包 - KEIL - Tools By ARM USBDevice  (12/12/2017 1.0.1.0)",
+			"    Publisher    REG_SZ    KEIL - Tools By ARM",
+			"",
+			"HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\C96E78AFEDFD4529DF572369E6FD81679F49E548",
+			"    UninstallString    REG_SZ    C:\\PROGRA~1\\DIFX\\4A7292F75FEBBD3C\\dpinst.exe /u C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\keilulx.inf_amd64_9d185112ff3ce4b0\\keilulx.inf",
+			"    DisplayName    REG_SZ    Windows 驱动程序包 - KEIL - Tools By ARM (WinUSB) USB  (08/29/2013 1.0.0.3)",
+			"",
+			"HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Keil μVision4",
+			"    DisplayIcon    REG_SZ    D:\\Users\\admin\\AppData\\Local\\Keil_v5\\UV4\\UV4.exe",
+			"    DisplayName    REG_SZ    Keil μVision4",
+			"    UninstallString    REG_SZ    D:\\Users\\admin\\AppData\\Local\\Keil_v5\\Uninstall.exe",
+			"    LastInstallDir    REG_SZ    D:\\Users\\admin\\AppData\\Local\\Keil_v5",
+			"",
+			"End of search: 10 match(es) found.",
+		].join("\r\n");
+		expect(parseInstallLocations(stdout)).toEqual(["C:\\PROGRA~1\\DIFX\\4A7292F75FEBBD3C", "D:\\Users\\admin\\AppData\\Local\\Keil_v5"]);
+	});
+
+	it("InstallLocation 在时听它的,不看 UninstallString;空的 InstallLocation(只有空格)不算", () => {
+		const stdout = [
+			"HKEY_LOCAL_MACHINE\\...\\{A}",
+			"    InstallLocation    REG_SZ    D:\\Program Files\\SEGGER\\JLink_V958",
+			"    UninstallString    REG_SZ    D:\\Program Files\\SEGGER\\JLink_V958\\Uninstall.exe",
+			"HKEY_LOCAL_MACHINE\\...\\{B}",
+			"    InstallLocation    REG_SZ    ",
+			"    UninstallString    REG_SZ    E:\\Keil_v5\\Uninstall.exe",
+		].join("\r\n");
+		expect(parseInstallLocations(stdout)).toEqual(["D:\\Program Files\\SEGGER\\JLink_V958", "E:\\Keil_v5"]);
+	});
+});
+
+describe("uninstallerDir", () => {
+	it.each([
+		['"C:\\Program Files\\X\\Uninstaller\\unscript.bat"', "C:\\Program Files\\X"],
+		["C:\\Keil_v5\\Uninstall.exe", "C:\\Keil_v5"],
+		['"C:\\Program Files\\Y\\uninst.exe" /S', "C:\\Program Files\\Y"],
+		["D:\\Tools\\Z\\unins000.exe", "D:\\Tools\\Z"],
+	])("%s → %s", (command, dir) => {
+		expect(uninstallerDir(command)).toBe(dir);
+	});
+
+	it("MsiExec 这类说的不是装在哪:不带盘符的、落在 System32 里的,不产出", () => {
+		expect(uninstallerDir("MsiExec.exe /X{12345678-1234-1234-1234-123456789012}")).toBeUndefined();
+		expect(uninstallerDir("C:\\WINDOWS\\system32\\msiexec.exe /x {GUID}")).toBeUndefined();
+		expect(uninstallerDir("")).toBeUndefined();
 	});
 });
 
