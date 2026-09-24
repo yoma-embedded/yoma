@@ -217,6 +217,16 @@ describe("找文件守则", () => {
 		expect(noShell).not.toContain("Use bash for file operations");
 	});
 
+	it("有 powershell 时带上 Windows 上的分工:一般命令用 bash,Windows 专属的事用 powershell,两者都不拿来读 / 找文件", () => {
+		const prompt = buildSystemPrompt({ cwd: "/p", selectedTools: ["read", "bash", "grep", "find", "ls", "powershell"] });
+		expect(prompt).toContain(
+			"- On Windows, run general commands with bash and use powershell for Windows-specific work (registry, services, network ports, devices, serial ports, .NET APIs).",
+		);
+		expect(prompt).toContain("Neither is for reading or searching files: use read, grep, find and ls.");
+		const withoutPowershell = buildSystemPrompt({ cwd: "/p", selectedTools: ["read", "bash", "grep"] });
+		expect(withoutPowershell).not.toContain("Windows-specific work");
+	});
+
 	it("子 agent 的提示词同样带上(那个跑了 33 分钟的 grep -rn 出在 general-purpose 子 agent 里)", () => {
 		const prompt = buildSystemPrompt({
 			agentPrompt: "You are an agent.",

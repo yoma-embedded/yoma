@@ -72,6 +72,9 @@ export const POWERSHELL_CONTRACT = {
   parameters: powershellParameters,
   guidelines: [
     "Use powershell only on Windows; on macOS and Linux use bash.",
+    // 分工照 CC 的 PowerShell 工具说明(git / npm / docker / cmdlet,不做文件操作):模型写 POSIX 命令更熟,5.1 又缺 && / ||、
+    // 默认 UTF-16 写文件;真正要 PowerShell 的是 Windows 专属的那些事。
+    "On Windows, run general commands with bash and use powershell for Windows-specific work (registry, services, network ports, devices, serial ports, .NET APIs). Neither is for reading or searching files: use read, grep, find and ls.",
     "Each powershell call is a fresh process — cd, $env: changes and imported modules do not carry over to the next call.",
   ],
   // 与 flash 同一道门:脚本里的命令位站着 openocd / JLink / STM32_Programmer_CLI 就先问用户。
