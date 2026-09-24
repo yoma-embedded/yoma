@@ -258,7 +258,9 @@ function recordLog(stream: string) {
 
 // TMPDIR 指到我们自己的临时根:main 的 YOMA_TEST_ONBOARDING 分支把 userData 放在
 // `tmpdir()/yoma-onboarding-<uuid>`,这样它连带几十 MB 的 Chromium 存储一起被我们收走。
-const child = spawn(electron, [mainEntry], {
+// YOMA_PAINT_LOCALE=en-US:本机模拟英文系统(Windows runner 的 navigator.languages 是 en-US)。
+// 走 Chromium 的 --lang:CDP 的 Emulation.setLocaleOverride 只管 Intl,navigator.language 不跟着变。
+const child = spawn(electron, [mainEntry, ...(process.env.YOMA_PAINT_LOCALE ? [`--lang=${process.env.YOMA_PAINT_LOCALE}`] : [])], {
   cwd: desktop,
   env: {
     ...process.env,
@@ -525,6 +527,31 @@ try {
   await send("Runtime.enable")
   await send("Log.enable")
   await send("Page.enable")
+  // 本机模拟 CI 的 Windows 岗:GitHub 的 Windows runner 屏幕是 1024×768(窗口被夹到这么小),滚动条还占宽度。
+  // YOMA_PAINT_VIEWPORT=1008x690 把视口压到那个尺寸,YOMA_PAINT_CLASSIC_SCROLLBARS=1 让滚动条像 Windows 那样占地方。
+  const viewport = /^(\d+)x(\d+)$/.exec(process.env.YOMA_PAINT_VIEWPORT ?? "")
+  if (viewport) {
+    await send("Emulation.setDeviceMetricsOverride", {
+      width: Number(viewport[1]),
+      height: Number(viewport[2]),
+      deviceScaleFactor: 1,
+      mobile: false,
+    })
+  }
+  if (process.env.YOMA_PAINT_LOCALE) {
+    await waitFor(HOME_MOUNTED, MOUNT_TIMEOUT_MS)
+    console.log(
+      `  (语言模拟) navigator.language = ${await evaluate<string>("navigator.language")},界面:${await evaluate<string>(
+        `document.querySelector('[data-component="codex-sidebar"]')?.innerText.includes("新对话") ? "中文" : "非中文"`,
+      )}`,
+    )
+  }
+  if (process.env.YOMA_PAINT_CLASSIC_SCROLLBARS === "1") {
+    await send("Page.addScriptToEvaluateOnNewDocument", {
+      source: `addEventListener("DOMContentLoaded", () => { const s = document.createElement("style"); s.textContent = "::-webkit-scrollbar{width:17px;height:17px}::-webkit-scrollbar-thumb{background:#999}"; document.head.appendChild(s) })`,
+    })
+    await evaluate(`(() => { const s = document.createElement("style"); s.textContent = "::-webkit-scrollbar{width:17px;height:17px}::-webkit-scrollbar-thumb{background:#999}"; document.head.appendChild(s); return true })()`)
+  }
 
   // ------------------------------------------------------------------ 1. 首屏
   check("首页挂载(侧栏 + 会话搜索)", await waitFor(HOME_MOUNTED, MOUNT_TIMEOUT_MS))
@@ -537,12 +564,26 @@ try {
     projects: { local: [{ worktree: workspace, expanded: true }] },
     lastProject: { local: workspace },
   })
-  const seeded = await evaluate<string>(`window.api.storeSet("yoma.global.dat", "server", ${json(stored)})
-    .then(() => "ok").catch((error) => "ERR " + error.message)`)
-  check("storeSet 写入 yoma.global.dat:server", seeded === "ok", seeded)
+  // 界面语言一并钉成中文:下面按中文的 aria-label / 按钮字找元素(「放大波形」「游标 A」…),而 app 缺省跟
+  // navigator.languages 走 —— GitHub 的 Windows runner 是 en-US,示波器面板的文案 f152305 起走 i18n 之后,
+  // 那边的按钮叫 "Zoom in",闸门就找不到它(v0.3.2 的 ci 撞上的)。预热读的是裸 localStorage,persist 层走
+  // storeGet,两边都写(截图工装同一个做法)。
+  const seeded = await evaluate<string>(`Promise.all([
+      window.api.storeSet("yoma.global.dat", "server", ${json(stored)}),
+      window.api.storeSet("yoma.global.dat", "language", ${json(json({ locale: "zh" }))}),
+    ]).then(() => { localStorage.setItem("yoma.global.dat:language", ${json(json({ locale: "zh" }))}); return "ok" })
+    .catch((error) => "ERR " + error.message)`)
+  check("storeSet 写入 yoma.global.dat:server 与界面语言", seeded === "ok", seeded)
 
   await send("Page.reload", { ignoreCache: false })
   check("reload 后首页重新挂载", await waitFor(HOME_MOUNTED, MOUNT_TIMEOUT_MS))
+  check(
+    "界面是中文(下面的检查按中文文案找元素,不看 runner 的系统语言)",
+    await waitFor(
+      `document.querySelector('[data-component="codex-sidebar"]')?.innerText.includes("新对话") === true`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
   const projectName = WORKSPACE_NAME
   check(
     `侧栏列出工程 ${projectName}`,
@@ -754,6 +795,35 @@ try {
     scopeData.channels[0].points.some((point) => point.max > 3),
   )
   await evaluate(`document.querySelector('[data-component="scope-waveform"]').scrollIntoView({block:'center'})`)
+  // 诊断(Windows 岗上这一步在等的 15 秒里波形被卸掉了,本机复现不出来):每 250 ms 记一次右栏的样子,只记变化。
+  await evaluate(`(() => {
+    const trace = (window.__scopeTrace = [])
+    const t0 = performance.now()
+    let last = ""
+    const snap = () => {
+      const q = (s) => document.querySelector(s)
+      const wave = q('[data-component="scope-waveform"]')
+      const zoom = wave?.querySelector('button[aria-label="放大波形"]')
+      const state = JSON.stringify({
+        panel: !!q('#review-panel'),
+        mode: [...document.querySelectorAll('#review-panel button[aria-pressed="true"]')].map((b) => b.getAttribute("aria-label")).join(","),
+        rail: q('[data-component="instrument-rail"]') ? (q('[data-component="instrument-rail"] [data-slot="empty"]') ? "empty" : "body") : "none",
+        scopeBody: !!q('[data-component="scope-body"]'),
+        wave: !!wave,
+        zoom: zoom ? (zoom.disabled ? "disabled" : "enabled") : "none",
+        busy: wave?.querySelector('[data-slot="plot"]')?.getAttribute("aria-busy"),
+        err: q('[data-component="scope-body"] [role="alert"]')?.textContent?.slice(0, 120),
+        pick: q('[data-component="scope-body"] select')?.value?.slice(-40),
+        nav: [...document.querySelectorAll('[data-component="workbench-nav"] button')].map((b) => b.dataset.instrument + (b.getAttribute("aria-pressed") === "true" ? "*" : "")).join(" "),
+        canvas: wave?.querySelector("canvas")?.clientWidth,
+      })
+      if (state !== last) trace.push(Math.round(performance.now() - t0) + "ms " + state)
+      last = state
+    }
+    snap()
+    window.__scopeTraceTimer = setInterval(snap, 250)
+    return true
+  })()`)
   check(
     "波形放大按钮可操作",
     await waitFor(
@@ -764,6 +834,21 @@ try {
       APPEAR_TIMEOUT_MS,
     ),
   )
+  const trace = await evaluate<string[]>(`(() => { clearInterval(window.__scopeTraceTimer); return window.__scopeTrace ?? [] })()`)
+  const zoomReady = await evaluate<boolean>(
+    `!!document.querySelector('[data-component="scope-waveform"] button[aria-label="放大波形"]:not([disabled])')`,
+  )
+  if (!zoomReady) for (const line of trace) console.log(`  (波形轨迹) ${line}`)
+  const zoomState = await evaluate<string>(`JSON.stringify({
+    waveform: !!document.querySelector('[data-component="scope-waveform"]'),
+    rail: !!document.querySelector('[data-component="instrument-rail"]'),
+    railEmpty: !!document.querySelector('[data-component="instrument-rail"] [data-slot="empty"]'),
+    scopeBody: !!document.querySelector('[data-component="scope-body"]'),
+    panel: !!document.querySelector('#review-panel'),
+    zoom: document.querySelector('[data-component="scope-waveform"] button[aria-label="放大波形"]')?.disabled,
+    size: [innerWidth, innerHeight],
+  })`)
+  if ((JSON.parse(zoomState) as { zoom?: boolean }).zoom !== false) console.log(`  (诊断) ${zoomState}`)
   await evaluate(`document.querySelector('[data-component="scope-waveform"] button[aria-label="放大波形"]').click()`)
   await waitFor(
     `document.querySelector('[data-component="scope-waveform"] [data-slot="plot"]')?.getAttribute('aria-busy') === 'false'`,
