@@ -181,12 +181,14 @@ describe("serialArgv", () => {
     expect(serialArgv("/dev/cu.usbmodem1", 921600, "darwin")).toEqual(["cat"])
   })
 
-  it("windows 上是 powershell 的固定开关 + -EncodedCommand,解回来就是那段读串口的脚本", () => {
+  it("windows 上是 powershell 的固定开关 + -Command,最后一个参数就是那段读串口的脚本", () => {
     const argv = serialArgv("COM4", 115200, "win32", "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe")
     expect(argv[0]).toMatch(/powershell\.exe$/)
     expect(argv.slice(1, 1 + POWERSHELL_FLAGS.length)).toEqual([...POWERSHELL_FLAGS])
-    expect(argv[1 + POWERSHELL_FLAGS.length]).toBe("-EncodedCommand")
-    const script = Buffer.from(argv[argv.length - 1]!, "base64").toString("utf16le")
+    // 不用 -EncodedCommand:安全软件对编码过的 PowerShell 做同步审查,每次开采内核卡 0.6–3 s(powershell/session.ts 文件头)。
+    expect(argv[1 + POWERSHELL_FLAGS.length]).toBe("-Command")
+    expect(argv).toHaveLength(POWERSHELL_FLAGS.length + 3)
+    const script = argv[argv.length - 1]!
     expect(script.split("\n")[0]).toBe(PS_NO_PROGRESS)
     expect(script).toContain("System.IO.Ports.SerialPort -ArgumentList 'COM4',115200,'None',8,'One'")
     expect(script).toContain("$p.DtrEnable=$true")

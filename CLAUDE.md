@@ -105,7 +105,9 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
   **只出文件不出目录**(pi 用 fd 会出目录)。ls 用 readdir(withFileTypes)而不是 env.listDir:后者对字符设备 /
   FIFO / socket 静默丢弃,`ls /dev` 会看不见 cu.* 串口。powershell 全平台恒定登记(清单平台无关),非 Windows
   没有 pwsh 时 execute 报未安装;Windows 上用 SystemRoot 绝对路径的 5.1,`-NoProfile -NonInteractive
-  -ExecutionPolicy Bypass -EncodedCommand`,脚本头两行关进度条与置 UTF-8 输出(含 `$OutputEncoding`,否则 native stdin 中文变问号),
+  -ExecutionPolicy Bypass -Command <脚本>`(脚本原样作一个参数;**别换回 `-EncodedCommand`**:2026-09-24 实测安全软件对
+  "没签名的程序起编码过的 PowerShell"在 CreateProcess 里同步审查,Electron / 打包的 Yoma.exe 每次 spawn 卡 0.6–3 s,
+  整个内核跟着停,`-Command` 8 ms;log 的 Windows 串口源同理),脚本头两行关进度条与置 UTF-8 输出(含 `$OutputEncoding`,否则 native stdin 中文变问号),
   接着 `Set-Location -LiteralPath` 定位工程(5.1 启动遇到 `[]` 会静默落回系统目录)。Windows 真进程回归与使用方法见
   `docs/WINDOWS-POWERSHELL-2026-09-15.md`。stderr 上的 CLIXML 块**解码**
   (取出 Error 记录,丢进度)而不是整块删 —— Write-Error 退出码是 0,整块删掉模型就以为成功了。CI 两岗测试前

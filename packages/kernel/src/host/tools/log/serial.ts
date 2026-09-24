@@ -26,8 +26,9 @@
  *
  * 【Windows:为什么是 PowerShell】
  * 没有 stty,`type \\.\COM3` 也不是流式的。System.IO.Ports.SerialPort 在每台 Win10/11 自带的 Windows
- * PowerShell 5.1 里就有,零安装。脚本用 `-EncodedCommand` 传,读的是**原始字节**直接写 stdout ——
- * 不让 PowerShell 先按代码页解一遍,中文 Windows 上 cp936 解出来的 U+FFFD 是不可逆的。
+ * PowerShell 5.1 里就有,零安装。脚本原样作为 `-Command` 的一个参数传(不用 `-EncodedCommand`,理由同 powershell
+ * 工具:安全软件对"没签名的程序起编码过的 PowerShell"做同步审查,每次开采内核卡 0.6–3 s),读的是**原始字节**直接写
+ * stdout —— 不让 PowerShell 先按代码页解一遍,中文 Windows 上 cp936 解出来的 U+FFFD 是不可逆的。
  * PowerShell 的可执行文件、固定开关与关进度记录的那一行都复用 powershell 工具的(同一份疤痕组织)。
  *
  * 【端口名不进 shell,也不进脚本文本】
@@ -224,12 +225,7 @@ export function serialPowershellArgv(script: string, exe: string | undefined): s
         "enable the Windows PowerShell feature, or capture through a reader that opens the port itself (a pyserial script) as a command source",
     )
   }
-  return [
-    exe,
-    ...POWERSHELL_FLAGS,
-    "-EncodedCommand",
-    Buffer.from(`${PS_NO_PROGRESS}\n${script}`, "utf16le").toString("base64"),
-  ]
+  return [exe, ...POWERSHELL_FLAGS, "-Command", `${PS_NO_PROGRESS}\n${script}`]
 }
 
 /**

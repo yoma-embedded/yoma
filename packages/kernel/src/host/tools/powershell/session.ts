@@ -3,14 +3,18 @@
  *
  * 为什么不复用内核 bash 那条路(env.exec):ExecutionEnv 的 shell 由构造参数定死
  * (NodeExecutionEnv 的 shellPath),ShellExecOptions 里没有 shell/argv 字段 —— 把 pwsh 塞进
- * shellPath 会得到 `pwsh -c <命令串>`:丢掉 -NoProfile / -NonInteractive / -EncodedCommand,
+ * shellPath 会得到 `pwsh -c <命令串>`:丢掉 -NoProfile / -NonInteractive / -ExecutionPolicy 这几个开关,
  * 而且会把同一个会话里**所有 bash 调用**一起改掉(工具拿到的是同一个 env 实例)。
  * 代价是丢掉 bash 那条流式 + 溢出文件 + 崩溃 checkpoint 的链路:这里是 runEngine 全量收完
  * 再 truncateTail,截断时自己落一个临时文件。
  *
  * 三道编码钉子,少一道就会得到"看起来像脚本写坏了"的乱码:
- * 1. `-EncodedCommand`(UTF-16LE base64):脚本里的引号、分号、反斜杠一律不参与命令行解析,
- *    也绕开了 Windows 命令行那层代码页。
+ * 1. 脚本原样作为 `-Command` 的**一个** argv 元素:Node 按 MSVC 规则给它加引号、经 CreateProcessW 以 UTF-16 交出去
+ *    (不过代码页),PowerShell 按同一套规则拆回来,引号、分号、反斜杠、中文逐字到达(tools-powershell.windows.test.ts
+ *    用真进程钉着)。**不用 `-EncodedCommand`**:那是恶意 PowerShell 的典型写法,安全软件会在 CreateProcess 里同步审查
+ *    "没签名的程序起编码过的 PowerShell" —— 2026-09-24 实测开发版 electron.exe 与打包的 Yoma.exe 每次 spawn 卡 0.6–3 s,
+ *    而 spawn 跑在内核唯一的线程上,所有会话的流和界面请求跟着停;同一段脚本走 `-Command` 8 ms。CC
+ *    (`-NoProfile -NonInteractive -Command`)与 Codex(`-NoProfile -Command`)也都这么传。
  * 2. 脚本第一行 `$ProgressPreference='SilentlyContinue'`:PowerShell 5.1 一发现 stderr 被重定向,
  *    就把进度记录序列化成 `#< CLIXML` 写 stderr(attic/tools/serial.ts 的真机实测:482B→100B,
  *    `-OutputFormat Text` 无效)。它必须在用户脚本之前执行,所以是第一行而不是一个 argv 开关。
@@ -60,10 +64,20 @@ export const PS_UTF8_OUTPUT =
 export const POWERSHELL_FLAGS = ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass"] as const
 
 /**
- * 编码后的脚本长度上限。Windows 的命令行总长约 32k 字符,超了的症状是 spawn 直接失败或者脚本
- * 被截断后以一个语法错误收场 —— 两种都看不出是"命令太长"。提前拒,并告诉模型出路。
+ * 脚本在命令行上占的长度上限。Windows 的命令行总长约 32k 字符(还要装下可执行文件路径与开关),超了的症状是
+ * spawn 直接失败或者脚本被截断后以一个语法错误收场 —— 两种都看不出是"命令太长"。提前拒,并告诉模型出路。
  */
-export const MAX_ENCODED_COMMAND_CHARS = 30_000
+export const MAX_COMMAND_CHARS = 30_000
+
+/**
+ * 脚本加上引号之后在命令行上最多占多长:两头各一个引号,每个 `"` 前补一个反斜杠,紧挨着引号的反斜杠翻倍 ——
+ * 按"每个反斜杠都翻倍"算,只会高估。满是引号的脚本加引号之后能长一倍,所以不能拿原文长度比。
+ */
+export function commandLineChars(script: string): number {
+  let extra = 2
+  for (const char of script) if (char === '"' || char === "\\") extra += 1
+  return script.length + extra
+}
 
 /** 在 PATH 上找一个可执行文件。engineBin 那套只认 engines/bin,PowerShell 不是我们装的。 */
 export function findOnPath(name: string, pathEnv: string | undefined = process.env.PATH): string | undefined {
@@ -122,15 +136,15 @@ export function powershellScript(command: string, cwd?: string): string {
   return `${PS_NO_PROGRESS}\n${PS_UTF8_OUTPUT}\n${location}${command}`
 }
 
-/** 完整 argv(不含可执行文件);超长在这里拒,调用方不必自己数长度。 */
+/** 完整 argv(不含可执行文件);超长在这里拒,调用方不必自己数长度。`-Command` 必须是最后一个开关。 */
 export function powershellArgv(command: string, cwd?: string): string[] {
-  const encoded = Buffer.from(powershellScript(command, cwd), "utf16le").toString("base64")
-  if (encoded.length > MAX_ENCODED_COMMAND_CHARS) {
+  const script = powershellScript(command, cwd)
+  if (commandLineChars(script) > MAX_COMMAND_CHARS) {
     throw new Error(
       "powershell: command too long — write a UTF-8 with BOM .ps1 file and invoke it with & 'path.ps1' (or powershell.exe -File 'path.ps1')",
     )
   }
-  return [...POWERSHELL_FLAGS, "-EncodedCommand", encoded]
+  return [...POWERSHELL_FLAGS, "-Command", script]
 }
 
 /**

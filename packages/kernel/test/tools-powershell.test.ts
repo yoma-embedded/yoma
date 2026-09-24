@@ -2,7 +2,7 @@
  * powershell 工具(host/tools/powershell/session.ts)的验收。
  *
  * 真 PowerShell 只在 Windows 上有,所以这一组用一段 JS 冒充它(fixtures/fake-exe.ts):它把收到的
- * argv 打出来,并把 -EncodedCommand 的 base64 解回 UTF-16LE 脚本 —— 于是"四个固定开关逐字"与
+ * argv 打出来,并把 -Command 后面那个参数(脚本)原样打出来 —— 于是"四个固定开关逐字"与
  * "两行编码头在脚本最前面"这两条契约在 macOS/Linux 上也钉得住。那两行头是付过学费的疤:
  * 少了 $ProgressPreference,5.1 会把进度记录序列化成 `#< CLIXML` 写 stderr(模型会当成脚本输出读);
  * 少了 [Console]::OutputEncoding,中文 Windows 上输出按 cp936 写而我们按 UTF-8 解,得到 U+FFFD。
@@ -22,6 +22,7 @@ import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node"
 
 import type { PowerShellDetails, PowerShellInput } from "../src/host/tools/powershell/contract.ts"
 import {
+  commandLineChars,
   createPowerShellTool,
   findOnPath,
   POWERSHELL_MISSING,
@@ -101,12 +102,12 @@ async function waitForFile(file: string, timeoutMs = 10_000): Promise<void> {
   }
 }
 
-/** 把 argv 与解回来的脚本一起打出来的假货:前者验开关,后者验两行头。 */
-const ECHO_ENCODED_JS = `
+/** 把 argv 与收到的脚本一起打出来的假货:前者验开关,后者验两行头。 */
+const ECHO_COMMAND_JS = `
 const args = process.argv.slice(2)
-const i = args.indexOf("-EncodedCommand")
+const i = args.indexOf("-Command")
 console.log("flags: " + args.slice(0, i).join(" "))
-process.stdout.write(Buffer.from(args[i + 1], "base64").toString("utf16le"))
+process.stdout.write(args[i + 1])
 `
 
 describe("powershell 纯函数", () => {
@@ -117,16 +118,23 @@ describe("powershell 纯函数", () => {
     expect(PS_UTF8_OUTPUT).toContain("OutputEncoding")
   })
 
-  it("argv 是四个固定开关 + -EncodedCommand,base64 能解回 UTF-16LE 脚本", () => {
+  it("argv 是四个固定开关 + -Command,脚本原文是最后一个参数", () => {
     const argv = powershellArgv("Write-Output 'héllo €'")
-    expect(argv.slice(0, 5)).toEqual(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand"])
+    expect(argv.slice(0, 5)).toEqual(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"])
     expect(argv).toHaveLength(6)
-    expect(Buffer.from(argv[5], "base64").toString("utf16le")).toBe(powershellScript("Write-Output 'héllo €'"))
+    expect(argv[5]).toBe(powershellScript("Write-Output 'héllo €'"))
+    // 别改回 -EncodedCommand:安全软件会在 CreateProcess 里同步审查"没签名的程序起编码过的 PowerShell",
+    // Electron 里每次 spawn 卡 0.6–3 s、整个内核跟着停(见 session.ts 文件头)。
+    expect(argv).not.toContain("-EncodedCommand")
   })
 
-  it("超长命令被拒,并指向 .ps1 + -File", () => {
+  it("超长命令被拒,并指向 .ps1 + -File;长度按加引号之后算", () => {
     expect(() => powershellArgv("a".repeat(30_000))).toThrow(/command too long/)
     expect(() => powershellArgv("a".repeat(30_000))).toThrow(/-File/)
+    // 同样一万五千个字符:普通字符放得下,全是引号的加上转义就翻倍,放不下。
+    expect(() => powershellArgv("a".repeat(15_000))).not.toThrow()
+    expect(() => powershellArgv('"'.repeat(15_000))).toThrow(/command too long/)
+    expect(commandLineChars('a"b\\c')).toBe(5 + 2 + 2)
   })
 
   it("stripClixml 剥掉整块 XML,留下真报错", () => {
@@ -179,7 +187,7 @@ describe("powershell 纯函数", () => {
 // 见文件头:假货的启动器在 Windows 上是 .cmd,无 shell 的 spawn 起不了它。
 describe.skipIf(process.platform === "win32")("powershell 工具(假 PowerShell)", () => {
   it("四个固定开关逐字,两行编码头在脚本最前面", async () => {
-    const { run, cwd } = makeTool(ECHO_ENCODED_JS)
+    const { run, cwd } = makeTool(ECHO_COMMAND_JS)
     const lines = textOf(await run({ command: "Write-Output hi" })).split("\n")
     expect(lines[0]).toBe("flags: -NoProfile -NonInteractive -ExecutionPolicy Bypass")
     expect(lines[1]).toBe(PS_NO_PROGRESS)
