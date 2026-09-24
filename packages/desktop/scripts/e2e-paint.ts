@@ -1035,6 +1035,23 @@ try {
       APPEAR_TIMEOUT_MS,
     ),
   )
+  // 主会话那一轮跑完了:两张 agent 卡(子 agent 卡与硬件卡一样不收)原样在外面,write / edit 收进「处理详情」,
+  // 回答与「本轮改动」在外面。write 卡此刻不在 DOM 里 —— 后面的查找要能把段和卡一起打开。
+  const writeCard = `[...document.querySelectorAll('[data-component="tool-part-wrapper"]')].find((el) => (el.querySelector('[data-slot="basic-tool-tool-subtitle"]')?.textContent ?? "").includes(${json(CHANGED_NEW_FILE)}))`
+  const mainFold = `document.querySelector('[data-component="process-group"]')`
+  check(
+    "主会话那一轮收成「处理详情」:write / edit 收在里面(2 次调用),agent 卡照旧在外面",
+    await waitFor(
+      `(() => {
+        const header = ${mainFold}
+        const count = header?.querySelector('[data-slot="process-group-count"]')?.textContent ?? ""
+        return !!header && header.getAttribute("aria-expanded") === "false" && /^2/.test(count)
+          && !${writeCard} && !!${agentCard}
+      })()`,
+      APPEAR_TIMEOUT_MS,
+    ),
+    await evaluate<string>(`${mainFold}?.textContent ?? "(没有这一行)"`),
+  )
   await evaluate(`${changedFile(EXPLORE_FILE)}?.querySelector('[data-slot="accordion-trigger"]')?.click()`)
   check(
     "点开改过的文件:diff 画出来了(有高度),另一个文件仍收着",
@@ -1076,6 +1093,25 @@ try {
       APPEAR_TIMEOUT_MS,
     ),
   )
+  // 这一轮已经跑完:回答之前的三次只读调用收成「处理详情」一行(几次调用、几次失败折叠着就看得见),回答在外面。
+  // 点开它,下面才是那一行「已探索」。文字跟语言走,这里只认数字与结构。
+  const childFold = `document.querySelector('[data-component="process-group"]')`
+  check(
+    "子会话页:跑完的那一轮收成「处理详情」一行(3 次调用、1 次失败),点开之前看不见「已探索」",
+    await waitFor(
+      `(() => {
+        const header = ${childFold}
+        if (!header) return false
+        const count = header.querySelector('[data-slot="process-group-count"]')?.textContent ?? ""
+        const failed = header.querySelector('[data-slot="process-group-failed"]')?.textContent ?? ""
+        return header.getAttribute("aria-expanded") === "false" && /^3/.test(count) && /^1/.test(failed)
+          && !document.querySelector('[data-component="context-tool-group"]')
+      })()`,
+      APPEAR_TIMEOUT_MS,
+    ),
+    await evaluate<string>(`${childFold}?.textContent ?? "(没有这一行)"`),
+  )
+  await evaluate(`${childFold}?.click()`)
   // 子 agent 回答之前连着做了三次只读调用(ls + 两次 read,其中一次读不到):时间线上并成一行,折叠着就说得出
   // 「几次读取、几个列表、几次失败」,点开才是逐张卡片。文字跟语言走,这里只认数字与结构。
   const contextGroup = `document.querySelector('[data-component="context-tool-group"]')`
@@ -1151,9 +1187,11 @@ try {
     "cmd+F 打开会话内查找,焦点在输入框里",
     await waitFor(`!!${searchInput} && document.activeElement === ${searchInput}`, APPEAR_TIMEOUT_MS),
   )
-  // write 卡片缺省收着。先记下这一点:后面的查找会跳进它里面,那时它得自己打开。
-  const writeCard = `[...document.querySelectorAll('[data-component="tool-part-wrapper"]')].find((el) => (el.querySelector('[data-slot="basic-tool-tool-subtitle"]')?.textContent ?? "").includes(${json(CHANGED_NEW_FILE)}))`
-  check("查找之前 write 卡片是收着的", await evaluate<boolean>(`!!${writeCard} && !${writeCard}.querySelector('[data-component="tool-output"]')`))
+  // write 卡片收在「处理详情」里(DOM 里还没有它)。先记下这一点:后面的查找会跳进它里面,那时段和卡都得自己打开。
+  check(
+    "查找之前 write 卡片收在收着的「处理详情」里",
+    await evaluate<boolean>(`!${writeCard} && ${mainFold}?.getAttribute("aria-expanded") === "false"`),
+  )
   await typeQuery("STM32F405RGTX")
   check(
     "查找:计数来自整个会话(子 agent 的结果 + write 的内容 + 回复,共 3 处),眼前的命中上了色",
@@ -1171,10 +1209,10 @@ try {
     await waitFor(`${searchCount} !== ${json(before)} && /^[1-3]\\/3$/.test(${searchCount})`, APPEAR_TIMEOUT_MS),
     `${before} → ${await evaluate<string>(searchCount)}`,
   )
-  // 只在 write 卡片的输出里出现的词:跳过去时卡片得开着,字才画得出来、才圈得上。
+  // 只在 write 卡片的输出里出现的词:跳过去时「处理详情」与卡片都得开着,字才画得出来、才圈得上。
   await typeQuery("successfully wrote")
   check(
-    "命中在收着的卡片里:卡片自己打开,当前那一处圈在它的输出上",
+    "命中在收着的「处理详情」里的卡片上:段和卡自己打开,当前那一处圈在它的输出上",
     await waitFor(
       `${searchCount} === "1/1" && !!${writeCard}?.querySelector('[data-component="tool-output"]')
         && ${painted("timeline-search-hit-active")}[0] === "successfully wrote"`,
@@ -1201,9 +1239,9 @@ try {
     await waitFor(inNotice, 1_500)
   }
   check("命中在收着的通知行里:通知行自己打开,当前那一处圈在结果全文上", await evaluate<boolean>(inNotice), await evaluate<string>(searchCount))
-  // 计数和高亮是同一个口径:界面上有、数据层没有的字(卡片标题里翻译过的那句「调用了」)搜不到,也不上色 ——
+  // 计数和高亮是同一个口径:界面上有、数据层没有的字(「处理详情」那一行的标签)搜不到,也不上色 ——
   // 头一版 DOM 层自己圈,会出现计数写着"无结果"、屏幕上却一片高亮。
-  await typeQuery("调用了")
+  await typeQuery("处理详情")
   check(
     "只在界面标签里出现的词:计数说没有,屏幕上也不圈",
     await waitFor(

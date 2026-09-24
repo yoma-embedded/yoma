@@ -155,6 +155,165 @@
   }
 }
 
+/*
+ * 紧凑工具行(通用卡,`BasicTool` 的 row):一行 = 工具名 + 摘要 + 右边的耗时,一圈细框 + 按状态的淡底
+ * (照 pi-agent-desktop)。颜色走 v2 的 state 色,深浅两套主题都有;硬件卡与 agent 卡不带 data-tool-row,不受影响。
+ */
+[data-component="collapsible"].tool-collapsible[data-tool-row] {
+  --tool-row-fg: var(--v2-text-text-base);
+  --tool-row-border: var(--v2-border-border-base);
+  --tool-row-bg: transparent;
+  gap: 0;
+  border: 1px solid var(--tool-row-border);
+  border-radius: 7px;
+  background: var(--tool-row-bg);
+
+  &[data-tone="ok"] {
+    --tool-row-fg: var(--v2-state-fg-success);
+    --tool-row-border: color-mix(in srgb, var(--v2-state-border-success) 55%, transparent);
+    --tool-row-bg: color-mix(in srgb, var(--v2-state-bg-success) 40%, transparent);
+  }
+
+  &[data-tone="error"] {
+    --tool-row-fg: var(--v2-state-fg-danger);
+    --tool-row-border: color-mix(in srgb, var(--v2-state-border-danger) 70%, transparent);
+    --tool-row-bg: color-mix(in srgb, var(--v2-state-bg-danger) 50%, transparent);
+  }
+
+  &[data-tone="interrupted"] {
+    --tool-row-fg: var(--v2-state-fg-warning);
+    --tool-row-border: color-mix(in srgb, var(--v2-state-border-warning) 70%, transparent);
+    --tool-row-bg: color-mix(in srgb, var(--v2-state-bg-warning) 40%, transparent);
+  }
+
+  > [data-slot="collapsible-trigger"] {
+    height: 30px;
+    padding: 0 2px 0 10px;
+    cursor: pointer;
+
+    [data-slot="collapsible-arrow"] {
+      opacity: 0.7;
+    }
+  }
+
+  [data-component="tool-trigger"] {
+    gap: 4px;
+  }
+
+  [data-slot="basic-tool-tool-trigger-content"] {
+    flex: 1 1 auto;
+    width: 0;
+    max-width: none;
+  }
+
+  [data-slot="basic-tool-tool-info"],
+  [data-slot="basic-tool-tool-info-structured"] {
+    display: flex;
+    flex: 1 1 auto;
+    width: 100%;
+  }
+
+  [data-slot="basic-tool-tool-info-main"] {
+    flex: 1 1 auto;
+    align-items: center;
+  }
+
+  [data-slot="basic-tool-tool-title"] {
+    font-family: var(--font-family-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--tool-row-fg);
+  }
+
+  [data-slot="basic-tool-tool-subtitle"] {
+    font-family: var(--font-family-mono);
+    font-size: 12px;
+    color: var(--v2-text-text-muted);
+  }
+
+  [data-slot="basic-tool-tool-action"] {
+    margin-left: auto;
+    padding-left: 8px;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    color: var(--v2-text-text-muted);
+  }
+
+  [data-slot="tool-row-flag"] {
+    color: var(--v2-state-fg-warning);
+  }
+}
+
+/* 展开之后:完整参数 → 输出 → 报错。限高的几块各自滚动(data-scrollable 让时间线把滚轮让给它们)。 */
+[data-component="tool-row-body"] {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--tool-row-border, var(--v2-border-border-base));
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--v2-text-text-base);
+  -webkit-user-select: text;
+  user-select: text;
+
+  pre {
+    margin: 0;
+    font-family: inherit;
+    font-size: inherit;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  [data-slot="tool-row-command"] {
+    max-height: 160px;
+    overflow-y: auto;
+  }
+
+  [data-slot="tool-row-args"] {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    column-gap: 12px;
+    row-gap: 2px;
+    max-height: 160px;
+    overflow-y: auto;
+  }
+
+  [data-slot="tool-row-arg"] {
+    display: contents;
+  }
+
+  [data-slot="tool-row-arg-key"] {
+    color: var(--v2-text-text-muted);
+  }
+
+  [data-slot="tool-row-arg-value"] {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  [data-component="tool-output"] {
+    margin-bottom: 0;
+    padding-top: 8px;
+    border-top: 1px dashed var(--v2-border-border-base);
+    color: var(--v2-text-text-muted);
+    white-space: pre-wrap;
+  }
+
+  [data-slot="tool-row-error"] {
+    max-height: 240px;
+    overflow-y: auto;
+    color: var(--v2-state-fg-danger);
+  }
+
+  [data-slot="tool-row-note"] {
+    font-family: var(--font-family-sans);
+    color: var(--v2-text-text-muted);
+  }
+}
+
 body:not([data-new-layout]) {
   [data-component="tool-trigger"] {
     [data-slot="basic-tool-tool-title"],

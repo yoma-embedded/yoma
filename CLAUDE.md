@@ -603,6 +603,14 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
    delta 只是叠在上面的增量,于是"累积 delta 是快照的严格前缀"天然成立。
    yoma 自己的 ACP 适配器在这里分了叉(`pipeHarnessToAcp` / `replayUpdatesOf`),
    代价是 datasheet 图片只在重放时可见。
+   重放循环多传一样 entry 的落盘时间(`applyMessage(message, { timestamp })`,2026-09-24):assistant 那条 entry 在回复
+   结束、工具开跑之前落盘,重放时就拿它当这一批工具共同的开始时间。不传的时候开始时间是重放那一刻的
+   `Date.now()`、结束时间是当年的工具结果时间戳,卡片上的耗时是负数。live 不看它(tool_start 覆盖)。
+   代价:一批里的调用逐个开跑、开跑前先过 before_tool,要确认的(烧录、带探针命令的 bash)重放出来的耗时含等人点的那段。
+   live 专用的路有三条:`markToolRunning`(tool_start)、`updateToolProgress`(tool_update)、`finishTool`(tool_end,2026-09-24)。
+   最后这条是因为一批的**结果消息按调用顺序落定**(发动机 `drive/tool-placement.ts` 的 `readPlacement`:前一个没做完,后面
+   做完的也得排着)—— 只认结果消息的话,排在一条慢命令后面的 `ls` 会一直挂着「在跑」。tool_end 在每个调用做完时就到,
+   `result` 就是那条结果消息的 content / details,卡片当场收尾;之后到的结果消息照旧投影,终态与重放逐字段相同。
 2. **id 自己铸,而且确定。** 内核的 `generateEntryId()` 是 `uuidv7().slice(-8)` ——
    取的是 **随机尾部**,不可排序;而前端每个集合都用 `Binary.search` 按 id 字符串序维护。
    投影器从(消息序号, 时间戳)确定性铸 id,并对时钟回拨做严格递增钳制。
@@ -658,12 +666,12 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
    Highlight API(不改 DOM,不和 Solid / markdown 渲染打架),`MutationObserver` 盯着时间线,一帧最多重圈一次。
    两层看的不是同一份字(markdown 源码 vs 渲染后的字、卡片标题是翻译过的),"第几处"只能近似对上:**一定落在
    对的 part 上**,part 里可能差一处;DOM 里圈不到(命中在链接的 URL 里)就把那张卡摆到眼前。跳到一处时
-   `revealSearchMatch` 停掉跟随到底、把收着的工具卡(和它所在的「已探索」组)打开、让虚拟列表滚到那一行,然后
+   `revealSearchMatch` 停掉跟随到底、把收着的工具卡(和它所在的「已探索」组、「处理详情」段)打开、让虚拟列表滚到那一行,然后
    搜索条追着找最多 30 帧(行要先画出来,卡片展开后正文还要再等两帧)。索引按 part 各记一个 memo(规矩 1 的同
    一个道理):流式增量只重数正在长的那一段;**整个组件只在搜索开着时挂载**,索引和观察器关掉就全部释放。
    只搜已加载的消息,更早的历史没加载时搜索条上说一声。
-   **DOM 层只圈数据层数到了命中的 part**(`collectRanges` 的 `counted`):界面上有、数据里没有的字(卡片标题里翻译
-   过的「调用了」、各种标签)不搜也不上色 —— 头一版 DOM 层自己圈,审查抓到计数写着"无结果"、屏幕上却一片高亮、
+   **DOM 层只圈数据层数到了命中的 part**(`collectRanges` 的 `counted`):界面上有、数据里没有的字(「处理详情」那一行的
+   标签、各种标签)不搜也不上色 —— 头一版 DOM 层自己圈,审查抓到计数写着"无结果"、屏幕上却一片高亮、
    回车还跳不过去;顺带省掉了流式输出时每帧对绝大多数 part 的遍历。可搜的字要和卡片上画的对得上:工具名算
    (标题第一个词)、调用参数只算顶层标量、后台任务通知算类型 + 描述 + 结果全文(给模型看的那句 summary 不画,不算)。
    收着才看得见的东西(工具输出、通知的结果全文)跳过去时要自己打开 —— 通知行的展开状态因此也交给了时间线的
@@ -674,6 +682,33 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
    的 diff)。对话那一栏在 `session.tsx` 打了 `data-find-scope="session"`,焦点在它里面、又不在某个文件视图里时
    归会话内查找(`inSessionFindScope`),否则照旧归文件内查找;cmd+G 同一条规矩。真窗口覆盖在 `e2e:paint`:按键走
    CDP 的真按键。
+6. **跑完的一轮把过程收成「处理详情」,回答留在外面**(`TimelineRow.ProcessGroup`,2026-09-24,方案
+   `docs/工具调用显示-方案-20260924.md`,照 `suidao/pi-agent-desktop`)。`rows.ts` 的 `foldProcess`:
+   (a) **只对不在跑的轮次做** —— 正在跑的那一轮照旧平铺,跑完那一下行重建一次就是「跑完自动收」;回答那一行跑着与
+   跑完是同一个 key,不重建、markdown 不重画。(b) **最终回答** = 最后一条有可画 part 的非 synthetic assistant 消息里、
+   最后一个非文字 part 之后的那几段文字。**以工具调用收尾的也折**(整段收起、外面没有回答):后台子 agent 的通知、
+   排队的用户消息在工具边界插进来会另起一轮,前半截就是这样 —— 头一版只认有回答的轮次,审查抓到长任务的前半截永远
+   不收。**报错收场(terminalError)与被打断的不折**,出了什么事摆在眼前。
+   (c) **分段**:过程照旧先过 `groupParts`,连着的可折叠组合成一段(没有专用卡的工具、「已探索」组、说明文字、思考);
+   **有专用卡的工具(硬件五件、子 agent)与 synthetic 消息里的 part 把段切开、原样留在原位**(用户定的「硬件卡不动」),
+   一段至少有一次工具调用才折。(d) 段的 key 取段里第一个不是思考的 part(开关「显示思考」不改 key),开合记在
+   `toolOpen[key]`,经 `processOpen` 交给
+   `constructMessageRows` —— 每一轮的 memo 只订阅自己那几段的键,开合一段只重建那一轮(`timeline-projection.test.ts`
+   钉着)。点开时段里的组照旧各出一行、带 `process`,画左边一根竖线(`session-turn.css` 的 `data-process`,行间距挪进
+   竖线里,外层不加 pt-3)。计数(调用 / 失败 / 未完成)不进行,标题组件 `ProcessGroupHeader` 从 part 现读(同「已探索」)。
+   (e) 收着的段:
+   会话内查找把段里的 part 记到标题那一行上(带 `processKey`),跳过去先开段、下一帧按段里那一行滚。
+   同一次改动里通用卡换成了紧凑工具行(`GenericTool`:工具名 + 契约的 `summary()` + 耗时,按状态着色;失败也走它,
+   只有专用卡的工具失败才走 `ToolErrorCard`),一轮结束还停在 pending / running 的通用卡画成「未完成」(`settled`)。
+   `GenericTool` 一律 `defer`:BasicTool 不 defer 时判断「有没有内容」要读 children,而 children 是 getter,每读一次就多建
+   一份没人看的展开态(连同整段输出),输出每涨一次重建一次 —— 审查抓到的。
+   真窗口覆盖在 `e2e:paint`:子会话页(收着 → 点开 → 「已探索」)与主会话页(查找跳进收着的段里的 write 卡)。
+7. **正在跑的那一轮底下那一行说「此刻在干什么」**(`TimelineRow.Thinking` + `timeline/activity.ts`,2026-09-24,照
+   pi-agent-desktop 的 `phaseLabel`):最新那条回复的最后一个 part 是思考段 → 「思考中」(模型真在往外发思考内容;后面跟最近
+   那段思考的标题;打开「显示思考」时不在这里说,思考块自己在闪);有工具在跑 → 「正在运行 bash、ls」;还没回复 / 这一批工具
+   都收尾了 → 「等待模型」;模型在写正文、写调用参数、工具在等确认 → 不出字。从前会话忙就一直写「思考中」(跑工具时也是),
+   「显示思考」打开时第一段内容一出来这一行就收掉。**行只管"这一轮在跑就有这一行"**,说什么由组件现算(要读工具状态,规矩 1)。
+   这一行和「正在压缩上下文」、「已探索」的组标题都是 12px、淡色:它们是状态,不是回复(用户定)。
 
 ### 内核事件只能用 `subscribe()`
 

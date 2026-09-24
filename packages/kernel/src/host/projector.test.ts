@@ -4,7 +4,7 @@
  * 这里测的每一条,出错时在 UI 上都是 **静默** 的:顺序错乱不报错、孤儿 part 被默默丢弃、
  * 流式文本先截断再长回来看起来像"网络抖动"。所以必须在这一层钉死。
  */
-import { describe, expect, test } from "vitest"
+import { describe, expect, test, vi } from "vitest"
 import type {
   AssistantMessage,
   AssistantMessageEvent,
@@ -385,6 +385,50 @@ describe("工具", () => {
     expect(p.markToolRunning("nope")).toEqual([])
   })
 
+  // 卡片右边的耗时 = end - start。重放时开始时间从前记成重放那一刻的 Date.now(),而结束时间是当年的工具结果
+  // 时间戳 —— 历史会话里每张卡的耗时都是负数。assistant 那条 entry 在回复结束、工具开跑之前落盘,重放拿它当开始。
+  test("重放时工具的开始时间是 assistant 那条 entry 的落盘时间(同一批并行共用);live 由 tool_start 定", () => {
+    const p = projection()
+    p.applyMessage(user("读两个文件"))
+    p.applyMessage(
+      assistant(
+        [
+          { type: "toolCall", id: "call_A", name: "read", arguments: { path: "/a" } },
+          { type: "toolCall", id: "call_B", name: "read", arguments: { path: "/b" } },
+        ],
+        { stopReason: "toolUse" },
+      ),
+      { timestamp: T0 + 2_000 },
+    )
+    p.applyMessage(toolResult("call_A", "A", undefined, T0 + 2_400))
+    p.applyMessage(toolResult("call_B", "B", undefined, T0 + 5_000))
+    const parts = p.snapshot().at(-1)!.parts as ToolPart[]
+    const time = (id: string) => (parts.find((part) => part.callID === id)!.state as ToolStateCompleted).time
+    expect(time("call_A")).toEqual({ start: T0 + 2_000, end: T0 + 2_400 })
+    expect(time("call_B")).toEqual({ start: T0 + 2_000, end: T0 + 5_000 })
+
+    // live 没有落盘时间:开始时间是 tool_start 那一刻,不是消息时间戳(那是开始请求的时刻,含模型生成的时间),
+    // 也不是投影这条消息的时刻。钉时钟:同一毫秒里跑完的话,"不早于某一刻"这种断言什么都证明不了。
+    vi.useFakeTimers()
+    try {
+      const live = projection()
+      live.applyMessage(user("跑"))
+      vi.setSystemTime(T0 + 10_000)
+      live.applyMessage(
+        assistant([{ type: "toolCall", id: "c1", name: "bash", arguments: { command: "make" } }], {
+          stopReason: "toolUse",
+        }),
+      )
+      vi.setSystemTime(T0 + 12_000)
+      live.markToolRunning("c1")
+      live.applyMessage(toolResult("c1", "ok", undefined, T0 + 15_000))
+      const time = ((live.snapshot().at(-1)!.parts as ToolPart[])[0]!.state as ToolStateCompleted).time
+      expect(time).toEqual({ start: T0 + 12_000, end: T0 + 15_000 })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   test("tool_update 把已吐出的输出挂到 running 态;空快照不动卡片;终态之后再来是 no-op", () => {
     const p = projection()
     p.applyMessage(user("跑"))
@@ -421,6 +465,41 @@ describe("工具", () => {
     const capped = partsOf(p.updateToolProgress("c1", { content: [{ type: "text", text: big }], details: undefined }))
     const state = capped[0]!.type === "tool" && capped[0]!.state.status === "running" ? capped[0]!.state : null
     expect(state?.output?.length).toBe(8_000)
+  })
+
+  // 一批里的结果消息按调用顺序落定:排在慢命令后面的 ls 早就做完了,也得等那条慢的。tool_end 在每个调用做完时就到。
+  test("tool_end 一到卡片就收尾(不等同一批前面那个);之后按顺序到的结果消息覆盖成同样的终态", () => {
+    const p = projection()
+    p.applyMessage(user("看看"))
+    p.applyMessage(
+      assistant(
+        [
+          { type: "toolCall", id: "slow", name: "bash", arguments: { command: "du -sh dist" } },
+          { type: "toolCall", id: "fast", name: "ls", arguments: {} },
+        ],
+        { stopReason: "toolUse" },
+      ),
+    )
+    p.markToolRunning("slow")
+    p.markToolRunning("fast")
+    const state = (id: string) => (p.snapshot().at(-1)!.parts as ToolPart[]).find((part) => part.callID === id)!.state
+
+    const finished = partsOf(p.finishTool("fast", { content: [{ type: "text", text: "a\nb" }], details: { entries: 2 } }, false))
+    expect(finished).toHaveLength(1)
+    expect(state("fast")).toMatchObject({ status: "completed", output: "a\nb", metadata: { entries: 2 } })
+    expect(state("slow").status).toBe("running")
+    // 失败的同理。
+    p.finishTool("slow", { content: [{ type: "text", text: "Command exited with code 1" }] }, true)
+    expect(state("slow")).toMatchObject({ status: "error", error: "Command exited with code 1" })
+
+    // 结果消息后到:终态照旧(内容一样),重放同一段历史得到同样的 part。
+    p.applyMessage({ ...toolResult("slow", "Command exited with code 1"), toolName: "bash", isError: true })
+    p.applyMessage({ ...toolResult("fast", "a\nb", { entries: 2 }), toolName: "ls" })
+    expect(state("fast")).toMatchObject({ status: "completed", output: "a\nb", metadata: { entries: 2 } })
+    expect(state("slow")).toMatchObject({ status: "error", error: "Command exited with code 1" })
+    // 已经收过尾的再来一次 tool_end(不该有,防御):不发事件、不改状态。
+    expect(p.finishTool("fast", { content: [{ type: "text", text: "别的" }] }, false)).toEqual([])
+    expect(p.finishTool("nope", { content: [] }, false)).toEqual([])
   })
 
   test("重算快照不会把已完成的工具倒回 pending", () => {

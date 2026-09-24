@@ -43,30 +43,36 @@
     align-self: stretch;
   }
 
+  /*
+   * 正在跑的那一轮底下那一行(思考中 / 正在运行 … / 等待模型)与「正在压缩上下文」:它们是状态,不是回复 ——
+   * 小一号、常规字重、最淡的一档字色,闪的那道光也压到 muted,别跟模型的正文一个样子(用户 2026-09-24)。
+   */
   [data-slot="session-turn-thinking"] {
+    --text-shimmer-base-color: var(--v2-text-text-faint);
+    --text-shimmer-peak-color: var(--v2-text-text-muted);
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-top: 12px;
+    margin-top: 8px;
     width: 100%;
     min-width: 0;
-    color: var(--text-weak);
+    color: var(--v2-text-text-faint);
     font-family: var(--font-family-sans);
-    font-size: var(--font-size-base);
-    font-weight: var(--font-weight-medium);
-    line-height: 20px;
-    min-height: 20px;
+    font-size: 12px;
+    font-weight: var(--font-weight-regular);
+    line-height: 18px;
+    min-height: 18px;
 
     [data-component="spinner"] {
-      width: 16px;
-      height: 16px;
+      width: 14px;
+      height: 14px;
     }
   }
 
   [data-component="text-reveal"].session-turn-thinking-heading {
     flex: 1 1 auto;
     min-width: 0;
-    color: var(--text-weaker);
+    color: var(--v2-text-text-faint);
     font-weight: var(--font-weight-regular);
   }
 
@@ -86,6 +92,19 @@
     flex-direction: column;
     align-self: stretch;
     gap: 12px;
+  }
+
+  /*
+   * 「处理详情」点开后,段里的每一行各是虚拟列表里单独的一行:靠左边一根竖线连成一片(同「已探索」展开的画法)。
+   * 行间距挪进竖线里面(padding-top,外层就不再加 pt-3),竖线才是连着的。
+   */
+  [data-slot="session-turn-assistant-content"][data-process] {
+    /* 不能再是 width: 100%:加上左边的 6px 就比别的卡片往右多出 6px(全局 border-box,margin 不算进宽度里)。 */
+    width: auto;
+    margin-left: 6px;
+    padding-top: 12px;
+    padding-left: 14px;
+    border-left: 1px solid var(--v2-border-border-base);
   }
 
   [data-slot="session-turn-diffs"] {

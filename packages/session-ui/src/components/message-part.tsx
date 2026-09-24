@@ -49,6 +49,7 @@ import { TooltipV2 } from "@yoma-desktop/ui/v2/tooltip-v2"
 import { attached, kind } from "./message-file"
 import { contextToolSummary, isContextGroupTool } from "./context-tool-group"
 import { readPartText } from "./message-part-text"
+import { processSummary } from "./process-group"
 
 async function writeClipboard(text: string): Promise<boolean> {
   const body = typeof document === "undefined" ? undefined : document.body
@@ -97,7 +98,14 @@ export interface MessagePartProps {
   onContentRendered?: () => void
   showAssistantCopyPartID?: string | null
   turnDurationMs?: number
+  /** 这一轮所有 assistant 消息的花费之和(美元),挂在回答那一行的元信息上。 */
+  turnCost?: number
   useV2Actions?: boolean
+  /**
+   * 这一轮已经不在跑了。还停在 pending / running 的通用卡于是画成「未完成」:它不会再有结果了
+   * (模型写调用时被停止、工具跑到一半 app 关了),不该一直闪、一直锁着点不开。
+   */
+  settled?: boolean
 }
 
 function MessageActionButton(
@@ -318,6 +326,20 @@ export function renderable(part: PartType, showReasoningSummaries = true) {
   if (part.type === "text") return !!part.text?.trim()
   if (part.type === "reasoning") return showReasoningSummaries && !!part.text?.trim()
   return !!PART_MAPPING[part.type]
+}
+
+/** 这个工具有没有自己的卡(硬件五件与子 agent)。有的不换成紧凑行,也不折进「处理详情」。 */
+export function hasDedicatedCard(tool: string) {
+  return !!state[tool]?.render
+}
+
+/**
+ * 能折进「处理详情」的 part:没有专用卡的工具(走通用卡的)、说明文字、思考段。有专用卡的各有自己的样子和结论,
+ * 留在原位 —— 用户定的「硬件卡不动」(子 agent 卡同理)。
+ */
+export function isProcessFoldable(part: PartType) {
+  if (part.type === "tool") return !hasDedicatedCard(part.tool)
+  return part.type === "text" || part.type === "reasoning"
 }
 
 function toolDefaultOpen(tool: string, shell = false, edit = false) {
@@ -640,7 +662,9 @@ export function Part(props: MessagePartProps) {
         onContentRendered={props.onContentRendered}
         showAssistantCopyPartID={props.showAssistantCopyPartID}
         turnDurationMs={props.turnDurationMs}
+        turnCost={props.turnCost}
         useV2Actions={props.useV2Actions}
+        settled={props.settled}
       />
     </Show>
   )
@@ -652,6 +676,11 @@ export interface ToolProps {
   tool: string
   sessionID?: string
   output?: string
+  /** 失败时的报错全文(只有通用卡收;有专用卡的工具失败时走 `ToolErrorCard`)。 */
+  error?: string
+  /** 开始 / 结束时间(毫秒),卡片右边的耗时由它算。pending 没有。 */
+  time?: { start?: number; end?: number }
+  /** 内核的四种状态,外加通用卡的 `interrupted`(这一轮结束了它还没结果,见 `MessagePartProps.settled`)。 */
   status?: string
   /** 工具返回的附件(目前只有 datasheet view_figure 会带图片)。 */
   attachments?: FilePart[]
@@ -713,9 +742,22 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
   // @ts-expect-error
   const partMetadata = () => part().state?.metadata ?? emptyMetadata
 
-  const render = createMemo(() => ToolRegistry.render(part().tool) ?? GenericTool)
+  const dedicated = createMemo(() => ToolRegistry.render(part().tool))
+  const render = createMemo(() => dedicated() ?? GenericTool)
   const controlledOpen = () => (props.onToolOpenChange ? (props.toolOpen ?? props.defaultOpen) : undefined)
   const handleToolOpenChange = (open: boolean) => props.onToolOpenChange?.(open)
+  // 通用卡:这一轮已经结束、它还停在 pending / running,就不会再有结果了 —— 画成「未完成」而不是一直闪。
+  // 有专用卡的(硬件五件、子 agent)照旧收内核的原状态。
+  const status = createMemo(() => {
+    const value = part().state.status
+    if (!dedicated() && props.settled && (value === "pending" || value === "running")) return "interrupted"
+    return value
+  })
+  const time = () => (part().state as { time?: { start?: number; end?: number } }).time
+  const error = () => {
+    const state = part().state
+    return state.status === "error" ? state.error : undefined
+  }
 
   return (
     <Show when={true}>
@@ -725,7 +767,8 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
             值得一个"去面板里看"的出口。回调缺席时它一个像素都不渲染。 */}
         <OpenInstrumentButton part={part()} />
         <Switch>
-          <Match when={part().state.status === "error" && (part().state as any).error}>
+          {/* 只有专用卡的工具失败时走错误卡(硬件卡不动);通用卡的失败就是一行红色的工具行,命令照样看得见。 */}
+          <Match when={dedicated() && part().state.status === "error" && (part().state as any).error}>
             {(error) => {
               return (
                 <ToolErrorCard
@@ -749,7 +792,9 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
               output={part().state.output}
               // @ts-expect-error
               attachments={part().state.attachments}
-              status={part().state.status}
+              status={status()}
+              error={error()}
+              time={time()}
               hideDetails={props.hideDetails}
               defaultOpen={props.defaultOpen}
               open={controlledOpen()}
@@ -781,11 +826,16 @@ export function ContextToolGroup(props: {
   grouped: boolean
   open?: boolean
   onOpenChange?: (open: boolean) => void
+  /** 这一轮已经不在跑了:还停在 pending / running 的那几次不会再有结果,标题不再闪「正在探索」。 */
+  settled?: boolean
   children: JSX.Element
 }) {
   const i18n = useI18n()
   const [state, setState] = createStore({ open: false })
-  const summary = createMemo(() => contextToolSummary(props.parts))
+  const summary = createMemo(() => {
+    const value = contextToolSummary(props.parts)
+    return props.settled && value.active ? { ...value, active: false } : value
+  })
   const counts = createMemo(() => {
     const value = summary()
     const count = (key: "read" | "search" | "list", n: number) =>
@@ -849,6 +899,51 @@ export function ContextToolGroup(props: {
   )
 }
 
+/**
+ * 「处理详情」那一行(时间线的 `ProcessGroup` 行):一轮跑完以后,连着的通用工具调用(与夹在中间的说明、思考)收成的
+ * 一枚按钮,照 pi-agent-desktop 的样子。点开是时间线上逐行的卡片 —— 它们在虚拟列表里各占一行,不在这个组件里面,
+ * 所以这里不套 Collapsible。计数从 part 现读(同「已探索」组):行的 memo 只看结构,不读工具状态。
+ */
+export function ProcessGroupHeader(props: { parts: PartType[]; open: boolean; onToggle: () => void }) {
+  const i18n = useI18n()
+  const summary = createMemo(() => processSummary(props.parts))
+  return (
+    <button
+      type="button"
+      data-component="process-group"
+      data-open={props.open ? "true" : undefined}
+      data-failed={summary().failed > 0 ? "true" : undefined}
+      aria-expanded={props.open}
+      title={i18n.t(props.open ? "ui.processGroup.collapse" : "ui.processGroup.expand")}
+      onClick={() => props.onToggle()}
+    >
+      <span data-slot="process-group-chevron" aria-hidden="true">
+        <Icon name="chevron-down" size="small" />
+      </span>
+      <span data-slot="process-group-title">{i18n.t("ui.processGroup.title")}</span>
+      <Show when={summary().tools > 0}>
+        <span data-slot="process-group-sep" aria-hidden="true" />
+        <span data-slot="process-group-count">
+          {i18n.t(summary().tools === 1 ? "ui.processGroup.tools.one" : "ui.processGroup.tools.other", {
+            count: summary().tools,
+          })}
+        </span>
+      </Show>
+      {/* 失败数单独一段、只染它 —— 整句都红的话看着像全失败了(同「已探索」组)。没结果的同理。 */}
+      <Show when={summary().failed > 0}>
+        <span data-slot="process-group-sep" aria-hidden="true" />
+        <span data-slot="process-group-failed">{i18n.t("ui.processGroup.failed", { count: summary().failed })}</span>
+      </Show>
+      <Show when={summary().unfinished > 0}>
+        <span data-slot="process-group-sep" aria-hidden="true" />
+        <span data-slot="process-group-unfinished">
+          {i18n.t("ui.processGroup.unfinished", { count: summary().unfinished })}
+        </span>
+      </Show>
+    </button>
+  )
+}
+
 export function MessageDivider(props: { label: string }) {
   return (
     <div data-component="compaction-part">
@@ -909,9 +1004,21 @@ PART_MAPPING["text"] = function TextPartDisplay(props) {
     })
   })
 
+  // 整轮的花费(这一轮所有 assistant 消息的 cost 之和)。一轮常常只有零点几分钱,两位小数会写成 $0.00。
+  const cost = createMemo(() => {
+    const value = props.turnCost
+    if (typeof value !== "number" || !(value > 0)) return ""
+    return new Intl.NumberFormat(i18n.locale(), {
+      style: "currency",
+      currency: "USD",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: value < 0.01 ? 4 : 2,
+    }).format(value)
+  })
+
   const meta = createMemo(() => {
     if (props.message.role !== "assistant") return ""
-    const items = [model(), duration(), interrupted() ? i18n.t("ui.message.interrupted") : ""]
+    const items = [model(), duration(), cost(), interrupted() ? i18n.t("ui.message.interrupted") : ""]
     return items.filter((x) => !!x).join(" \u00B7 ")
   })
 
@@ -972,20 +1079,47 @@ PART_MAPPING["text"] = function TextPartDisplay(props) {
   )
 }
 
+/**
+ * 思考段(设置里打开「显示思考」时才画):收成一个「思考」块,缺省收着,点开是正文(照 pi-agent-desktop)。
+ * 开合状态有调用方记就交给调用方(时间线的 `toolOpen`:虚拟列表会卸载行,会话内查找跳进来时也要能把它打开)。
+ */
 PART_MAPPING["reasoning"] = function ReasoningPartDisplay(props) {
   const data = useData()
+  const i18n = useI18n()
   const part = () => props.part as ReasoningPart
   const streaming = createMemo(
     () => props.message.role === "assistant" && typeof (props.message as AssistantMessage).time.completed !== "number",
   )
   const text = () => readPartText(data.store.part_text_accum_delta, part())
+  const [state, setState] = createStore({ open: false })
+  const open = () => (props.onToolOpenChange ? (props.toolOpen ?? false) : state.open)
+  const setOpen = (value: boolean) => {
+    if (props.onToolOpenChange) return props.onToolOpenChange(value)
+    setState("open", value)
+  }
 
   return (
     <Show when={text()}>
       <div data-component="reasoning-part" data-timeline-part-id={part().id}>
-        <Show when={streaming()} fallback={<Markdown text={text()} cacheKey={part().id} streaming={false} />}>
-          <PacedMarkdown text={text()} cacheKey={part().id} streaming={streaming()} />
-        </Show>
+        <Collapsible open={open()} onOpenChange={setOpen} class="tool-collapsible" data-reasoning-block="">
+          <Collapsible.Trigger>
+            <div data-component="tool-trigger">
+              <div data-slot="basic-tool-tool-trigger-content">
+                <span data-slot="basic-tool-tool-title">
+                  <TextShimmer text={i18n.t("ui.reasoning.title")} active={streaming()} />
+                </span>
+              </div>
+              <Collapsible.Arrow />
+            </div>
+          </Collapsible.Trigger>
+          <Collapsible.Content>
+            <div data-slot="reasoning-part-body">
+              <Show when={streaming()} fallback={<Markdown text={text()} cacheKey={part().id} streaming={false} />}>
+                <PacedMarkdown text={text()} cacheKey={part().id} streaming={streaming()} />
+              </Show>
+            </div>
+          </Collapsible.Content>
+        </Collapsible>
       </div>
     </Show>
   )

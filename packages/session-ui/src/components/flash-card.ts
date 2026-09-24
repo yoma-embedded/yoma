@@ -28,9 +28,9 @@ export interface FlashCard {
   /**
    * 烧写 + 校验的秒数(烧录器自己报的)。
    *
-   * **不用卡片的 `state.time`**:重放一段旧会话时 projector 的 `time.start` 是"现在"
-   * (`ref.startedAt = Date.now()`),而 `end` 是当年的时刻 —— 相减是一个荒唐的负数。
-   * 烧录器打在输出里的这两个秒数是随证据一起存下来的,重放照样对。
+   * **不用卡片的 `state.time`**:那是整次工具调用的墙钟(含探针握手、复位),而且 2026-09-24 之前重放一段旧会话时
+   * projector 的 `time.start` 是"现在"、相减是负数(现在重放取 entry 的落盘时间,见 `projector.applyMessage`)。
+   * 烧录器打在输出里的这两个秒数是随证据一起存下来的,只算烧写与校验,重放照样对。
    */
   totalSeconds?: number
 }

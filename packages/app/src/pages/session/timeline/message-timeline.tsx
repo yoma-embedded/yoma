@@ -21,6 +21,7 @@ import {
   MessageDivider,
   Part as MessagePart,
   partDefaultOpen,
+  ProcessGroupHeader,
   type PartRef,
 } from "@yoma-desktop/session-ui/message-part"
 import { FileIcon } from "@yoma-desktop/ui/file-icon"
@@ -55,6 +56,7 @@ import { TimelineSearch } from "./timeline-search"
 import { createTimelineProjection } from "./projection"
 import { MessageComment, TimelineRow, TimelineRowMap } from "./rows"
 import { ModelRequestStatus } from "./model-request-status"
+import { turnActivity, type TurnActivity } from "./activity"
 import { filterVirtualIndexes } from "./virtual-items"
 import { SubagentBack, SubagentStatus } from "../subagent/subagent-header"
 
@@ -100,16 +102,43 @@ const markBoundaryGesture = (input: {
   }
 }
 
-function TimelineThinkingRow(props: { reasoningHeading?: string; showReasoningSummaries: boolean }) {
+/**
+ * 正在跑的那一轮底下那一行(`TimelineRow.Thinking`):此刻在干什么(`activity.ts`,照 pi-agent-desktop 的 phaseLabel)。
+ * 模型正在往外发思考内容才说「思考中」(打开了「显示思考」时不在这里说 —— 思考块自己在闪);有工具在跑说「正在运行 …」;
+ * 在等下一次请求出字说「等待模型」;模型在写正文、在写调用参数时不出字。小号、最淡:它是状态,不是回复。
+ */
+function TimelineActivityRow(props: {
+  activity: TurnActivity | undefined
+  reasoningHeading?: string
+  showReasoningSummaries: boolean
+}) {
   const language = useLanguage()
+  const label = createMemo(() => {
+    const activity = props.activity
+    if (!activity) return
+    if (activity.kind === "thinking")
+      return props.showReasoningSummaries ? undefined : language.t("ui.sessionTurn.status.thinking")
+    if (activity.kind === "waiting") return language.t("ui.sessionTurn.status.waitingModel")
+    const shown = activity.names.slice(0, 3).join(language.t("ui.sessionTurn.status.toolSeparator"))
+    if (activity.names.length <= 3) return language.t("ui.sessionTurn.status.runningTools", { names: shown })
+    return language.t("ui.sessionTurn.status.runningToolsMore", {
+      names: shown,
+      total: activity.names.length,
+      more: activity.names.length - 3,
+    })
+  })
 
   return (
-    <div data-slot="session-turn-thinking">
-      <TextShimmer text={language.t("ui.sessionTurn.status.thinking")} />
-      <Show when={!props.showReasoningSummaries}>
-        <TextReveal text={props.reasoningHeading} class="session-turn-thinking-heading" travel={25} duration={700} />
-      </Show>
-    </div>
+    <Show when={label()}>
+      {(text) => (
+        <div data-slot="session-turn-thinking" data-activity={props.activity?.kind}>
+          <TextShimmer text={text()} />
+          <Show when={props.activity?.kind === "thinking"}>
+            <TextReveal text={props.reasoningHeading} class="session-turn-thinking-heading" travel={25} duration={700} />
+          </Show>
+        </div>
+      )}
+    </Show>
   )
 }
 
@@ -170,12 +199,16 @@ export function MessageTimeline(props: {
   const getMsgParts = (msgId: string) => sync().data.part[msgId] ?? emptyParts
   const getMsgPart = (messageID: string, partID: string) => getMsgParts(messageID).find((part) => part.id === partID)
   const showHeader = createMemo(() => !!titleValue())
+  // 卡片、「已探索」组、「处理详情」段的开合都记在这里(虚拟列表会卸载行)。要在投影之前建好:投影的 memo 一建就求值,
+  // 而「处理详情」开没开是切行时就要读的。
+  const [toolOpen, setToolOpen] = createStore<Record<string, boolean | undefined>>(cached?.toolOpen ?? {})
   const projection = createTimelineProjection({
     messages: sessionMessages,
     userMessages: () => props.userMessages,
     parts: getMsgParts,
     status: sessionStatus,
     showReasoningSummaries: settings.general.showReasoningSummaries,
+    processOpen: (key) => toolOpen[key],
   })
   const activeMessageID = projection.activeMessageID
   const assistantMessagesByParent = projection.assistantMessagesByParent
@@ -245,7 +278,6 @@ export function MessageTimeline(props: {
     prependAnchorFrame = requestAnimationFrame(apply)
   }
 
-  const [toolOpen, setToolOpen] = createStore<Record<string, boolean | undefined>>(cached?.toolOpen ?? {})
   const [renderOverscan, setRenderOverscan] = createSignal(initialMeasurements?.length || coldBottomMount ? 6 : 20)
   let resizePinnedIndexes: number[] = []
   let resizePinFrame: number | undefined
@@ -343,9 +375,10 @@ export function MessageTimeline(props: {
     },
   ])
   // 可搜的就是画得出来的:照着行收 part,所以顺序 = 屏幕上从上到下,每个 part 都有行号可滚。
+  // 收着的「处理详情」例外:段里的 part 点开就画得出来,它们全记到标题那一行上,跳过去时先把段打开。
   const searchable = createMemo(() => {
     const parts: PartType[] = []
-    const where = new Map<string, { row: number; groupKey?: string }>()
+    const where = new Map<string, { row: number; groupKey?: string; processKey?: string }>()
     if (!search.open) return { parts, where }
     timelineRows().forEach((row, index) => {
       if (row._tag === "UserMessage") {
@@ -355,6 +388,23 @@ export function MessageTimeline(props: {
         if (!shown) return
         parts.push(shown)
         where.set(shown.id, { row: index })
+        return
+      }
+      if (row._tag === "ProcessGroup") {
+        // 开着的段:段里的行各自跟在后面,下面照常收。
+        if (row.open) return
+        for (const group of row.groups) {
+          for (const ref of groupRefs(group)) {
+            const part = getMsgPart(ref.messageID, ref.partID)
+            if (!part) continue
+            parts.push(part)
+            where.set(part.id, {
+              row: index,
+              processKey: row.key,
+              groupKey: group.type === "context" ? group.key : undefined,
+            })
+          }
+        }
         return
       }
       if (row._tag !== "AssistantPart") return
@@ -371,12 +421,18 @@ export function MessageTimeline(props: {
     const at = searchable().where.get(partID)
     if (!at) return
     props.onPauseAutoScroll?.()
+    // 命中在收着的「处理详情」里:先把那一段打开,段里的行才会出现。
+    if (at.processKey) setToolOpen(at.processKey, true)
     // 命中在收着的卡片里:把卡片(和它所在的「已探索」组)打开,字才画得出来、才圈得上。
     if (at.groupKey) setToolOpen(at.groupKey, true)
-    // 工具卡和后台任务的通知行都是收着的:正文(输出 / 结果全文)要打开才画得出来。
+    // 工具卡、后台任务的通知行、思考块都是收着的:正文(输出 / 结果全文 / 思考)要打开才画得出来。
     const type = searchable().parts.find((part) => part.id === partID)?.type
-    if (type === "tool" || type === "task") setToolOpen(partID, true)
-    virtualizer.scrollToIndex(at.row, { align: "center" })
+    if (type === "tool" || type === "task" || type === "reasoning") setToolOpen(partID, true)
+    if (!at.processKey) return virtualizer.scrollToIndex(at.row, { align: "center" })
+    // 打开一段插进了新行:按打开之后它自己那一行滚,下一帧再滚(虚拟列表先拿到新的行数)。
+    requestAnimationFrame(() =>
+      virtualizer.scrollToIndex(searchable().where.get(partID)?.row ?? at.row, { align: "center" }),
+    )
   }
 
   let overscanFrame: number | undefined
@@ -670,6 +726,13 @@ export function MessageTimeline(props: {
     return end - message.time.created
   }
 
+  /** 这一轮所有 assistant 消息的花费之和:挂在回答那一行的元信息上(用户定:整轮总费用放在那,不要每一步一行)。 */
+  const turnCost = (userMessageID: string) =>
+    (assistantMessagesByParent().get(userMessageID) ?? emptyAssistantMessages).reduce(
+      (sum, message) => sum + (message.cost ?? 0),
+      0,
+    )
+
   const assistantCopyPartID = (userMessageID: string) => {
     if (workingTurn(userMessageID)) return null
     const messages = assistantMessagesByParent().get(userMessageID) ?? emptyAssistantMessages
@@ -710,6 +773,8 @@ export function MessageTimeline(props: {
                 message={message()}
                 showAssistantCopyPartID={assistantCopyPartID(row().userMessageID)}
                 turnDurationMs={turnDurationMs(row().userMessageID)}
+                turnCost={turnCost(row().userMessageID)}
+                settled={!workingTurn(row().userMessageID)}
                 useV2Actions
                 defaultOpen={defaultOpen()}
                 toolOpen={toolOpen[part().id] ?? defaultOpen()}
@@ -744,6 +809,7 @@ export function MessageTimeline(props: {
           groupKey={row().group.key}
           refs={refs()}
           parts={parts()}
+          settled={!workingTurn(row().userMessageID)}
           isOpen={(key) => toolOpen[key]}
           onOpenChange={setToolOpen}
           renderCard={(ref) => renderAssistantPart(row, ref, onSizeChange)}
@@ -759,7 +825,12 @@ export function MessageTimeline(props: {
     }
     const previousAssistantPart = () => {
       const row = input.row()
-      return row._tag === "AssistantPart" && row.previousAssistantPart
+      return (row._tag === "AssistantPart" || row._tag === "ProcessGroup") && row.previousAssistantPart
+    }
+    // 点开的「处理详情」里的行:间距挪进竖线里面(session-turn.css 的 data-process),外层不再加,竖线才连得上。
+    const inProcess = () => {
+      const row = input.row()
+      return row._tag === "AssistantPart" && !!row.process
     }
 
     return (
@@ -771,7 +842,7 @@ export function MessageTimeline(props: {
           "min-w-0 w-full max-w-full": true,
           "md:max-w-200 2xl:max-w-[1000px]": props.centered,
           "md:mx-auto": props.centered,
-          "pt-3": previousAssistantPart(),
+          "pt-3": previousAssistantPart() && !inProcess(),
         }}
       >
         <div data-component="session-turn" class="min-w-0 w-full relative" style={{ height: "auto" }}>
@@ -876,6 +947,7 @@ export function MessageTimeline(props: {
             <div data-slot="session-turn-message-container" class="w-full px-4 md:px-5">
               <div
                 data-slot="session-turn-assistant-content"
+                data-process={assistantPartRow().process ? "" : undefined}
                 aria-hidden={workingTurn(assistantPartRow().userMessageID)}
               >
                 {renderAssistantPartGroup(assistantPartRow, onSizeChange)}
@@ -884,12 +956,42 @@ export function MessageTimeline(props: {
           </TimelineRowFrame>
         )
       }
+      case "ProcessGroup": {
+        const processRow = row as Accessor<TimelineRowByTag<"ProcessGroup">>
+        const parts = createMemo(() =>
+          processRow().groups.flatMap((group) =>
+            groupRefs(group).flatMap((ref) => {
+              const part = getMsgPart(ref.messageID, ref.partID)
+              return part ? [part] : []
+            }),
+          ),
+        )
+        return (
+          <TimelineRowFrame row={processRow}>
+            <div data-slot="session-turn-message-container" class="w-full px-4 md:px-5">
+              <ProcessGroupHeader
+                parts={parts()}
+                open={processRow().open}
+                onToggle={() => setToolOpen(processRow().key, !processRow().open)}
+              />
+            </div>
+          </TimelineRowFrame>
+        )
+      }
       case "Thinking": {
         const thinkingRow = row as Accessor<TimelineRowByTag<"Thinking">>
+        // 此刻在干什么要读工具状态:在组件里现算,不进行的 memo(规矩 1)。
+        const activity = createMemo(() =>
+          turnActivity(
+            assistantMessagesByParent().get(thinkingRow().userMessageID) ?? emptyAssistantMessages,
+            getMsgParts,
+          ),
+        )
         return (
           <TimelineRowFrame row={thinkingRow}>
             <div data-slot="session-turn-message-container" class="w-full px-4 md:px-5">
-              <TimelineThinkingRow
+              <TimelineActivityRow
+                activity={activity()}
                 reasoningHeading={thinkingRow().reasoningHeading}
                 showReasoningSummaries={settings.general.showReasoningSummaries()}
               />

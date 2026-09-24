@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest"
 import type { AssistantMessage, ModelRetry, Part, UserMessage } from "@yoma-desktop/kernel"
-import { Timeline } from "./rows"
+import { groupRefs } from "@yoma-desktop/session-ui/message-part"
+import { Timeline, TimelineRow } from "./rows"
 
 const user: UserMessage = {
   id: "user",
@@ -118,10 +119,20 @@ describe("连着的「找东西」工具并成一行", () => {
   })
   const reasoningPart = (id: string, messageID: string, text: string): Part =>
     ({ id, sessionID: "session", messageID, type: "reasoning", text, time: { start: 1 } }) as Part
+  // 这一组测的是分组本身:跑完的轮次会收成「处理详情」,这里让段都开着,好看清里面的组。
   const build = (parts: Record<string, Part[]>, messages: AssistantMessage[], showReasoning = true) =>
-    Timeline.constructMessageRows(user, (id) => parts[id] ?? [], messages, 0, showReasoning, "idle", false).flatMap(
-      (row) => (row._tag === "AssistantPart" ? [row.group] : []),
-    )
+    Timeline.constructMessageRows(
+      user,
+      (id) => parts[id] ?? [],
+      messages,
+      0,
+      showReasoning,
+      "idle",
+      false,
+      undefined,
+      undefined,
+      () => true,
+    ).flatMap((row) => (row._tag === "AssistantPart" ? [row.group] : []))
   const shape = (groups: ReturnType<typeof build>) =>
     groups.map((group) => (group.type === "context" ? group.refs.map((ref) => ref.partID) : group.ref.partID))
 
@@ -178,6 +189,198 @@ describe("连着的「找东西」工具并成一行", () => {
   })
 })
 
+describe("处理详情:跑完的一轮把过程收成一行,回答留在外面", () => {
+  const tool = (id: string, messageID: string, name: string, input: Record<string, unknown> = {}): Part =>
+    ({
+      id,
+      sessionID: "session",
+      messageID,
+      callID: `call_${id}`,
+      type: "tool",
+      tool: name,
+      state: { status: "completed", input, output: "", title: name, metadata: {}, time: { start: 1, end: 2 } },
+    }) as Part
+  const text = (id: string, messageID: string, value = "说明"): Part => ({
+    id,
+    sessionID: "session",
+    messageID,
+    type: "text",
+    text: value,
+  })
+  const reasoning = (id: string, messageID: string): Part =>
+    ({ id, sessionID: "session", messageID, type: "reasoning", text: "想一下", time: { start: 1 } }) as Part
+  // 内核只给收尾那一条 time.completed(toolUse 的回复没有)。
+  const step = (id: string, extra: Partial<AssistantMessage> = {}) => assistant(id, { time: { created: 2 }, ...extra })
+  const build = (
+    parts: Record<string, Part[]>,
+    messages: AssistantMessage[],
+    options: {
+      status?: "busy" | "idle" | "compacting"
+      active?: boolean
+      open?: Record<string, boolean>
+      showReasoning?: boolean
+    } = {},
+  ) =>
+    Timeline.constructMessageRows(
+      user,
+      (id) => parts[id] ?? [],
+      messages,
+      0,
+      options.showReasoning ?? true,
+      options.status ?? "idle",
+      options.active ?? false,
+      undefined,
+      undefined,
+      (key) => options.open?.[key],
+    )
+  /** 行的样子:`[a,b]` = 收着的「处理详情」(`+` = 开着),`x@` = 在点开的段里,别的行按 tag。 */
+  const shape = (rows: ReturnType<typeof build>) =>
+    rows.map((row) => {
+      if (row._tag === "ProcessGroup")
+        return `[${row.groups.flatMap((group) => groupRefs(group).map((ref) => ref.partID)).join(",")}]${row.open ? "+" : ""}`
+      if (row._tag !== "AssistantPart") return row._tag
+      const id = groupRefs(row.group)
+        .map((ref) => ref.partID)
+        .join("+")
+      return row.process ? `${id}@` : id
+    })
+
+  const plain = {
+    a: [text("t1", "a", "我先看看"), tool("p1", "a", "bash")],
+    b: [tool("p2", "b", "read"), tool("p3", "b", "read")],
+    c: [text("p4", "c", "结论")],
+  }
+  const plainMessages = [step("a"), step("b"), assistant("c")]
+
+  test("没有硬件调用:说明、工具、「已探索」全收进一行,回答在外面", () => {
+    const rows = build(plain, plainMessages)
+    expect(shape(rows)).toEqual(["UserMessage", "[t1,p1,p2,p3]", "p4"])
+    expect(rows.find((row) => row._tag === "ProcessGroup")).toMatchObject({ key: "process:a:t1", open: false })
+  })
+
+  test("点开:标题下面照旧是逐行(带 process,「已探索」照旧是一组);回答那一行与跑着时同一个 key", () => {
+    const opened = build(plain, plainMessages, { open: { "process:a:t1": true } })
+    expect(shape(opened)).toEqual(["UserMessage", "[t1,p1,p2,p3]+", "t1@", "p1@", "p2+p3@", "p4"])
+    const running = build(plain, plainMessages, { status: "busy", active: true })
+    const answerKey = (rows: ReturnType<typeof build>) =>
+      rows.filter((row) => row._tag === "AssistantPart").map((row) => TimelineRow.key(row)).at(-1)
+    expect(answerKey(opened)).toBe(answerKey(running))
+  })
+
+  test("正在跑的那一轮平铺,跑完(idle)才收;压缩中也算在跑", () => {
+    // 最后那一行是「此刻在干什么」(activity.ts),这一轮在跑就在。
+    expect(shape(build(plain, plainMessages, { status: "busy", active: true }))).toEqual([
+      "UserMessage",
+      "t1",
+      "p1",
+      "p2+p3",
+      "p4",
+      "Thinking",
+    ])
+    expect(shape(build(plain, plainMessages, { status: "compacting", active: true }))).not.toContain("[t1,p1,p2,p3]")
+    expect(shape(build(plain, plainMessages, { status: "idle", active: true }))).toContain("[t1,p1,p2,p3]")
+    // 别的轮次在跑,这一轮早就跑完了。
+    expect(shape(build(plain, plainMessages, { status: "busy", active: false }))).toContain("[t1,p1,p2,p3]")
+  })
+
+  test("硬件卡不动:它把段切开、自己原样留在原位;子 agent 卡同理", () => {
+    const parts = {
+      a: [tool("p1", "a", "bash")],
+      b: [tool("f1", "b", "flash")],
+      c: [tool("p2", "c", "bash"), tool("p3", "c", "grep")],
+      d: [tool("s1", "d", "scope"), tool("g1", "d", "agent")],
+      e: [text("p4", "e", "波形正常")],
+    }
+    const messages = [step("a"), step("b"), step("c"), step("d"), assistant("e")]
+    expect(shape(build(parts, messages))).toEqual(["UserMessage", "[p1]", "f1", "[p2,p3]", "s1", "g1", "p4"])
+  })
+
+  test("只有说明文字、没有工具调用的段不收(烧录卡前面那句话原样在)", () => {
+    const parts = { a: [text("t1", "a", "我先烧一下"), tool("f1", "a", "flash")], b: [text("p2", "b", "烧好了")] }
+    expect(shape(build(parts, [step("a"), assistant("b")]))).toEqual(["UserMessage", "t1", "f1", "p2"])
+  })
+
+  test("回答 = 最后一条消息里最后一个非文字 part 之后的文字;同一条里前面的思考收进去", () => {
+    const parts = { a: [tool("p1", "a", "bash")], b: [reasoning("r1", "b"), text("p2", "b", "结论")] }
+    const messages = [step("a"), assistant("b")]
+    expect(shape(build(parts, messages))).toEqual(["UserMessage", "[p1,r1]", "p2"])
+    // 不展示思考时思考段本来就不画。
+    expect(shape(build(parts, messages, { showReasoning: false }))).toEqual(["UserMessage", "[p1]", "p2"])
+  })
+
+  // 后台子 agent 的通知、排队的用户消息在工具边界插进来,另起一轮:前半截以工具调用收尾,回答在后面那一轮里。
+  // 审查抓到的:只认有回答的轮次时,这种前半截永远不收 —— 而后台子 agent 与排队都是缺省开的,长任务常常这样。
+  test("以工具调用收尾(被下一轮切断)也收:整段收起,外面没有回答;硬件卡照旧在外", () => {
+    const cut = { a: [tool("p1", "a", "bash")], b: [tool("f1", "b", "flash"), tool("p2", "b", "read")] }
+    expect(shape(build(cut, [step("a"), step("b")]))).toEqual(["UserMessage", "[p1]", "f1", "[p2]"])
+  })
+
+  test("报错收场、被打断的不收", () => {
+    const failed = { a: [tool("p1", "a", "bash")], b: [text("p2", "b", "写到一半")] }
+    const error = assistant("b", { error: { name: "UnknownError", data: { message: "503" } } })
+    expect(shape(build(failed, [step("a"), error]))).toEqual(["UserMessage", "p1", "p2", "ModelRequest"])
+    const stopped = step("a", { error: { name: "MessageAbortedError", data: { message: "Stopped" } } })
+    expect(shape(build({ a: [tool("p1", "a", "bash"), text("p2", "a")] }, [stopped]))).toEqual([
+      "UserMessage",
+      "p1",
+      "p2",
+      "TurnDivider",
+    ])
+    // 重试耗尽:失败的那条没有可画的 part,最后一条有 part 的是以工具调用收尾的那条 —— 照样不收。
+    const exhausted = failure("b")
+    expect(shape(build({ a: [tool("p1", "a", "bash")] }, [step("a"), exhausted]))).toEqual([
+      "UserMessage",
+      "p1",
+      "ModelRequest",
+    ])
+  })
+
+  test("段的 key 不跟着「显示思考」变:开关它,开着的段还开着", () => {
+    const parts = { a: [reasoning("r1", "a"), tool("p1", "a", "bash")], b: [text("p2", "b", "结论")] }
+    const messages = [step("a"), assistant("b")]
+    const keyOf = (showReasoning: boolean) =>
+      build(parts, messages, { showReasoning }).flatMap((row) => (row._tag === "ProcessGroup" ? [row.key] : []))
+    expect(keyOf(true)).toEqual(["process:a:p1"])
+    expect(keyOf(false)).toEqual(["process:a:p1"])
+  })
+
+  test("synthetic 消息(压缩摘要)不算回答,也不收进去,原样平铺", () => {
+    const parts = {
+      a: [tool("p1", "a", "bash")],
+      b: [text("p2", "b", "结论")],
+      c: [
+        { id: "x1", sessionID: "session", messageID: "c", type: "compaction", auto: true } as Part,
+        text("x2", "c", "摘要"),
+      ],
+    }
+    expect(shape(build(parts, [step("a"), assistant("b"), assistant("c", { synthetic: true })]))).toEqual([
+      "UserMessage",
+      "[p1]",
+      "p2",
+      "x1",
+      "x2",
+    ])
+    // 一轮里撞到阈值、压缩摘要夹在过程中间:它把段切开,摘要正文原样平铺,不并进后面那一段。
+    const middle = {
+      a: [tool("p1", "a", "bash")],
+      c: [
+        { id: "x1", sessionID: "session", messageID: "c", type: "compaction", auto: true } as Part,
+        text("x2", "c", "摘要"),
+      ],
+      d: [tool("p3", "d", "bash")],
+      e: [text("p4", "e", "结论")],
+    }
+    const messages = [step("a"), assistant("c", { synthetic: true }), step("d"), assistant("e")]
+    expect(shape(build(middle, messages))).toEqual(["UserMessage", "[p1]", "x1", "x2", "[p3]", "p4"])
+  })
+
+  test("只有回答的轮次没有这一行;「本轮改动」照旧排在回答后面", () => {
+    expect(shape(build({ a: [text("p1", "a", "你好")] }, [assistant("a")]))).toEqual(["UserMessage", "p1"])
+    const parts = { a: [tool("p1", "a", "write", { path: "docs/a.md", content: "# a" })], b: [text("p2", "b", "写好了")] }
+    expect(shape(build(parts, [step("a"), assistant("b")]))).toEqual(["UserMessage", "[p1]", "p2", "TurnChanges"])
+  })
+})
+
 describe("压缩上下文的那段时间", () => {
   const tags = (status: "busy" | "idle" | "compacting", active: boolean) =>
     rows([assistant("a")], status, active).map((row) => row._tag)
@@ -215,18 +418,12 @@ describe("本轮改动那一行", () => {
   ) => Timeline.constructMessageRows(user, (id) => parts[id] ?? [], messages, 0, true, status, active)
   const changes = (rows: ReturnType<typeof build>) => rows.flatMap((row) => (row._tag === "TurnChanges" ? [row] : []))
 
-  test("跨多条 assistant 消息收齐这一轮的 edit / write,排在工具卡之后", () => {
+  test("跨多条 assistant 消息收齐这一轮的 edit / write,排在工具卡(这里已收成「处理详情」)之后", () => {
     const built = build(
       { a: [change("p1", "a", "edit"), change("p2", "a", "read")], b: [change("p3", "b", "write")] },
       [assistant("a"), assistant("b")],
     )
-    expect(built.map((row) => row._tag)).toEqual([
-      "UserMessage",
-      "AssistantPart",
-      "AssistantPart",
-      "AssistantPart",
-      "TurnChanges",
-    ])
+    expect(built.map((row) => row._tag)).toEqual(["UserMessage", "ProcessGroup", "TurnChanges"])
     expect(changes(built)[0]!.refs).toEqual([
       { messageID: "a", partID: "p1" },
       { messageID: "b", partID: "p3" },

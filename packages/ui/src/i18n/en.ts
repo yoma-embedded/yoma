@@ -46,6 +46,11 @@ export const dict: Record<string, string> = {
   "ui.sessionTurn.status.makingEdits": "Making edits",
   "ui.sessionTurn.status.runningCommands": "Running commands",
   "ui.sessionTurn.status.thinking": "Thinking",
+  // 正在跑的那一轮底下那一行(app 的 timeline/activity.ts):模型在出思考 / 工具在跑 / 在等下一次请求出字。
+  "ui.sessionTurn.status.waitingModel": "Waiting for the model",
+  "ui.sessionTurn.status.runningTools": "Running {{names}}",
+  "ui.sessionTurn.status.runningToolsMore": "Running {{names}} and {{more}} more",
+  "ui.sessionTurn.status.toolSeparator": ", ",
   "ui.sessionTurn.status.thinkingWithTopic": "Thinking - {{topic}}",
   "ui.sessionTurn.status.gatheringThoughts": "Gathering thoughts",
   "ui.sessionTurn.status.consideringNextSteps": "Considering next steps",
@@ -64,6 +69,15 @@ export const dict: Record<string, string> = {
   "ui.messagePart.context.list.one": "{{count}} list",
   "ui.messagePart.context.list.other": "{{count}} lists",
   "ui.messagePart.context.failed": "{{count}} failed",
+  // 一轮跑完之后,连着的通用工具调用(与中间的说明、思考)收成的那一行(时间线的 ProcessGroup 行)。
+  "ui.processGroup.title": "Process details",
+  "ui.processGroup.tools.one": "{{count}} tool call",
+  "ui.processGroup.tools.other": "{{count}} tool calls",
+  "ui.processGroup.failed": "{{count}} failed",
+  "ui.processGroup.unfinished": "{{count}} not finished",
+  "ui.processGroup.expand": "Expand process details",
+  "ui.processGroup.collapse": "Collapse process details",
+  "ui.reasoning.title": "Thinking",
 
   "ui.list.loading": "Loading",
   "ui.list.empty": "No results",
@@ -288,7 +302,8 @@ export const dict: Record<string, string> = {
 
   // 时间线里硬件卡片右上角那个按钮(log / gdb / la / scope;flash 没有面板所以没有它)。
   "ui.tool.openInPanel": "Open in panel",
-  "ui.basicTool.called": "Called `{{tool}}`",
+  "ui.basicTool.interrupted": "Not finished",
+  "ui.basicTool.interruptedNote": "No result came back before this turn ended: it was stopped, or the app closed while the tool was running.",
   "ui.toolErrorCard.failed": "Failed",
   "ui.toolErrorCard.copyError": "Copy error",
 

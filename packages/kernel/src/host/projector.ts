@@ -256,16 +256,27 @@ export class SessionProjection {
    *
    * **发射顺序是硬约束**:父 message.updated 一定排在它的任何 part 事件之前 ——
    * 前端 reducer 会静默丢弃孤儿 part(server-session.ts:771-779),不报错。
+   *
+   * `timestamp` 是这条 entry 的落盘时间,只有重放给:assistant 那条 entry 在回复结束、工具开跑之前落盘,
+   * 重放时它就是这一批工具卡片共同的开始时间。不给的话开始时间是重放那一刻的 `Date.now()`,而结束时间是
+   * 当年的工具结果时间戳 —— 相减是个负数。live 不需要:tool_start 会覆盖。
+   * 代价:一批里的调用是逐个开跑的,每个开跑前先过 before_tool(要确认的在那儿等人点),所以重放出来的耗时
+   * 含"等确认"的那段(烧录、带探针命令的 bash);live 的是真开跑之后的。transcript 里没有更准的开始时间。
    */
-  applyMessage(message: AgentMessage, options?: { entryId?: string; messageID?: string }): KernelEvent[] {
+  applyMessage(
+    message: AgentMessage,
+    options?: { entryId?: string; messageID?: string; timestamp?: number },
+  ): KernelEvent[] {
     if (message.role === "toolResult") return this.applyToolResult(message)
     // 每条路自己认领 lastID;先清掉,免得"这条没投影出消息"时 entryId 绑到上一条身上。
     this.lastID = ""
     // renderer 的乐观 id 优先,其次是重建投影时这条 entry 上一次的 id。
     const given = options?.messageID ?? this.seededID(options?.entryId)
+    const committed = options?.timestamp
+    const toolStart = typeof committed === "number" && Number.isFinite(committed) && committed > 0 ? committed : undefined
     const events =
       message.role === "assistant"
-        ? this.finalizeAssistant(message, given)
+        ? this.finalizeAssistant(message, given, toolStart)
         : message.role === "user"
           ? this.applyUser(message, given)
           : this.applySynthetic(message, given)
@@ -273,14 +284,14 @@ export class SessionProjection {
     return events
   }
 
-  /** message_start:开一条流式 assistant 消息。 */
-  startAssistant(message: AssistantBody, givenID?: string): KernelEvent[] {
+  /** message_start:开一条流式 assistant 消息。`toolStart` 见 `applyMessage`。 */
+  startAssistant(message: AssistantBody, givenID?: string, toolStart?: number): KernelEvent[] {
     const id = this.mintID(message.timestamp, givenID)
     this.streamingID = id
     this.lastID = id
 
     const info = this.assistantInfo(id, message)
-    const parts = this.assistantParts(id, message.content as AssistantBlock[])
+    const parts = this.assistantParts(id, message.content as AssistantBlock[], toolStart)
 
     this.messages.set(id, { info, parts })
     return [{ type: "message.updated", message: info }, ...parts.map(partEvent)]
@@ -622,11 +633,11 @@ export class SessionProjection {
     }
   }
 
-  private assistantParts(messageID: string, content: AssistantBlock[]): Part[] {
+  private assistantParts(messageID: string, content: AssistantBlock[], toolStart?: number): Part[] {
     return content.map((block, index) => {
       if (block.type === "text") return this.textPart(messageID, index, block.text)
       if (block.type === "thinking") return this.reasoningPart(messageID, index, block.thinking)
-      return this.toolPart(messageID, index, block)
+      return this.toolPart(messageID, index, block, toolStart)
     })
   }
 
@@ -651,7 +662,7 @@ export class SessionProjection {
     }
   }
 
-  private toolPart(messageID: string, index: number, call: ToolCall): ToolPart {
+  private toolPart(messageID: string, index: number, call: ToolCall, toolStart?: number): ToolPart {
     const partID = this.partID(messageID, index)
     const existing = this.messages.get(messageID)?.parts[index]
     // 已经有结果了就别把状态倒回去 —— 重算快照不该覆盖已完成的工具卡片。
@@ -660,7 +671,7 @@ export class SessionProjection {
       return existing
     }
     if (!this.toolRefs.has(call.id)) {
-      this.toolRefs.set(call.id, { messageID, partID, index, startedAt: Date.now() })
+      this.toolRefs.set(call.id, { messageID, partID, index, startedAt: toolStart ?? Date.now() })
     }
     return {
       id: partID,
@@ -690,20 +701,20 @@ export class SessionProjection {
    * 必须和 startAssistant 分开:message_end 到达时那条消息 **已经有 id 了**,再走
    * startAssistant 会铸一个新 id,transcript 上就多出一条重复回复。
    */
-  private finalizeAssistant(message: AssistantBody, givenID?: string): KernelEvent[] {
+  private finalizeAssistant(message: AssistantBody, givenID?: string, toolStart?: number): KernelEvent[] {
     const id = this.streamingID
     const entry = id ? this.messages.get(id) : undefined
     // 没流式过(非流式 provider、重放)就新建;建完立刻清掉流式标记,否则紧跟着的
     // 下一条 assistant 消息会被"收尾"到这一条上,transcript 里就少一条回复。
     if (!id || !entry) {
-      const events = this.startAssistant(message, givenID)
+      const events = this.startAssistant(message, givenID, toolStart)
       this.streamingID = ""
       return events
     }
 
     this.lastID = id
     entry.info = this.assistantInfo(id, message)
-    entry.parts = this.assistantParts(id, message.content as AssistantBlock[])
+    entry.parts = this.assistantParts(id, message.content as AssistantBlock[], toolStart)
     this.streamingID = ""
     return [{ type: "message.updated", message: entry.info }, ...entry.parts.map(partEvent)]
   }
@@ -722,6 +733,35 @@ export class SessionProjection {
     if (part.state.status !== "pending") return []
     part.state = { status: "running", input: part.state.input, title: part.tool, time: { start: ref.startedAt } }
     return [partEvent(part)]
+  }
+
+  /**
+   * tool_end:这个调用做完了,卡片当场收尾。
+   *
+   * 结果消息要等**按调用顺序**落定(发动机 `drive/tool-placement.ts` 的 readPlacement:前一个没做完,后面做完的也得排着),
+   * 只认结果消息的话,同一批里排在一条慢命令后面的 `ls` 会一直挂着「在跑」、计时跟着那条慢命令走。发动机在每个调用
+   * 做完时单独发 tool_end,`result` 就是那条结果消息的 content / details(`toolResultFromMessage`),所以这里用它先收尾;
+   * 之后按顺序到的结果消息照旧走 `applyToolResult`,终态与重放逐字段相同(同 markToolRunning,这是 live 专用的一条路)。
+   */
+  finishTool(
+    toolCallId: string,
+    result: { content: ToolResultBody["content"]; details?: unknown },
+    isError: boolean,
+  ): KernelEvent[] {
+    const ref = this.toolRefs.get(toolCallId)
+    if (!ref) return []
+    const part = this.messages.get(ref.messageID)?.parts[ref.index]
+    if (!part || part.type !== "tool") return []
+    if (part.state.status === "completed" || part.state.status === "error") return []
+    return this.applyToolResult({
+      role: "toolResult",
+      toolCallId,
+      toolName: part.tool,
+      content: result.content,
+      details: result.details,
+      isError,
+      timestamp: Date.now(),
+    } as ToolResultBody)
   }
 
   /**

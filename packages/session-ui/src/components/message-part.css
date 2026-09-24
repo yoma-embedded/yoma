@@ -251,8 +251,42 @@
   color: var(--v2-text-text-muted);
   line-height: var(--line-height-normal);
 
+  /* 「思考」块:缺省收着的一行灰框,点开是正文(照 pi-agent-desktop)。 */
+  [data-reasoning-block] {
+    gap: 0;
+    border: 1px solid var(--v2-border-border-base);
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--v2-background-bg-layer-02) 60%, transparent);
+
+    > [data-slot="collapsible-trigger"] {
+      height: 30px;
+      padding: 0 2px 0 10px;
+      cursor: pointer;
+
+      [data-slot="collapsible-arrow"] {
+        opacity: 0.7;
+      }
+    }
+
+    [data-slot="basic-tool-tool-trigger-content"] {
+      flex: 1 1 auto;
+      max-width: none;
+    }
+
+    [data-slot="basic-tool-tool-title"] {
+      font-size: 12px;
+      font-weight: var(--font-weight-medium);
+      color: var(--v2-text-text-muted);
+    }
+  }
+
+  [data-slot="reasoning-part-body"] {
+    padding: 0 10px 10px;
+    border-top: 1px solid var(--v2-border-border-base);
+  }
+
   [data-component="markdown"] {
-    margin-top: 16px;
+    margin-top: 8px;
     font-style: normal;
     font-size: 13px;
     color: var(--v2-text-text-muted);
@@ -349,12 +383,103 @@
     border-left: 1px solid var(--border-weak-base);
   }
 
+  /*
+   * 组的标题行(「已探索 · 2 次读取 · 1 个列表」)是摘要,不是回复:小一号、淡色(用户 2026-09-24)。
+   * 只认直接子级的那个触发器 —— 组里逐张的工具行也是同一套 data-slot,别连它们一起改了。
+   */
+  > [data-component="collapsible"] > [data-slot="collapsible-trigger"] {
+    --text-shimmer-base-color: var(--v2-text-text-muted);
+    --text-shimmer-peak-color: var(--v2-text-text-base);
+    height: 26px;
+
+    [data-slot="basic-tool-tool-title"] {
+      font-size: 12px;
+      font-weight: var(--font-weight-medium);
+      color: var(--v2-text-text-muted);
+    }
+
+    [data-slot="basic-tool-tool-subtitle"],
+    [data-slot="basic-tool-tool-arg"] {
+      font-size: 12px;
+      color: var(--v2-text-text-faint);
+    }
+  }
+
   /* 折叠着也要看得见有没有失败的。 */
   &[data-failed="true"]
     > [data-component="collapsible"]
     > [data-slot="collapsible-trigger"]
     [data-slot="basic-tool-tool-arg"] {
     color: var(--text-danger-base, #d5544a);
+  }
+}
+
+/* 「处理详情」那一行:一枚浅底圆角按钮,照 pi-agent-desktop。点开的卡片是时间线上另外的行(见 message-timeline 的 data-process)。 */
+[data-component="process-group"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-height: 26px;
+  padding: 3px 10px 3px 6px;
+  border: 1px solid var(--v2-border-border-base);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--v2-background-bg-layer-02) 60%, transparent);
+  color: var(--v2-text-text-muted);
+  font-family: var(--font-family-sans);
+  font-size: 12px;
+  font-weight: var(--font-weight-medium);
+  line-height: 18px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+
+  &:hover {
+    background: var(--v2-overlay-simple-overlay-hover);
+    color: var(--v2-text-text-base);
+  }
+
+  &:focus-visible {
+    outline: 1px solid var(--v2-border-border-strong);
+    outline-offset: 1px;
+  }
+
+  [data-slot="process-group-chevron"] {
+    display: inline-flex;
+    color: var(--v2-text-text-faint);
+    transform: rotate(-90deg);
+    transition: transform 0.15s ease;
+  }
+
+  &[data-open="true"] [data-slot="process-group-chevron"] {
+    transform: rotate(0deg);
+  }
+
+  [data-slot="process-group-count"],
+  [data-slot="process-group-failed"],
+  [data-slot="process-group-unfinished"] {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  [data-slot="process-group-unfinished"] {
+    color: var(--v2-state-fg-warning);
+  }
+
+  /* 分隔用一个画出来的小圆点,不是打上去的字。 */
+  [data-slot="process-group-sep"] {
+    flex: none;
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0.6;
+  }
+
+  [data-slot="process-group-failed"] {
+    color: var(--v2-state-fg-danger);
   }
 }
 

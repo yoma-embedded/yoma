@@ -10,6 +10,10 @@ export function createTimelineProjection(input: {
   parts: (messageID: string) => Part[]
   status: Accessor<SessionStatus>
   showReasoningSummaries: Accessor<boolean>
+  /**
+   * 「处理详情」各段的开合(按段的 key,缺省收着)。每一轮的 memo 只订阅它自己那几段的键:开合一段只重建那一轮。
+   */
+  processOpen?: (key: string) => boolean | undefined
 }) {
   const messageByID = createMemo(() => new Map(input.messages().map((message) => [message.id, message] as const)))
   const assistantMessagesByParent = createMemo(() => {
@@ -56,6 +60,7 @@ export function createTimelineProjection(input: {
             isActive(),
             modelRetry(),
             read,
+            input.processOpen,
           ),
         ),
       )

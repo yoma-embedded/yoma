@@ -422,6 +422,30 @@ describe("内核宿主端到端", () => {
     }
   }, 30_000)
 
+  // 一批的结果消息按调用顺序落定:ls 排在一条慢 bash 后面,只认结果消息的话它会跟着 bash 一直挂着「在跑」。
+  // tool_end 在每个调用做完时就到,卡片当场收尾(projector.finishTool)。
+  test("同一批里排在慢命令后面的调用,做完就收尾,不等前面那条", async () => {
+    const { host, events, workspace } = makeHost([
+      fauxAssistantMessage([fauxToolCall("bash", { command: "sleep 2; echo slow" }), fauxToolCall("ls", {})]),
+      fauxAssistantMessage([fauxText("好")]),
+    ])
+    try {
+      const session = (await host.handle("session.create", { directory: workspace })) as Session
+      await host.handle("session.prompt", { sessionID: session.id, input: { text: "看看" } })
+      // 事件里的 part 是同一个对象引用,读到的是它此刻的状态。
+      const latest = (tool: string) =>
+        events
+          .flatMap((e) => (e.type === "message.part.updated" && e.part.type === "tool" && e.part.tool === tool ? [e.part as ToolPart] : []))
+          .at(-1)
+      await waitFor(() => latest("ls")?.state.status === "completed", 10_000)
+      expect(latest("bash")?.state.status).toBe("running")
+      await waitFor(() => latest("bash")?.state.status === "completed", 15_000)
+      expect(events.filter((e) => e.type === "kernel.error")).toEqual([])
+    } finally {
+      await host.dispose()
+    }
+  }, 30_000)
+
   test("bash 里起 openocd 也要先问:门按程序名判,不按工具名判(拒绝 → bash 没跑)", async () => {
     const command = "cd build && openocd -f interface/stlink.cfg -c 'init; stm32g4x mass_erase 0; exit'"
     const { host, events, workspace } = makeHost(

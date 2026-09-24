@@ -15,6 +15,8 @@ export function ContextGroupRow(props: {
   groupKey: string
   refs: PartRef[]
   parts: ToolPart[]
+  /** 这一轮已经不在跑了(`ContextToolGroup` 的同名参数)。 */
+  settled?: boolean
   isOpen: (key: string) => boolean | undefined
   onOpenChange: (key: string, open: boolean) => void
   renderCard: (ref: Accessor<PartRef>) => JSX.Element
@@ -30,6 +32,7 @@ export function ContextGroupRow(props: {
     <ContextToolGroup
       parts={props.parts}
       grouped={grouped()}
+      settled={props.settled}
       open={props.isOpen(props.groupKey) ?? openWhenFormed() ?? false}
       onOpenChange={(open) => props.onOpenChange(props.groupKey, open)}
     >

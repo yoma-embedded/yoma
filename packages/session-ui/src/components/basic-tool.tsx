@@ -1,4 +1,16 @@
-import { createEffect, For, Match, on, onCleanup, onMount, Show, Switch, type Accessor, type JSX } from "solid-js"
+import {
+  createEffect,
+  createMemo,
+  For,
+  Match,
+  on,
+  onCleanup,
+  onMount,
+  Show,
+  Switch,
+  type Accessor,
+  type JSX,
+} from "solid-js"
 import { animate, type AnimationPlaybackControls } from "motion"
 import { useI18n } from "@yoma-desktop/ui/context/i18n"
 import { createStore } from "solid-js/store"
@@ -6,6 +18,8 @@ import { Collapsible } from "@yoma-desktop/ui/collapsible"
 import type { IconProps } from "@yoma-desktop/ui/icon"
 import { TextShimmer } from "@yoma-desktop/ui/text-shimmer"
 import type { ToolProps } from "./message-part"
+import { formatToolDuration, toolElapsed, useSecondTicker } from "./tool-duration"
+import { toolArguments, toolCommand, toolSummary } from "./tool-summary"
 
 export type TriggerTitle = {
   title: string
@@ -40,6 +54,15 @@ export interface BasicToolProps {
   onTriggerClick?: JSX.EventHandlerUnion<HTMLElement, MouseEvent>
   triggerHref?: string
   clickable?: boolean
+  /** 紧凑工具行的皮(`data-tool-row`,通用卡用;硬件卡与 agent 卡不传,样子不变)。 */
+  row?: boolean
+  /** 紧凑行按状态着色(`data-tone`):ok / error / interrupted / running / pending。 */
+  tone?: string
+  /**
+   * pending / running 时照样画副标题与 action。缺省藏起来(参数还没拼完时没东西可看);通用卡要显示:
+   * 命令在模型写完这个调用时就完整了,而一条跑几十秒的命令从头到尾只剩一个工具名,看着就像卡住了。
+   */
+  revealWhilePending?: boolean
 }
 
 const SPRING = { type: "spring" as const, visualDuration: 0.35, bounce: 0 }
@@ -204,7 +227,7 @@ export function BasicTool(props: BasicToolProps) {
                     >
                       <TextShimmer text={title().title} active={pending()} />
                     </span>
-                    <Show when={!pending()}>
+                    <Show when={!pending() || props.revealWhilePending}>
                       <Show when={title().subtitle}>
                         <span
                           data-slot="basic-tool-tool-subtitle"
@@ -238,7 +261,7 @@ export function BasicTool(props: BasicToolProps) {
                       </Show>
                     </Show>
                   </div>
-                  <Show when={!pending() && title().action}>
+                  <Show when={(!pending() || props.revealWhilePending) && title().action}>
                     <span data-slot="basic-tool-tool-action">{title().action}</span>
                   </Show>
                 </div>
@@ -255,7 +278,13 @@ export function BasicTool(props: BasicToolProps) {
   )
 
   return (
-    <Collapsible open={open()} onOpenChange={handleOpenChange} class="tool-collapsible">
+    <Collapsible
+      open={open()}
+      onOpenChange={handleOpenChange}
+      class="tool-collapsible"
+      data-tool-row={props.row ? "" : undefined}
+      data-tone={props.row ? props.tone : undefined}
+    >
       <Show
         when={props.triggerHref}
         fallback={
@@ -300,47 +329,123 @@ export function BasicTool(props: BasicToolProps) {
   )
 }
 
-const LABEL_KEYS = ["description", "query", "url", "filePath", "path", "pattern", "name", "command"]
-const LABEL_KEY_SET = new Set(LABEL_KEYS)
+/** 紧凑行按状态着色。`interrupted` 不是内核的状态:这一轮已经结束、它还没结果(见 `ToolPartDisplay`)。 */
+function toolTone(status: string | undefined) {
+  if (status === "completed") return "ok"
+  if (status === "error") return "error"
+  if (status === "interrupted") return "interrupted"
+  if (status === "running") return "running"
+  return "pending"
+}
 
-function label(input: Record<string, unknown> | undefined) {
-  return LABEL_KEYS.map((key) => input?.[key]).find(
-    (value): value is string => typeof value === "string" && value.length > 0,
+/** 跑着的那一格:共享秒表每秒走一次。 */
+function RunningElapsed(props: { start?: number }) {
+  const now = useSecondTicker()
+  const text = () => formatToolDuration(toolElapsed({ start: props.start }, now()) ?? Number.NaN)
+  return (
+    <Show when={text()}>
+      <span data-slot="tool-row-duration">{text()}</span>
+    </Show>
   )
 }
 
-function args(input: Record<string, unknown> | undefined) {
-  if (!input) return []
-  return Object.entries(input)
-    .filter(([key]) => !LABEL_KEY_SET.has(key))
-    .flatMap(([key, value]) => {
-      if (typeof value === "string") return [`${key}=${value}`]
-      if (typeof value === "number") return [`${key}=${value}`]
-      if (typeof value === "boolean") return [`${key}=${value}`]
-      return []
-    })
-    .slice(0, 3)
+/** 紧凑行右边那一格:耗时(跑着的每秒走一格),或者「未完成」。 */
+function ToolRowMeta(props: { status?: string; time?: { start?: number; end?: number } }) {
+  const i18n = useI18n()
+  const finished = () => formatToolDuration(toolElapsed(props.time, Date.now()) ?? Number.NaN)
+  return (
+    <Switch>
+      <Match when={props.status === "interrupted"}>
+        <span data-slot="tool-row-flag">{i18n.t("ui.basicTool.interrupted")}</span>
+      </Match>
+      <Match when={props.status === "running"}>
+        <RunningElapsed start={props.time?.start} />
+      </Match>
+      <Match when={(props.status === "completed" || props.status === "error") && finished()}>
+        <span data-slot="tool-row-duration">{finished()}</span>
+      </Match>
+    </Switch>
+  )
 }
 
-export function GenericTool(props: ToolProps) {
+/**
+ * 展开之后:先是完整参数(命令类整段,别的逐条列顶层参数),再是输出,失败时是报错全文。顺序与会话内查找的
+ * 「可搜的字」一致(工具名 → 参数 → 输出 / 报错),查得到的字展开后都画得出来。
+ */
+function ToolRowBody(props: {
+  tool: string
+  input: Record<string, unknown>
+  output: string
+  error: string
+  status?: string
+}) {
   const i18n = useI18n()
+  const command = createMemo(() => toolCommand(props.tool, props.input))
+  const args = createMemo(() =>
+    toolArguments(props.input).filter((arg) => command() === undefined || arg.key !== "command"),
+  )
+  return (
+    <div data-component="tool-row-body">
+      <Show when={command()}>{(value) => <pre data-slot="tool-row-command">{value()}</pre>}</Show>
+      <Show when={args().length > 0}>
+        <div data-slot="tool-row-args" data-scrollable>
+          <For each={args()}>
+            {(arg) => (
+              <div data-slot="tool-row-arg">
+                <span data-slot="tool-row-arg-key">{arg.key}</span>
+                <span data-slot="tool-row-arg-value">{arg.value}</span>
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
+      <Show when={props.output}>
+        <div data-component="tool-output" data-scrollable>
+          <pre>{props.output}</pre>
+        </div>
+      </Show>
+      <Show when={props.error}>
+        <pre data-slot="tool-row-error" data-scrollable>
+          {props.error}
+        </pre>
+      </Show>
+      <Show when={props.status === "interrupted"}>
+        <div data-slot="tool-row-note">{i18n.t("ui.basicTool.interruptedNote")}</div>
+      </Show>
+    </div>
+  )
+}
+
+/**
+ * 通用卡 = 一行紧凑的工具行(照 pi-agent-desktop 的样子):工具名 + 摘要 + 右边的耗时,按状态着色。
+ * 没有专用卡的工具都走它(bash / read / edit / write / grep / find / ls / powershell / datasheet …),**失败的也走它**
+ * (从前失败的走 `ToolErrorCard`,标题是「Shell」、副标题是报错切出来的一段,命令整个看不见)。
+ * 硬件卡在 details 认不出时也会回落到这里。
+ */
+export function GenericTool(props: ToolProps) {
   const output = () => (typeof props.output === "string" ? props.output : "")
+  const error = () => (typeof props.error === "string" ? props.error.replace(/^Error:\s*/, "").trim() : "")
+  const summary = createMemo(() => toolSummary(props.tool, props.input))
+  // 只建一份:标题对象每次读都是新的,action 若写在里面,每读一次就多建一个组件。
+  const meta = <ToolRowMeta status={props.status} time={props.time} />
 
   return (
     <BasicTool
       {...props}
+      // 永远延迟挂载展开态:不 defer 的话 BasicTool 判断「有没有内容」时要读 children,而 children 是个 getter,
+      // 每读一次就多建一份没人看的 ToolRowBody(连同整段输出),输出每涨一次就重建一次。收着的行一份都不建。
+      defer
       icon="mcp"
+      row
+      tone={toolTone(props.status)}
+      revealWhilePending
       trigger={{
-        title: i18n.t("ui.basicTool.called", { tool: props.tool }),
-        subtitle: label(props.input),
-        args: args(props.input),
+        title: props.tool,
+        subtitle: summary() || undefined,
+        action: meta,
       }}
     >
-      {output() ? (
-        <div data-component="tool-output" data-scrollable>
-          <pre>{output()}</pre>
-        </div>
-      ) : undefined}
+      <ToolRowBody tool={props.tool} input={props.input} output={output()} error={error()} status={props.status} />
     </BasicTool>
   )
 }

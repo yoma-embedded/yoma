@@ -1,6 +1,6 @@
 import { parseCommentNote, readCommentMetadata } from "@/utils/comment-note"
 import { AssistantMessage, ModelRetry, Part, SessionStatus, UserMessage } from "@yoma-desktop/kernel"
-import { groupParts, PartGroup, renderable } from "@yoma-desktop/session-ui/message-part"
+import { groupParts, groupRefs, isProcessFoldable, PartGroup, renderable } from "@yoma-desktop/session-ui/message-part"
 import { isFileChange } from "@yoma-desktop/session-ui/turn-changes"
 import { Data, Equal } from "effect"
 
@@ -21,6 +21,18 @@ export type TimelineRowMap = {
     userMessageID: string
     group: PartGroup
     previousAssistantPart: boolean
+    /** 这一行在一段点开了的「处理详情」里(值是那一段的 key):画左边那根竖线。 */
+    process?: string
+  }
+  /** 「处理详情」那一行:一轮跑完以后,连着的可折叠 part 收成一段(见 `Timeline.constructMessageRows`)。 */
+  ProcessGroup: {
+    userMessageID: string
+    /** `process:<第一个 part 的 messageID>:<partID>`;开合状态按它记在时间线的 toolOpen 里。 */
+    key: string
+    /** 这一段的组(「已探索」组照旧是一组):计数、会话内查找都从这里拿。 */
+    groups: PartGroup[]
+    open: boolean
+    previousAssistantPart: boolean
   }
   Thinking: { userMessageID: string; reasoningHeading?: string }
   Compacting: { userMessageID: string }
@@ -38,6 +50,14 @@ export type TimelineRowMap = {
 /** 指向一次 edit / write。行里只放指针:patch 和文件内容留在 store 里,行画出来时才去读、去解析。 */
 export type TurnChangeRef = { messageID: string; partID: string }
 
+type AssistantPartRef = { messageID: string; messageIndex: number; part: Part }
+
+/** 一轮 assistant 那一侧摊成的条目:一个组(可能在一段点开的「处理详情」里)、打断分隔线,或「处理详情」那一行。 */
+type AssistantItem =
+  | { type: "part"; group: PartGroup; process?: string }
+  | { type: "interrupted" }
+  | { type: "process"; key: string; groups: PartGroup[]; open: boolean }
+
 export namespace TimelineRow {
   export class TurnGap extends Data.TaggedClass("TurnGap")<{
     userMessageID: string
@@ -53,11 +73,8 @@ export namespace TimelineRow {
     userMessageID: string
     label: "compaction" | "interrupted"
   }> {}
-  export class AssistantPart extends Data.TaggedClass("AssistantPart")<{
-    userMessageID: string
-    group: PartGroup
-    previousAssistantPart: boolean
-  }> {}
+  export class AssistantPart extends Data.TaggedClass("AssistantPart")<TimelineRowMap["AssistantPart"]> {}
+  export class ProcessGroup extends Data.TaggedClass("ProcessGroup")<TimelineRowMap["ProcessGroup"]> {}
   export class Thinking extends Data.TaggedClass("Thinking")<{
     userMessageID: string
     reasoningHeading?: string
@@ -79,6 +96,7 @@ export namespace TimelineRow {
     | UserMessage
     | TurnDivider
     | AssistantPart
+    | ProcessGroup
     | Thinking
     | Compacting
     | TurnChanges
@@ -96,6 +114,8 @@ export namespace TimelineRow {
         return `turn-divider:${row.userMessageID}:${row.label}`
       case "AssistantPart":
         return `assistant-part:${row.userMessageID}:${row.group.key}`
+      case "ProcessGroup":
+        return `process-group:${row.userMessageID}:${row.key}`
       case "Thinking":
         return `thinking:${row.userMessageID}`
       case "Compacting":
@@ -137,6 +157,8 @@ export namespace Timeline {
     isActive: boolean,
     retry?: ModelRetry,
     read: PartReader = directPartReader,
+    /** 「处理详情」各段的开合(按段的 key);缺省收着。时间线把它接到自己的 toolOpen 上。 */
+    processOpen: (key: string) => boolean | undefined = () => undefined,
   ) {
     const rows: TimelineRow.TimelineRow[] = []
 
@@ -165,8 +187,15 @@ export namespace Timeline {
         .filter((part) => read.renderable(part, showReasoning))
         .map((part) => ({ messageID: message.id, messageIndex, part })),
     )
-    const assistantItems =
-      interrupted && !compaction
+    const settled = !isActive || status === "idle"
+    // 报错收场、被打断的轮次不折:出了什么事都该摆在眼前。
+    const folded =
+      settled && !interrupted && !terminalError
+        ? foldProcess(assistantMessages, assistantPartRefs, processOpen)
+        : undefined
+    const assistantItems: AssistantItem[] = folded
+      ? folded
+      : interrupted && !compaction
         ? [
             ...groupParts(assistantPartRefs.filter((ref) => ref.messageIndex <= interruptedMessageIndex)).map(
               (group) => ({
@@ -220,21 +249,39 @@ export namespace Timeline {
         return
       }
 
+      if (item.type === "process") {
+        rows.push(
+          new TimelineRow.ProcessGroup({
+            userMessageID: userMessage.id,
+            key: item.key,
+            groups: item.groups,
+            open: item.open,
+            previousAssistantPart: assistantGroupIndex > 0,
+          }),
+        )
+        assistantGroupIndex += 1
+        return
+      }
+
       rows.push(
         new TimelineRow.AssistantPart({
           userMessageID: userMessage.id,
           group: item.group,
           previousAssistantPart: assistantGroupIndex > 0,
+          ...(item.process ? { process: item.process } : {}),
         }),
       )
       assistantGroupIndex += 1
     })
 
-    if (isActive && status === "busy" && !activeRetry && (showReasoning ? assistantPartRefs.length === 0 : true)) {
+    // 这一轮在跑就有这一行;它此刻说什么(思考中 / 正在运行 … / 等待模型 / 不出字)由组件按 activity.ts 现算 ——
+    // 那要读工具状态,不能进行的 memo(规矩 1)。从前「显示思考」打开时第一段内容出来就收掉,跑工具时什么都看不到。
+    if (isActive && status === "busy" && !activeRetry) {
+      // 「思考中」后面跟的标题取最近那段思考的:这一行只在模型正在出思考时说「思考中」,说的就是正在出的那一段。
       const heading = assistantMessages
         .flatMap((message) => getMessageParts(message.id))
         .map((part) => read.reasoningHeading(part))
-        .find((value): value is string => !!value)
+        .findLast((value): value is string => !!value)
 
       rows.push(
         new TimelineRow.Thinking({
@@ -278,6 +325,79 @@ export namespace Timeline {
     }
 
     return rows
+  }
+
+  /**
+   * 跑完的一轮切成「过程」与「最终回答」,过程里连着的可折叠 part 收成「处理详情」(照 pi-agent-desktop)。
+   * 报错收场与被打断的轮次调用方就不送进来(平铺)。
+   *
+   * - **最终回答**:最后一条有可画 part 的非 synthetic assistant 消息里,排在它最后一个非文字 part 之后的那几段文字
+   *   (pi-agent-desktop 的 `splitFinalAssistantBlocks`)。这条消息报了错就不折(返回 undefined)。
+   * - **没有最终回答也折**(这一轮以工具调用收尾):多半是后台子 agent 的完成通知或排队的用户消息在工具边界插了进来、
+   *   另起了一轮,回答在后面那一轮里。整段收起,外面没有回答。审查抓到的:只认有回答的轮次时,默认开着后台子 agent
+   *   与排队的长任务前半截永远不收。
+   * - **分段**:过程照旧先过 `groupParts`(「已探索」组照旧),连着的可折叠组合成一段;有专用卡的工具(硬件五件、
+   *   子 agent)与 synthetic 消息(压缩摘要)里的 part 把段切开,自己原样留在原位 —— 用户定的「硬件卡不动」。
+   * - 一段**至少有一次工具调用**才折;只有说明 / 思考的原样平铺(比如烧录卡前面那句「我先烧一下」)。
+   * - 段的 key 取段里第一个不是思考的 part(同「已探索」组取第一个):开关「显示思考」不改 key,开合状态不丢。
+   *   开着时段里的组照旧出行,带上 `process`。
+   *
+   * 只看结构:part 的类型、工具名、消息的 synthetic / error(文字空不空已经由 PartReader 记成按 part 的 memo)。
+   * 不读正文、不读工具状态 —— 时间线规矩 1。
+   */
+  function foldProcess(
+    messages: AssistantMessage[],
+    refs: AssistantPartRef[],
+    processOpen: (key: string) => boolean | undefined,
+  ): AssistantItem[] | undefined {
+    const final = messages.findLastIndex(
+      (message, index) => !message.synthetic && refs.some((ref) => ref.messageIndex === index),
+    )
+    if (final === -1 || messages[final]!.error) return
+    const own = refs.filter((ref) => ref.messageIndex === final)
+    const answer = own.slice(own.findLastIndex((ref) => ref.part.type !== "text") + 1)
+    const end = refs.indexOf(own.at(-1)!) + 1
+    const process = refs.slice(0, end - answer.length)
+    // 回答之后还有的(罕见:synthetic 的压缩摘要落在了回答后面)照旧平铺在回答后面。
+    const tail = refs.slice(end)
+
+    const byPart = new Map(refs.map((ref) => [ref.part.id, ref] as const))
+    const foldable = (group: PartGroup) => {
+      if (group.type === "context") return true
+      const ref = byPart.get(group.ref.partID)
+      return !!ref && !messages[ref.messageIndex]!.synthetic && isProcessFoldable(ref.part)
+    }
+    const hasTool = (group: PartGroup) =>
+      group.type === "context" || byPart.get(group.ref.partID)?.part.type === "tool"
+
+    const items: AssistantItem[] = []
+    let run: PartGroup[] = []
+    const flush = () => {
+      if (run.length === 0) return
+      if (run.some(hasTool)) {
+        const refsInRun = run.flatMap(groupRefs)
+        const first = refsInRun.find((ref) => byPart.get(ref.partID)?.part.type !== "reasoning") ?? refsInRun[0]!
+        const key = `process:${first.messageID}:${first.partID}`
+        const open = processOpen(key) ?? false
+        items.push({ type: "process", key, groups: run, open })
+        if (open) for (const group of run) items.push({ type: "part", group, process: key })
+      } else {
+        for (const group of run) items.push({ type: "part", group })
+      }
+      run = []
+    }
+    for (const group of groupParts(process)) {
+      if (foldable(group)) {
+        run.push(group)
+        continue
+      }
+      flush()
+      items.push({ type: "part", group })
+    }
+    flush()
+    for (const group of groupParts(answer)) items.push({ type: "part", group })
+    for (const group of groupParts(tail)) items.push({ type: "part", group })
+    return items
   }
 
   function reasoningHeading(text: string) {

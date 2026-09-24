@@ -1548,7 +1548,8 @@ export class SessionManager {
    */
   private async replay(lane: Pick<Branch, "findEntries">, projection: SessionProjection): Promise<void> {
     for (const item of await lane.findEntries({ order: "oldestFirst" }, this.context)) {
-      if (item.type === "message") projection.applyMessage(item.message, { entryId: item.id })
+      // 带上落盘时间:重放时工具卡片的开始时间就是它(见 applyMessage)。
+      if (item.type === "message") projection.applyMessage(item.message, { entryId: item.id, timestamp: item.timestamp })
       else if (item.type === "compaction" || item.type === "branch_summary") projection.applySummary(item)
       // 自定义 entry(现在只有 yoma/compaction)必须和 live 走同一条路,否则手动压缩
       // 重放出来就变成自动压缩。
@@ -1865,8 +1866,12 @@ export class SessionManager {
         if (partial.content.length === 0 && (partial.details === undefined || partial.details === null)) return
         progress.push(event.toolCallId, partial)
       }),
-      // 终态由 message_end 的工具结果消息投影;这里只把还没发的尾沿丢掉。
-      harness.events.on("tool_end", (event) => progress.settle(event.toolCallId)),
+      // 这个调用做完了:先把还没发的进度尾沿丢掉,再让卡片当场收尾。结果消息要按调用顺序落定,只等它的话,
+      // 同一批里排在慢命令后面的调用会一直挂着「在跑」(见 projector.finishTool)。之后到的结果消息照旧投影。
+      harness.events.on("tool_end", (event) => {
+        progress.settle(event.toolCallId)
+        apply((projection) => projection.finishTool(event.toolCallId, event.result, event.isError))
+      }),
       harness.events.on("entry_added", (event) => {
         entry.updatedAt = Date.now()
         const added = event.entry

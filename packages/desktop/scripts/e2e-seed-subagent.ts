@@ -68,7 +68,12 @@ function firstUserText(context: Context): string {
  */
 function script() {
   // 主会话:先派前台的(等它交回),再派后台的(立刻交回),这一轮收尾;后台的完成后通知进收件箱,主会话被叫醒
-  // 再答一句。通知要是恰好在这一轮里就被取走了,最后一步用不上 —— 无妨,等的是"通知进了 transcript 且主会话空闲"。
+  // 再答一句。
+  // 后台那个**等主会话把收尾那句答完**才交:否则它的通知可能在 write / edit 之后、收尾之前被取走、另起一轮,
+  // 「查到了」那句回答就落进了通知那一轮 —— transcript 的样子看时序,闸门断言的是哪一轮里有什么,得定下来。
+  const parentFinal = text(`查到了:${SUBAGENT_ANSWER};手册在后台查`)
+  let parentAnswered!: () => void
+  const answered = new Promise<void>((resolve) => (parentAnswered = resolve))
   const routes = new Map<string, AssistantMessage[]>([
     [
       PARENT_PROMPT,
@@ -89,7 +94,7 @@ function script() {
           fauxToolCall("write", { path: CHANGED_NEW_FILE, content: CHANGED_NEW_CONTENT }),
           fauxToolCall("edit", { path: EXPLORE_FILE, edits: [{ oldText: EDIT_OLD, newText: EDIT_NEW }] }),
         ]),
-        text(`查到了:${SUBAGENT_ANSWER};手册在后台查`),
+        parentFinal,
         text(`后台也查到了:${BACKGROUND_ANSWER}`),
       ],
     ],
@@ -107,9 +112,13 @@ function script() {
     [BACKGROUND_PROMPT, [text(BACKGROUND_ANSWER)]],
   ])
   let served = 0
-  const step: FauxResponseFactory = (context) => {
+  const step: FauxResponseFactory = async (context) => {
     served += 1
-    return routes.get(firstUserText(context))?.shift() ?? text("(闸门种子的脚本已用完)")
+    const prompt = firstUserText(context)
+    if (prompt === BACKGROUND_PROMPT) await answered
+    const next = routes.get(prompt)?.shift() ?? text("(闸门种子的脚本已用完)")
+    if (next === parentFinal) parentAnswered()
+    return next
   }
   return { step, served: () => served }
 }
