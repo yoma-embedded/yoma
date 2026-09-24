@@ -83,6 +83,7 @@ import {
 } from "./domain/toolchain/index.ts"
 import { installProgressEvent } from "./toolchain.ts"
 import { buildSystemPrompt } from "./system-prompt.ts"
+import { withShellGuidance } from "./shell-guidance.ts"
 import { ConfirmDesk } from "./confirm.ts"
 import { ActivityTracker, contentKindOf } from "./activity.ts"
 import { traceHarness } from "./trace/harness.ts"
@@ -1176,12 +1177,17 @@ export class SessionManager {
       })
       entry.stm32Availability = await this.inspectStm32(entry, preparationSignal)
       preparationSignal?.throwIfAborted()
-      const tools = profile && !fork ? this.childTools(entry, profile, allTools) : allTools
+      const assembled = profile && !fork ? this.childTools(entry, profile, allTools) : allTools
       entry.activeToolNames = fork
-        ? fork.activeToolNames.filter((name) => tools.some((tool) => tool.name === name))
+        ? fork.activeToolNames.filter((name) => assembled.some((tool) => tool.name === name))
         : profile
-          ? tools.map((tool) => tool.name)
-          : activeToolNames(tools, entry.stm32Availability!.available, true)
+          ? assembled.map((tool) => tool.name)
+          : activeToolNames(assembled, entry.stm32Availability!.available, true)
+      // bash 描述里的"别在 shell 里递归扫"与子 agent 的缺省超时(shell-guidance.ts)。fork 按主会话算:工具定义要逐字相同。
+      const tools = withShellGuidance(assembled, {
+        activeToolNames: entry.activeToolNames,
+        subagent: Boolean(profile && !fork),
+      })
       // 新 lane 的种子。子 agent:模型按 env > 入参 > profile > 继承主会话,思考缺省 off(CC 同款,§4.5);
       // fork:主会话此刻的模型与思考档位(CC:fork 继承主对话的模型与思考设置);
       // 主会话:宿主不表态就交给内核(off)。重开旧会话时用的是 lane 自己存下来的那一组。

@@ -1017,7 +1017,11 @@ app 的 `test-browser/subagent-ui.test.ts`,以及 `e2e:paint` 的子 agent 一�
 的 `grep -rn`,最长 31 分钟);而界面只有一行不带计时的「思考中」,bash 在跑时也是它,内核几乎不写日志。四件事:
 
 - **找文件守则**(`system-prompt.ts` 的 `fileSearchGuideline`):手上有 grep / find / ls 又有 shell 时,守则里明说用它们找文件、
-  别在 shell 里递归扫 node_modules / 构建产物 / 整个盘(按实际装配的工具名拼,子 agent 同样带)。bash 本身不改(用户定,不加缺省超时)。
+  别在 shell 里递归扫 node_modules / 构建产物 / 整个盘(按实际装配的工具名拼,子 agent 同样带)。同样的话照 CC 也写进 **bash 工具
+  自己的描述**(`shell-guidance.ts`,在装配面上包一层,不碰上游的 bash):模型挑工具时看的是工具描述。**子 agent 的 bash 缺省
+  120 秒超时**(没给 timeout 就补上,描述与参数说明跟着改;fork 不算,它的工具定义要与主会话逐字相同);主会话的 bash 不加
+  (用户定)。起因:2026-09-24 真跑里 Explore 子 agent 在 grep 工具用不了(worktree 没装 rg,`npm run engines:rg`)之后,从工作区根
+  上跑 `grep -rn … . | grep -v node_modules`(过滤的是输出、不是遍历),276 秒零输出。
 - **状态行**:session.status 的 busy 带 `activity`(`SessionActivity`:waiting / thinking / writing / calling / tools / confirm
   + `since`),由 `host/activity.ts` 的 `ActivityTracker` 从 harness 事件折出来,**只在阶段变化时推**(一个 step 五到十次)。
   界面那一行是 tool-display 做的「按阶段说话」(`timeline/activity.ts` + `activity-row.tsx`:真在出思考才说思考中、正在运行 …、

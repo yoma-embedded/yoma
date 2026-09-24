@@ -664,6 +664,18 @@ describe("子 agent 宿主(P2)", () => {
       expect(prompt).toContain("Notes:\n- Agent threads always have their cwd reset between bash calls")
       expect(prompt).not.toContain("You are Yoma, a coding and embedded-development agent.")
       expect(prompt).toContain("<env>")
+
+      // bash 的描述(shell-guidance.ts):主会话与子 agent 都带"别在 shell 里递归扫";缺省 120 秒超时只给子 agent,
+      // 参数说明跟着改 —— 上游原文写的是"没有缺省超时"。
+      const bashOf = (context: LlmContext) => getCurrentTools(context.messages).find((tool) => tool.name === "bash")
+      const parentBash = bashOf(script.last("派两个看工具"))
+      const childBash = bashOf(script.last("看看只读工具"))
+      expect(parentBash?.description).toContain("Do not run recursive file searches or listings with this tool")
+      expect(parentBash?.description).toContain("use the grep, find, ls tools instead")
+      expect(parentBash?.description).not.toContain("stopped after 120 seconds")
+      expect(childBash?.description).toContain("Do not run recursive file searches or listings with this tool")
+      expect(childBash?.description).toContain("commands without a timeout are stopped after 120 seconds")
+      expect(JSON.stringify(childBash?.parameters)).toContain("Timeout in seconds (default 120 in this agent)")
     },
     SLOW,
   )
