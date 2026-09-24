@@ -22,7 +22,7 @@ import {
 
 import { SessionManager } from "./session-manager.ts"
 import { parseSession, parseTrace, renderReport } from "./trace/report.ts"
-import { createTrace } from "./trace/sink.ts"
+import { createTrace, type Trace } from "./trace/sink.ts"
 import type { KernelEvent } from "../protocol.ts"
 import type { SessionActivity, SessionStatus } from "../types.ts"
 import { patient } from "../../test/patience.ts"
@@ -33,7 +33,10 @@ beforeAll(() => {
 })
 
 const roots: string[] = []
-afterEach(() => {
+const traces: Trace[] = []
+afterEach(async () => {
+  // 先关轨迹再删目录:轨迹攒着 250 ms 的一批,目录先没了的话那一批写不出去,stderr 上多一句"trace disabled … ENOENT"。
+  for (const trace of traces.splice(0)) await trace.close()
   for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true })
   vi.unstubAllEnvs()
 })
@@ -52,6 +55,7 @@ function makeManager(steps: unknown[], options: { confirmTools?: boolean; tokens
   const events: KernelEvent[] = []
   const traceFile = path.join(tempDir("yoma-trace-"), "trace.jsonl")
   const trace = createTrace({ file: traceFile })
+  traces.push(trace)
   const provider = `faux-activity-${++fauxCount}`
   const sessionsRoot = tempDir("yoma-sessions-")
   const manager = new SessionManager({
