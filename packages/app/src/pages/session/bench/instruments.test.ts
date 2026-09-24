@@ -16,7 +16,9 @@ import {
 import { BENCH_CHANNEL_COLORS, BENCH_CHANNEL_VARS, benchChannelColor } from "./bench-theme"
 import { SCOPE_COLORS } from "../debug/scope-waveform-data"
 
-function ctx(input: { status?: Partial<BenchStatus>; disk?: Partial<BenchDisk>; pinned?: InstrumentId[] } = {}): InstrumentContext {
+function ctx(
+  input: { status?: Partial<BenchStatus>; disk?: Partial<BenchDisk>; pinned?: InstrumentId[] } = {},
+): InstrumentContext {
   return {
     status: { ...EMPTY_BENCH_STATUS, ...input.status } as BenchStatus,
     disk: { ...EMPTY_BENCH_DISK, ...input.disk },
@@ -76,7 +78,9 @@ describe("状态灯", () => {
     expect(log.status(ctx())).toBe("offline")
     expect(log.status(ctx({ disk: { logFiles: 1 } }))).toBe("idle")
     expect(log.status(ctx({ status: { log: { capturing: true, totalLines: 0, dropped: 0, at: 0 } } }))).toBe("active")
-    expect(log.status(ctx({ status: { log: { capturing: false, exitCode: 1, totalLines: 0, dropped: 0, at: 0 } } }))).toBe("attention")
+    expect(
+      log.status(ctx({ status: { log: { capturing: false, exitCode: 1, totalLines: 0, dropped: 0, at: 0 } } })),
+    ).toBe("attention")
   })
 
   test("调试器:故障压过一切,运行中是 active,退出 / 掉线是 offline", () => {
@@ -86,7 +90,9 @@ describe("状态灯", () => {
     expect(gdb.status(ctx({ status: { gdb: { state: "running", epoch: 1, stops: [], at: 0 } } }))).toBe("active")
     expect(gdb.status(ctx({ status: { gdb: { state: "exited", epoch: 1, stops: [], at: 0 } } }))).toBe("offline")
     expect(
-      gdb.status(ctx({ status: { gdb: { state: "running", fault: "故障(HardFault):…", epoch: 1, stops: [], at: 0 } } })),
+      gdb.status(
+        ctx({ status: { gdb: { state: "running", fault: "故障(HardFault):…", epoch: 1, stops: [], at: 0 } } }),
+      ),
     ).toBe("attention")
   })
 
@@ -105,7 +111,7 @@ describe("钉住集合落盘", () => {
 
   test("非法内容一律当作「没钉过」,绝不抛", async () => {
     const { PinsTesting } = await import("./instruments")
-    for (const junk of ["", "not json", "{}", '["nope"]', '[1,2]']) {
+    for (const junk of ["", "not json", "{}", '["nope"]', "[1,2]"]) {
       localStorage.setItem(BENCH_PIN_KEY, junk)
       expect([...PinsTesting.readPins()]).toEqual([])
     }

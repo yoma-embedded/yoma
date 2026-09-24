@@ -2,8 +2,8 @@
  * log 工具的契约:菜单那一半。
  *
  * 把板子的运行日志接进会话 —— UART 串口、TCP 流(gdb server 的 RTT/telnet 口),或者任意往 stdout
- * 吐日志的命令。六个动作(start/read/wait/status/stop/ports)合成一个工具:日志源是长驻、有状态的,
- * 与一次性 spawn 的引擎工具正相反,所以厨房那半(session.ts)持有一个会话级采集器,五个动作只是对它
+ * 吐日志的命令。七个动作(start/read/write/wait/status/stop/ports)合成一个工具:日志源是长驻、有状态的,
+ * 与一次性 spawn 的引擎工具正相反,所以厨房那半(session.ts)持有一个会话级采集器,各个动作只是对它
  * 发指令。
  *
  * 门规同 flash(boundary.test.ts 第 3、5 条):界面只许走 `@yoma-desktop/kernel/tools/log/contract`,
@@ -21,7 +21,7 @@ export const DEFAULT_WAIT_MS = 10_000
 export const MAX_WAIT_MS = 120_000
 export const DEFAULT_MAX_LINES = 80
 
-export const LOG_ACTIONS = ["start", "read", "wait", "status", "stop", "ports"] as const
+export const LOG_ACTIONS = ["start", "read", "wait", "status", "stop", "ports", "write"] as const
 export type LogAction = (typeof LOG_ACTIONS)[number]
 
 const logParameters = Type.Object({
@@ -34,9 +34,13 @@ const logParameters = Type.Object({
       Type.Literal("status"),
       Type.Literal("stop"),
       Type.Literal("ports"),
+      Type.Literal("write"),
     ],
-    { description: "start | read | wait | status | stop | ports" },
+    { description: "start | read | wait | status | stop | ports | write" },
   ),
+  data: Type.Optional(Type.String({ maxLength: 12288, description: "write: text or hex bytes to the connected serial port (max 4096 encoded bytes)." })),
+  encoding: Type.Optional(Type.Union([Type.Literal("text"), Type.Literal("hex")])),
+  lineEnding: Type.Optional(Type.Union([Type.Literal("none"), Type.Literal("lf"), Type.Literal("cr"), Type.Literal("crlf")])),
   tcp: Type.Optional(
     Type.String({
       description:
@@ -82,6 +86,9 @@ export interface LogDetails {
   /** wait 专有:是否命中。 */
   matched?: boolean
   exitCode?: number | null
+  serial?: { port: string; baud: number }
+  writable?: boolean
+  bytesSent?: number
 }
 
 const LOG_DESCRIPTION = `Captures the running board's log output — a UART/USB serial port, a TCP stream (RTT from your gdb server), or any command that prints to stdout — so you can see what the firmware actually did instead of guessing from the source.
@@ -91,6 +98,7 @@ Actions:
   - UART / USB serial: port (plus baud, default ${DEFAULT_BAUD}; 8N1, no flow control). Same call on macOS, Linux and Windows — the port name is the only difference. Run ports first if you do not know it.
   - RTT / any TCP log stream: tcp "host:port". RTT comes from the gdb server that is already holding the probe: J-Link GDBServer serves it on telnet port 19021 automatically; with OpenOCD run \`monitor rtt setup <addr> <size> "SEGGER RTT"\`, \`monitor rtt start\`, \`monitor rtt server start <port> 0\`, then read that port here.
   - Anything else: command — an argv line (a decoder script, a vendor CLI, …); no shell unless you spawn one yourself.
+- write (data, [encoding: text|hex], [lineEnding: none|lf|cr|crlf]): send up to 4096 bytes to the active SERIAL port. Text uses UTF-8. No shell evaluation or automatic retry. Success means accepted by the serial driver, not acknowledged by the device. TCP/command sources cannot be written.
 - ports: list the serial ports on this machine, with the OS's own description where it has one. Opens nothing, takes nothing — safe to call any time, including while a capture is running.
 - wait (pattern, [timeoutMs]): block until a new line matches the regex, the source exits, or the timeout expires. THIS IS THE MAIN ACTION — one call turns "did it boot / did it crash" into a definite answer and returns only the matched line plus a few lines of context. A wait that does not match leaves the cursor untouched, so nothing is lost: follow it with read.
 - read ([since], [pattern], [maxLines]): the tail of whatever arrived since the last read, then advances the cursor. With pattern it only shows matching lines and does not move the cursor (it is a query, not a consumption).
@@ -138,6 +146,8 @@ export function logSummary(input: Partial<LogInput>): string {
     case "stop":
     case "ports":
       return input.action
+    case "write":
+      return `send ${input.encoding === "hex" ? "hex" : "text"}`
     default:
       return ""
   }

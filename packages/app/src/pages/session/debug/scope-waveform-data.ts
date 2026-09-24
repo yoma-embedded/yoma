@@ -47,6 +47,21 @@ export function scopeVoltageRange(channels: ScopeTrace[]) {
   return { min: low - pad, max: high + pad }
 }
 
+/** Eight equal engineering divisions, shared by all channels with the same unit. */
+export function scopeVoltageAxis(channels: ScopeTrace[]) {
+  const range = scopeVoltageRange(channels)
+  const target = (range.max - range.min) / 8
+  const power = 10 ** Math.floor(Math.log10(target))
+  // Alignment can add a ninth division even when the unaligned span fits eight.
+  const division = ([1, 2, 5, 10, 20].find((factor) => {
+    const step = factor * power
+    return step >= target && Math.ceil(range.max / step) - Math.floor(range.min / step) <= 8
+  }) ?? 20) * power
+  const centered = Math.round((range.min + range.max) / 2 / division) - 4
+  const start = Math.max(Math.ceil(range.max / division) - 8, Math.min(Math.floor(range.min / division), centered))
+  return { min: start * division, max: (start + 8) * division, division }
+}
+
 export function scopeTicks(from: number, to: number, count: number): number[] {
   const target = (to - from) / Math.max(1, count)
   if (!(target > 0)) return []

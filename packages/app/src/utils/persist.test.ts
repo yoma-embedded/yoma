@@ -228,3 +228,83 @@ describe("persist localStorage resilience", () => {
     )
   })
 })
+
+// 桌面端的 setItem 先落在内存里、攒一批才写盘(namespace-storage.ts)。搬家跨两个名字空间:新家没落盘之前
+// 不许删旧家的,不然那一批要是没写成,这个值就哪儿都没有了(审查抓到的顺序问题)。
+describe("桌面端搬旧键:新的落盘了才删旧的", () => {
+  function memory(initial: Record<string, string> = {}) {
+    const data = new Map(Object.entries(initial))
+    const log: string[] = []
+    const api = {
+      getItem: async (key: string) => data.get(key) ?? null,
+      setItem: async (key: string, value: string) => {
+        log.push(`set ${key}`)
+        data.set(key, value)
+      },
+      removeItem: async (key: string) => {
+        log.push(`remove ${key}`)
+        data.delete(key)
+      },
+    }
+    return { api, data, log }
+  }
+
+  test("新家是攒批的名字空间:先 flush,落盘了再删旧的", async () => {
+    const order: string[] = []
+    const current = memory()
+    const legacy = memory({ "language.v1": '{"locale":"zh"}' })
+    const storage = {
+      ...current.api,
+      flush: async () => void order.push("flush"),
+      pending: () => false,
+    }
+    const removeItem = legacy.api.removeItem
+    legacy.api.removeItem = async (key) => {
+      order.push("remove legacy")
+      return removeItem(key)
+    }
+    const value = await persistTesting.migrateLegacyAsync({
+      current: storage as never,
+      legacyStore: legacy.api as never,
+      stores: [],
+      keys: ["language.v1"],
+      key: "language",
+      defaults: { locale: "en" },
+    })
+    expect(value).toBe('{"locale":"zh"}')
+    expect(order).toEqual(["flush", "remove legacy"])
+    expect(legacy.data.size).toBe(0)
+  })
+
+  test("新家那一批没写成(还 pending):旧的留着,下次启动再搬", async () => {
+    const current = memory()
+    const legacy = memory({ "language.v1": '{"locale":"zh"}' })
+    const storage = { ...current.api, flush: async () => undefined, pending: () => true }
+    const value = await persistTesting.migrateLegacyAsync({
+      current: storage as never,
+      legacyStore: legacy.api as never,
+      stores: [],
+      keys: ["language.v1"],
+      key: "language",
+      defaults: { locale: "en" },
+    })
+    // 这一次会话照样用得上搬过来的值
+    expect(value).toBe('{"locale":"zh"}')
+    expect(legacy.data.get("language.v1")).toBe('{"locale":"zh"}')
+  })
+
+  test("不是攒批的存储(没有 flush / pending):照旧,写完就删", async () => {
+    const current = memory()
+    const legacy = memory({ old: '{"a":1}' })
+    await persistTesting.migrateLegacyAsync({
+      current: current.api as never,
+      legacyStore: legacy.api as never,
+      stores: [],
+      keys: ["old"],
+      key: "new",
+      defaults: { a: 0 },
+    })
+    expect(current.data.get("new")).toBe('{"a":1}')
+    expect(legacy.data.size).toBe(0)
+  })
+})

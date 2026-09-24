@@ -350,6 +350,8 @@ const FORCE_KILL_GRACE_MS = 3 * 1000;
 const STREAM_FLUSH_GRACE_MS = 1000;
 
 export interface EngineRunOptions {
+	/** Explicit cmd.exe /d /s /c callers own command quoting, as in Node's shell:true path. */
+	windowsVerbatimArguments?: boolean;
 	cwd?: string;
 	/** 完整子进程环境;省略时继承 process.env。允许调用方移除不兼容的宿主变量。 */
 	env?: NodeJS.ProcessEnv;
@@ -484,6 +486,7 @@ export function runEngine(bin: string, args: string[], options: EngineRunOptions
 	const env = options.env ?? process.env;
 	return new Promise((resolve, reject) => {
 		const child = spawn(bin, args, {
+			windowsVerbatimArguments: options.windowsVerbatimArguments,
 			cwd: options.cwd,
 			stdio: ["ignore", "pipe", "pipe"],
 			// Python 引擎在中文 Windows 上按 cp936 写 stdout,而下面按 UTF-8 解;与 getShellEnv 同一条规矩。

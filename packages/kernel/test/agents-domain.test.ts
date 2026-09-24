@@ -219,7 +219,7 @@ describe("resolveAgentTools", () => {
   it("缺省(全集):去掉子 agent 四件与五个硬件工具,其余按全集顺序", () => {
     const { tools, unknown } = resolveAgentTools(all, { tools: ["*"] })
     expect(tools).toEqual(all.filter((name) => !SUBAGENT_TOOL_NAMES.includes(name) && !HARDWARE_TOOL_NAMES.includes(name)))
-    expect(tools).toEqual(["read", "bash", "edit", "write", "grep", "find", "ls", "powershell", "toolchain", "datasheet", "netlist", "stm32config"])
+    expect(tools).toEqual(["read", "bash", "edit", "write", "grep", "find", "ls", "powershell", "toolchain", "project", "datasheet", "netlist", "stm32config"])
     expect(unknown).toEqual([])
   })
 

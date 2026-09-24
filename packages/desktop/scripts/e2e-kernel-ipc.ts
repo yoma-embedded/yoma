@@ -135,6 +135,19 @@ app.whenReady().then(async () => {
     const info = await request("app.info", undefined)
     check("app.info 走通 MessagePort", info?.version === "e2e", `node ${info?.node}`)
 
+    let project = await request("project.context", { directory: workspace })
+    check("工程识别走通 MessagePort", typeof project.revision === "string" && project.saved === false)
+    project = await request("project.configure", { directory: workspace, revision: project.revision,
+      profile: { ...project.profile, chip: "STM32G474", buildCommand: "echo build-check" } })
+    project = await request("project.remember", { directory: workspace, revision: project.revision,
+      memory: { title: "UART", content: "PA2/PA3", kind: "fact", confidence: "verified",
+        evidence: "User confirmed", scope: "board A", enabled: true } })
+    check("档案与记忆穿过真实进程保存", project.saved && project.profile.chip === "STM32G474" && project.memories.length === 1)
+    project = await request("project.check", { directory: workspace, revision: project.revision })
+    check("构建检查经真实进程返回结果", project.baseline?.ok === true && project.baseline.output.includes("build-check"))
+    project = await request("project.forget", { directory: workspace, revision: project.revision, id: project.memories[0].id })
+    check("忘记经真实进程删除条目", project.memories.length === 0)
+
     const session = await request("session.create", { directory: workspace })
     check("session.create 建出会话", Boolean(session?.id), session?.id)
 

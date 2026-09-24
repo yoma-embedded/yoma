@@ -1,7 +1,7 @@
 /** 路径记录只说明用户保存了什么;入口定位必须复核文件类型和声明名。 */
 import { statSync } from "node:fs";
 import path from "node:path";
-import { findOnPath, withPath } from "./locations.ts";
+import { expandGlobPath, findOnPath, withPath } from "./locations.ts";
 import type { ToolSpec } from "./schema.ts";
 
 export function pathType(value: string): "file" | "dir" | undefined {
@@ -58,7 +58,35 @@ export function directoryRoot(spec: ToolSpec, value: string, env: NodeJS.Process
 	return type === "dir" ? { root: value, verified: false } : { verified: false };
 }
 
-/** 保留显式命名的文件映射;目录记录/单个入口的同目录兄弟文件按声明重新定位。 */
+const MAX_LAYOUT_CLIMB = 3;
+
+/**
+ * exe 型、声明了 binDirs 的工具(Keil):从 start 往上逐层,在每一层下展开 binDirs,第一层里真有声明的
+ * 可执行文件的就是这个安装的根,返回那一层展开出的目录。停在最近的一层:再往上爬可能爬进同一个盘上
+ * 并排的另一份安装。要求"真有声明的程序"而不只是"目录在":`ARM\BIN` 这种名字太普通,光看目录会认错根。
+ * 爬 3 层够从 `<根>\ARM\ARMCLANG\bin` 回到根;这是 2026-09-24 那台机器上用户贴 `Keil_v5\UV4` 永远
+ * "未找到入口"的修复 —— 从前只查 [目录, 目录\bin] 两处。
+ */
+export function layoutDirs(spec: ToolSpec, start: string, env: NodeJS.ProcessEnv): string[] {
+	const names = spec.bin ?? [];
+	if (!spec.binDirs?.length || names.length === 0) return [];
+	let base = start;
+	for (let i = 0; i <= MAX_LAYOUT_CLIMB; i++) {
+		const dirs = spec.binDirs.flatMap((rel) => expandGlobPath(path.join(base, rel)));
+		const search = withPath(env, dirs);
+		if (dirs.length > 0 && names.some((name) => findOnPath(name, search) !== undefined)) return dirs;
+		const parent = path.dirname(base);
+		if (parent === base) break;
+		base = parent;
+	}
+	return [];
+}
+
+/**
+ * 保留显式命名的文件映射;目录记录/单个入口的同目录兄弟文件按声明重新定位;声明了安装布局
+ * (binDirs)的,记录落在安装树里的任何一层都往上找回编译器所在的目录 —— 包括用"浏览…"挑了一个
+ * 不是声明入口的程序(Keil 用户挑的是 UV4.exe)。
+ */
 export function executableEntries(
 	spec: ToolSpec,
 	recorded: Record<string, string>,
@@ -70,7 +98,7 @@ export function executableEntries(
 	const dirs: string[] = [];
 	for (const [name, value] of Object.entries(recorded)) {
 		const type = pathType(value);
-		if (type === "dir") dirs.push(value, path.join(value, "bin"));
+		if (type === "dir") dirs.push(value, path.join(value, "bin"), ...layoutDirs(spec, value, env));
 		if (type !== "file") continue;
 		const declared = names.find((candidate) =>
 			process.platform === "win32" ? candidate.toLowerCase() === name.toLowerCase() : candidate === name,
@@ -79,6 +107,7 @@ export function executableEntries(
 			files[declared ?? name] = value;
 			dirs.push(path.dirname(value));
 		}
+		dirs.push(...layoutDirs(spec, path.dirname(value), env));
 	}
 	const searchEnv = withPath(env, [...new Set(dirs)]);
 	for (const name of names) {

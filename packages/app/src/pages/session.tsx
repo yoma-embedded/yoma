@@ -1,7 +1,7 @@
 import type { ToolConfirmView, UserMessage } from "@yoma-desktop/kernel"
 import { useDialog } from "@yoma-desktop/ui/context/dialog"
 import { useData } from "@yoma-desktop/session-ui/context"
-import { createQuery, useMutation, useQueryClient } from "@tanstack/solid-query"
+import { createQuery, useQueryClient } from "@tanstack/solid-query"
 import {
   onCleanup,
   Show,
@@ -39,7 +39,6 @@ import { useSettings } from "@/context/settings"
 import { useSync } from "@/context/sync"
 import { PromptInput } from "@/components/prompt-input"
 import { useSettingsCommand } from "@/components/settings-dialog"
-import { type FollowupDraft, sendFollowupDraft } from "@/components/prompt-input/submit"
 import { createLicenseNotice } from "@/licensing/license-notice"
 import {
   createPromptInputController,
@@ -54,6 +53,7 @@ import { syncSessionModel } from "@/pages/session/session-model-helpers"
 import { SessionSidePanel } from "@/pages/session/session-side-panel"
 import { debug as debugDock } from "@/pages/session/debug/debug-data"
 import { BenchProvider } from "@/pages/session/bench/bench-context"
+import { WorkbenchToolbar } from "@/pages/session/console/workbench-toolbar"
 import { SessionConsole } from "@/pages/session/console/session-console"
 import { SessionStatusBar } from "@/pages/session/console/session-status-bar"
 import { consoleUI } from "@/pages/session/console/console-state"
@@ -61,17 +61,11 @@ import { useConsoleCommands } from "@/pages/session/console/use-console-commands
 import { useComposerCommands } from "@/pages/session/use-composer-commands"
 import { useSessionCommands } from "@/pages/session/use-session-commands"
 import { useSessionHashScroll } from "@/pages/session/use-session-hash-scroll"
-import { Identifier } from "@/utils/id"
-import { Persist, persisted } from "@/utils/persist"
 import { formatServerError } from "@/utils/server-errors"
 import { directoryKey } from "@/context/global-sync/utils"
 import { createSessionOwnership } from "./session/session-ownership"
 import { prependRetracted, type RetractedMessage } from "./session/composer/queue-retract"
 import { dockTasks } from "./session/subagent/task-view"
-
-type FollowupItem = FollowupDraft & { id: string }
-type FollowupEdit = Pick<FollowupItem, "id" | "prompt" | "context">
-const emptyFollowups: FollowupItem[] = []
 
 const sessionViewState = () => ({
   messageId: undefined as string | undefined,
@@ -181,6 +175,8 @@ export default function Page() {
   // 新布局这一行有 gap-2(8px)：中间栏按百分比减宽时要把这道缝一起减掉，
   // 否则 中间 + 缝 + 右栏 会超出一格，右栏顶掉右侧 8px 留白（贴到窗口边）。
   const rowGap = () => 8
+  /** 聊天栏的下限:窄窗口里也至少一半,宽窗口里 380px 够放输入框与模型选择。 */
+  const CHAT_MIN_WIDTH = "min(380px, 50%)"
   const sessionPanelWidth = createMemo(() => {
     if (dockVisible()) {
       if (!debugDock.opened()) return `calc(100% - ${36 + rowGap()}px)` // 收起态：给展开窄条(w-9)留位
@@ -259,21 +255,6 @@ export default function Page() {
     deferRender: false,
   })
 
-  const [followup, setFollowup] = persisted(
-    Persist.workspace(sdk().directory, "followup", ["followup.v1"]),
-    createStore<{
-      items: Record<string, FollowupItem[] | undefined>
-      failed: Record<string, string | undefined>
-      paused: Record<string, boolean | undefined>
-      edit: Record<string, FollowupEdit | undefined>
-    }>({
-      items: {},
-      failed: {},
-      paused: {},
-      edit: {},
-    }),
-  )
-
   createComputed((prev) => {
     const key = sessionKey()
     if (key !== prev) {
@@ -321,8 +302,15 @@ export default function Page() {
         }),
   }))
   const refreshVcs = debounce(() => void queryClient.invalidateQueries({ queryKey: vcsKey() }), 100)
-  // avoids suspense
-  const vcsDiffs = () => (vcsQuery.isFetched ? (vcsQuery.data ?? []) : [])
+  // 不读 vcsQuery.data:solid-query 的 data getter 在"上一份值是 undefined"时读的是 query 的 resource,
+  // 重新拉取期间就会让**整页**进上层 <Suspense>(layout-new.tsx)—— 页面被摘下再插回,时间线的滚动位置
+  // 没有任何 scroll 事件地归零,虚拟列表还画着底部那几行,聊天区于是一片空白。会话每次变空闲都会刷新一次
+  // (上面那条 effect),所以按停止 / agent 说完一轮就会撞上(2026-09-23 真窗口复现:停止后 150ms 整页被重插两次)。
+  // 只订阅"数据换了"(dataUpdatedAt 是普通字段),值从缓存里拿。
+  const vcsDiffs = createMemo(() => {
+    void vcsQuery.dataUpdatedAt
+    return queryClient.getQueryData<typeof vcsQuery.data>(vcsKey()) ?? []
+  })
 
   const setActiveMessage = (message: UserMessage | undefined) => {
     messageMark = scrollMark
@@ -738,136 +726,6 @@ export default function Page() {
     })
   }
 
-  const busy = (sessionID: string) => sync().data.session_working(sessionID)
-
-  const queuedFollowups = createMemo(() => {
-    const id = params.id
-    if (!id) return emptyFollowups
-    return followup.items[id] ?? emptyFollowups
-  })
-
-  const editingFollowup = createMemo(() => {
-    const id = params.id
-    if (!id) return
-    return followup.edit[id]
-  })
-
-  const followupMutation = useMutation(() => ({
-    mutationFn: async (input: { sessionID: string; id: string; manual?: boolean }) => {
-      const owner = sessionOwnership.capture()
-      const item = (followup.items[input.sessionID] ?? []).find((entry) => entry.id === input.id)
-      if (!item) return
-
-      if (input.manual) setFollowup("paused", input.sessionID, undefined)
-      setFollowup("failed", input.sessionID, undefined)
-
-      const ok = await sendFollowupDraft({
-        client: sdk().client,
-        sync: sync(),
-        serverSync: serverSync(),
-        draft: item,
-        optimisticBusy: item.sessionDirectory === sdk().directory,
-      }).catch((err) => {
-        setFollowup("failed", input.sessionID, input.id)
-        fail(err)
-        return false
-      })
-      if (!ok) return
-
-      setFollowup("items", input.sessionID, (items) => (items ?? []).filter((entry) => entry.id !== input.id))
-      if (input.manual) owner.run(resumeScroll)
-    },
-  }))
-
-  const followupBusy = (sessionID: string) =>
-    followupMutation.isPending && followupMutation.variables?.sessionID === sessionID
-
-  const sendingFollowup = createMemo(() => {
-    const id = params.id
-    if (!id) return
-    if (!followupBusy(id)) return
-    return followupMutation.variables?.id
-  })
-
-  const queueEnabled = createMemo(() => {
-    const id = params.id
-    if (!id) return false
-    return settings.general.followup() === "queue" && busy(id)
-  })
-
-  const followupText = (item: FollowupDraft) => {
-    const text = item.prompt
-      .map((part) => {
-        if (part.type === "image") return `[image:${part.filename}]`
-        if (part.type === "file") return `[file:${part.path}]`
-        if (part.type === "agent") return `@${part.name}`
-        return part.content
-      })
-      .join("")
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .find((line) => !!line)
-
-    if (text) return text
-    return `[${language.t("common.attachment")}]`
-  }
-
-  const queueFollowup = (draft: FollowupDraft) => {
-    setFollowup("items", draft.sessionID, (items) => [
-      ...(items ?? []),
-      { id: Identifier.ascending("message"), ...draft },
-    ])
-    setFollowup("failed", draft.sessionID, undefined)
-    setFollowup("paused", draft.sessionID, undefined)
-  }
-
-  const followupDock = createMemo(() => queuedFollowups().map((item) => ({ id: item.id, text: followupText(item) })))
-
-  const sendFollowup = (sessionID: string, id: string, opts?: { manual?: boolean }) => {
-    const item = (followup.items[sessionID] ?? []).find((entry) => entry.id === id)
-    if (!item) return Promise.resolve()
-    if (followupBusy(sessionID)) return Promise.resolve()
-
-    return followupMutation.mutateAsync({ sessionID, id, manual: opts?.manual })
-  }
-
-  const editFollowup = (id: string) => {
-    const sessionID = params.id
-    if (!sessionID) return
-    if (followupBusy(sessionID)) return
-
-    const item = queuedFollowups().find((entry) => entry.id === id)
-    if (!item) return
-
-    setFollowup("items", sessionID, (items) => (items ?? []).filter((entry) => entry.id !== id))
-    setFollowup("failed", sessionID, (value) => (value === id ? undefined : value))
-    setFollowup("edit", sessionID, {
-      id: item.id,
-      prompt: item.prompt,
-      context: item.context,
-    })
-  }
-
-  const clearFollowupEdit = () => {
-    const id = params.id
-    if (!id) return
-    setFollowup("edit", id, undefined)
-  }
-
-  createEffect(() => {
-    const sessionID = params.id
-    if (!sessionID) return
-
-    const item = queuedFollowups()[0]
-    if (!item) return
-    if (followupBusy(sessionID)) return
-    if (followup.failed[sessionID] === item.id) return
-    if (followup.paused[sessionID]) return
-    if (busy(sessionID)) return
-
-    void sendFollowup(sessionID, item.id)
-  })
-
   createResizeObserver(
     () => promptDock,
     ({ height }) => {
@@ -1083,6 +941,46 @@ export default function Page() {
     return true
   }
 
+  // ── /btw 顺便问一句(docs/btw顺便问-设计方案-20260924.md §4.8)──────────────────────────
+  // 数据是内核的 session.btw(整条快照)。关掉 = 本地先拿掉,还在答就让内核取消;转后台 = btwFork,成功后
+  // 内核推 cancelled、坞自己关掉,fork 出现在上面的子 agent 坞里。
+  const btwView = createMemo(() => {
+    const id = params.id
+    return id ? sync().data.btw[id] : undefined
+  })
+  const [btwUI, setBtwUI] = createStore<{ forking: boolean }>({ forking: false })
+  /** 关掉顺便问(× 与 Esc 共用)。返回 true = 关掉了一条,Esc 据此不再去停 agent。 */
+  const dismissBtw = () => {
+    const sessionID = params.id
+    if (!sessionID) return false
+    const dismissed = sync().session.dismissBtw(sessionID)
+    if (!dismissed) return false
+    void kernel.session.btwCancel({ sessionID, btwID: dismissed.id }).catch(() => {})
+    return true
+  }
+  const forkBtw = async () => {
+    const sessionID = params.id
+    const view = btwView()
+    if (!sessionID || view?.status !== "done" || btwUI.forking) return
+    setBtwUI("forking", true)
+    try {
+      await kernel.session.btwFork({ sessionID, btwID: view.id })
+      showToast({ title: language.t("session.btwDock.forked") })
+    } catch (err) {
+      fail(err)
+    } finally {
+      setBtwUI("forking", false)
+    }
+  }
+  const copyBtw = () => {
+    const text = btwView()?.text
+    if (!text) return
+    void navigator.clipboard?.writeText(text).then(
+      () => showToast({ title: language.t("session.btwDock.copied") }),
+      () => {},
+    )
+  }
+
   const composerRegion = () => {
     const controller = createSessionComposerRegionController({
       sessionKey,
@@ -1113,15 +1011,17 @@ export default function Page() {
               onRetract: (entryId) => void retractQueued([entryId]),
             }
           : undefined,
-      followup: () =>
-        params.id
-          ? {
-              items: followupDock(),
-              sending: sendingFollowup(),
-              onSend: (id) => void sendFollowup(params.id!, id, { manual: true }),
-              onEdit: editFollowup,
-            }
-          : undefined,
+      btw: () => {
+        const view = btwView()
+        if (!view) return undefined
+        return {
+          view,
+          forking: btwUI.forking,
+          onDismiss: () => void dismissBtw(),
+          onFork: () => void forkBtw(),
+          onCopy: copyBtw,
+        }
+      },
       setPromptRef: (el) => {
         inputRef = el
       },
@@ -1142,16 +1042,8 @@ export default function Page() {
               comments.clear()
               resumeScroll()
             }}
-            edit={editingFollowup()}
-            onEditLoaded={clearFollowupEdit}
-            shouldQueue={queueEnabled}
-            onQueue={queueFollowup}
             onRetractQueued={retractAllQueued}
-            onAbort={() => {
-              const id = params.id
-              if (!id) return
-              setFollowup("paused", id, true)
-            }}
+            onDismissBtw={dismissBtw}
           />
         }
       />
@@ -1191,6 +1083,7 @@ export default function Page() {
       {/* 会话区 = 上面一行(聊天栏 | 右栏) + 底部控制台 + 状态栏。
           左侧栏不在这棵树里,所以"横跨聊天栏与右栏"就是这一列的全宽。 */}
       <BenchProvider>
+        <WorkbenchToolbar />
         <div class="flex-1 min-h-0 flex flex-col">
           <div
             class="flex-1 min-h-0 flex flex-col md:flex-row gap-2 p-2"
@@ -1204,11 +1097,16 @@ export default function Page() {
               }}
               style={{
                 width: sessionPanelWidth(),
+                // 右栏存的是固定像素宽:窗口一窄,聊天栏会被挤成一条(标题、输入框、首屏大字全折成竖排)。
+                // 给它一个下限,不够的时候让右栏收窄(右栏是 shrink 的)。
+                "min-width": dockVisible() && debugDock.opened() && !debugDock.fullscreen() ? CHAT_MIN_WIDTH : undefined,
                 // 右侧面板全屏时隐藏中间会话栏（inline style 优先级高于 flex 类）
                 display: debugDock.fullscreen() ? "none" : undefined,
               }}
             >
               <div
+                // cmd+F 的归属按焦点分:焦点在这一栏里归会话内查找,否则归右栏的文件内查找(file-tabs.tsx)。
+                data-find-scope="session"
                 classList={{
                   "flex-1 min-h-0 flex flex-col bg-v2-background-bg-base rounded-[10px] overflow-hidden": true,
                   "shadow-[var(--v2-elevation-raised)]": !!params.id,
@@ -1250,6 +1148,8 @@ export default function Page() {
                             setRevealMessage={(fn) => {
                               revealMessage = fn
                             }}
+                            onPauseAutoScroll={autoScroll.pause}
+                            historyMore={historyMore()}
                             setScrollToEnd={(fn) => {
                               scrollToEnd = fn
                             }}

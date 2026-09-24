@@ -15,6 +15,7 @@ import { useSync, type DirectorySync } from "@/context/sync"
 import { Identifier } from "@/utils/id"
 import { createLicenseNotice } from "@/licensing/license-notice"
 import { buildRequestParts } from "./build-request-parts"
+import { parseBtw } from "./btw"
 import { prependRetracted } from "@/pages/session/composer/queue-retract"
 import { setCursorPosition } from "./editor-dom"
 import { ScopedKey } from "@/utils/scoped-key"
@@ -155,9 +156,6 @@ type PromptSubmitInput = {
   addToHistory: (prompt: Prompt) => void
   resetHistoryNavigation: () => void
   setPopover: (popover: "at" | "slash" | null) => void
-  shouldQueue?: Accessor<boolean>
-  onQueue?: (draft: FollowupDraft) => void
-  onAbort?: () => void
   onSubmit?: () => void
 }
 
@@ -188,8 +186,6 @@ export function createPromptSubmit(input: PromptSubmitInput) {
   const abort = async () => {
     const sessionID = params.id
     if (!sessionID) return Promise.resolve()
-
-    input.onAbort?.()
 
     const key = pendingKey(sessionID)
     const queued = pending.get(key)
@@ -230,12 +226,6 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     }
   }
 
-  const clearContext = (target: ReturnType<ReturnType<typeof usePrompt>["capture"]>) => {
-    for (const item of target.context.items()) {
-      target.context.remove(item.key)
-    }
-  }
-
   const seed = (dir: string, info: Session) => {
     serverSync().session.remember(info)
     const [, setStore] = serverSync().child(dir)
@@ -251,6 +241,52 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     })
   }
 
+  /**
+   * 发一条 /btw。附件跟普通消息同一套(`buildRequestParts`:行内评论拼进正文、图片是 data: URL、@ 提及只带路径);
+   * 模型不由界面下发 —— /btw 要的是主轮正在用的那个(换了就吃不到缓存)。发出去失败就把输入框还原。
+   */
+  const submitBtw = async (request: {
+    submission: ReturnType<typeof createPromptSubmissionState>
+    question: string
+    images: ImageAttachmentPart[]
+    context: (ContextItem & { key: string })[]
+  }) => {
+    const sessionID = params.id
+    if (!sessionID) {
+      showToast({ title: language.t("prompt.toast.btw.noSession") })
+      return
+    }
+    if (!request.question) {
+      showToast({ title: language.t("prompt.toast.btw.usage") })
+      return
+    }
+    input.addToHistory(request.submission.prompt)
+    input.resetHistoryNavigation()
+    const { input: promptInput } = buildRequestParts({
+      prompt: request.submission.prompt,
+      context: request.context,
+      images: request.images,
+      text: request.question,
+      messageID: Identifier.ascending("message"),
+      sessionID,
+      sessionDirectory: sdk().directory,
+    })
+    // 行内评论拼进了正文,上下文项用掉了(同普通消息);失败时还原。
+    const commentItems = request.context.filter((item) => item.type === "file" && !!item.comment?.trim())
+    for (const item of commentItems) request.submission.target().context.remove(item.key)
+    request.submission.clear()
+    input.setPopover(null)
+    try {
+      await sdk().client.session.btw(sessionID, promptInput)
+    } catch (err) {
+      showToast({ title: language.t("prompt.toast.btw.failed"), description: errorMessage(err) })
+      const restored = request.submission.restore()
+      if (!restored) return
+      restored.target.set(restored.prompt, input.promptLength(restored.prompt))
+      restoreCommentItems(restored.target, commentItems)
+    }
+  }
+
   const handleSubmit = async (event: Event) => {
     event.preventDefault()
 
@@ -264,6 +300,14 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     const context = submission.context
     const text = currentPrompt.map((part) => ("content" in part ? part.content : "")).join("")
     const images = input.imageAttachments().slice()
+
+    // /btw 顺便问一句:不发消息、不排队、不打断,答案画在输入框上方的坞里(docs/btw顺便问-设计方案-20260924.md §4.8)。
+    // 截在所有"发消息"的逻辑之前:agent 在跑也照样能问。
+    const question = parseBtw(text)
+    if (question !== undefined) {
+      await submitBtw({ submission, question, images, context })
+      return
+    }
 
     if (text.trim().length === 0 && images.length === 0 && input.commentCount() === 0) {
       if (input.working()) void abort()
@@ -352,13 +396,6 @@ export function createPromptSubmit(input: PromptSubmitInput) {
         input.queueScroll()
       })
       return true
-    }
-
-    if (!isNewSession && input.shouldQueue?.()) {
-      input.onQueue?.(draft)
-      clearContext(submission.target())
-      clearInput()
-      return
     }
 
     input.onSubmit?.()

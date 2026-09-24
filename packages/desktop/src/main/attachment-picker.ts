@@ -30,6 +30,19 @@ export function createPickedFileAuthorizations(
   }
 }
 
+/**
+ * 选中的文件里,哪些的内容要读进渲染器。渲染器报一份扩展名清单(只有图片,编成 data-URL 送进模型),
+ * 其余文件只交路径 —— 固件产物 .elf 带调试信息动辄几十 MB,它们不该撞 20 MB 的附件预算,
+ * 也不该被读进渲染器的内存。不给清单 = 全都要读(保守的缺省)。
+ */
+export function inlineAttachment(name: string, inlineExtensions: string[] | undefined) {
+  if (!inlineExtensions) return true
+  const dot = name.lastIndexOf(".")
+  if (dot === -1) return false
+  const ext = name.slice(dot + 1).toLowerCase()
+  return inlineExtensions.some((item) => item.toLowerCase() === ext)
+}
+
 export function assertAttachmentBudget(files: { size: number }[]) {
   const total = files.reduce((sum, file) => sum + file.size, 0)
   if (total <= MAX_ATTACHMENT_BYTES) return

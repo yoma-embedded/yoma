@@ -35,16 +35,19 @@ import { LaTool } from "./la-tool"
 import { LogTool } from "./log-tool"
 import { OpenInstrumentButton } from "./open-instrument"
 import { ScopeTool } from "./scope-tool"
+import { Collapsible } from "@yoma-desktop/ui/collapsible"
 import { FileIcon } from "@yoma-desktop/ui/file-icon"
 import { Icon } from "@yoma-desktop/ui/icon"
 import { ToolErrorCard } from "./tool-error-card"
 import { Markdown } from "./markdown"
 import { ImagePreview } from "@yoma-desktop/ui/image-preview"
+import { TextShimmer } from "@yoma-desktop/ui/text-shimmer"
 import { Tooltip } from "@yoma-desktop/ui/tooltip"
 import { IconButton } from "@yoma-desktop/ui/icon-button"
 import { IconButtonV2 } from "@yoma-desktop/ui/v2/icon-button-v2"
 import { TooltipV2 } from "@yoma-desktop/ui/v2/tooltip-v2"
 import { attached, kind } from "./message-file"
+import { contextToolSummary, isContextGroupTool } from "./context-tool-group"
 import { readPartText } from "./message-part-text"
 
 async function writeClipboard(text: string): Promise<boolean> {
@@ -77,6 +80,9 @@ export interface MessageProps {
   showAssistantCopyPartID?: string | null
   showReasoningSummaries?: boolean
   useV2Actions?: boolean
+  /** 用户消息里可展开的 part(后台任务的完成通知)的展开状态,交给调用方记 —— 时间线是虚拟列表,记在组件身上会丢。 */
+  partOpen?: (partID: string) => boolean | undefined
+  onPartOpenChange?: (partID: string, open: boolean) => void
 }
 
 export interface MessagePartProps {
@@ -244,9 +250,21 @@ export type PartRef = {
   partID: string
 }
 
-export type PartGroup = {
-  key: string
-  ref: PartRef
+/** 时间线上的一行:一个 part,或者一串连着的「找东西」工具(`context-tool-group.ts`)。 */
+export type PartGroup =
+  | {
+      key: string
+      type: "part"
+      ref: PartRef
+    }
+  | {
+      key: string
+      type: "context"
+      refs: PartRef[]
+    }
+
+export function groupRefs(group: PartGroup): PartRef[] {
+  return group.type === "context" ? group.refs : [group.ref]
 }
 
 function sameRef(a: PartRef, b: PartRef) {
@@ -255,8 +273,10 @@ function sameRef(a: PartRef, b: PartRef) {
 
 function sameGroup(a: PartGroup, b: PartGroup) {
   if (a === b) return true
-  if (a.key !== b.key) return false
-  return sameRef(a.ref, b.ref)
+  if (a.key !== b.key || a.type !== b.type) return false
+  const left = groupRefs(a)
+  const right = groupRefs(b)
+  return left.length === right.length && left.every((ref, index) => sameRef(ref, right[index]!))
 }
 
 export function sameGroups(a: readonly PartGroup[] | undefined, b: readonly PartGroup[] | undefined) {
@@ -266,14 +286,27 @@ export function sameGroups(a: readonly PartGroup[] | undefined, b: readonly Part
   return a.every((item, i) => sameGroup(item, b[i]!))
 }
 
+/**
+ * 连着的「找东西」工具并成一组。**只有一个也成组**:key 取这一串的第一个 part,于是第二个 read 到的时候
+ * 这一行是原地长大,而不是旧行删掉、新行插进来(虚拟列表按 key 记高度)。行里的卡片换不换是另一回事,
+ * 由 `ContextToolGroup` 与 app 那边的 `context-group-row.tsx` 保证。
+ */
 export function groupParts(parts: { messageID: string; part: PartType }[]): PartGroup[] {
-  return parts.map((item) => ({
-    key: `part:${item.messageID}:${item.part.id}`,
-    ref: {
-      messageID: item.messageID,
-      partID: item.part.id,
-    },
-  }))
+  const result: PartGroup[] = []
+  for (const item of parts) {
+    const ref = { messageID: item.messageID, partID: item.part.id }
+    if (!isContextGroupTool(item.part)) {
+      result.push({ key: `part:${item.messageID}:${item.part.id}`, type: "part", ref })
+      continue
+    }
+    const last = result.at(-1)
+    if (last?.type === "context") {
+      last.refs.push(ref)
+      continue
+    }
+    result.push({ key: `context:${item.messageID}:${item.part.id}`, type: "context", refs: [ref] })
+  }
+  return result
 }
 
 function index<T extends { id: string }>(items: readonly T[]) {
@@ -333,10 +366,10 @@ export function AssistantParts(props: {
   )
 
   return (
-    <Index each={grouped()}>
+    <Index each={grouped().flatMap(groupRefs)}>
       {(entryAccessor) => {
-        const message = createMemo(() => msgs().get(entryAccessor().ref.messageID))
-        const item = createMemo(() => part().get(entryAccessor().ref.messageID)?.get(entryAccessor().ref.partID))
+        const message = createMemo(() => msgs().get(entryAccessor().messageID))
+        const item = createMemo(() => part().get(entryAccessor().messageID)?.get(entryAccessor().partID))
 
         return (
           <Show when={message()}>
@@ -370,6 +403,8 @@ export function Message(props: MessageProps) {
             message={userMessage() as UserMessage}
             parts={props.parts}
             useV2Actions={props.useV2Actions}
+            partOpen={props.partOpen}
+            onPartOpenChange={props.onPartOpenChange}
           />
         )}
       </Match>
@@ -411,9 +446,9 @@ export function AssistantMessageDisplay(props: {
   )
 
   return (
-    <Index each={grouped()}>
+    <Index each={grouped().flatMap(groupRefs)}>
       {(entryAccessor) => {
-        const item = createMemo(() => part().get(entryAccessor().ref.partID))
+        const item = createMemo(() => part().get(entryAccessor().partID))
 
         return (
           <Show when={item()}>
@@ -434,13 +469,22 @@ export function UserMessageDisplay(props: {
   message: UserMessage
   parts: PartType[]
   useV2Actions?: boolean
+  partOpen?: (partID: string) => boolean | undefined
+  onPartOpenChange?: (partID: string, open: boolean) => void
 }) {
   // 不是用户打的字(后台子 agent 的完成通知):画成通知行,不画成用户气泡,也没有复制 / 时间那一行。
   return (
     <Show when={props.message.synthetic} fallback={<UserBubble {...props} />}>
       <div data-component="user-message" data-synthetic="">
         <For each={props.parts.filter((part) => renderable(part))}>
-          {(part) => <Part part={part} message={props.message} />}
+          {(part) => (
+            <Part
+              part={part}
+              message={props.message}
+              toolOpen={props.partOpen?.(part.id)}
+              onToolOpenChange={props.onPartOpenChange ? (open) => props.onPartOpenChange!(part.id, open) : undefined}
+            />
+          )}
         </For>
       </div>
     </Show>
@@ -718,6 +762,90 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
         </Switch>
       </div>
     </Show>
+  )
+}
+
+/**
+ * 一串「找东西」工具的那一行(`groupParts`)。**只有一个的时候也是它**:那时不画标题,里面那张卡片照常画;
+ * 第二个到了才长出标题「已探索 · 2 次读取 · 1 个列表」。卡片列表自始至终在同一个位置渲染,所以 1 → 2 的那一下
+ * 卡片实例不换 —— 用户刚点开的那张还开着、还在原地(早先用 `<Show>` 在「单张卡片 / 整组」之间切换,旧卡片会被
+ * 卸载、换成一个折叠着的组,内容当场从屏幕上消失)。
+ *
+ * 不套 `BasicTool`:它的 defer 会让内容空两帧,不 defer 又会把 children 求值两遍(两套卡片实例)。标题的
+ * 结构与 data-slot 照抄它的,样式共用。还有没跑完的就按进行时画 —— 标题闪、计数先不出,与别的卡片一致。
+ * 折叠着的时候卡片不挂载(`Collapsible.Content` 关着不渲染 children)。
+ */
+export function ContextToolGroup(props: {
+  parts: ToolPart[]
+  /** 两个以上才是「一组」。 */
+  grouped: boolean
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+  children: JSX.Element
+}) {
+  const i18n = useI18n()
+  const [state, setState] = createStore({ open: false })
+  const summary = createMemo(() => contextToolSummary(props.parts))
+  const counts = createMemo(() => {
+    const value = summary()
+    const count = (key: "read" | "search" | "list", n: number) =>
+      n > 0 ? [i18n.t(`ui.messagePart.context.${key}.${n === 1 ? "one" : "other"}`, { count: n })] : []
+    return [...count("read", value.read), ...count("search", value.search), ...count("list", value.list)].join(" · ")
+  })
+  const open = () => !props.grouped || (props.open ?? state.open)
+  const setOpen = (value: boolean) => {
+    if (!props.grouped) return
+    if (props.open === undefined) setState("open", value)
+    props.onOpenChange?.(value)
+  }
+
+  return (
+    <div
+      data-component="context-tool-group"
+      data-grouped={props.grouped ? "true" : undefined}
+      data-failed={props.grouped && summary().failed > 0 ? "true" : undefined}
+      data-timeline-part-ids={props.parts.map((part) => part.id).join(",")}
+    >
+      <Collapsible open={open()} onOpenChange={setOpen} class="tool-collapsible">
+        <Show when={props.grouped}>
+          <Collapsible.Trigger>
+            <div data-component="tool-trigger">
+              <div data-slot="basic-tool-tool-trigger-content">
+                <div data-slot="basic-tool-tool-info">
+                  <div data-slot="basic-tool-tool-info-structured">
+                    <div data-slot="basic-tool-tool-info-main">
+                      <span data-slot="basic-tool-tool-title">
+                        <TextShimmer
+                          text={i18n.t(
+                            summary().active
+                              ? "ui.sessionTurn.status.gatheringContext"
+                              : "ui.sessionTurn.status.gatheredContext",
+                          )}
+                          active={summary().active}
+                        />
+                      </span>
+                      <Show when={!summary().active}>
+                        <span data-slot="basic-tool-tool-subtitle">{counts()}</span>
+                        {/* 失败数单独一段,样式只染它 —— 整句都红的话看着像全失败了。 */}
+                        <Show when={summary().failed > 0}>
+                          <span data-slot="basic-tool-tool-arg">
+                            {i18n.t("ui.messagePart.context.failed", { count: summary().failed })}
+                          </span>
+                        </Show>
+                      </Show>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <Collapsible.Arrow />
+            </div>
+          </Collapsible.Trigger>
+        </Show>
+        <Collapsible.Content>
+          <div data-slot="context-tool-group-list">{props.children}</div>
+        </Collapsible.Content>
+      </Collapsible>
+    </div>
   )
 }
 

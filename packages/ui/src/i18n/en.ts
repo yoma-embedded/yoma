@@ -40,6 +40,7 @@ export const dict: Record<string, string> = {
   "ui.sessionTurn.status.planning": "Planning next steps",
   "ui.sessionTurn.status.gatheringContext": "Exploring",
   "ui.sessionTurn.status.gatheredContext": "Explored",
+  "ui.sessionTurn.status.compacting": "Compacting context",
   "ui.sessionTurn.status.searchingCodebase": "Searching the codebase",
   "ui.sessionTurn.status.searchingWeb": "Searching the web",
   "ui.sessionTurn.status.makingEdits": "Making edits",
@@ -62,6 +63,7 @@ export const dict: Record<string, string> = {
   "ui.messagePart.context.search.other": "{{count}} searches",
   "ui.messagePart.context.list.one": "{{count}} list",
   "ui.messagePart.context.list.other": "{{count}} lists",
+  "ui.messagePart.context.failed": "{{count}} failed",
 
   "ui.list.loading": "Loading",
   "ui.list.empty": "No results",

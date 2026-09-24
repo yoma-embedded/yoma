@@ -60,7 +60,7 @@ import {
   type PromptHistoryStoredEntry,
   promptLength,
 } from "./prompt-input/history"
-import { createPromptSubmit, type FollowupDraft } from "./prompt-input/submit"
+import { createPromptSubmit } from "./prompt-input/submit"
 import { PromptPopover, type AtOption, type SlashCommand } from "./prompt-input/slash-popover"
 import {
   entryOptions,
@@ -147,16 +147,16 @@ export interface PromptInputProps {
   submission?: PromptInputSubmission
   controls: PromptInputControls
   ref?: (el: HTMLDivElement) => void
-  edit?: { id: string; prompt: Prompt; context: FollowupDraft["context"] }
-  onEditLoaded?: () => void
-  shouldQueue?: () => boolean
-  onQueue?: (draft: FollowupDraft) => void
   /**
    * 空输入框里按 ↑:会话忙时排着的消息先撤回来改(照 CC),没有排队的才翻历史。
    * 返回 true = 接住了(有东西可撤),这一下 ↑ 不再翻历史。
    */
   onRetractQueued?: () => boolean
-  onAbort?: () => void
+  /**
+   * Esc:输入框上方的 /btw 坞开着就先关它(返回 true = 关掉了),这一下 Esc 不再去停 agent —— agent 在跑正是
+   * 用 /btw 的时候,想关答案却把 agent 停了,对正在烧录的板子是实打实的损失(docs/btw顺便问-设计方案-20260924.md §4.8)。
+   */
+  onDismissBtw?: () => boolean
   onSubmit?: () => void
   toolbar?: JSX.Element
 }
@@ -629,6 +629,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
         title: opt.title,
         description: opt.description,
         keybind: opt.keybind,
+        ...(opt.slashInsert ? { insert: opt.slashInsert } : {}),
       })),
   )
 
@@ -636,6 +637,14 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     if (!cmd) return
     closePopover()
     const images = imageAttachments()
+
+    // 带参数的命令:写进输入框、光标放末尾,等用户接着打参数(附件照留)。
+    if (cmd.insert) {
+      const text = cmd.insert
+      prompt.set([{ type: "text", content: text, start: 0, end: text.length }, ...images], text.length)
+      restoreFocus()
+      return
+    }
 
     clearEditor()
     prompt.set([...DEFAULT_PROMPT, ...images], 0)
@@ -871,11 +880,11 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       return
     }
 
-    const atMatch = rawText.substring(0, cursorPosition).match(/@(\S*)$/)
+    const mention = atMentionRange(rawText, cursorPosition)
     const slashMatch = rawText.match(/^\/(\S*)$/)
 
-    if (atMatch) {
-      atOnInput(atMatch[1])
+    if (mention) {
+      atOnInput(rawText.slice(mention.start + 1, mention.end))
       setStore("popover", "at")
     } else if (slashMatch) {
       slashOnInput(slashMatch[1])
@@ -1019,44 +1028,6 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     history.add(prompt, historyComments())
   }
 
-  createEffect(
-    on(
-      () => props.edit?.id,
-      (id) => {
-        const edit = props.edit
-        if (!id || !edit) return
-
-        for (const item of prompt.context.items()) {
-          prompt.context.remove(item.key)
-        }
-
-        for (const item of edit.context) {
-          prompt.context.add({
-            type: item.type,
-            path: item.path,
-            selection: item.selection,
-            comment: item.comment,
-            commentID: item.commentID,
-            commentOrigin: item.commentOrigin,
-            preview: item.preview,
-          })
-        }
-
-        setStore("popover", null)
-        setStore("historyIndex", -1)
-        setStore("savedPrompt", null)
-        prompt.set(edit.prompt, promptLength(edit.prompt))
-        requestAnimationFrame(() => {
-          editorRef.focus()
-          setCursorPosition(editorRef, promptLength(edit.prompt))
-          queueScroll()
-        })
-        props.onEditLoaded?.()
-      },
-      { defer: true },
-    ),
-  )
-
   const navigateHistory = (direction: "up" | "down") => {
     const result = navigatePromptHistory({
       direction,
@@ -1121,9 +1092,6 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
         resetHistoryNavigation(true)
       },
       setPopover: (popover) => setStore("popover", popover),
-      shouldQueue: props.shouldQueue,
-      onQueue: props.onQueue,
-      onAbort: props.onAbort,
       onSubmit: props.onSubmit,
     })
 
@@ -1155,6 +1123,12 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     if (event.key === "Escape") {
       if (store.popover) {
         closePopover()
+        event.preventDefault()
+        event.stopPropagation()
+        return
+      }
+
+      if (props.onDismissBtw?.()) {
         event.preventDefault()
         event.stopPropagation()
         return
@@ -1221,6 +1195,11 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
         event.preventDefault()
         return
       }
+      // 与 Esc 同一个顺序:/btw 的坞开着就先关它。
+      if (props.onDismissBtw?.()) {
+        event.preventDefault()
+        return
+      }
       if (working()) {
         void abort()
         event.preventDefault()
@@ -1278,7 +1257,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     (p) => p,
   )
 
-  const designPlaceholder = () => "Ask anything, / for commands, @ for context..."
+  const designPlaceholder = () => language.t("session.workbench.prompt")
 
   const modelControlState = createMemo<ComposerModelControlState>(() => ({
     loading: providersLoading(),

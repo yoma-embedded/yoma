@@ -122,6 +122,8 @@ const JLINK: ToolchainFamilyTool = {
 	optional: true,
 	// win32 靠 PATHEXT 展开成 JLink.exe;macOS/Linux 的官方分发叫 JLinkExe。
 	bin: ["JLink", "JLinkExe"],
+	// Commander 没有能正常退出的版本参数:--version 打完横幅报 unknown option、退出 1(见 version.ts)。
+	versionPattern: "J-Link Commander V(\\d+\\.\\d+)",
 	install: {
 		win32: "从 segger.com 装 J-Link Software Pack(安装器会注册 JLink.exe 与驱动)",
 		darwin: "从 segger.com 装 J-Link Software Pack(.pkg)",
@@ -137,8 +139,16 @@ const KEIL: ToolchainFamilyTool = {
 	// 探测编译器而不是 UV4.exe:UV4 是 GUI,对它 spawn --version 会真的弹起 IDE;
 	// armclang/armcc 是老实的命令行程序,而且是构建真正要用的东西。
 	bin: ["armclang", "armcc"],
+	// 用户贴的多半是安装根或 UV4(IDE 在那),编译器在旁边的 ARM 树里:AC6 在 ARM\ARMCLANG\bin;AC5 在老 MDK
+	// 的 ARM\ARMCC\bin / ARM\BIN,MDK 5.37 起不再自带、另装进 ARM\ARM_Compiler_5.06u7\bin(2026-09-24 实机)。
+	binDirs: ["ARM/ARMCLANG/bin", "ARM/ARMCC/bin", "ARM/BIN", "ARM/ARM_Compiler_*/bin"],
+	// armcc 不认 --version(C3900U: Unrecognized option,退出 1);--vsn 两代编译器都认、都退出 0。
+	versionArgs: ["--vsn"],
+	// 第一行是 "Product: MDK Professional 5.43"(MDK 的版本),编译器自己的在
+	// "Component: Arm Compiler for Embedded 6.24" / "Component: ARM Compiler 5.06 update 7 (build 960)"。
+	versionPattern: "Component: (?:Arm|ARM) Compiler[^\\d\\n]*(\\d+\\.\\d+(?:\\.\\d+)?)",
 	install: {
-		win32: "从 keil.com 装 MDK(MDK-Community 免费,需注册);编译器在安装目录的 ARM 子目录下,把 armclang 所在的 bin 目录路径填进来即可",
+		win32: "从 keil.com 装 MDK(MDK-Community 免费,需注册);填 Keil 的安装目录(Keil_v5)或其中的 UV4 目录即可,编译器会从 ARM 子目录里找到",
 	},
 };
 
@@ -351,7 +361,7 @@ export function findToolchainFamily(id: string): ToolchainFamily | undefined {
  * 环境变量、怎么装、怎么问版本。**不继承**的是"这个项目**怎么要**它":optional(预设里的 optional
  * 是设置页的语境,项目点了名就是要)、version、side、why。
  */
-const INHERITED_FIELDS = ["bin", "binMode", "pathKind", "marker", "env", "exports", "versionArgs", "install", "from"] as const;
+const INHERITED_FIELDS = ["bin", "binMode", "pathKind", "marker", "binDirs", "env", "exports", "versionArgs", "versionPattern", "install", "from"] as const;
 
 function providerOf(id: string): ProviderSpec | undefined {
 	for (const family of TOOLCHAIN_FAMILIES) {

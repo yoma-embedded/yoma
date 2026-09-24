@@ -29,6 +29,7 @@ import { createKernelHost, SessionManager } from "./index.ts"
 import type { KernelEvent } from "../protocol.ts"
 import type { AssistantMessage, CompactionPart, Part, Session, ToolPart } from "../types.ts"
 import { patient } from "../../test/patience.ts"
+import type { ProjectContextView } from "../project-view.ts"
 
 // 真 ~/.yoma/probe.lock 归用户,测试绝不碰它。这个文件里有用例会真跑 flash,flash 要先拿探针租约,而租约
 // 除了进程内那份还落一把**跨进程**的锁文件。不隔离的话,vitest 分给不同 worker 进程的用例文件共用机器上
@@ -734,7 +735,7 @@ describe("子 agent 的 RPC", () => {
         model: "faux/plain",
       })
       expect(agents.find((agent) => agent.name === "Explore")?.tools).toBe(
-        "All tools except edit, write, toolchain, stm32config",
+        "All tools except edit, write, toolchain, stm32config, project",
       )
 
       const session = (await host.handle("session.create", { directory: workspace })) as Session
@@ -924,6 +925,57 @@ describe("轮级自动重试", () => {
 })
 
 describe("项目资源发现", () => {
+  test("项目记忆进入真实模型上下文，停用后当前会话和新会话都不再注入", async () => {
+    const prompts: string[] = []
+    const capture = (context: TranscriptContext) => {
+      prompts.push(getCurrentSystemPrompt(context.messages))
+      return fauxAssistantMessage([fauxText("已检查工程上下文")])
+    }
+    const { host, workspace, events } = makeHost([capture, capture, capture])
+    const directory = workspace
+    try {
+      let view = await host.handle("project.context", { directory }) as ProjectContextView
+      view = await host.handle("project.remember", { directory, revision: view.revision, memory: {
+        title: "板卡串口约定", content: "BOARD_A_DEBUG_PORT_PA2", kind: "fact", confidence: "verified",
+        evidence: "User confirmed schematic A", scope: "board A", enabled: true,
+      } }) as ProjectContextView
+      const first = await host.handle("session.create", { directory }) as Session
+      await host.handle("session.prompt", { sessionID: first.id, input: { text: "检查工程" } })
+      await waitFor(() => prompts.length === 1 && statusesOf(events).at(-1) === "idle")
+      expect(prompts[0]).toContain("BOARD_A_DEBUG_PORT_PA2")
+      await host.handle("project.remember", { directory, revision: view.revision,
+        memory: { ...view.memories[0], enabled: false } })
+      await host.handle("session.prompt", { sessionID: first.id, input: { text: "再次检查" } })
+      await waitFor(() => prompts.length === 2 && statusesOf(events).at(-1) === "idle")
+      expect(prompts[1]).not.toContain("BOARD_A_DEBUG_PORT_PA2")
+      const second = await host.handle("session.create", { directory }) as Session
+      await host.handle("session.prompt", { sessionID: second.id, input: { text: "检查工程" } })
+      await waitFor(() => prompts.length === 3 && statusesOf(events).at(-1) === "idle")
+      expect(prompts[2]).not.toContain("BOARD_A_DEBUG_PORT_PA2")
+    } finally { await host.dispose() }
+  })
+
+  test("模型通过 project 工具保存的经验会持久化并标记来源会话", async () => {
+    const workspace = tempDir("yoma-ws-")
+    const { inspectProject } = await import("./domain/project/store.ts")
+    const revision = (await inspectProject(workspace)).revision
+    const { host, events } = makeHost([
+      fauxAssistantMessage([fauxToolCall("project", { action: "remember", revision, memory: {
+        title: "构建交接", content: "需要继续检查链接脚本", kind: "handoff", confidence: "hypothesis",
+        evidence: "build.log", scope: "board A", enabled: true,
+      } })]),
+      fauxAssistantMessage([fauxText("已记录交接")]),
+    ], { workspace })
+    try {
+      const session = await host.handle("session.create", { directory: workspace }) as Session
+      await host.handle("session.prompt", { sessionID: session.id, input: { text: "保存交接" } })
+      await waitFor(() => statusesOf(events).at(-1) === "idle")
+      const view = await host.handle("project.context", { directory: workspace }) as ProjectContextView
+      expect(view.memories).toHaveLength(1)
+      expect(view.memories[0]).toMatchObject({ title: "构建交接", source: `session:${session.id}` })
+    } finally { await host.dispose() }
+  })
+
   test("工作目录的 AGENTS.md 会进系统提示词 —— 与 Zed 里看到的是同一份项目上下文", async () => {
     const workspace = tempDir("yoma-ws-")
     writeFileSync(path.join(workspace, "AGENTS.md"), "本项目的板子是 STM32G474,烧录前必须先 make。")

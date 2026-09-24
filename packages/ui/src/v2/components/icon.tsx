@@ -117,6 +117,10 @@ const icons = {
     viewBox: "0 0 16 16",
     body: `<path d="M9.5 2.5H13.5V6.5" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/><path d="M6.5 13.5H2.5V9.5" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>`,
   },
+  "collapse-corners": {
+    viewBox: "0 0 16 16",
+    body: `<path d="M13.5 6.5H9.5V2.5" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/><path d="M2.5 9.5H6.5V13.5" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>`,
+  },
   "dots-horizontal": {
     viewBox: "0 0 16 16",
     body: `<circle cx="3.75" cy="8" r="1.05" fill="currentColor"/><circle cx="8" cy="8" r="1.05" fill="currentColor"/><circle cx="12.25" cy="8" r="1.05" fill="currentColor"/>`,

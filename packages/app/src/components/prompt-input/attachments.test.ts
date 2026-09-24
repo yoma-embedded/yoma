@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest"
 import type { ContentPart } from "@/context/prompt"
 import { createPromptAttachmentsCore } from "./attachments"
-import { attachmentMime, pickAttachmentFiles } from "./files"
+import { attachmentMime, pickAttachmentFiles, unreadableImage } from "./files"
 import { pasteMode } from "./paste"
 
 describe("attachmentMime", () => {
@@ -36,6 +36,7 @@ describe("createPromptAttachmentsCore.add 的能力分流", () => {
     const insertedParts: ContentPart[] = []
     let warned = 0
     let warnedPdf = 0
+    let warnedImage = 0
     const core = createPromptAttachmentsCore({
       capture: () => ({
         current: () => parts,
@@ -55,6 +56,9 @@ describe("createPromptAttachmentsCore.add 的能力分流", () => {
       warnPdf: () => {
         warnedPdf += 1
       },
+      warnImage: () => {
+        warnedImage += 1
+      },
       getPathForFile: options.getPathForFile,
     })
     return {
@@ -63,6 +67,7 @@ describe("createPromptAttachmentsCore.add 的能力分流", () => {
       insertedParts,
       warned: () => warned,
       warnedPdf: () => warnedPdf,
+      warnedImage: () => warnedImage,
     }
   }
 
@@ -121,6 +126,82 @@ describe("createPromptAttachmentsCore.add 的能力分流", () => {
     expect(h.parts()).toHaveLength(0)
     expect(h.insertedParts).toEqual([{ type: "file", path: "C:\\proj\\main.c", content: "@C:\\proj\\main.c", start: 0, end: 0 }])
     expect(h.warned()).toBe(0)
+  })
+
+  // 固件产物是这个产品里最常被拖进来的东西:.elf / .bin / .hex 拖进去,agent 拿到路径就能去烧录、反汇编。
+  // 它们的内容探测不出 mime(attachmentMime 返回 undefined),以前在这里就被拒了。
+  test("二进制文件有真实路径(desktop)时同样转成 @path,内容不进渲染器", async () => {
+    const h = makeHarness({ getPathForFile: () => "/proj/build/firmware.elf" })
+    const file = new File([Uint8Array.of(0x7f, 0x45, 0x4c, 0x46, 0, 0, 0)], "firmware.elf", {
+      type: "application/octet-stream",
+    })
+    expect(await attachmentMime(file)).toBeUndefined()
+    expect(await h.core.addAttachment(file)).toBe(true)
+    expect(h.parts()).toHaveLength(0)
+    expect(h.insertedParts).toEqual([
+      { type: "file", path: "/proj/build/firmware.elf", content: "@/proj/build/firmware.elf", start: 0, end: 0 },
+    ])
+    expect(h.warned()).toBe(0)
+  })
+
+  test("批量里混着二进制和图片:二进制走 @path,图片照旧,不报不支持", async () => {
+    const paths = new Map<string, string>([["app.bin", "/proj/build/app.bin"]])
+    const h = makeHarness({ getPathForFile: (file) => paths.get(file.name) ?? "" })
+    const found = await h.core.addAttachments([
+      new File([Uint8Array.of(0, 1, 2, 3)], "app.bin"),
+      new File([Uint8Array.of(1)], "board.png", { type: "image/png" }),
+    ])
+    expect(found).toBe(true)
+    expect(h.insertedParts).toMatchObject([{ type: "file", path: "/proj/build/app.bin" }])
+    expect(h.parts()).toHaveLength(1)
+    expect(h.warned()).toBe(0)
+  })
+
+  test("二进制文件没有真实路径(web)时明说做不了", async () => {
+    const h = makeHarness()
+    const file = new File([Uint8Array.of(0, 255, 1, 2)], "blob.bin", { type: "application/octet-stream" })
+    expect(await h.core.addAttachment(file)).toBe(false)
+    expect(h.insertedParts).toHaveLength(0)
+    expect(h.parts()).toHaveLength(0)
+    expect(h.warned()).toBe(1)
+    expect(h.warnedPdf()).toBe(0)
+  })
+
+  // desktop 的原生选择器对图片之外的文件只交一个带名字和路径的空壳(不读内容),这里必须照样认。
+  test("原生选择器交来的空壳文件(零字节 + 真实路径)转成 @path", async () => {
+    const h = makeHarness({ getPathForFile: () => "/proj/build/firmware.hex" })
+    expect(await h.core.addAttachment(new File([], "firmware.hex"))).toBe(true)
+    expect(h.insertedParts).toMatchObject([{ type: "file", path: "/proj/build/firmware.hex" }])
+  })
+
+  // 审查抓到的回归:放开"有路径就转 @path"之后,HEIC / AVIF / TIFF 这类模型看不了、read 也解不开的图片
+  // 也跟着变成了一颗 pill —— 看着像成功,模型什么都看不到。以前它们是被拒的,现在明说是图片格式的问题。
+  test("模型看不了的图片格式(HEIC)有路径也不转 @path,给图片格式的专门提示", async () => {
+    const h = makeHarness({ getPathForFile: () => "/Users/me/Desktop/IMG_1234.heic" })
+    const file = new File([Uint8Array.of(0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70)], "IMG_1234.heic", { type: "image/heic" })
+    expect(await h.core.addAttachment(file)).toBe(false)
+    expect(h.insertedParts).toHaveLength(0)
+    expect(h.parts()).toHaveLength(0)
+    expect(h.warnedImage()).toBe(1)
+    expect(h.warned()).toBe(0)
+  })
+
+  test("一批里混着一张 TIFF:别的文件进去了,它照样要说一声", async () => {
+    const h = makeHarness({ getPathForFile: (file) => `/proj/${file.name}` })
+    // 原生选择器交来的是没有 type 的空壳,只能按扩展名认
+    expect(await h.core.addAttachments([new File([], "scope-capture.tiff"), new File([], "firmware.elf")])).toBe(true)
+    expect(h.insertedParts).toMatchObject([{ type: "file", path: "/proj/firmware.elf" }])
+    expect(h.warnedImage()).toBe(1)
+  })
+
+  test("unreadableImage:BMP(read 会转成 PNG)和 SVG(文本)不算,照旧按路径交", () => {
+    expect(unreadableImage(new File([], "a.heic"))).toBe(true)
+    expect(unreadableImage(new File([], "a.AVIF"))).toBe(true)
+    expect(unreadableImage(new File([], "a.bin", { type: "image/tiff" }))).toBe(true)
+    expect(unreadableImage(new File([], "logo.bmp", { type: "image/bmp" }))).toBe(false)
+    expect(unreadableImage(new File([], "diagram.svg", { type: "image/svg+xml" }))).toBe(false)
+    expect(unreadableImage(new File([], "board.png", { type: "image/png" }))).toBe(false)
+    expect(unreadableImage(new File([], "firmware.elf"))).toBe(false)
   })
 
   test("文本文件没有真实路径(web 宿主的内存 File)时明说做不了", async () => {

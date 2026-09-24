@@ -33,6 +33,30 @@ describe("atMentionRange", () => {
     expect(atMentionRange("@packages/", 10)).toEqual({ start: 0, end: 10 })
     expect(atMentionRange("@packages/app/", 14)).toEqual({ start: 0, end: 14 })
   })
+
+  test("@ 贴在字后面是普通字符 —— 邮箱、中文句子里的 @ 都不弹候选", () => {
+    expect(atMentionRange("foo@", 4)).toBeNull()
+    expect(atMentionRange("mail a@b.com", 12)).toBeNull()
+    expect(atMentionRange("看看@src", 6)).toBeNull()
+    // 前面那个 @ 不独立,后面这个也贴着它:整串都不算。
+    expect(atMentionRange("a@@", 3)).toBeNull()
+  })
+
+  test("补在一个词前面的 @ 是普通字符 —— 光标后面紧跟着字就不算", () => {
+    // 在 "see README" 的 R 前面敲 @,接着再敲几个字,都不弹。
+    expect(atMentionRange("see @README", 5)).toBeNull()
+    expect(atMentionRange("see @srcREADME", 8)).toBeNull()
+    // 光标后面是空白就行:同一段文字,光标换个位置就是提及。
+    expect(atMentionRange("see @src README", 8)).toEqual({ start: 4, end: 8 })
+    expect(atMentionRange("@ tail", 1)).toEqual({ start: 0, end: 1 })
+  })
+
+  test("空白不只是半角空格:换行、全角空格、粘贴进来的 NBSP 都算", () => {
+    expect(atMentionRange("line\n@src", 9)).toEqual({ start: 5, end: 9 })
+    expect(atMentionRange("看\u3000@", 3)).toEqual({ start: 2, end: 3 })
+    expect(atMentionRange("a\u00a0@src", 6)).toEqual({ start: 2, end: 6 })
+    expect(atMentionRange("@src\nmore", 4)).toEqual({ start: 0, end: 4 })
+  })
 })
 
 describe("prompt-input editor dom", () => {

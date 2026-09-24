@@ -11,8 +11,8 @@
  *   (`log-feed.ts` 按工程目录引用计数),不额外发请求;
  * - 控制台开合。
  *
- * 点状态条上的一格 = 打开对应的地方:文本流仪器(日志 / GDB)开底部控制台的那一页签,
- * 波形仪器(示波器 / LA)切右栏。哪一台走哪条路由注册表的 `surface` 说了算,这里不写死。
+ * 点状态条上的一格 = 打开对应的地方:日志开底部控制台,调试器跟示波器、逻辑分析仪一起切右栏。
+ * 哪一台走哪条路由注册表的 `surface` 说了算,这里不写死。
  */
 import { createEffect, createMemo, Show } from "solid-js"
 import { Icon } from "@yoma-desktop/ui/icon"

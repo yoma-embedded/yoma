@@ -17,6 +17,7 @@ const sessionFields = new Set([
   "part_text_accum_delta",
   "task",
   "queue",
+  "btw",
 ])
 
 export const createDirSyncContext = (
@@ -96,6 +97,8 @@ export const createDirSyncContext = (
       },
       // 删掉的 diff / todo:内核没有文件快照,也没有 todo 工具。
       history: serverSync.session.history,
+      /** 用户关掉这个会话的顺便问(本地先拿掉;要不要通知内核看返回值)。 */
+      dismissBtw: (sessionID: string) => serverSync.session.dismissBtw(sessionID),
       evict(sessionID: string) {
         serverSync.session.evict(sessionID)
       },

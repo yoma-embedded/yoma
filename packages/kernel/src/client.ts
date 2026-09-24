@@ -57,6 +57,10 @@ export interface KernelClient {
     info(): Promise<KernelResult<"app.info">>
     preflight(): Promise<KernelResult<"app.preflight">>
   }
+  instrument: {
+    execute(params: KernelParams<"instrument.execute">): Promise<KernelResult<"instrument.execute">>
+    ports(): Promise<KernelResult<"instrument.ports">>
+  }
   session: {
     /** 回答一条工具确认。`accepted:false` = 这条询问已经不在了(超时 / 会话关了),不是错误。 */
     confirmReply(params: { id: string; allow: boolean }): Promise<{ accepted: boolean }>
@@ -75,6 +79,12 @@ export interface KernelClient {
     abort(sessionID: string): Promise<KernelResult<"session.abort">>
     /** 撤回一条还没被取走的排队消息,原文与图片交回。 */
     cancelQueued(params: { sessionID: string; entryId: string }): Promise<KernelResult<"session.cancelQueued">>
+    /** /btw 顺便问一句:立即回 btwID,答案走 `session.btw` 事件。不打断、不排队、不进对话历史。 */
+    btw(sessionID: string, input: PromptInput): Promise<KernelResult<"session.btw">>
+    /** 关掉这条顺便问(还在答就取消)。 */
+    btwCancel(params: { sessionID: string; btwID: string }): Promise<void>
+    /** 把答完的顺便问转成后台子 agent(照 CC 的 fork)。 */
+    btwFork(params: { sessionID: string; btwID: string }): Promise<KernelResult<"session.btwFork">>
     compact(sessionID: string): Promise<void>
     navigate(sessionID: string, messageID: string): Promise<{ editorText: string }>
     setModel(params: {
@@ -179,9 +189,16 @@ export function createKernelClient(transport: KernelTransport): KernelClient {
       prompt: (sessionID, input) => call("session.prompt", { sessionID, input }),
       abort: (sessionID) => call("session.abort", { sessionID }),
       cancelQueued: (params) => call("session.cancelQueued", params),
+      btw: (sessionID, input) => call("session.btw", { sessionID, input }),
+      btwCancel: (params) => call("session.btwCancel", params),
+      btwFork: (params) => call("session.btwFork", params),
       compact: (sessionID) => call("session.compact", { sessionID }),
       navigate: (sessionID, messageID) => call("session.navigate", { sessionID, messageID }),
       setModel: (params) => call("session.setModel", params),
+    },
+    instrument: {
+      execute: (params) => call("instrument.execute", params),
+      ports: () => call("instrument.ports", undefined),
     },
     task: {
       list: (params) => call("task.list", params),

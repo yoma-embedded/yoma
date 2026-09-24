@@ -111,159 +111,103 @@
   line-height: 1.5;
 }
 
-/* ---- 示波器：保存的模拟波形与仪器截图（只读） ---- */
+/* ---- Saved oscilloscope captures: controls are local to the recorded waveform. ---- */
 [data-component="scope-body"] {
+  --d-ink: var(--text-strong);
+  --d-muted: var(--text-base);
+  --d-faint: var(--text-weak);
+  --d-line: var(--border-weak-base, var(--border-base));
   min-width: 0;
+  color: var(--d-ink);
 }
 [data-component="scope-body"] select {
   min-width: 0;
+  min-height: 30px;
   color: var(--d-ink);
   background: var(--d-panel);
   border: 1px solid var(--d-line);
-  border-radius: 5px;
-  padding: 3px 6px;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
 }
-[data-component="scope-body"] > .ydbg-win-meta select {
-  flex: 1;
-  width: 0;
-}
+[data-component="scope-body"] > .ydbg-win-meta select { flex: 1; width: 0; }
 [data-component="scope-body"] button {
   background: var(--d-panel);
   color: var(--d-ink);
   border: 1px solid var(--d-line);
-  border-radius: 5px;
-  padding: 3px 7px;
+  border-radius: 6px;
+  padding: 5px 9px;
+  min-height: 29px;
   font-size: 11px;
   cursor: pointer;
+  transition: background 120ms, border-color 120ms;
 }
-[data-component="scope-body"] button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-[data-component="scope-body"] button[aria-pressed="true"] {
-  background: var(--d-accent-tint);
-  border-color: var(--d-accent);
-}
-[data-component="scope-body"] [data-slot="identity"] {
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-[data-component="scope-body"] [data-slot="acquisition"],
-[data-component="scope-body"] [data-slot="sampling"] {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px 12px;
-  font-size: 11px;
-  color: var(--d-muted);
-  margin: 6px 0;
-}
-[data-component="scope-body"] [data-slot="error"] {
-  color: var(--d-fail);
-  background: var(--d-fail-bg);
-  border-radius: 6px;
-  padding: 6px 8px;
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-[data-component="scope-waveform"] {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  gap: 7px;
-  margin-top: 12px;
-}
+[data-component="scope-body"] button:hover:not(:disabled) { background: var(--d-panel-2); border-color: var(--d-muted); }
+[data-component="scope-body"] button:disabled { opacity: 0.45; cursor: default; }
+[data-component="scope-body"] button[aria-pressed="true"] { background: var(--d-accent-tint); border-color: var(--d-accent); color: var(--d-accent); }
+[data-component="scope-body"] button:focus-visible,
+[data-component="scope-body"] select:focus-visible,
+[data-component="scope-waveform"] canvas:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
+[data-component="scope-body"] [data-slot="history-toolbar"] { gap: 7px; margin-bottom: 0; }
+[data-component="scope-body"] [data-slot="read-only"] { flex-shrink: 0; color: var(--d-muted); font-size: 10px; }
+[data-component="scope-body"] [data-slot="quality-warning"] { color: var(--d-warn, #a27316); font-size: 10px; line-height: 1.5; margin-top: 6px; }
+[data-component="scope-body"] [data-slot="identity"] { display: flex; align-items: baseline; gap: 10px; margin-top: 13px; font-size: 13px; overflow-wrap: anywhere; }
+[data-component="scope-body"] [data-slot="identity"] > span { font: 10px var(--d-mono); color: var(--d-muted); }
+[data-component="scope-body"] [data-slot="acquisition"] { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; font-size: 10px; color: var(--d-muted); margin: 8px 0; }
+[data-component="scope-body"] [data-slot="quality"] { color: var(--d-ink); }
+[data-component="scope-body"] [data-slot="quality"][data-quality="overview"],
+[data-component="scope-body"] [data-slot="clipped"] { color: var(--d-warn, #a27316); }
+[data-component="scope-body"] [data-slot="error"] { color: var(--d-fail); background: var(--d-fail-bg); border-radius: 6px; padding: 8px 10px; font-size: 12px; overflow-wrap: anywhere; }
+[data-component="scope-body"] [data-slot="empty"] { display: flex; flex-direction: column; gap: 8px; padding: 32px 18px; background: var(--d-panel); border: 1px dashed var(--d-line); border-radius: 8px; }
+[data-component="scope-body"] [data-slot="empty"] strong { font-size: 14px; color: var(--d-ink); }
+[data-component="scope-body"] [data-slot="empty"] p { margin: 0; max-width: 50ch; font-size: 12px; line-height: 1.7; color: var(--d-muted); }
+[data-component="scope-body"] [data-slot="empty"] > span { font-size: 11px; color: var(--d-faint); line-height: 1.6; }
+[data-component="scope-waveform"] { display: flex; flex-direction: column; min-width: 0; gap: 7px; margin-top: 7px; }
+[data-component="scope-waveform"] [data-slot="scale-strip"] { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 16px; padding: 7px 10px; background: var(--d-panel-2); border: 1px solid var(--d-line); border-radius: 7px; }
+[data-component="scope-waveform"] [data-slot="scale-strip"] > div { display: flex; align-items: baseline; gap: 6px; }
+[data-component="scope-waveform"] [data-slot="scale-strip"] > div > span { color: var(--d-muted); font-size: 10px; font-family: var(--d-sans, inherit); }
+[data-component="scope-waveform"] [data-slot="scale-strip"] strong { font-size: 12px; font-weight: 600; white-space: nowrap; }
+[data-component="scope-waveform"] [data-slot="scale-strip"] small { margin-left: 2px; color: var(--d-muted); font-size: 10px; font-weight: normal; }
+[data-component="scope-waveform"] [data-slot="view-range"] { display: flex; align-items: baseline; gap: 9px; font-size: 10px; color: var(--d-muted); }
+[data-component="scope-waveform"] [data-slot="view-range"] strong { font-weight: normal; }
+[data-component="scope-waveform"] [data-slot="resolution"] { margin-left: auto; color: var(--d-muted); font-size: 10px; }
 [data-component="scope-waveform"] [data-slot="controls"],
 [data-component="scope-waveform"] [data-slot="actions"],
 [data-component="scope-waveform"] [data-slot="channels"],
-[data-component="scope-waveform"] [data-slot="readout"] {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px 10px;
-  font-size: 11px;
-}
-[data-component="scope-waveform"] [data-slot="controls"] {
-  justify-content: space-between;
-}
-[data-component="scope-waveform"] [data-slot="actions"] {
-  gap: 4px;
-}
-[data-component="scope-waveform"] [data-slot="channels"] label {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-[data-component="scope-waveform"] [data-slot="channels"] input {
-  accent-color: currentColor;
-}
-[data-component="scope-waveform"] [data-slot="plot"] {
-  position: relative;
-  min-width: 0;
-  min-height: 280px;
-  background: var(--d-panel);
-  border-radius: 5px;
-}
-[data-component="scope-waveform"] canvas {
-  display: block;
-  max-width: 100%;
-  touch-action: none;
-  cursor: crosshair;
-}
-[data-component="scope-waveform"] [data-slot="loading"] {
-  position: absolute;
-  top: 7px;
-  right: 10px;
-  font-size: 11px;
-  color: var(--d-muted);
-}
-[data-component="scope-waveform"] [data-slot="cursor-table"] {
-  min-width: 0;
-  max-width: 100%;
-  overflow-x: auto;
-  font: 11px var(--d-mono);
-}
-[data-component="scope-waveform"] table {
-  width: 100%;
-  table-layout: fixed;
-  border-collapse: collapse;
-}
-[data-component="scope-waveform"] th:first-child {
-  width: 44px;
-}
+[data-component="scope-waveform"] [data-slot="readout"] { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; font-size: 11px; }
+[data-component="scope-waveform"] [data-slot="controls"] { justify-content: space-between; }
+[data-component="scope-waveform"] [data-slot="actions"] { gap: 4px; }
+[data-component="scope-waveform"] [data-slot="actions"] button { min-width: 29px; }
+[data-component="scope-waveform"] [data-slot="channels"] { gap: 6px; }
+[data-component="scope-waveform"] [data-slot="channels"] label { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; background: var(--d-panel); border: 1px solid var(--d-line); border-left: 3px solid var(--scope-channel, var(--d-line)); border-radius: 5px; padding: 6px 9px; cursor: pointer; }
+[data-component="scope-waveform"] [data-slot="channels"] label[data-hidden="true"] { opacity: 0.5; }
+[data-component="scope-waveform"] [data-slot="channels"] label strong { color: var(--scope-channel); font: 600 11px var(--d-mono); }
+[data-component="scope-waveform"] [data-slot="channels"] label small { color: var(--d-muted); font: 10px var(--d-mono); }
+[data-component="scope-waveform"] [data-slot="channels"] input { accent-color: var(--scope-channel); width: 12px; height: 12px; margin: 0; }
+[data-component="scope-waveform"] [data-slot="plot"] { position: relative; min-width: 0; background: var(--d-panel); border: 1px solid var(--d-line); border-radius: 7px; overflow: hidden; }
+[data-component="scope-waveform"] canvas { display: block; width: 100%; max-width: 100%; touch-action: none; cursor: crosshair; }
+[data-component="scope-waveform"] [data-dragging="true"] canvas { cursor: grabbing; }
+[data-component="scope-waveform"] [data-slot="loading"] { position: absolute; top: 7px; right: 10px; font-size: 10px; color: var(--d-muted); padding: 3px 6px; border-radius: 4px; background: var(--d-panel); pointer-events: none; }
+[data-component="scope-waveform"] [data-slot="readout"] { gap: 8px 20px; padding: 9px 12px; background: var(--d-panel-2); border-radius: 6px; color: var(--d-muted); }
+[data-component="scope-waveform"] [data-slot="readout"] > span { display: inline-flex; gap: 9px; }
+[data-component="scope-waveform"] [data-slot="readout"] strong { color: var(--d-ink); font-weight: 500; }
+[data-component="scope-waveform"] [data-slot="readout"] [data-cursor="A"] { color: var(--d-accent); }
+[data-component="scope-waveform"] [data-slot="cursor-table"] { min-width: 0; max-width: 100%; overflow-x: auto; font: 11px var(--d-mono); }
+[data-component="scope-waveform"] table { width: 100%; table-layout: fixed; border-collapse: collapse; }
+[data-component="scope-waveform"] th:first-child { width: 50px; }
 [data-component="scope-waveform"] th,
-[data-component="scope-waveform"] td {
-  text-align: left;
-  font-weight: normal;
-  padding: 4px 7px;
-  border-bottom: 1px solid var(--d-line);
-  white-space: normal;
-  overflow-wrap: anywhere;
-  vertical-align: top;
-}
-[data-component="scope-body"] [data-slot="screen"] {
-  margin-top: 12px;
-}
-[data-component="scope-body"] figure {
-  margin: 8px 0 0;
-}
-[data-component="scope-body"] .scope-screen-image {
-  display: block;
-  padding: 0;
-  max-width: 100%;
-  overflow: hidden;
-  cursor: zoom-in;
-}
-[data-component="scope-body"] .scope-screen-image img {
-  display: block;
-  max-width: 100%;
-  max-height: 420px;
-  object-fit: contain;
-}
-[data-component="scope-body"] figcaption {
-  margin-top: 5px;
-  font-size: 11px;
-  color: var(--d-muted);
-}
+[data-component="scope-waveform"] td { text-align: left; font-weight: normal; padding: 7px; border-bottom: 1px solid var(--d-line); white-space: normal; overflow-wrap: anywhere; vertical-align: top; }
+[data-component="scope-waveform"] thead { color: var(--d-muted); font-size: 10px; }
+[data-component="scope-waveform"] [data-slot="gesture-hint"] { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 14px; font-size: 10px; line-height: 1.6; color: var(--d-muted); }
+[data-component="scope-body"] [data-slot="capture-details"] { border-top: 1px solid var(--d-line); margin-top: 14px; padding-top: 10px; }
+[data-component="scope-body"] [data-slot="capture-details"] summary { font-size: 11px; color: var(--d-muted); cursor: pointer; }
+[data-component="scope-body"] [data-slot="sampling"] { display: grid; gap: 8px; padding: 10px 0; }
+[data-component="scope-body"] [data-slot="sampling"] > div { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 12px; font-size: 10px; color: var(--d-muted); }
+[data-component="scope-body"] [data-slot="screen"] { margin-top: 12px; }
+[data-component="scope-body"] figure { margin: 8px 0 0; }
+[data-component="scope-body"] .scope-screen-image { display: block; padding: 0; max-width: 100%; overflow: hidden; cursor: zoom-in; }
+[data-component="scope-body"] .scope-screen-image img { display: block; max-width: 100%; max-height: 420px; object-fit: contain; }
+[data-component="scope-body"] figcaption { margin-top: 5px; font-size: 11px; color: var(--d-muted); }
 
 /* ---- 逻辑分析仪波形(真仪器,la-waveform.tsx) ---- */
 [data-component="la-body"] select[data-slot="pick"] {

@@ -6,8 +6,9 @@ import type { DesktopMenuAction } from "@yoma-desktop/app/desktop-menu"
 
 import type { FatalRendererError, TitlebarTheme } from "../preload/types"
 import { runDesktopMenuAction } from "./desktop-menu-actions"
-import { assertAttachmentBudget, createPickedFileAuthorizations } from "./attachment-picker"
+import { assertAttachmentBudget, createPickedFileAuthorizations, inlineAttachment } from "./attachment-picker"
 import { getStore } from "./store"
+import { stringItems } from "./store-batch"
 import { getPinchZoomEnabled, setPinchZoomEnabled, setTitlebar, updateTitlebar } from "./windows"
 import type { UpdaterController } from "./updater-controller"
 import { createUpdaterSubscriptions } from "./updater-subscriptions"
@@ -95,6 +96,16 @@ export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle("store-set", (_event: IpcMainInvokeEvent, name: string, key: string, value: string) => {
     getStore(name).set(key, value)
   })
+  // 渲染器的名字空间缓存走这两条:一个名字空间只读一次,一个窗口里攒的改动只写一次盘。
+  // 单键的 store-get / store-set 留着 —— 渲染器的 i18n 在 platform 建好之前要读一个键,闸门脚本也直接用。
+  // 读不了就让它失败,别回一个空对象:渲染器会把"空的"当真,拿缺省值去盖用户的数据。
+  ipcMain.handle("store-items", (_event: IpcMainInvokeEvent, name: string) => stringItems(getStore(name).entries()))
+  ipcMain.handle(
+    "store-update",
+    (_event: IpcMainInvokeEvent, name: string, insert: Record<string, string>, remove: string[]) => {
+      getStore(name).update(insert, remove)
+    },
+  )
   ipcMain.handle("store-delete", (_event: IpcMainInvokeEvent, name: string, key: string) => {
     getStore(name).delete(key)
   })
@@ -102,12 +113,10 @@ export function registerIpcHandlers(deps: Deps) {
     getStore(name).clear()
   })
   ipcMain.handle("store-keys", (_event: IpcMainInvokeEvent, name: string) => {
-    const store = getStore(name)
-    return Object.keys(store.store)
+    return Object.keys(getStore(name).entries())
   })
   ipcMain.handle("store-length", (_event: IpcMainInvokeEvent, name: string) => {
-    const store = getStore(name)
-    return Object.keys(store.store).length
+    return Object.keys(getStore(name).entries()).length
   })
 
   ipcMain.handle(
@@ -127,7 +136,13 @@ export function registerIpcHandlers(deps: Deps) {
     "open-file-picker",
     async (
       event: IpcMainInvokeEvent,
-      opts?: { multiple?: boolean; title?: string; defaultPath?: string; extensions?: string[] },
+      opts?: {
+        multiple?: boolean
+        title?: string
+        defaultPath?: string
+        extensions?: string[]
+        inlineExtensions?: string[]
+      },
     ) => {
       const result = await dialog.showOpenDialog({
         properties: ["openFile", ...(opts?.multiple ? ["multiSelections" as const] : [])],
@@ -141,10 +156,16 @@ export function registerIpcHandlers(deps: Deps) {
           path: filePath,
           name: basename(filePath),
           size: (await stat(filePath)).size,
+          inline: inlineAttachment(basename(filePath), opts?.inlineExtensions),
         })),
       )
-      assertAttachmentBudget(files)
-      const token = pickedFiles.add(event.sender.id, result.filePaths)
+      // 预算与读取授权都只管要读内容的那几个;只交路径的文件渲染器根本读不到。
+      const inline = files.filter((file) => file.inline)
+      assertAttachmentBudget(inline)
+      const token = pickedFiles.add(
+        event.sender.id,
+        inline.map((file) => file.path),
+      )
       return { token, files }
     },
   )

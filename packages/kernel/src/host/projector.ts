@@ -51,6 +51,15 @@ import type {
   UserMessage as ViewUser,
 } from "../types.ts"
 import { notificationSummary, parseTaskNotification, TASK_NOTIFICATION_TYPE } from "./domain/agents/notification.ts"
+import { FORK_BOILERPLATE_TAG, forkDirectiveOf } from "./btw.ts"
+
+/**
+ * 用户消息在 transcript 上显示的正文。fork(从 /btw 转出去的后台任务)的首轮末尾是一段给模型看的守则 + 指令,
+ * 界面上只画指令那一段(照 CC 把 `<fork-boilerplate>` 消息单独渲染的做法);模型收到的仍是原文。live 与重放都走这里。
+ */
+function userText(text: string): string {
+  return text.startsWith(`<${FORK_BOILERPLATE_TAG}>`) ? (forkDirectiveOf(text) ?? text) : text
+}
 
 const COUNTER_BITS = 12n
 const BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -360,10 +369,10 @@ export class SessionProjection {
     const parts: Part[] = []
     const content = message.content
     if (typeof content === "string") {
-      parts.push(this.textPart(id, 0, content))
+      parts.push(this.textPart(id, 0, userText(content)))
     } else {
       content.forEach((block, index) => {
-        if (block.type === "text") parts.push(this.textPart(id, index, block.text))
+        if (block.type === "text") parts.push(this.textPart(id, index, userText(block.text)))
         else if (block.type === "image") parts.push(this.filePart(id, index, block))
       })
     }

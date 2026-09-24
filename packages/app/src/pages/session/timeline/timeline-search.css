@@ -1,0 +1,99 @@
+[data-component="timeline-search"] {
+  position: absolute;
+  top: var(--timeline-search-top, 8px);
+  right: 16px;
+  z-index: 65;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  width: min(360px, calc(100% - 32px));
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--v2-background-bg-layer-01);
+  box-shadow:
+    0 0 0 0.5px var(--v2-border-border-base),
+    var(--v2-elevation-raised);
+
+  [data-slot="timeline-search-field"] {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 8px;
+    border-radius: 6px;
+    background: var(--v2-background-bg-layer-02);
+    color: var(--v2-icon-icon-muted);
+
+    &:focus-within {
+      box-shadow: 0 0 0 0.5px var(--v2-border-border-focus);
+    }
+  }
+
+  [data-slot="timeline-search-input"] {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--v2-text-text-base);
+    font-family: var(--font-family-sans);
+    font-size: var(--font-size-small);
+
+    &::placeholder {
+      color: var(--v2-text-text-faint);
+    }
+  }
+
+  [data-slot="timeline-search-count"] {
+    flex-shrink: 0;
+    color: var(--v2-text-text-muted);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  [data-slot="timeline-search-button"] {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--v2-icon-icon-muted);
+    cursor: pointer;
+
+    &:hover:not(:disabled) {
+      background: var(--v2-overlay-simple-overlay-hover);
+    }
+
+    &:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+
+    &[data-direction="previous"] svg {
+      transform: rotate(180deg);
+    }
+  }
+
+  [data-slot="timeline-search-note"] {
+    flex-basis: 100%;
+    padding: 2px 8px 4px;
+    color: var(--v2-text-text-faint);
+    font-size: 11px;
+  }
+}
+
+::highlight(timeline-search-hit) {
+  background-color: color-mix(in srgb, var(--v2-icon-icon-accent) 30%, transparent);
+}
+
+::highlight(timeline-search-hit-active) {
+  background-color: var(--v2-icon-icon-accent);
+  color: var(--v2-background-bg-deep);
+}

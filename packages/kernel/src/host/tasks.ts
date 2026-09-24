@@ -23,7 +23,7 @@
 import { appendFile, mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
 
-import { createCustomMessage, type AgentMessage } from "@earendil-works/pi-agent-core"
+import { createCustomMessage, type AgentMessage, type ThinkingLevel } from "@earendil-works/pi-agent-core"
 import type { AssistantMessage } from "@earendil-works/pi-ai"
 
 import type { KernelEvent } from "../protocol.ts"
@@ -47,7 +47,8 @@ import { toolContract } from "./tools/contracts.ts"
 export interface SubagentMeta {
   agent: string
   parentSessionId: string
-  toolCallId: string
+  /** 派它的那次 agent 工具调用。用户从 /btw 转出去的 fork 没有。 */
+  toolCallId?: string
   description: string
   background: boolean
   createdAt: number
@@ -57,13 +58,31 @@ export interface SubagentMeta {
   status?: TaskStatus
 }
 
+/**
+ * 把一条 /btw 转成后台子 agent(fork,docs/btw顺便问-设计方案-20260924.md §4.6)要带过去的东西。TaskManager 只是
+ * 原样转交给 `createChild`,读它的是 SessionManager。
+ */
+export interface ForkSpec {
+  /** 首轮的整串消息:继承的上下文 + 问答 + 指令(host/btw.ts 的 forkSeed)。只在内存里,首轮 accept 之后就在子会话的历史里了。 */
+  seed: AgentMessage[]
+  /** 主会话最后一次请求的系统提示词原字符串:fork 一直用它(缓存要逐字相同)。 */
+  systemPrompt: string
+  /** 主会话此刻的激活工具名;顺序就是请求里工具定义的顺序。 */
+  activeToolNames: string[]
+  model: { provider: string; modelId: string }
+  thinkingLevel: ThinkingLevel
+}
+
 export interface ChildSpec {
   agent: string
   description: string
-  toolCallId: string
+  /** 派它的那次 agent 工具调用;fork 没有。 */
+  toolCallId?: string
   background: boolean
   /** agent 工具的 model 入参("provider/modelId")。 */
   model?: string
+  /** 有它就是 fork:按主会话的样子装配,首轮种进继承来的上下文。 */
+  fork?: ForkSpec
 }
 
 /** TaskManager 对 SessionManager 的全部要求。 */
@@ -287,6 +306,34 @@ export class TaskManager {
     this.schedule(task, { prompt: request.prompt, first: true })
     if (background) return { kind: "async_launched", task: this.snapshot(task) }
     return this.awaitForeground(task)
+  }
+
+  /**
+   * 用户把一条 /btw 转成后台子 agent(fork,docs/btw顺便问-设计方案-20260924.md §4.6)。与 spawn 的后台那一支同路,
+   * 只是不查 profiles(fork 是合成的,不在列表里)、没有父工具调用,而且**一律后台**(CC:"A fork always runs in the
+   * background")—— 宿主不能后台时(bench / 信箱)直接拒。落定照常以 task-notification 通知父会话。
+   */
+  async fork(parentID: string, request: { agent: string; description: string; prompt: string; fork: ForkSpec }): Promise<TaskSnapshot> {
+    if (this.closing) throw new Error("The host is shutting down; no new sub-agents can be started.")
+    if (!this.options.background) throw new Error("这个宿主不跑后台任务,不能转成后台子 agent")
+    const childID = await this.port.createChild(parentID, {
+      agent: request.agent,
+      description: request.description,
+      background: true,
+      fork: request.fork,
+    })
+    const task = this.register({
+      id: childID,
+      parentID,
+      agent: request.agent,
+      description: request.description,
+      prompt: request.prompt,
+      oneShot: false,
+      background: true,
+    })
+    await this.prepareOutput(task)
+    this.schedule(task, { prompt: request.prompt, first: true })
+    return this.snapshot(task)
   }
 
   private register(init: {

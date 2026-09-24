@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest"
-import type { AssistantMessage, ModelRetry, UserMessage } from "@yoma-desktop/kernel"
+import type { AssistantMessage, ModelRetry, Part, UserMessage } from "@yoma-desktop/kernel"
 import { Timeline } from "./rows"
 
 const user: UserMessage = {
@@ -95,5 +95,159 @@ describe("model request status", () => {
     expect(requests([message])).toMatchObject([
       { state: "failed", providerID: "deepseek", text: "401 invalid api key" },
     ])
+  })
+})
+
+describe("连着的「找东西」工具并成一行", () => {
+  const toolPart = (id: string, messageID: string, tool: string): Part =>
+    ({
+      id,
+      sessionID: "session",
+      messageID,
+      callID: `call_${id}`,
+      type: "tool",
+      tool,
+      state: { status: "completed", input: {}, output: "", title: tool, metadata: {}, time: { start: 1, end: 2 } },
+    }) as Part
+  const textPart = (id: string, messageID: string, text: string): Part => ({
+    id,
+    sessionID: "session",
+    messageID,
+    type: "text",
+    text,
+  })
+  const reasoningPart = (id: string, messageID: string, text: string): Part =>
+    ({ id, sessionID: "session", messageID, type: "reasoning", text, time: { start: 1 } }) as Part
+  const build = (parts: Record<string, Part[]>, messages: AssistantMessage[], showReasoning = true) =>
+    Timeline.constructMessageRows(user, (id) => parts[id] ?? [], messages, 0, showReasoning, "idle", false).flatMap(
+      (row) => (row._tag === "AssistantPart" ? [row.group] : []),
+    )
+  const shape = (groups: ReturnType<typeof build>) =>
+    groups.map((group) => (group.type === "context" ? group.refs.map((ref) => ref.partID) : group.ref.partID))
+
+  test("同一条消息里连着的并成一组,中间隔了别的就断开", () => {
+    const groups = build(
+      {
+        a: [
+          toolPart("p1", "a", "read"),
+          toolPart("p2", "a", "grep"),
+          toolPart("p3", "a", "flash"),
+          toolPart("p4", "a", "ls"),
+          textPart("p5", "a", "看完了"),
+          toolPart("p6", "a", "find"),
+        ],
+      },
+      [assistant("a")],
+    )
+    expect(shape(groups)).toEqual([["p1", "p2"], "p3", ["p4"], "p5", ["p6"]])
+  })
+
+  // 内核每一步一条 assistant 消息:一轮里「读一个、想一下、再读一个」落在好几条消息上。
+  test("跨消息照样并;思考段展示时隔开它们,不展示时不隔", () => {
+    const parts = {
+      a: [reasoningPart("r1", "a", "先看启动文件"), toolPart("p1", "a", "read")],
+      b: [reasoningPart("r2", "b", "再看链接脚本"), toolPart("p2", "b", "read")],
+      c: [toolPart("p3", "c", "grep")],
+    }
+    const messages = [assistant("a"), assistant("b"), assistant("c")]
+    expect(shape(build(parts, messages, true))).toEqual(["r1", ["p1"], "r2", ["p2", "p3"]])
+    expect(shape(build(parts, messages, false))).toEqual([["p1", "p2", "p3"]])
+  })
+
+  test("组的 key 取第一个 part:后面再来多少个,这一行还是这一行", () => {
+    const one = build({ a: [toolPart("p1", "a", "read")] }, [assistant("a")])
+    const three = build(
+      { a: [toolPart("p1", "a", "read")], b: [toolPart("p2", "b", "read"), toolPart("p3", "b", "ls")] },
+      [assistant("a"), assistant("b")],
+    )
+    expect(one.map((group) => group.key)).toEqual(["context:a:p1"])
+    expect(three.map((group) => group.key)).toEqual(["context:a:p1"])
+  })
+
+  test("打断的分隔线两边不并到一起", () => {
+    const groups = Timeline.constructMessageRows(
+      user,
+      (id) => ({ a: [toolPart("p1", "a", "read")], b: [toolPart("p2", "b", "read")] })[id] ?? [],
+      [assistant("a", { error: { name: "MessageAbortedError", data: { message: "Stopped" } } }), assistant("b")],
+      0,
+      true,
+      "idle",
+      false,
+    ).map((row) => (row._tag === "AssistantPart" ? shape([row.group])[0] : row._tag))
+    expect(groups).toEqual(["UserMessage", ["p1"], "TurnDivider", ["p2"]])
+  })
+})
+
+describe("压缩上下文的那段时间", () => {
+  const tags = (status: "busy" | "idle" | "compacting", active: boolean) =>
+    rows([assistant("a")], status, active).map((row) => row._tag)
+
+  test("正在压缩的那一轮底下有一行「压缩中」,而不是「思考中」", () => {
+    expect(tags("compacting", true)).toEqual(["UserMessage", "Compacting"])
+  })
+
+  test("别的轮次、别的状态都没有这一行", () => {
+    expect(tags("compacting", false)).toEqual(["UserMessage"])
+    expect(tags("busy", true)).not.toContain("Compacting")
+    expect(tags("idle", false)).not.toContain("Compacting")
+  })
+})
+
+describe("本轮改动那一行", () => {
+  const change = (id: string, messageID: string, tool: string, status = "completed"): Part =>
+    ({
+      id,
+      sessionID: "session",
+      messageID,
+      callID: `call_${id}`,
+      type: "tool",
+      tool,
+      state:
+        status === "completed"
+          ? { status, input: { path: "src/main.c" }, output: "", title: tool, metadata: {}, time: { start: 1, end: 2 } }
+          : { status, input: { path: "src/main.c" }, error: "boom", metadata: {}, time: { start: 1, end: 2 } },
+    }) as Part
+  const build = (
+    parts: Record<string, Part[]>,
+    messages: AssistantMessage[],
+    status: "busy" | "idle" | "compacting" = "idle",
+    active = false,
+  ) => Timeline.constructMessageRows(user, (id) => parts[id] ?? [], messages, 0, true, status, active)
+  const changes = (rows: ReturnType<typeof build>) => rows.flatMap((row) => (row._tag === "TurnChanges" ? [row] : []))
+
+  test("跨多条 assistant 消息收齐这一轮的 edit / write,排在工具卡之后", () => {
+    const built = build(
+      { a: [change("p1", "a", "edit"), change("p2", "a", "read")], b: [change("p3", "b", "write")] },
+      [assistant("a"), assistant("b")],
+    )
+    expect(built.map((row) => row._tag)).toEqual([
+      "UserMessage",
+      "AssistantPart",
+      "AssistantPart",
+      "AssistantPart",
+      "TurnChanges",
+    ])
+    expect(changes(built)[0]!.refs).toEqual([
+      { messageID: "a", partID: "p1" },
+      { messageID: "b", partID: "p3" },
+    ])
+  })
+
+  test("没动过文件的轮次没有这一行;失败的 edit 不算", () => {
+    expect(changes(build({ a: [change("p1", "a", "read")] }, [assistant("a")]))).toEqual([])
+    expect(changes(build({ a: [change("p1", "a", "edit", "error")] }, [assistant("a")]))).toEqual([])
+  })
+
+  test("跑着的那一轮不出,跑完(idle)才出;已经不是当前轮的照出", () => {
+    const parts = { a: [change("p1", "a", "edit")] }
+    expect(changes(build(parts, [assistant("a")], "busy", true))).toEqual([])
+    expect(changes(build(parts, [assistant("a")], "compacting", true))).toEqual([])
+    expect(changes(build(parts, [assistant("a")], "idle", true))).toHaveLength(1)
+    expect(changes(build(parts, [assistant("a")], "busy", false))).toHaveLength(1)
+  })
+
+  test("被打断的轮次照样出 —— 文件确实改了", () => {
+    const aborted = assistant("a", { error: { name: "MessageAbortedError", data: { message: "aborted" } } })
+    expect(changes(build({ a: [change("p1", "a", "edit")] }, [aborted]))).toHaveLength(1)
   })
 })

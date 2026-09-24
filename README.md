@@ -44,6 +44,8 @@ Installers are published on [GitHub Releases](https://github.com/yoma-embedded/y
 
 Currently only DeepSeek and Kimi are supported.
 
+An API key is needed for the agent. The serial monitor and manual GDB controls work without one.
+
 - First time: the banner at the top says "No API key configured yet" → click **Connect**
 - Afterwards: top-left menu **File → Settings** (or `Ctrl+,`) → **Providers** on the left → pick DeepSeek / Kimi → **Connect** → paste your API key
 
@@ -72,6 +74,18 @@ Yoma ships the configuration engine and local database converter. On first use, 
 These resources stay on your computer: they are not uploaded or included in Yoma installers. A changed database or engine produces a new cache version.
 Missing resources are reported with configuration instructions. `schema` and raw netlist parsing need no CubeMX data.
 See the [engine and data delivery notes](docs/桌面版发布流程.md#引擎和数据的交付边界).
+
+### 6. Project profiles and memory
+
+Open a project and ask the agent to inspect and save its configuration, remember a debugging finding, retrieve previous experience, or forget an entry. Later turns load recent memories and retrieve more history as needed. Memory stays local but retrieved content is sent to your selected model. Saving relies on the agent calling the memory tool, not on background transcription. [Usage, storage and limitations (Chinese)](docs/project-memory.md).
+
+### 7. Embedded workbench
+
+Open an instrument from the home page, or use the permanent Serial & logs / GDB / Oscilloscope / Logic analyzer toolbar. The console starts open, including in a new workspace before sending a message. Typing in the agent composer does not select or open instruments.
+
+- **Serial monitor:** choose or enter a port, set the baud rate, then connect. Refresh discovers available ports; disconnect releases the active source. Port and baud fields accept both presets and custom values, remembered per project. The bottom send bar supports **UTF-8 text or Hex**, None/LF/CR/CRLF line endings, Enter to send, command history (↑/↓), and a dedicated Ctrl+C button. Serial uses **8N1, no flow control**; each send allows up to 4096 encoded bytes. Filter and follow the saved log independently of the agent. TCP and command sources remain receive-only.
+- **GDB:** select an existing server, OpenOCD, J-Link, or QEMU and enter the ELF and connection settings. Connect, continue, pause, step, set breakpoints, and read expressions directly. These controls share the session's debugger with the agent; they do not send chat prompts.
+- **Saved oscilloscope captures:** drag to pan, scroll or pinch to zoom, double-click to fit, and place A/B cursors. The panel distinguishes saved samples, envelope previews, and capture metadata; it does not imply a live acquisition. Oscilloscope and logic-analyzer acquisition still use the agent tools.
 
 ## Run from source
 

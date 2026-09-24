@@ -1,9 +1,26 @@
 export const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"]
 
+export const IMAGE_EXTENSION_MIME = new Map([
+  ["gif", "image/gif"],
+  ["jpeg", "image/jpeg"],
+  ["jpg", "image/jpeg"],
+  ["png", "image/png"],
+  ["webp", "image/webp"],
+])
+
+/**
+ * 内容要读进渲染器的只有图片(编成 data-URL 送进模型)。desktop 的原生选择器拿这份清单
+ * 决定哪些文件读字节、哪些只交路径 —— 和 attachmentMime 认图片用的是同一张表。
+ */
+export const INLINE_ATTACHMENT_EXTENSIONS = Array.from(IMAGE_EXTENSION_MIME.keys())
+
+/**
+ * 只给 web 的 <input accept> 用。Web 没有可读路径,图片之外的东西 attachments 会明确拒绝,
+ * 清单是为了别让人白选。Desktop 的原生选择器不设类型过滤:有真实路径的文件(原理图 PDF、
+ * 源码、固件产物 .elf / .bin / .hex)一律转成 @path 交给工具去读；数据手册仍走手册库。
+ */
 export const ACCEPTED_FILE_TYPES = [
   ...ACCEPTED_IMAGE_TYPES,
-  // Desktop 保留真实路径:原理图 PDF 可转成 @path 后交给 netlist 工具。Web 没有
-  // 可读路径,attachments 会明确拒绝；数据手册仍走手册库,不作为模型附件发送。
   "application/pdf",
   "text/*",
   "application/json",
@@ -56,36 +73,3 @@ export const ACCEPTED_FILE_TYPES = [
   ".yml",
   ".zsh",
 ]
-
-const MIME_EXT = new Map([
-  ["image/png", "png"],
-  ["image/jpeg", "jpg"],
-  ["image/gif", "gif"],
-  ["image/webp", "webp"],
-  ["application/pdf", "pdf"],
-  ["application/json", "json"],
-  ["application/ld+json", "jsonld"],
-  ["application/toml", "toml"],
-  ["application/x-toml", "toml"],
-  ["application/x-yaml", "yaml"],
-  ["application/xml", "xml"],
-  ["application/yaml", "yaml"],
-])
-
-const TEXT_EXT = ["txt", "text", "md", "markdown", "log", "csv"]
-
-export const ACCEPTED_FILE_EXTENSIONS = Array.from(
-  new Set(
-    ACCEPTED_FILE_TYPES.flatMap((item) => {
-      if (item.startsWith(".")) return [item.slice(1)]
-      if (item === "text/*") return TEXT_EXT
-      const out = MIME_EXT.get(item)
-      return out ? [out] : []
-    }),
-  ),
-).sort()
-
-export function filePickerFilters(ext?: string[]) {
-  if (!ext || ext.length === 0) return undefined
-  return [{ name: "Files", extensions: ext }]
-}

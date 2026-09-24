@@ -221,6 +221,21 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
   6. **失败的输出不是版本。** `esptool --version` 打印 usage 后失败,而 usage 里有一段 "1.8"(flash 电压选项),
      账本里于是记着 `version: "1.8"`(真实 4.10.0)—— 清单一写版本范围就是一条假的 VERSION MISMATCH。退出码非 0 时
      不取版本;问法按工具来(`versionArgs`,esptool 是子命令 `version`)。
+     **2026-09-24 同一类又撞了两家**,全部预设工具在 Windows 开发机上逐个真跑核过,只有这两家有问题:
+     - J-Link Commander 没有任何参数能正常退出(`--version` / `-?` / `-h` 都是打完 "SEGGER J-Link Commander V9.58" 横幅再报
+       unknown option、退出 1),装得好好的 J-Link 永远"入口待验证"、设置页一直叫人去 segger.com 装。没改用同目录的
+       GDB Server(它认 `--version`):它不认识的参数会去连探针、开端口,旧版本 / macOS 上认不认没核过,而核账每次开会话都跑。
+     - Keil 三条:armcc 不认 `--version`(C3900U,退出 1;`--vsn` 两代编译器都认);两代编译器第一行都是
+       "Product: MDK Professional 5.43",版本被记成 MDK 的 5.43(清单写 ">=6.18" 就是假的 VERSION MISMATCH);用户贴的是
+       `Keil_v5\UV4`,编译器在旁边的 `ARM\ARMCLANG\bin` / `ARM\ARM_Compiler_5.06u7\bin`,而入口只查 [目录, 目录\bin]。
+     由此多了两个字段:`versionPattern`(带程序名的正则,第 1 组是版本;声明了就只从它取版本,退出码非 0 而它命中也算跑起来)
+     与 `binDirs`(exe 型的安装布局,记录落在安装树任何一层都往上找回来,`entries.ts` 的 `layoutDirs`;已知位置表与注册表
+     两档也过它,所以位置表对 Keil 只写安装根,布局只写一处)。顺带修了 `findOnPath`:裸名字候选在 Windows 上不分大小写,
+     `ARM\` 下那个叫 `ARMCLANG` 的**目录**被当成 armclang 返回、扫描就此停下。
+     **拿空账本测"新电脑"才看得见的**:注册表那一档只认 `InstallLocation`,而实机上只有 J-Link 的安装器写了它,
+     STM32CubeProgrammer / Keil / CubeMX 都是空的 —— 装在 D 盘的 CubeProgrammer 在新电脑上直接 MISSING。现在空的时候从
+     `UninstallString` 反推(`locations.ts` 的 `uninstallerDir`,卸载程序在 `Uninstall*` 子目录里再上一层)。另外
+     `reg query /f <词> /d` 只打印**内容里含搜索词的值**(从前注释写的"全部值整块打印"不对),所以这一档只看得见路径里带产品名的安装。
   7. **`set` 的回复带记完之后的状态。** 从前恒为 "Recorded … finds it automatically",而核出来可能是 RECORDED ——
      一句必然成功的话让模型多跑一次 check 才发现没成,然后原地重试。三个 set 入口(agent、设置页项目级、设置页平台级)
      现在都把 `spec` 递给 `recordToolchainPath`,分档在那一处按 `pathKind` 定,不可能再分叉。
@@ -506,7 +521,7 @@ kernel 接它 —— 从前那份自有 harness(`agent-legacy` / `@yoma/agent`)�
 | `npm run smoke -w packages/desktop` | 内核冒烟:对 **构建产物** 验证内核装配(工具清单与 `TOOL_NAMES` 逐字同序,今天 21 个)+ 引擎二进制 |
 | `npm run e2e:ipc -w packages/desktop` | 生产路径:真 utilityProcess + 真 MessagePort + 真协议帧(不开窗口) |
 | `npm run e2e:renderer -w packages/desktop` | 最后一跳:真窗口 + 真 preload + **真 contextBridge**(含 mailbox 桥三条) |
-| `npm run e2e:paint -w packages/desktop` | 真窗口首屏 + 点一遍:Electron 跑构建产物 + 接 CDP,首页 / 会话页(含逻辑分析仪面板)/ 子 agent 卡片、完成通知行与子会话页 / 草稿页 / 手册库 / 调试台全点一遍,零 `exceptionThrown` 零 `console.error` / Log 错误(含资源 404)(窗口会在屏幕上闪几秒,别去点它) |
+| `npm run e2e:paint -w packages/desktop` | 真窗口首屏 + 点一遍:Electron 跑构建产物 + 接 CDP,首页 / 会话页(含逻辑分析仪面板)/ 子 agent 卡片、完成通知行、「本轮改动」那一行、会话内查找(cmd+F)与子会话页(含连着的只读调用并成的那一行)/ 草稿页 / 手册库 / 调试台全点一遍,零 `exceptionThrown` 零 `console.error` / Log 错误(含资源 404)(窗口会在屏幕上闪几秒,别去点它) |
 | `npm run smoke:mailbox -w packages/desktop` | 调试台冒烟:Electron RUN_AS_NODE 对打包产物跑完整**本机演练**(假模型,零 key 零硬件) |
 | `npm run e2e:mailbox -w packages/desktop` | main 托管端到端:真 kernel.js 的 `mailbox.setActive` 往返 + 假守护喂 `@@event` + 停止杀树 + 锁冲突人话 |
 | `npm run e2e:license -w packages/desktop` | 授权闭环的真进程验证:现场生成临时密钥 → 往临时目录打一份注入了临时公钥的产物 → 真 utilityProcess / 真 contextBridge / 真守护 + 真 turn 子进程(假模型、**真的短有效期授权**)跑「导入 → 执行 → 到期暂停 → 续费恢复」。`-- --out <desktop 目录> --key <私钥> --key-id <id>` 对现成的、注入了公钥的 `out/` 跑 |
@@ -614,6 +629,70 @@ main/kernel.ts (只牵线,不在数据通路上)  --> utilityProcess: out/main/k
    的 entry id,这条不受影响。要干掉时钟回拨钳制的话,正路是给存储层的 Entry 加 `seq`。)
 3. **发射顺序**:父 `message.updated` 早于它的任何 part;`part.updated` 早于该 part 的 delta。
    reducer 会静默丢弃孤儿 part 和未知 part 的 delta。
+
+### 时间线的行(`packages/app/src/pages/session/timeline`,2026-09-21)
+
+`rows.ts` 把一轮(一条 user 消息 + 它名下的 assistant 消息)摊成行,`projection.ts` 按轮各记一个 memo。几条规矩:
+
+1. **行的 memo 不许直接读 `part.text`。** 行的结构只取决于一段文本「空 / 非空」(思考行另看标题),这两样由
+   `projection.ts` 的 `createPartReader` 按 part 各记一个 memo,经 `Timeline.PartReader` 交给 `constructMessageRows`。
+   直接读的话,流式增量每 16 ms 一批,每批都把当前这一轮的行重建一遍(遍历全部 part、逐行造对象再逐行比)。
+   闸门是 `test-browser/timeline-projection.test.ts`:数 `constructMessageRows` 被叫了几次 —— 200 个文本增量 0 次
+   (改之前 200 次);工具进度本来就是 0 次(`message.part.updated` 走 `reconcile` 原地更新,行只读 `part.type`)。
+   往行里加新的判断时,凡是要读正文的,照样先记成按 part 的 memo。
+2. **连着的只读「找东西」工具并成一行**(read / grep / find / ls,清单在 session-ui 的 `context-tool-group.ts`):
+   一轮里它们常常一连十几次,逐张摆开会把烧录、调试器那几张挤到屏幕外。`groupParts` 出 `type: "context"` 的组,
+   **只有一个也成组、key 取第一个 part** —— 第二个到的时候那一行是原地长大,不是旧行删掉新行插入(虚拟列表按 key
+   记高度)。**行里的卡片也不许换**:单个与成组都由同一个 `ContextToolGroup` 画,卡片列表始终在同一个位置渲染,
+   只有一个时不画标题,第二个到了才长出「已探索 · 2 次读取 · 1 个列表」;组成形的那一刻里面有卡片开着,组就接着
+   开着(`timeline/context-group-row.tsx`,只定一次,之后用户收起 / 展开过组以用户的为准)。头一版用 `<Show>` 在
+   「单张卡片 / 整组」之间切换,审查抓到:用户正开着的卡片在第二个 read 到的那一下被卸载、换成一个折叠着的组,
+   文件内容当场从屏幕上消失 —— 闸门是 `test-browser/context-group-row.test.ts`(断言是同一个 DOM 节点、没被拆过)。
+   它不套 `BasicTool`:defer 会让内容空两帧,不 defer 又会把 children 求值两遍。
+   **失败数单独一段、折叠着也看得见**(一次 read 读不到往往就是模型接下来走偏的原因),展开是逐张卡片,
+   各自的展开状态仍按 part id 记在 `toolOpen` 里,组的按组 key 记。会动硬件、会改文件、会起进程的工具不许进清单。
+   这是 2026-09-10 卡片归零时连带删掉的 opencode `ContextToolGroup` 的重写版(上游后来的同类改动:ea582fc133)。
+   真窗口覆盖在 `e2e:paint` 的子会话页:种子里 Explore 先 `ls` + 读一个在的文件 + 读一个不在的文件。
+3. **压缩上下文的那段时间有一行「正在压缩上下文」**(`TimelineRow.Compacting`)。内核一直在发 `compacting` 状态
+   (手动 /compact,或一轮里撞到阈值 / 溢出),而「思考中」只认 `busy` —— 不补这一行,模型写摘要的那几秒到几十秒里
+   屏幕上什么都不动。只挂在正在跑的那一轮底下;压完内核补的 compaction part 才是「会话已压缩」的分隔线。
+4. **每轮底下有一行「本轮改动」**(`TimelineRow.TurnChanges`,`timeline/turn-changes-row.tsx`):这一轮里 `edit` /
+   `write` 改过的文件,一行一个带 +/− 行数,点开是 diff。opencode 的这一行读文件快照(`UserMessage.summary.diffs`),
+   内核没有快照,数据从工具结果的 details 合成(session-ui 的 `turn-changes.ts`):`edit` 的 `details.patch` 是上游
+   自带的;**`write` 上游什么都不给,旧内容是宿主补的** —— `kernel/src/host/write-before.ts` 在写之前把被覆盖的内容读
+   进 `details.before`(新建记 `null`;超过 256 KB 或是二进制就不记,前端只列文件名、标「未记录内容」)。记旧内容而
+   不记 patch:write 多半是整份重写,patch ≈ 旧 + 新,而新内容在调用参数里已经落过一次盘,内核也不必背 diff 依赖。
+   三条边界别越:(a) **只管这两个工具** —— bash 里的 sed、代码生成器、git checkout 改的文件不在里面,那是审查面板
+   (VCS diff)的事;同一个文件按归一过的路径并行(分隔符换成 `/`、盘符小写 —— Windows 上模型一会儿写绝对的
+   反斜杠路径、一会儿写相对的);有几次改动没记下内容时那一行标「另有 N 次未记录」;(b) **同一个文件一轮里改多次,
+   逐次的 diff 叠着放、行数相加,不合成一份** —— edit 的 patch 只有
+   4 行上下文,没有全文合不出对的;(c) **行里只放指向 part 的指针,只在这一轮不再跑的时候出** —— patch 和文件内容
+   留在 store 里、画出来才解析,跑着的时候读 part 状态等于每一步重建这一轮的行(规矩 1 的同一个坑)。展开状态记在
+   时间线的 `toolOpen`(key = 行 key + 文件),不记在组件身上:虚拟列表滚出去就卸载。真窗口覆盖在 `e2e:paint`
+   的主会话页:种子里主会话真的 `write` 一个新文件、`edit` 一个已有的,同时也就验了 write 那一层接上了。
+5. **会话内查找(cmd+F,`timeline/search.ts` + `timeline-search.tsx`)分两层,别合成一层。** 时间线是虚拟列表,
+   屏幕外的行不在 DOM 里,浏览器式的查找只看得见眼前几行。**数据层**说"哪个 part 里有几处"—— 计数、上一处 /
+   下一处、滚到哪一行都听它的(可搜的 = 画得出来的 part,照着行从上到下收:用户消息的正文、回复、打开了显示的
+   思考段、工具调用参数里的顶层标量 + 输出 / 报错、后台任务通知);**DOM 层**只给眼前画出来的字上色,用 CSS Custom
+   Highlight API(不改 DOM,不和 Solid / markdown 渲染打架),`MutationObserver` 盯着时间线,一帧最多重圈一次。
+   两层看的不是同一份字(markdown 源码 vs 渲染后的字、卡片标题是翻译过的),"第几处"只能近似对上:**一定落在
+   对的 part 上**,part 里可能差一处;DOM 里圈不到(命中在链接的 URL 里)就把那张卡摆到眼前。跳到一处时
+   `revealSearchMatch` 停掉跟随到底、把收着的工具卡(和它所在的「已探索」组)打开、让虚拟列表滚到那一行,然后
+   搜索条追着找最多 30 帧(行要先画出来,卡片展开后正文还要再等两帧)。索引按 part 各记一个 memo(规矩 1 的同
+   一个道理):流式增量只重数正在长的那一段;**整个组件只在搜索开着时挂载**,索引和观察器关掉就全部释放。
+   只搜已加载的消息,更早的历史没加载时搜索条上说一声。
+   **DOM 层只圈数据层数到了命中的 part**(`collectRanges` 的 `counted`):界面上有、数据里没有的字(卡片标题里翻译
+   过的「调用了」、各种标签)不搜也不上色 —— 头一版 DOM 层自己圈,审查抓到计数写着"无结果"、屏幕上却一片高亮、
+   回车还跳不过去;顺带省掉了流式输出时每帧对绝大多数 part 的遍历。可搜的字要和卡片上画的对得上:工具名算
+   (标题第一个词)、调用参数只算顶层标量、后台任务通知算类型 + 描述 + 结果全文(给模型看的那句 summary 不画,不算)。
+   收着才看得见的东西(工具输出、通知的结果全文)跳过去时要自己打开 —— 通知行的展开状态因此也交给了时间线的
+   `toolOpen`(`Message` 的 `partOpen` / `onPartOpenChange`)。搜索会停掉跟随到底,关掉搜索不自动恢复:和用户自己
+   往上滚是一回事,回到底部(或点「回到最新」)才接着跟。
+   **cmd+F 的归属按焦点分**:同一页上还有文件内查找(`file-tabs.tsx` 与 session-ui 的 `pierre/file-find.ts`,
+   两处都在 window 捕获阶段接 cmd+F,后者只要页面上挂着任何一个文件 / diff 视图就会接 —— 包括「本轮改动」里点开
+   的 diff)。对话那一栏在 `session.tsx` 打了 `data-find-scope="session"`,焦点在它里面、又不在某个文件视图里时
+   归会话内查找(`inSessionFindScope`),否则照旧归文件内查找;cmd+G 同一条规矩。真窗口覆盖在 `e2e:paint`:按键走
+   CDP 的真按键。
 
 ### 内核事件只能用 `subscribe()`
 
@@ -828,7 +907,7 @@ v3 规格(`pi/packages/agent/docs/harness.md` §5.5/§5.6)的形状 —— hooks
    不能按"下一条 user 消息"认领 —— 会被排队的那条抢走。
 4. **列表里的会话是懒的**:`repo.list` 只读文件头,标题是占位;而只读查看(`session.messages`)从来不读会话名 ——
    从磁盘加载的会话看完了标题仍是占位。`fillListed` 在只读与装配两条路上补名字与子会话类型,有变化推
-   `session.updated`。
+   `session.updated`。(主会话的名字 2026-09-21 起在 `list()` 里就按字节读出来了,见「会话自动起名」;子会话仍靠这条。)
 5. **事件流不分会话**:子会话的 `session.status`、消息、工具调用与主会话的走同一条流,凡是按事件判断"这一轮"
    的地方都要先看 sessionID(bench 那次就是这么漏的,见「调试台」第 3 条)。
 6. **上游哨兵**:`host/subagent-v2.test.ts` 钉着本方案依赖的 v2 行为(steer 在工具边界插入、空闲时 accept 空
@@ -838,6 +917,79 @@ v3 规格(`pi/packages/agent/docs/harness.md` §5.5/§5.6)的形状 —— hooks
 测试:`host/subagents.test.ts`(场景 22 例)、`host/subagent-v2.test.ts`、`test/agents-domain.test.ts`、
 `test/tools-agent.test.ts`、`host/projector.test.ts` 的通知一组、`bench/src/turn.test.ts` 的子 agent 一组、
 app 的 `test-browser/subagent-ui.test.ts`,以及 `e2e:paint` 的子 agent 一段。
+
+### 会话自动起名(`host/session-title.ts` + `host/session-names.ts`,2026-09-21)
+
+照主流 agent 做(对着本机的 opencode 与 Claude Code 源码核过;Codex / Cline / pi 不起名,只拿第一句话当名字):主会话收到
+**第一句话**、而它还没有名字时,另起一次模型调用起一个短标题 —— 与这一轮并行,不 await、不占 lane。
+
+- **先占位再换**(Claude Code 桥接 claude.ai 那条路的做法):收下这句话立刻拿它的第一句当临时名字(`Entry.titling.placeholder`,
+  只在视图里),模型的标题到了再换上、落盘(`session.setName`);没起出来(报错、30 秒超时、没有能用的字)就把占位定下来。
+  失败**不发 kernel.error** —— 界面会把它当成"这个会话出错了",弹系统通知、标红。
+- **请求**:提示词照 opencode 的 title.txt(几家里唯一明确要求"跟用户同一种语言"的,中文用户就靠这条),加了中文的长度与嵌入式的
+  例子;不带工具;思考开到模型允许的最低档 —— 关得掉就关、顺手封 256 个输出,关不掉的给最低档、不封(思考也记在输出里,封小了
+  正文一个字都到不了)。输出剥 `<think>`、引号、"Title:",取第一行有字的,50 字封顶。
+- **模型**:跟着会话当前的模型;`YOMA_TITLE_MODEL=<provider>/<model>` 钉一个便宜的(没配 key 就不理它),`off` 整个关掉。
+  主流是挑同家的小模型(Claude Code 固定 Haiku,opencode 按一张型号优先表),没抄那张表:目录四十家、型号按周变,手写的表会烂
+  (见「模型目录会过期」),而会话自己的模型一定配了 key。
+- **人说了算**:建会话时带了名字(bench 用任务书的标题)就不起;起名期间用户改名 / 删会话,那一次作废并掐掉请求 —— 结果只在
+  `entry.titling` 还是**同一个对象**时才算数。落定时先改内存、推事件,再落盘:rename 的写排在它后面,后写的赢。opencode 在这里
+  有竞态(改名会被晚到的标题盖掉),Claude Code 在 await 之后重查,我们照后者。起名期间会话被删了,不能再推它的
+  `session.updated` —— 界面的归约器找不到就**插入**,删掉的会话会回到列表里。
+- **只看第一句**:会话里已经有消息的(上线前的旧会话)不补起,半路的一句话代表不了整段对话(Claude Code 对恢复的会话也不起);
+  只发了图没打字的第一句给不出名字。
+- **宿主开关** `autoTitle`:桌面端开,bench 不开。起名是一次额外的模型调用,faux 演练与测试按脚本逐条应答,多出来的那次会吃掉
+  正文那一轮的一条 —— 所以缺省关、`makeHost` 不传。测试里要开就像 `session-title.test.ts` 那样按系统提示词路由,不能按调用次序
+  写脚本(起名与正文并发,谁先到 faux 不一定)。
+- **列表里读得到名字**(`session-names.ts`):`repo.list` 只读文件头,会话名是后来追加的一条值 —— 从前重启之后侧栏里个个叫工程
+  目录名,点开才对,自动起的名字等于白起。现在 `list()` 对没进内存的主会话按字节扫 `"namespace":"pi.session.name"` 那一行
+  (不解析整个会话,最后一次写为准;消息正文里的同样字样在 JSONL 里是转义的,对不上),实测 26 个会话 40 MB 共 30 ms;子会话不扫
+  (不进侧栏、一条消息能派十几个),仍由 `fillListed` 在打开时补。格式是上游的:`session-names.test.ts` 头一组用真 repo 写名字
+  再读回来,上游一改写法它先红。
+
+测试:`host/session-title.test.ts`(纯函数 + SessionManager 场景)、`host/session-names.test.ts`。
+
+### /btw 顺便问一句(`host/btw.ts` + session-manager 的 /btw 一节 + `composer/session-btw-dock.tsx`,2026-09-24)
+
+照 CC 做(2.1.88 还原源码的 `commands/btw/`、`utils/sideQuestion.ts`;转后台照 `tools/AgentTool/forkSubagent.ts` 与文档里 v2.1.206
+起的 fork 规则),方案与每一处偏离的理由在 `docs/btw顺便问-设计方案-20260924.md`。agent 在跑时输入 `/btw 问题`:不打断、不排队、
+问答不进对话历史,答案画在输入框上方的坞里;答完可以一键转成后台子 agent。
+
+- **本质是一次旁路调用**:拿主会话此刻的上下文,末尾追加一条包好的问题(CC 的 `<system-reminder>` 原话),单发一次
+  `models.streamSimple`。不走 admit / lane、不改会话状态、**零写入**(测试钉住 /btw 前后 JSONL 逐字节相同);事件只有
+  `session.btw`(整条快照,正文按 100 ms 节流,复用工具进度那个节流器),**不复用 `message.*`**(会落进 transcript 的 store,
+  bench 也会把它当成这一轮的输出)。一个会话同时一条,新的顶掉旧的 —— 旧的先推 `cancelled`,再推新的第一拍。
+- **请求前缀必须和主轮逐字相同**,供应商的缓存才命中(长会话十万 token,差十倍的钱):系统提示词记"最后一次真发出去的"
+  (`openEntry` 用 `recordSystemPrompt` 包一层;项目记忆一改,发动机下一次请求现算出来的就变了);工具按 `lane.getActiveTools()`
+  的顺序**照带不执行**;消息按 `readBoundedEntries` 的扫法从分支读,拼法照抄发动机**没导出**的 `buildSessionContext`
+  (`btw.ts` 的 `contextMessages`);请求选项照 `createRequestOptions`,**外加 `sessionId: <会话 id>:main`** —— 发动机在
+  `drive/generation.ts` 真发请求时才补这个,pi-ai 拿它做会话亲和头与 OpenAI 的 `prompt_cache_key`,只看 `createRequestOptions`
+  会漏掉它(写方案时就漏过一次)。思考档跟会话走(用户定,CC 同理:档位是缓存键的一部分)。`session-btw.test.ts` 拿发动机
+  **真发出去的**请求逐字比对,上游一改拼法它先红;把工具顺序反过来两条对齐用例都红(变异验证过)。
+- **只动尾巴**:最后一条 assistant 里还没结果的工具调用补一条"还在运行"(`isError: false`)—— 不补的话 pi-ai 补的是
+  `isError: true` 的 "No result provided",模型会据此说"那个工具失败了"。历史中间悬空的调用不碰:两条路 pi-ai 补的一样,前缀
+  照样相同。正在写的那条回复在 pending 帧里、不在分支上,天然看不见。
+- **附件**与 `prompt()` 共用 `prepareImages`(抽出来的,`prompt()` 行为不变):图片过同一道压缩、说明跟着正文进模型;没送到的图、
+  非图片的 `data:` 附件写进坞上的提示。/btw 的失败与附件提示**都不发 `kernel.error`**(那会弹系统通知、把会话标红)。
+- **转成后台任务(fork)**:`session.btwFork` → `TaskManager.fork()`(不查 profiles、没有父工具调用、**一律后台**,宿主不能后台就拒)。
+  子会话照主会话的样子装:合成的 `fork` profile(`domain/agents/fork.ts`,不进 `BUILTIN_AGENTS`,agent 工具选不到)、主会话的
+  系统提示词原字符串与激活工具名、主会话的模型与思考档,落在子会话的 `yoma/fork` 值里(重开照用)。首轮 = 继承的上下文 + 问答 +
+  `<fork-boilerplate>` 守则(照 CC 2.1.88 改了三处:不许再派子 agent、改了文件列出来不许 commit、点名会被拒的工具),一次 accept
+  种进去;种子只在内存里,排队期间内核重启过的 fork 以失败落定。**四个子 agent 工具与五个硬件工具的定义照带(缓存),调用在
+  `childBeforeTool` 拦下**(参数校验在 before_tool 之前,拦截用例的参数得合法);agent 工具的门面换成一律拒绝的桩。跑完照常
+  task-notification 通知主会话。子会话页上那条守则消息由**投影器**只画指令那一段(`projector.ts` 的 `userText`,live 与重放同一条路)
+  —— 放在内核而不是 app 的时间线,是因为 app/AGENTS.md 要求改时间线先量基准,而那套 Playwright 基准的场景 2026-08-13 就删光了。
+- **界面**:`submit.ts` 在所有"发消息"逻辑之前截 `^/btw(\s|$)`(比 CC 的单词边界严,同 @ 提及那次);不先 `setModel` —— 要的是主轮
+  正在用的模型。`/btw` 候选走新加的 `CommandOption.slashInsert`(选中是往输入框写 `"/btw "`、光标放末尾,不是执行)。坞在栈底紧贴
+  输入框。**Esc / Ctrl+G 先关坞再停 agent**(`PromptInput.onDismissBtw`):agent 在跑正是用 /btw 的时候,顺序反了用户想关答案却把
+  agent 停了。关掉的那条 id 记进 `server-session.ts` 的 `dismissedBtw`,之后到的它的事件一律不认 —— 否则关之前已经在路上的那一拍
+  会把坞画回来。
+- 没做 / 已知:CC 后来版本的历史列表、Tab 切换、`/btw` 不带参数重开上一条、`skipCacheWrite`;fork 的缓存路由键是子会话自己的 id
+  (发动机定的);窗口重载会丢掉在飞的答案(事件不重放);**真机(桌面 + DeepSeek)与 `e2e:paint` 还没跑过**。
+
+测试:`host/btw.test.ts`(纯函数)、`host/session-btw.test.ts`(逐字对齐、跑到一半、压缩后、附件、取消与顶替、失败、想调工具、fork 的
+继承 / 拦截 / 通知)、`host/projector.test.ts` 的 fork 一条、app 的 `components/prompt-input/btw.test.ts`、`context/server-session.test.ts`
+的 /btw 一组、`test-browser/btw-dock.test.ts`、`i18n/parity.test.ts` 的两个前缀。
 
 ### 调试台(`packages/bench`)
 
@@ -1079,9 +1231,14 @@ TS 侧的纪律:
 时间线优先)+ 一套工具卡片,截图与对比在仓外 `.claude/worktrees/_ui-lab/`;维护者选了**底部控制台**,另三种里各借了一样。
 
 - **按数据的形状分家,不按"是不是调试功能"分家。** 注册表 `bench/instruments.ts` 每台仪器一条记录,带
-  `tier`(core / frequent / occasional)与 `surface`(`"text"` | `"wave"`):文本流(日志、GDB,将来的上位机 / RTT 终端)
-  要宽度,住会话页底部的**控制台**(`console/session-console.tsx`,`Mod+J`,缺省收着,可拖高,再点当前页签 = 收起);
-  波形(示波器、LA,将来的功耗曲线)要高度,住右栏"调试"档,页内页签一次一台(`console/instrument-rail.tsx`)。
+  `tier`(core / frequent / occasional)与 `surface`(`"text"` | `"wave"`):文本流(日志,将来的上位机 / RTT 终端)
+  要宽度,住会话页底部的**控制台**(`console/session-console.tsx`,`Mod+J`,缺省收着,可拖高);
+  要高度的(调试器 —— 源码视图、示波器、LA,将来的功耗曲线)住右栏"仪器"档,一次一台(`console/instrument-rail.tsx`)。
+  **挑哪一台只在左侧栏的「仪器」里挑**(2026-09-23,`console/workbench-toolbar.tsx` 经 Portal 画进侧栏留的那一格,
+  带灯与"有新证据"的点):右栏自己没有页签、没有「+ 仪器」,顶上那一行的仪器按钮直接写当前是哪一台 —— 从前右栏的页签
+  按可见性规则露面,工程里存过采集的示波器 / LA 没打开过也挂在上面。底部控制台同理:**只有一台文本仪器时不画页签行**,
+  最大化 / 关闭经 `CompactProps.chrome`(一个画按钮的函数,不是元素)交给仪器挂到它自己的工具条上 —— 日志上面只剩串口
+  那一行(e2e:paint 钉着"日志第一行离控制台顶 ≤ 56px");发送行只在连着可写串口时出现。
   最底下 24px 的**状态栏**(`console/session-status-bar.tsx`)横跨聊天栏与右栏:最左是目标格(工程 · 芯片短名,悬停 /
   点住弹目标卡:芯片 · 内核 · 探针**只转述**烧录输出与 gdb 回执,认不出就只剩工程名),然后是烧录 / GDB / 日志三格。
   加一台仪器 = 注册表一条 + 两份 i18n;布局里没有一处写死"日志在下面"。
@@ -1333,6 +1490,41 @@ Windows 失败时这里超时变红,本来也不该有只含 mac 的 Release)。
 - turbo 的 `typecheck` 有 `dependsOn: ["^typecheck"]` —— 没有它,改了 kernel 的类型,
   依赖它的包会拿到过期缓存命中,typecheck 变成 **假绿**。验证时用 `--force`。
 - Prettier 配置内联在根 `package.json`(`semi:false, printWidth:120`)。
+- **动 main 的启动顺序之前先量。** main 日志里每次启动有一行 `startup {readyMs, windowMs, shownMs}`(自进程起来的毫秒数:
+  Electron 就绪 / 窗口建好 / 首帧画完亮出来)。2026-09-21 实测(M 系列 Mac,开发态构建,热启动中位数):就绪 164 →
+  建好 284 → 亮出来 430;就绪到建窗口之间,协议 + 更新器 + 信箱 + IPC + netlog + 起内核**加起来不到 10 ms**,
+  大头是 `setDockIcon()` 同步解一张 1024×1024 的 PNG(约 55 ms)—— 已挪到 `ready-to-show` 之后。所以
+  opencode 那套"先亮窗口、其余全部后置"的重排在我们这边没有收益,别照搬。
+- **渲染器的持久化(`persisted()` → `platform.storage(name)`)在桌面端不是"写一个键发一次 IPC"。** 每个名字空间
+  (`yoma.global.dat`、`yoma.workspace.….dat`、`yoma.draft.….dat`)在渲染器里有一份内存副本(app 的
+  `utils/namespace-storage.ts`):只从主进程读一次(`store-items`),之后的读是 Map 查找;写先落内存、攒 100 ms
+  合成一次 `store-update`,主进程一次写盘。为什么:主进程每写一次都是整份序列化 + 带 fsync 的原子写,同步的,
+  小文件也要 4–6 ms(2026-09-21 实测 dev 档的 global 文件 241 KB,`prompt-history` 一个键就 164 KB),
+  拖面板、打字、连着几次 setState 就是一串这样的同步写。闸门那一趟流程实测:store IPC 182 次 → 37 次,主进程花在
+  上面的时间 168 ms → 101 ms(那趟流程是一下一下点的,攒不出多少;连续写入的场景差得更多)。
+  **落盘边界是 `pagehide` 和窗口退到后台**:`flush()` 同步地把这一批交给 IPC,页面消失之前消息已经发出去了。
+  **relaunch 是例外**:它是 `app.exit(0)`,不关窗口、页面收不到 pagehide,所以主进程走之前显式要一次
+  (`main/renderer-storage.ts`:发 `storage-flush`、等 `storage-flushed` 回执,页面挂了 / 卡死就等到 1 秒超时)。
+  以后再加"不经过关窗就退出"的路径,记得走它。跨名字空间的搬家(`persist.ts` 的 legacy 迁移)要等新家落盘
+  (`flush()` 之后 `pending(key)` 为假)才删旧家的。
+  代价明说:硬崩溃最多丢最后 100 ms 的写。`e2e:paint` 有一条专门的闸门 —— 打完字**立刻** reload,草稿得还在
+  (把 pagehide 那一行去掉它就红)。单键的 `store-get` / `store-set` 留着:渲染器的 i18n 在 platform 建好之前
+  要读一个键,闸门脚本也直接用;**别在页面活着的时候用它们去改一个已经被缓存的名字空间**,副本不会知道。
+  多窗口的修订号那一套(opencode dc46ecfc55)没搬:我们只有一个窗口,主进程自己也不碰这些 `.dat`。
+- **主进程的存储是自己的 `main/json-store.ts`,窗口位置是 `main/window-state.ts`,不是 electron-store /
+  electron-window-state。** 2026-09-21 换掉的,理由是量出来的:electron-store 背后的 conf 光 import 就约 23 ms
+  (背着 ajv 一家子,而我们不用 schema),在启动关键路径上;它每次 get 都重读整个文件,每次 set 是读 + 解析 +
+  序列化 + 写。同机同脚本 7 次中位数:就绪 165 → 150、亮出来 392 → 378 ms;lockfile 少 16 个包,另有 9 个
+  (ajv、jsonfile、mkdirp…)降成只在开发时用,不再进安装包。**文件格式原样不动** —— 制表符缩进的一个 JSON 对象、
+  文件名不带扩展名;`window-state.json` 的字段也原样。换之前拿真的 conf 做过差分:8 步操作逐字节一致、双向互读
+  数据一致,老档案直接读,退回旧版本也读得了。写仍然是同步的带 fsync 的原子写(临时文件 + rename;Windows 上
+  rename 撞 EPERM / EBUSY 会退避重试,实在换不进去就直接写,不丢这次改动),先写成再认内存里的新值。和
+  electron-store 不一样的一处:**内容不是一个 JSON 对象的文件挪成 `.corrupt`(已有一份就带时间戳)、当作空的继续**,
+  它在这里是直接抛、挡住启动。**但读不了 ≠ 坏了**:I/O 错误(Windows 上杀毒占着文件的 EBUSY / EPERM、没权限)
+  退避重试、还不行就原样抛,绝不当成空的 —— 头一版把两者放在一个 catch 里,审查抓到:那样一份好好的 241 KB 会被
+  挪走,下一次写只剩几个键。`store-items` 也因此不再吞错回 `{}`(渲染器会把"空的"当真、拿缺省值去盖)。
+  前提是一个文件只有主进程在写;窗口位置照旧只在关窗时写盘(闸门是先算账再关 Electron 的,所以这一条没进
+  `e2e:paint`,换的时候用一次性脚本在真窗口里验过:写出来的文件和旧库逐字节相同,第二次启动摆回了记下的位置)。
 
 ## 会咬人的地方
 
@@ -1451,6 +1643,8 @@ Windows 失败时这里超时变红,本来也不该有只含 mac 的 Release)。
   GitHub 上真跑、没接真探针、信箱的暂停 / 恢复没有双机真跑;调试台的暂停横幅与英文界面没看图。购买联系方式是
   `configured: false`(界面显示"待配置"),正式签名密钥要维护者自己在仓库外生成。清单在 `docs/licensing.md` 第五部分。
 
+- **/btw 顺便问一句**(见「/btw 顺便问一句」一节):内核与界面都只过了单测(faux 模型)与组件测试,**没在真窗口里跑过**,
+  也没对真供应商核过缓存命中(开发期看 /btw 那次请求的 cacheRead 不为 0 即可)。
 - **子 agent**(见「子 agent」一节):子 agent 坞、状态栏任务面板、子会话页的状态与停止、"排队中"一栏都只有组件
   渲染测试,**没在真窗口里跑过**(`e2e:paint` 里的内核没有模型,种进去的任务不在它的注册表里);fork 型子 agent、
   worktree 隔离、硬件子 agent、重启后重新挂接前台调用等见设计稿 P5。

@@ -29,10 +29,14 @@ import {
   toolchainStatus,
 } from "./toolchain.ts"
 import { VcsWatchers } from "./vcs-watch.ts"
+import { forgetMemory, inspectProject, projectRoot, saveMemory, saveProfile } from "./domain/project/store.ts"
+import { checkProjectBuild } from "./domain/project/build.ts"
 
 export { SessionProjection } from "./projector.ts"
 export { SessionManager } from "./session-manager.ts"
 export { StreamSink } from "./stream.ts"
+// 行为评测复用产品提示词,不复制一份会悄悄漂移的正文。
+export { buildSystemPrompt } from "./system-prompt.ts"
 // 全局配置目录的真源(凭据/技能/上下文)。导出它是为了让 bench 的 paths.ts 副本
 // 有个可断言的对手 —— 那份副本必须是叶子模块,不能反过来 import 这里。
 export { yomaConfigDir } from "./auth.ts"
@@ -74,6 +78,11 @@ export interface KernelHostOptions {
    */
   confirmTools?: SessionManagerOptions["confirmTools"]
   /**
+   * 没名字的主会话收到第一句话时自动起名。**桌面端传 true,bench 不传**(它用任务书的标题命名;
+   * faux 演练按脚本应答,多一次起名调用会吃掉一条脚本)。详见 SessionManagerOptions。
+   */
+  autoTitle?: SessionManagerOptions["autoTitle"]
+  /**
    * 子 agent 的宿主选项。**bench 与信箱工位端传 `{ background: false }`**(无人值守,按 idle 判一轮结束,
    * 后台子 agent 会让 idle 说谎)。详见 SessionManagerOptions。
    */
@@ -98,6 +107,7 @@ export interface KernelHost {
 }
 
 export function createKernelHost(options: KernelHostOptions): KernelHost {
+  const projectBuilds = new Map<string, { controller: AbortController; done: Promise<unknown> }>()
   const sink = new StreamSink({ flush: options.onEvents })
   // 一个包同时只装一次;取消走这里的 AbortController。设置页的 RPC 与 agent 的 toolchain 工具
   // 共用这一个 —— 两边同时装同一个包会往同一棵目录树里解压,所以它必须在 SessionManager 之前建好。
@@ -121,6 +131,7 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     toolchainSide: options.toolchainSide,
     toolchainManifestText: options.toolchainManifestText,
     confirmTools: options.confirmTools,
+    autoTitle: options.autoTitle,
     subagents: options.subagents,
     installRegistry: installs,
     license,
@@ -150,6 +161,8 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     // 只列主会话:子 agent 的会话不进侧边栏与首页(CC 同款),从卡片与任务面板打开;列进来还会占掉目录列表的配额。
     "session.list": async ({ directory }) => (await sessions.list(directory)).filter((session) => !session.parentID),
     "session.get": ({ sessionID }) => sessions.get(sessionID),
+    "instrument.execute": (params) => sessions.executeInstrument(params),
+    "instrument.ports": () => sessions.serialPorts(),
     "session.create": ({ directory, title }) => sessions.create(directory, title),
     "session.delete": ({ sessionID }) => sessions.delete(sessionID),
     "session.rename": ({ sessionID, title }) => sessions.rename(sessionID, title),
@@ -158,6 +171,9 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     "session.prompt": ({ sessionID, input }) => sessions.prompt(sessionID, input),
     "session.abort": ({ sessionID }) => sessions.abort(sessionID),
     "session.cancelQueued": ({ sessionID, entryId }) => sessions.cancelQueued(sessionID, entryId),
+    "session.btw": ({ sessionID, input }) => sessions.btw(sessionID, input),
+    "session.btwCancel": ({ sessionID, btwID }) => sessions.btwCancel(sessionID, btwID),
+    "session.btwFork": ({ sessionID, btwID }) => sessions.btwFork(sessionID, btwID),
     "session.compact": ({ sessionID }) => sessions.compact(sessionID),
     "session.navigate": ({ sessionID, messageID }) => sessions.navigate(sessionID, messageID),
     "session.setModel": ({ sessionID, providerID, modelID, thinking }) =>
@@ -277,6 +293,22 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     "license.import": async ({ text }) => license.importText(text),
     "license.diagnostics": async () => ({ text: license.diagnostics({ appVersion: options.version }) }),
 
+    "project.context": ({ directory }) => inspectProject(directory),
+    "project.configure": ({ directory, revision, profile }) => saveProfile(directory, revision, profile),
+    "project.remember": ({ directory, revision, memory }) => saveMemory(directory, revision, memory, "user"),
+    "project.forget": ({ directory, revision, id }) => forgetMemory(directory, revision, id),
+    "project.check": async ({ directory, revision }) => {
+      const root = await projectRoot(directory)
+      if (projectBuilds.has(root)) throw new Error("该工程已有构建检查正在运行")
+      const controller = new AbortController()
+      const done = Promise.resolve().then(async () => checkProjectBuild(root, revision,
+        await sessions.projectBuildEnvironment(root), controller.signal))
+      projectBuilds.set(root, { controller, done })
+      try { return await done } finally { projectBuilds.delete(root) }
+    },
+    "project.cancelCheck": async ({ directory }) => {
+      projectBuilds.get(await projectRoot(directory))?.controller.abort()
+    },
     "project.list": async () => projects.list(),
     "project.add": ({ directory }) => projects.add(directory),
     "project.remove": ({ directory }) => projects.remove(directory),
@@ -299,6 +331,8 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
       sink.flushNow()
     },
     async dispose() {
+      for (const build of projectBuilds.values()) build.controller.abort()
+      await Promise.allSettled([...projectBuilds.values()].map(build => build.done))
       vcsWatchers.dispose()
       // 先关 sink:disposeAll 会中断在飞轮次,那一串收尾事件是故意丢掉的 ——
       // 进程正在退,renderer 的通道也在拆,推过去没人收。

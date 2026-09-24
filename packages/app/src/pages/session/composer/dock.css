@@ -181,6 +181,32 @@
   white-space: nowrap;
 }
 
+/**
+ * /btw 顺便问一句的答案区(docs/btw顺便问-设计方案-20260924.md §4.8):限高、框内滚动 —— 答案可能有几屏长,
+ * 不能把输入框顶到屏幕外。正文是和消息列表同一个 Markdown 组件。
+ */
+[data-slot="btw-answer"] {
+  max-height: 40vh;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-base);
+}
+[data-slot="btw-answer"] [data-slot="btw-status"] {
+  font-size: 12px;
+  color: var(--text-weak);
+}
+[data-slot="btw-answer"] [data-slot="btw-note"],
+[data-slot="btw-answer"] [data-slot="btw-error"] {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--text-weak);
+}
+[data-slot="btw-answer"] [data-slot="btw-error"] {
+  color: var(--text-danger-base, #d5544a);
+}
+
 /** 确认条那段命令:不截断(mass_erase 不许藏在省略号后面),超高时框内滚动。 */
 [data-slot="confirm-summary"] {
   flex: 1;

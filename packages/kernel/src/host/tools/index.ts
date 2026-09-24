@@ -22,6 +22,7 @@ import { createLogTool } from "./log/session.ts"
 import { createLsTool } from "./ls/session.ts"
 import { createNetlistTool } from "./netlist/session.ts"
 import { createPowerShellTool } from "./powershell/session.ts"
+import { createProjectTool } from "./project/session.ts"
 import { createScopeTool } from "./scope/session.ts"
 import { createSendMessageTool } from "./send_message/session.ts"
 import { createStm32ConfigTool } from "./stm32config/session.ts"
@@ -30,6 +31,9 @@ import { createTaskStopTool } from "./task_stop/session.ts"
 import { createToolchainTool, type ToolchainToolOptions } from "./toolchain/session.ts"
 
 export interface RegisteredToolOptions {
+  /** Session-owned instruments, also used by the manual controls. */
+  instruments?: Partial<Record<"log" | "gdb", RegisteredTool>>
+  project?: { sessionID?: string }
   /** engines/ 根目录(bin/rg 在里面)。空串也算没给:kernel-entry 把未设的路径透传成 ""。 */
   enginesDir?: string
   /** STM32 本机资源使用同一份工具链账本与用户缓存目录。 */
@@ -68,11 +72,12 @@ export function createRegisteredTools(options: RegisteredToolOptions = {}): Regi
     createLsTool(shared),
     createPowerShellTool(shared),
     createToolchainTool(options.toolchain),
+    createProjectTool(options.project),
     createFlashTool(),
-    createLogTool(),
+    options.instruments?.log ?? createLogTool(),
     createLaTool(shared),
     createScopeTool(),
-    createGdbTool(),
+    options.instruments?.gdb ?? createGdbTool(),
     createDatasheetTool(options.datasheet),
     createNetlistTool(stm32),
     createStm32ConfigTool(stm32),

@@ -36,23 +36,30 @@ export function createTimelineProjection(input: {
     return status.type === "busy" ? status.retry : undefined
   })
   const messageRowMemos = createMemo(
-    mapArray(input.userMessages, (userMessage, indexAccessor) =>
-      createMemo((previous: TimelineRow.TimelineRow[] | undefined) =>
+    mapArray(input.userMessages, (userMessage, indexAccessor) => {
+      const assistantMessages = () => assistantMessagesByParent().get(userMessage.id) ?? emptyAssistantMessages
+      const isActive = createMemo(() => activeMessageID() === userMessage.id)
+      const read = createPartReader(
+        () => assistantMessages().flatMap((message) => input.parts(message.id).filter(isTextual)),
+        isActive,
+      )
+      return createMemo((previous: TimelineRow.TimelineRow[] | undefined) =>
         reuseTimelineRows(
           previous,
           Timeline.constructMessageRows(
             userMessage,
             input.parts,
-            assistantMessagesByParent().get(userMessage.id) ?? emptyAssistantMessages,
+            assistantMessages(),
             indexAccessor(),
             input.showReasoningSummaries(),
             input.status().type,
-            activeMessageID() === userMessage.id,
+            isActive(),
             modelRetry(),
+            read,
           ),
         ),
-      ),
-    ),
+      )
+    }),
   )
   const rows = createMemo((previous: TimelineRow.TimelineRow[] | undefined) =>
     reuseTimelineRows(
@@ -84,6 +91,36 @@ export function createTimelineProjection(input: {
     messageLastRowIndex,
     rowByKey,
     rows,
+  }
+}
+
+type TextualPart = Extract<Part, { type: "text" | "reasoning" }>
+
+const isTextual = (part: Part): part is TextualPart => part.type === "text" || part.type === "reasoning"
+
+/**
+ * 行的结构只取决于一段文本「空 / 非空」(思考行另看它的标题),不取决于它现在有多长。这两样各记成按 part 的
+ * memo,行的 memo 订的是它们而不是 `part.text`:流式增量一批批地来,只有跨过空 → 非空、或标题变了的那一批
+ * 才重建这一轮的行。part 对象照旧原样交给行,渲染时读到的仍是活的文本。
+ */
+function createPartReader(parts: Accessor<TextualPart[]>, isActive: Accessor<boolean>): Timeline.PartReader {
+  const facts = mapArray(parts, (part) => ({
+    part,
+    visible: createMemo(() => !!part.text?.trim()),
+    // 标题只有「思考中」那一行用,而那一行只出现在正在跑的这一轮;历史轮次不去扫正文。
+    heading: createMemo(() => (isActive() ? Timeline.directPartReader.reasoningHeading(part) : undefined)),
+  }))
+  const byPart = createMemo(() => new Map(facts().map((fact) => [fact.part as Part, fact] as const)))
+  return {
+    renderable(part, showReasoning) {
+      const fact = isTextual(part) ? byPart().get(part) : undefined
+      if (!fact) return Timeline.directPartReader.renderable(part, showReasoning)
+      return (part.type === "text" || showReasoning) && fact.visible()
+    },
+    reasoningHeading(part) {
+      const fact = byPart().get(part)
+      return fact ? fact.heading() : Timeline.directPartReader.reasoningHeading(part)
+    },
   }
 }
 

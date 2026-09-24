@@ -32,8 +32,23 @@ export interface ToolSpec {
 	 * dir + bin,自动发现与 set 都按 bin 记下一个**文件**,而解析器只认目录,永远 RECORDED)。
 	 */
 	marker?: string;
+	/**
+	 * exe 型专用:安装树里放可执行文件的子目录(相对安装根,正斜杠,段里可带 `*`)。记录的路径
+	 * 是安装树里的任何一层(根、根下的某个子目录、那里的某个程序)时,从它往上逐层试这些子目录,
+	 * 最近的一层命中就停(entries.ts 的 layoutDirs)。Keil:用户贴的是 `Keil_v5\UV4`(IDE 在那),
+	 * 编译器在旁边的 `ARM\ARMCLANG\bin`(AC6)与 `ARM\ARM_Compiler_5.06u7\bin`(另装的 AC5)。
+	 */
+	binDirs?: string[];
 	/** 版本探针的参数,缺省 `["--version"]`。esptool 只认子命令 `version`,对它跑 --version 是打印 usage 后失败。 */
 	versionArgs?: string[];
+	/**
+	 * 版本号在输出里的哪儿:一个正则,第 1 个捕获组是版本号。声明了它,版本**只**从它的命中里取;
+	 * 退出码非 0 而它命中了,也算跑起来了(version.ts 的 probeExecutable)。两种工具需要它:
+	 * 没有任何参数能正常退出的(J-Link Commander 对 --version / -? / -h 一律先打
+	 * "SEGGER J-Link Commander V9.58" 再报 unknown option、退出 1),和第一个数不是自己版本的
+	 * (Keil 编译器先打 "Product: MDK Professional 5.43",自己的版本在 "Component: … 6.24")。
+	 */
+	versionPattern?: string;
 	/** 版本范围,如 ">=3.22"、"^3.11"、"12"。语法由 version.ts 的 satisfies() 认。 */
 	version?: string;
 	/** 缺省 "mother"。 */
@@ -157,6 +172,16 @@ function findAbsolutePath(value: unknown, at: string): { at: string; snippet: st
 
 // ─── 解析 + 校验 ──────────────────────────────────────────────────────────────
 
+function isRegExpSource(value: unknown): value is string {
+	if (typeof value !== "string" || !value.trim()) return false;
+	try {
+		new RegExp(value);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 export type ParseManifestResult = { ok: true; manifest: ToolchainManifest } | { ok: false; error: string };
 
 /**
@@ -239,6 +264,22 @@ export function parseManifest(text: string): ParseManifestResult {
 			(!Array.isArray(tool.versionArgs) || tool.versionArgs.some((arg) => typeof arg !== "string" || !arg.trim()))
 		) {
 			return { ok: false, error: `${MANIFEST_RELATIVE}: tools[${i}].versionArgs must be an array of non-empty strings` };
+		}
+		if (
+			tool.binDirs !== undefined &&
+			(!Array.isArray(tool.binDirs) ||
+				tool.binDirs.some((dir) => typeof dir !== "string" || !dir.trim() || dir.split(/[\\/]/).includes("..")))
+		) {
+			return {
+				ok: false,
+				error: `${MANIFEST_RELATIVE}: tools[${i}].binDirs must be an array of relative paths inside the install directory (e.g. "ARM/ARMCLANG/bin")`,
+			};
+		}
+		if (tool.versionPattern !== undefined && !isRegExpSource(tool.versionPattern)) {
+			return {
+				ok: false,
+				error: `${MANIFEST_RELATIVE}: tools[${i}].versionPattern must be a regular expression whose first group captures the version`,
+			};
 		}
 		// 绝对路径已被上面的全文档扫描拦下;这里只剩"往上爬"要拦 —— 标志文件必须在安装根之内。
 		if (

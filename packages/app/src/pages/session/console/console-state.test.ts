@@ -22,27 +22,27 @@ function ctx(
 const ids = (list: { id: string }[]) => list.map((item) => item.id)
 
 describe("按数据的形状分家", () => {
-  test("每台仪器都表了态,文本流两台在前、波形两台在后", () => {
+  test("每台仪器都表了态:日志在底部,调试器跟波形在右栏", () => {
     expect(INSTRUMENTS.map((instrument) => [instrument.id, instrument.surface])).toEqual([
       ["log", "text"],
-      ["gdb", "text"],
+      ["gdb", "wave"],
       ["scope", "wave"],
       ["la", "wave"],
     ])
   })
 
-  test("底部控制台拿文本流,右栏拿波形 —— 两边都还守着「该不该露面」那条规则", () => {
+  test("底部控制台拿文本流,右栏拿波形和调试器 —— 两边都还守着「该不该露面」那条规则", () => {
     // 什么都没发生:控制台只有核心的日志,右栏一台都没有(= 空态)。
     expect(ids(visibleOnSurface("text", ctx()))).toEqual(["log"])
     expect(ids(visibleOnSurface("wave", ctx()))).toEqual([])
-    expect(ids(hiddenOnSurface("text", ctx()))).toEqual(["gdb"])
-    expect(ids(hiddenOnSurface("wave", ctx()))).toEqual(["scope", "la"])
+    expect(ids(hiddenOnSurface("text", ctx()))).toEqual([])
+    expect(ids(hiddenOnSurface("wave", ctx()))).toEqual(["gdb", "scope", "la"])
   })
 
   test("碰过 / 有数据 / 钉住,各自把仪器送进它该去的那一边", () => {
     const used = ctx({ status: { gdb: { state: "halted", epoch: 1, stops: [], at: 0 } } })
-    expect(ids(visibleOnSurface("text", used))).toEqual(["log", "gdb"])
-    expect(ids(visibleOnSurface("wave", used))).toEqual([])
+    expect(ids(visibleOnSurface("text", used))).toEqual(["log"])
+    expect(ids(visibleOnSurface("wave", used))).toEqual(["gdb"])
 
     const onDisk = ctx({ disk: { scopeCaptures: 2 } })
     expect(ids(visibleOnSurface("wave", onDisk))).toEqual(["scope"])
@@ -53,7 +53,7 @@ describe("按数据的形状分家", () => {
     expect(ids(visibleOnSurface("text", pinned))).toEqual(["log"])
   })
 
-  test("紧凑装配只给文本流那两台配了正文,波形那两台退回完整面板", () => {
+  test("紧凑装配只给文本流配了正文,右栏那几台退回完整面板", () => {
     for (const instrument of INSTRUMENTS) {
       if (instrument.surface === "text") expect(typeof instrument.compact).toBe("function")
       else expect(instrument.compact).toBeUndefined()
@@ -115,18 +115,18 @@ describe("控制台的落盘状态", () => {
   })
 
   test("键在 yoma.* 下", () => {
-    expect(CONSOLE_STATE_KEY).toBe("yoma.console.v1")
+    expect(CONSOLE_STATE_KEY).toBe("yoma.console.v2")
   })
 
-  test("缺省是收着的 —— 它是一步可达,不是一直占地方", () => {
-    expect(consoleUI.opened()).toBe(false)
+  test("首次打开就能看到串口与日志", () => {
+    expect(consoleUI.opened()).toBe(true)
     expect(consoleUI.tab()).toBe("log")
   })
 
   test("非法内容一律当作默认,绝不抛", () => {
     for (const junk of ["", "not json", "null", "[]", '{"open":"yes","height":"tall","tab":"nope"}']) {
       const state = readConsoleState(junk)
-      expect(state.open).toBe(false)
+      expect(state.open).toBe(true)
       expect(state.tab).toBe("log")
       expect(state.height).toBeGreaterThanOrEqual(CONSOLE_MIN_HEIGHT)
       expect(state.rail).toBeUndefined()
@@ -138,7 +138,7 @@ describe("控制台的落盘状态", () => {
     expect(readConsoleState('{"height":4000}').height).toBe(4000)
   })
 
-  test("开合 / 页签 / 高度 / 右栏选择都落盘,最大化不落盘", () => {
+  test("开合 / 页签 / 高度 / 点过的右栏仪器都落盘,最大化不落盘", () => {
     consoleUI.open("gdb")
     consoleUI.resize(321)
     consoleUI.setRail("la")
@@ -151,10 +151,14 @@ describe("控制台的落盘状态", () => {
     expect(JSON.parse(localStorage.getItem(CONSOLE_STATE_KEY)!)).not.toHaveProperty("maximized")
   })
 
-  test("点当前页签 = 收起(同 VS Code 的底栏),点另一个页签只换页", () => {
+  test("没标过「用户点的」的右栏仪器不恢复 —— 那是自动落到示波器上留下的", () => {
+    expect(readConsoleState('{"open":true,"height":280,"tab":"log","rail":"scope"}').rail).toBeUndefined()
+  })
+
+  test("点击当前页签保持展开，点击其他页签切换工具", () => {
     consoleUI.open("log")
     consoleUI.select("log")
-    expect(consoleUI.opened()).toBe(false)
+    expect(consoleUI.opened()).toBe(true)
 
     consoleUI.select("gdb")
     expect(consoleUI.opened()).toBe(true)

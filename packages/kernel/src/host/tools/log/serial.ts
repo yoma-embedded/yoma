@@ -50,6 +50,7 @@ import path from "node:path"
 import { runEngine } from "../../domain/engines.ts"
 import { findOnPath, POWERSHELL_FLAGS, PS_NO_PROGRESS } from "../powershell/session.ts"
 import { DEFAULT_BAUD } from "./contract.ts"
+import { WINDOWS_DUPLEX_BRIDGE } from "./serial-output.ts"
 
 export { DEFAULT_BAUD }
 
@@ -239,18 +240,19 @@ export function windowsReaderScript(port: string, baud: number): string {
   return [
     "$ErrorActionPreference='Stop'",
     // **每一句都放进 try**:try 之外抛出的话,报错就走 PowerShell 自己的错误流 —— 既按代码页编码,
-    // 又被裹成 CLIXML。`$buf=New-Object …` 同样是一句会抛的话,端口名不合法时 SerialPort 的构造也是。
+    // 又被裹成 CLIXML。`Add-Type …` 同样是一句会抛的话,端口名不合法时 SerialPort 的构造也是。
     // 我们要的永远是下面 catch 里那条 UTF-8。
     "try{",
-    "$out=[Console]::OpenStandardOutput()",
-    "$buf=New-Object byte[] 4096",
+    "Add-Type -TypeDefinition @'",
+    WINDOWS_DUPLEX_BRIDGE,
+    "'@",
     `$p=New-Object -TypeName System.IO.Ports.SerialPort -ArgumentList '${port}',${Math.trunc(baud)},'None',8,'One'`,
     // POSIX 打开串口默认就拉高 DTR/RTS,这里对齐,免得同一块板子换台机器就不吐数据。
     "$p.DtrEnable=$true",
     "$p.RtsEnable=$true",
     "$p.ReadTimeout=-1",
     "$p.Open()",
-    "while($true){$n=$p.Read($buf,0,$buf.Length);if($n -le 0){break};$out.Write($buf,0,$n);$out.Flush()}",
+    "[YomaSerialBridge]::Run($p)",
     // 打不开时这一句是 Windows 上唯一的诊断,而 .NET 的消息是本地化的 —— 让 PowerShell 自己往 stderr 写
     // 就会按代码页编码,于是自己编成 UTF-8 字节。
     "}catch{",
@@ -379,4 +381,9 @@ export async function listSerialPorts(
     throw new Error(`could not list serial ports: ${detail}`)
   }
   return parsePortLines(result.stdout)
+}
+
+/** A nonblocking TX descriptor, opened once while the capture still holds the configured tty. */
+export function prepareSerialWriter(device: string): number {
+  return openSync(device, fsConstants.O_WRONLY | fsConstants.O_NOCTTY | fsConstants.O_NONBLOCK)
 }

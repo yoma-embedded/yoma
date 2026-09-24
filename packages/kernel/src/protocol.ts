@@ -16,6 +16,7 @@
 
 import type {
   AgentInfo,
+  BtwView,
   FileDiff,
   FileEntry,
   LaCaptureInfo,
@@ -38,10 +39,22 @@ import type {
 } from "./types.ts"
 import type { ScopeCaptureInfo, ScopeViewParams, ScopeViewResult } from "./scope-view.ts"
 import type { LicenseStatusView } from "./license-view.ts"
+import type { MemoryInput, ProjectContextView, ProjectProfile } from "./project-view.ts"
 
 // ---------------------------------------------------------------------------
 // 请求
 // ---------------------------------------------------------------------------
+
+/** A direct instrument operation result, separate from the agent transcript. */
+export interface InstrumentResult {
+  text: string
+  details?: Record<string, unknown>
+}
+
+export interface SerialPortView {
+  path: string
+  description?: string
+}
 
 /** 一次拉取到的 transcript 分页。 */
 export interface MessagePage {
@@ -81,6 +94,12 @@ export interface PreflightReport {
 }
 
 export interface KernelMethods {
+  "project.context": { params: { directory: string }; result: ProjectContextView }
+  "project.configure": { params: { directory: string; revision: string; profile: ProjectProfile }; result: ProjectContextView }
+  "project.remember": { params: { directory: string; revision: string; memory: MemoryInput }; result: ProjectContextView }
+  "project.forget": { params: { directory: string; revision: string; id: string }; result: ProjectContextView }
+  "project.check": { params: { directory: string; revision: string }; result: ProjectContextView }
+  "project.cancelCheck": { params: { directory: string }; result: void }
   "app.info": {
     params: void
     result: { version: string; enginesDir: string | null; sessionsRoot: string; node: string }
@@ -91,6 +110,12 @@ export interface KernelMethods {
   /** 主会话列表。子 agent 的会话不在里面(它们带 `parentID`,从 agent 卡片与任务面板按 id 打开)。 */
   "session.list": { params: { directory?: string }; result: Session[] }
   "session.get": { params: { sessionID: string }; result: Session }
+  /** Manual instruments share their session's tool instances; no model request is made. */
+  "instrument.execute": {
+    params: { sessionID: string; tool: "log" | "gdb"; input: Record<string, unknown> }
+    result: InstrumentResult
+  }
+  "instrument.ports": { params: void; result: SerialPortView[] }
   "session.create": { params: { directory: string; title?: string }; result: Session }
   "session.delete": { params: { sessionID: string }; result: void }
   "session.rename": { params: { sessionID: string; title: string }; result: Session }
@@ -125,6 +150,19 @@ export interface KernelMethods {
     }
   }
   "session.compact": { params: { sessionID: string }; result: void }
+  /**
+   * /btw 顺便问一句(docs/btw顺便问-设计方案-20260924.md):旁路单发一次模型调用,**立即返回**,答案走 `session.btw`
+   * 事件。不打断、不排队、不进对话历史;会话在跑也照样能问。`input` 与 `session.prompt` 同形(正文不带 `/btw`)。
+   * 同一个会话同时只有一条,新的一条顶掉旧的。
+   */
+  "session.btw": { params: { sessionID: string; input: PromptInput }; result: { btwID: string } }
+  /** 关掉这条顺便问:还在答就取消请求,答完了就放掉内核留着的那份(之后不能再转后台)。对不上 id 什么都不做。 */
+  "session.btwCancel": { params: { sessionID: string; btwID: string }; result: void }
+  /**
+   * 把答完的那条顺便问转成后台子 agent(照 CC 的 fork):继承主会话此刻的上下文 + 这次的问答、同一份系统提示词与
+   * 工具定义、同一个模型与思考档位,一律后台,跑完照常通知主 agent。返回子 agent 的任务 id。
+   */
+  "session.btwFork": { params: { sessionID: string; btwID: string }; result: { taskID: string } }
   /**
    * 顶替 opencode 的 revert。yoma 只能把会话树的 leaf 挪回某条消息(navigateTree),
    * **不还原文件** —— 所以 UI 上必须叫"改上一条重发",不能叫"回滚"。返回那条消息的
@@ -309,6 +347,11 @@ export type KernelEvent =
   | { type: "task.updated"; task: TaskView }
   /** 会话收件箱的现状(整份,不是增量):忙时发的消息与还没被取走的子 agent 通知。 */
   | { type: "session.queue"; sessionID: string; items: QueuedItemView[] }
+  /**
+   * /btw 的每一次变化(整条快照,正文按 100 ms 节流)。**不复用 `message.*`**:那会落进 transcript 的 store,
+   * 还会被 bench 当成这一轮的输出。`status: "cancelled"` = 从界面上拿掉。
+   */
+  | { type: "session.btw"; btw: BtwView }
   /**
    * 工具跑之前那一问的每一次状态变化:`status:"pending"` 是新挂起一条,其余 status 都是
    * "这条结算了,从确认条上删掉"。按 `confirm.sessionID` 归属会话。

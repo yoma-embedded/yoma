@@ -17,6 +17,7 @@ import { LOG_CONTRACT } from "./log/contract.ts"
 import { LS_CONTRACT } from "./ls/contract.ts"
 import { NETLIST_CONTRACT } from "./netlist/contract.ts"
 import { POWERSHELL_CONTRACT } from "./powershell/contract.ts"
+import { PROJECT_CONTRACT } from "./project/contract.ts"
 import { SCOPE_CONTRACT } from "./scope/contract.ts"
 import { SEND_MESSAGE_CONTRACT } from "./send_message/contract.ts"
 import { STM32CONFIG_CONTRACT } from "./stm32config/contract.ts"
@@ -31,6 +32,7 @@ export const TOOL_CONTRACTS = [
   LS_CONTRACT,
   POWERSHELL_CONTRACT,
   TOOLCHAIN_CONTRACT,
+  PROJECT_CONTRACT,
   FLASH_CONTRACT,
   LOG_CONTRACT,
   LA_CONTRACT,

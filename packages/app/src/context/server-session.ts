@@ -16,7 +16,16 @@
 
 import { Binary } from "@yoma-desktop/util/binary"
 import { retry } from "@yoma-desktop/util/retry"
-import type { KernelEvent, Message, Part, QueuedItemView, Session, SessionStatus, TaskView } from "@yoma-desktop/kernel"
+import type {
+  BtwView,
+  KernelEvent,
+  Message,
+  Part,
+  QueuedItemView,
+  Session,
+  SessionStatus,
+  TaskView,
+} from "@yoma-desktop/kernel"
 import { batch } from "solid-js"
 import { createStore, produce, reconcile } from "solid-js/store"
 import type { Sdk } from "@/utils/kernel"
@@ -161,11 +170,15 @@ export function createServerSession(client: Sdk, options?: { retry?: typeof retr
     task: {} as Record<string, TaskView>,
     /** 会话收件箱里排着的(`session.queue`,整份替换):忙时发的消息与还没被取走的子 agent 通知。 */
     queue: {} as Record<string, QueuedItemView[]>,
+    /** /btw 顺便问一句(`session.btw`,整条快照):一个会话同时只有一条,关掉或被顶掉就拿掉。 */
+    btw: {} as Record<string, BtwView>,
     session_working(id: string) {
       return (this.session_status[id]?.type ?? "idle") !== "idle"
     },
   })
   const requests = new Map<string, Promise<Session>>()
+  /** 用户关掉过的 /btw:之后到的它的事件一律不认(见 `session.btw` 的归约)。 */
+  const dismissedBtw = new Set<string>()
   const inflight = new Map<string, Promise<void>>()
   const optimistic = new Map<string, Map<string, OptimisticItem>>()
   const messageLoads = new Map<string, MessageLoadState>()
@@ -611,6 +624,8 @@ export function createServerSession(client: Sdk, options?: { retry?: typeof retr
       case "session.created":
       case "session.updated":
         return event.session.id
+      case "session.btw":
+        return event.btw.sessionID
       case "session.deleted":
       case "session.status":
       case "session.queue":
@@ -682,6 +697,7 @@ export function createServerSession(client: Sdk, options?: { retry?: typeof retr
         setData(
           produce((draft) => {
             delete draft.queue[sessionID]
+            delete draft.btw[sessionID]
             delete draft.task[sessionID]
             for (const [id, task] of Object.entries(draft.task)) if (task.parentID === sessionID) delete draft.task[id]
           }),
@@ -699,6 +715,22 @@ export function createServerSession(client: Sdk, options?: { retry?: typeof retr
       }
       case "session.queue": {
         setData("queue", event.sessionID, reconcile(event.items))
+        return
+      }
+      case "session.btw": {
+        const view = event.btw
+        // 用户关掉的那条:关之前已经在路上的那几拍(正文 100 ms 一拍)到了也不许把坞再画回来。
+        if (dismissedBtw.has(view.id)) return
+        if (view.status === "cancelled") {
+          // 只拿掉同一条 —— 被新的一条顶掉时,旧的那条的 cancelled 不该删掉新的。
+          if (data.btw[view.sessionID]?.id === view.id)
+            setData(
+              "btw",
+              produce((draft) => void delete draft[view.sessionID]),
+            )
+          return
+        }
+        setData("btw", view.sessionID, reconcile(view))
         return
       }
       case "message.updated": {
@@ -921,6 +953,20 @@ export function createServerSession(client: Sdk, options?: { retry?: typeof retr
     remember,
     resolve,
     seedTasks,
+    /**
+     * 用户关掉这个会话的顺便问:本地先拿掉,之后到的这一条的事件一律不认。返回被关掉的那条(调用方据此决定要不要
+     * 通知内核 `session.btwCancel`);没有就是 undefined。
+     */
+    dismissBtw(sessionID: string): BtwView | undefined {
+      const current = data.btw[sessionID]
+      if (!current) return undefined
+      dismissedBtw.add(current.id)
+      setData(
+        "btw",
+        produce((draft) => void delete draft[sessionID]),
+      )
+      return current
+    },
     sync,
     prefetch,
     shouldPrefetch(sessionID: string, limit: number) {

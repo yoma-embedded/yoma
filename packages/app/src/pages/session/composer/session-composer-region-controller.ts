@@ -1,15 +1,8 @@
 import { type Accessor, createEffect, createResource } from "solid-js"
-import type { ToolConfirmView } from "@yoma-desktop/kernel"
+import type { BtwView, ToolConfirmView } from "@yoma-desktop/kernel"
 import type { PromptInputState } from "@/components/prompt-input"
 import type { DockTask } from "@/pages/session/subagent/task-view"
 import { getSessionHandoff, setSessionHandoff } from "@/pages/session/handoff"
-
-export type SessionComposerFollowupDock = {
-  items: { id: string; text: string }[]
-  sending?: string
-  onSend: (id: string) => void
-  onEdit: (id: string) => void
-}
 
 /** 工具确认条(烧录前先问一声):未决的询问 + 正在回复的那条 + 回复动作。 */
 export type SessionComposerConfirmDock = {
@@ -33,6 +26,15 @@ export type SessionComposerQueueDock = {
   onRetract: (entryId: string) => void
 }
 
+/** /btw 顺便问一句:这一条的现状 + 关掉 / 转后台 / 复制。 */
+export type SessionComposerBtwDock = {
+  view: BtwView
+  forking: boolean
+  onDismiss: () => void
+  onFork: () => void
+  onCopy: () => void
+}
+
 /**
  * 组合区(确认条 + 子 agent 坞 + 排队中 + 排队追问 + 输入框)的容器控制器。
  *
@@ -48,10 +50,10 @@ export function createSessionComposerRegionController(input: {
   sessionID: Accessor<string | undefined>
   prompt: PromptInputState
   centered: Accessor<boolean>
-  followup: Accessor<SessionComposerFollowupDock | undefined>
   confirms: Accessor<SessionComposerConfirmDock | undefined>
   subagents: Accessor<SessionComposerSubagentDock | undefined>
   queue: Accessor<SessionComposerQueueDock | undefined>
+  btw: Accessor<SessionComposerBtwDock | undefined>
   setPromptRef: (el: HTMLDivElement) => void
   setDockRef: (el: HTMLDivElement) => void
 }) {
@@ -78,10 +80,10 @@ export function createSessionComposerRegionController(input: {
 
   return {
     centered: input.centered,
-    followup: input.followup,
     confirms: input.confirms,
     subagents: input.subagents,
     queue: input.queue,
+    btw: input.btw,
     setPromptRef: input.setPromptRef,
     setDockRef: input.setDockRef,
     handoffPrompt: () => getSessionHandoff(input.sessionKey())?.prompt,

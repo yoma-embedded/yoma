@@ -184,6 +184,16 @@ const api: ElectronAPI = {
   storeGet: (name, key) => ipcRenderer.invoke("store-get", name, key),
   storeSet: (name, key, value) => ipcRenderer.invoke("store-set", name, key, value),
   storeDelete: (name, key) => ipcRenderer.invoke("store-delete", name, key),
+  storeItems: (name) => ipcRenderer.invoke("store-items", name),
+  storeUpdate: (name, insert, remove) => ipcRenderer.invoke("store-update", name, insert, remove),
+  onStorageFlush: (flush) => {
+    ipcRenderer.on("storage-flush", () => {
+      void Promise.resolve()
+        .then(flush)
+        .catch(() => undefined)
+        .finally(() => ipcRenderer.send("storage-flushed"))
+    })
+  },
   storeClear: (name) => ipcRenderer.invoke("store-clear", name),
   storeKeys: (name) => ipcRenderer.invoke("store-keys", name),
   storeLength: (name) => ipcRenderer.invoke("store-length", name),

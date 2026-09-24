@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest"
 import type { retry } from "@yoma-desktop/util/retry"
-import type { MessagePage, Message, Part, Session, TaskView } from "@yoma-desktop/kernel"
+import type { BtwView, MessagePage, Message, Part, Session, TaskView } from "@yoma-desktop/kernel"
 import type { Sdk } from "@/utils/kernel"
 import { createServerSession, taskAhead } from "./server-session"
 
@@ -1319,5 +1319,54 @@ describe("子 agent 的任务与收件箱", () => {
 
     expect(Object.keys(ctx.store.data.task)).toEqual(["child-2"])
     expect(ctx.store.data.queue.main).toBeUndefined()
+  })
+})
+
+const btw = (id: string, input: Partial<BtwView> = {}): BtwView => ({
+  id,
+  sessionID: "main",
+  question: "这个寄存器是干嘛的",
+  status: "thinking",
+  text: "",
+  startedAt: 100,
+  ...input,
+})
+
+describe("/btw 顺便问一句", () => {
+  test("session.btw 按会话落进 btw,整条快照替换;cancelled 只拿掉同一条", () => {
+    const ctx = setup({})
+    ctx.store.apply({ type: "session.btw", btw: btw("b1") })
+    ctx.store.apply({ type: "session.btw", btw: btw("b1", { status: "answering", text: "它是" }) })
+    expect(ctx.store.data.btw.main).toMatchObject({ id: "b1", status: "answering", text: "它是" })
+
+    // 被新的一条顶掉:旧的那条的 cancelled 先到、新的一条跟着到。
+    ctx.store.apply({ type: "session.btw", btw: btw("b1", { status: "cancelled" }) })
+    ctx.store.apply({ type: "session.btw", btw: btw("b2") })
+    expect(ctx.store.data.btw.main?.id).toBe("b2")
+    // 晚到的旧 cancelled 不许删掉新的这条。
+    ctx.store.apply({ type: "session.btw", btw: btw("b1", { status: "cancelled" }) })
+    expect(ctx.store.data.btw.main?.id).toBe("b2")
+    ctx.store.apply({ type: "session.btw", btw: btw("b2", { status: "cancelled" }) })
+    expect(ctx.store.data.btw.main).toBeUndefined()
+  })
+
+  test("用户关掉的那条:本地立刻拿掉,关之前已经在路上的那几拍到了也不再画回来", () => {
+    const ctx = setup({})
+    ctx.store.apply({ type: "session.btw", btw: btw("b1", { status: "answering", text: "一" }) })
+    expect(ctx.store.dismissBtw("main")?.id).toBe("b1")
+    expect(ctx.store.data.btw.main).toBeUndefined()
+    ctx.store.apply({ type: "session.btw", btw: btw("b1", { status: "answering", text: "一二" }) })
+    expect(ctx.store.data.btw.main).toBeUndefined()
+    expect(ctx.store.dismissBtw("main")).toBeUndefined()
+    // 之后新问的照常出现。
+    ctx.store.apply({ type: "session.btw", btw: btw("b2") })
+    expect(ctx.store.data.btw.main?.id).toBe("b2")
+  })
+
+  test("删会话:它的顺便问一起清", () => {
+    const ctx = setup({})
+    ctx.store.apply({ type: "session.btw", btw: btw("b1", { status: "done", text: "答案" }) })
+    ctx.store.apply({ type: "session.deleted", sessionID: "main" })
+    expect(ctx.store.data.btw.main).toBeUndefined()
   })
 })

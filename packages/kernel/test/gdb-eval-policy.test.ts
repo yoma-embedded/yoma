@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest"
 
-import { classifyEval, expressionWrites, RUN_CONTROL_OPS } from "../src/host/domain/gdb/eval-policy.ts"
+import { classifyEval, expressionCalls, expressionWrites, RUN_CONTROL_OPS } from "../src/host/domain/gdb/eval-policy.ts"
 
 describe("classifyEval", () => {
   it("会污染 MI 流的一律拒绝 —— 包括行首的 | (gdb 的 pipe 别名)", () => {
@@ -200,5 +200,24 @@ describe("expressionWrites", () => {
     expect(expressionWrites("*(uint32_t*)0xe000ed28")).toBe(false)
     expect(expressionWrites("regs.ctrl &= ~1")).toBe(true)
     expect(expressionWrites('name == "a=b"')).toBe(false)
+  })
+})
+
+describe("expressionCalls:监视表达式里的函数调用会在目标上真的执行", () => {
+  it("直接调用、经函数指针调用都算", () => {
+    expect(expressionCalls("reset_board()")).toBe(true)
+    expect(expressionCalls("g_ops->read (3)")).toBe(true)
+    expect(expressionCalls("(*g_cb)(1)")).toBe(true)
+    expect(expressionCalls("(s.cb)(1)")).toBe(true)
+    expect(expressionCalls("table[2](x)")).toBe(true)
+  })
+
+  it("类型转换、sizeof、gdb 自带的 $_ 函数、字符串里的括号都不算", () => {
+    expect(expressionCalls("*(volatile uint32_t *)(0x40021000)")).toBe(false)
+    expect(expressionCalls("(unsigned int)(g_x + 1)")).toBe(false)
+    expect(expressionCalls("sizeof(g_foc)")).toBe(false)
+    expect(expressionCalls("$_streq(g_name, \"x\")")).toBe(false)
+    expect(expressionCalls("g_log == \"a(b)\"")).toBe(false)
+    expect(expressionCalls("g_foc.ticks * (2 + 3)")).toBe(false)
   })
 })

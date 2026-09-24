@@ -100,6 +100,28 @@ export type QueuedItemView =
   | { kind: "prompt"; entryId: string; text: string; images: number }
   | { kind: "notification"; entryId: string; taskID?: string }
 
+/**
+ * /btw 顺便问一句的现状(`session.btw` 事件,docs/btw顺便问-设计方案-20260924.md)。旁路单发一次模型调用,不进对话历史;
+ * 一个会话同时只有一条。`thinking` 是还没出正文(包括等首字);`cancelled` 的意思是"这条没了,从界面上拿掉"。
+ */
+export interface BtwView {
+  id: string
+  sessionID: string
+  /** 用户问的那句话(不带 `/btw`)。 */
+  question: string
+  status: "thinking" | "answering" | "done" | "failed" | "cancelled"
+  /** 到目前为止的正文,整段快照。 */
+  text: string
+  /** 模型没有直接回答,而是想调用这个工具(没有执行)。 */
+  attemptedTool?: string
+  /** failed 的原因。没有它的 failed = 模型什么都没回。 */
+  error?: string
+  /** 附件的提示:没送到模型的图、被忽略的非图片附件。 */
+  notices?: string[]
+  startedAt: number
+  endedAt?: number
+}
+
 export interface Tokens {
   input: number
   output: number
@@ -351,6 +373,7 @@ export const TOOL_NAMES = [
   "ls",
   "powershell",
   "toolchain",
+  "project",
   "flash",
   "log",
   "la",

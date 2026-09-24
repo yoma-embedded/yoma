@@ -14,6 +14,7 @@ import type { Part, ToolPart } from "@yoma-desktop/kernel"
 import { useSync } from "@/context/sync"
 import { useSessionKey } from "@/pages/session/session-layout"
 import { deriveBenchStatus, EMPTY_BENCH_STATUS, type BenchStatus } from "./bench-status"
+import { instrumentObservations } from "./instrument-state"
 
 /** 模块级的稳定空数组:每次现造一个新的 `[]` 会让下游 memo 每拍都认为变了。 */
 const EMPTY_PARTS: Part[] = []
@@ -46,9 +47,14 @@ export function useBenchToolParts(sessionID?: Accessor<string | undefined>): Acc
 
 /** 当前会话的工作台现状。面板、状态条、注册表的可见性判定全用它。 */
 export function useBenchStatus(sessionID?: Accessor<string | undefined>): Accessor<BenchStatus> {
+  const { params } = useSessionKey()
   const parts = useBenchToolParts(sessionID)
-  return createMemo(() => {
+  const recorded = createMemo(() => {
     const list = parts()
     return list.length === 0 ? EMPTY_BENCH_STATUS : deriveBenchStatus(list)
+  })
+  return createMemo(() => {
+    const observed = instrumentObservations(sessionID?.() ?? params.id, recorded())
+    return observed.length ? deriveBenchStatus([...parts(), ...observed]) : recorded()
   })
 }

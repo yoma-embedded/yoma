@@ -11,7 +11,7 @@
  * 这个 toolId,可能在哪"。
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -83,6 +83,10 @@ export function withPath(env: NodeJS.ProcessEnv, dirs: string[]): NodeJS.Process
  * PATH 扫描,按 PATHEXT 展开候选后缀 —— cmake 用 winget/choco 装出来常是
  * `.cmd` 垫片,ninja 靠 scoop 装时也是 `.cmd`/`.bat`,只拼 `.exe` 会在这些
  * 情况下假阴性(gdb.ts:1153 的 findOnPath 就是这个坑,这次不抄它)。
+ *
+ * **只认文件**:最后那条裸名字候选在 Windows 上不分大小写,Keil 的 `ARM\` 下就躺着一个叫
+ * `ARMCLANG` 的**目录** —— 从前它被当成 armclang 返回,调用方验出不是文件就丢掉,而扫描已经停了,
+ * 后面目录里真正的 armclang.exe 再也轮不到(2026-09-24,贴 `Keil_v5\ARM` 找不到编译器)。
  */
 export function findOnPath(name: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
 	const dirs = (readEnvVar(env, "PATH") ?? "").split(path.delimiter).filter(Boolean);
@@ -90,10 +94,18 @@ export function findOnPath(name: string, env: NodeJS.ProcessEnv = process.env): 
 	for (const dir of dirs) {
 		for (const ext of extensions) {
 			const candidate = path.join(dir, `${name}${ext}`);
-			if (existsSync(candidate)) return candidate;
+			if (isFile(candidate)) return candidate;
 		}
 	}
 	return undefined;
+}
+
+function isFile(candidate: string): boolean {
+	try {
+		return statSync(candidate).isFile();
+	} catch {
+		return false;
+	}
 }
 
 // ─── 已知安装位置:pattern 展开 ────────────────────────────────────────────────
@@ -330,16 +342,14 @@ export const WELL_KNOWN_LOCATIONS: LocationTable = {
 	},
 	// Keil 只有 Windows;探测的是编译器(armclang/armcc)而不是 UV4 —— 见 families.ts
 	// KEIL 条目的注释(对 GUI spawn --version 会真的弹起 IDE)。装盘符可选,同 jlink;
-	// AC6(armclang)在 ARM\ARMCLANG\bin,AC5(armcc)在 ARM\BIN(实机核对过,不是
-	// 想当然的 ARM\ARMCC\bin)。Users\*\AppData\Local 是安装器"仅为我安装"的落点,
-	// 用户目录可以不在 C 盘(实机:D:\Users\admin\AppData\Local\Keil_v5)。
+	// Users\*\AppData\Local 是安装器"仅为我安装"的落点,用户目录可以不在 C 盘
+	// (实机:D:\Users\admin\AppData\Local\Keil_v5)。
+	// 这里只写**安装根**:编译器在根下的哪几个子目录由预设的 binDirs 说(resolve.ts 的
+	// wellKnownHits 过 layoutDirs),布局只写一处。2026-09-24 之前这里自己抄了一份子目录,
+	// 只有 ARMCLANG\bin 与 ARM\BIN,漏了 Keil 文档上的 ARM\ARMCC\bin(MDK 5.36 及以前自带的
+	// AC5)和 5.37 起另装的 ARM\ARM_Compiler_5.06u7\bin。
 	keil: {
-		win32: [
-			...winDriveVariants("Keil_v5\\ARM\\ARMCLANG\\bin"),
-			...winDriveVariants("Keil_v5\\ARM\\BIN"),
-			...winDriveVariants("Users\\*\\AppData\\Local\\Keil_v5\\ARM\\ARMCLANG\\bin"),
-			...winDriveVariants("Users\\*\\AppData\\Local\\Keil_v5\\ARM\\BIN"),
-		],
+		win32: [...winDriveVariants("Keil_v5"), ...winDriveVariants("Users\\*\\AppData\\Local\\Keil_v5")],
 	},
 };
 
@@ -377,6 +387,10 @@ const REGISTRY_SEARCH_TERM: Record<string, string> = {
 	// 不复用 "STMicroelectronics":那个词会同时命中 CubeMX 与 CubeProgrammer 的卸载键,
 	// 用产品名把搜索面钉到最窄(见本表头注释 —— 面越宽,凑巧命中的概率越高)。
 	stm32cubeprog: "STM32CubeProgrammer",
+	// MDK 5 的卸载键叫 "Keil μVision4"(实机,MDK 5.43 也是这个名),卸载程序在安装根上;编译器在根下
+	// 哪个子目录由预设的 binDirs 说。同一个词还会命中 Keil 的 USB 驱动包(卸载程序在 DIFX 里),
+	// 那里没有编译器,不产生候选。
+	keil: "Keil",
 };
 
 // 三个 Uninstall 根都要查:只查 64 位视图会漏掉 32 位安装包(J-Link 官方安装包
@@ -389,19 +403,53 @@ const UNINSTALL_ROOTS = [
 ];
 
 /**
- * 从 `reg query <key> /s /f <term> /d` 的 stdout 里挑出 InstallLocation 的值。
+ * 从 `reg query <key> /s /f <term> /d` 的 stdout 里挑出每个命中键的安装目录。
  * `/d` 把匹配范围限制在**值的内容**上,不含键名/值名 —— 否则搜 "SEGGER" 有
- * 概率被某个凑巧带这几个字母的键名截胡。命中的键会把它全部的值(DisplayName、
- * InstallLocation、UninstallString……)整块缩进打印在下面,这里只挑
- * InstallLocation 这一行,认 REG_SZ 和 REG_EXPAND_SZ 两种类型。
+ * 概率被某个凑巧带这几个字母的键名截胡。命中的键以一行 `HKEY_…` 开头,下面缩进打印的
+ * **只是内容里含搜索词的那几个值**(实机核对;从前这里写的"全部的值整块打印"不对),认 REG_SZ
+ * 和 REG_EXPAND_SZ 两种类型。所以这一档看得见的是路径里带着产品名的安装(各家的默认目录名都带),
+ * 装进 `D:\tools\` 这种目录的看不见,那时靠用户在设置页记一次。
+ *
+ * 每个键:有 InstallLocation 用它;**是空的就从 UninstallString 反推**(2026-09-24 实机:
+ * 只有 J-Link 的安装器写了 InstallLocation,STM32CubeProgrammer、Keil、CubeMX 的都是空的,
+ * 卸载程序却都躺在安装目录里)。从前只认 InstallLocation,这一档于是只对 J-Link 有用 ——
+ * 装在非默认位置的 CubeProgrammer 在新电脑上直接 MISSING。
  */
 export function parseInstallLocations(stdout: string): string[] {
 	const out: string[] = [];
+	let location: string | undefined;
+	let uninstaller: string | undefined;
+	const flush = () => {
+		const dir = location || (uninstaller ? uninstallerDir(uninstaller) : undefined);
+		if (dir) out.push(dir);
+		location = uninstaller = undefined;
+	};
 	for (const line of stdout.split(/\r?\n/)) {
-		const m = /^\s*InstallLocation\s+REG_(?:SZ|EXPAND_SZ)\s+(.+?)\s*$/.exec(line);
-		if (m?.[1]) out.push(m[1]);
+		if (/^HKEY_/i.test(line)) {
+			flush();
+			continue;
+		}
+		const m = /^\s*(InstallLocation|UninstallString)\s+REG_(?:SZ|EXPAND_SZ)\s+(.*)$/.exec(line);
+		const value = m?.[2]?.trim();
+		if (!value) continue;
+		if (m![1] === "InstallLocation") location = value;
+		else uninstaller = value;
 	}
+	flush();
 	return out;
+}
+
+/**
+ * 卸载命令 → 安装目录:取可执行文件所在的目录;它若叫 Uninstall* / Uninst*(CubeProgrammer 的是
+ * `<根>\Uninstaller\unscript.bat`)再往上一层。`MsiExec.exe /X{…}` 这类不带盘符的、落在
+ * System32 里的,说的不是安装在哪,不产出。
+ */
+export function uninstallerDir(command: string): string | undefined {
+	const trimmed = command.trim();
+	const program = /^"([^"]+)"/.exec(trimmed)?.[1] ?? /^(.+?\.(?:exe|bat|cmd))(?:\s|$)/i.exec(trimmed)?.[1];
+	if (!program || !/^[A-Za-z]:[\\/]/.test(program) || /[\\/](?:system32|syswow64)[\\/]/i.test(program)) return undefined;
+	const dir = path.win32.dirname(program);
+	return /^uninst/i.test(path.win32.basename(dir)) ? path.win32.dirname(dir) : dir;
 }
 
 /**
