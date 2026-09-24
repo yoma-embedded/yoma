@@ -330,6 +330,139 @@ else { console.log("usage: esptool [-h] [--flash_voltage {1.8V,3.3V}]"); process
 		expect(recorded.version).toBeUndefined();
 		expect((await readLedger(configDir)).entries.esptool?.version).toBeUndefined();
 	});
+
+	/**
+	 * 与真 J-Link Commander V9.58 同一个脾气(2026-09-24 实测,Windows 设置页一直挂着"入口待验证 +
+	 * 去 segger.com 装"):任何参数都先打横幅,再报 unknown option、退出 1 —— 没有一个参数能让它正常退出。
+	 */
+	const JLINK_JS = `
+console.log("SEGGER J-Link Commander V9.58 (Compiled Jul  9 2026 16:00:07)");
+console.log("DLL version V9.58, compiled Jul  9 2026 15:59:07");
+console.log("");
+console.log("Unknown command line option " + process.argv[2] + ".");
+process.exitCode = 1;
+`;
+
+	it('{"id":"jlink"} 继承 versionPattern:退出 1 但横幅命中 → OK 9.58(从前永远 UNVERIFIED)', async () => {
+		const binDir = path.join(root, "SEGGER", "JLink_V958");
+		writeFakeExe(binDir, "JLink", JLINK_JS);
+		const result = await resolve([{ id: "jlink" }], { env: baseEnv({ PATH: binDir }) });
+		expect(result.tools[0]).toMatchObject({ status: "ok", version: "9.58", checks: { execution: "passed" } });
+		expect(result.tools[0]?.hint).toBeUndefined();
+	});
+
+	it("用户在设置页贴的是安装目录(账本 by:user)→ 同样 OK;set 记下的版本也是 9.58", async () => {
+		const binDir = path.join(root, "SEGGER", "JLink_V958");
+		writeFakeExe(binDir, "JLink", JLINK_JS);
+		const recorded = await recordToolchainPath({ id: "jlink", path: binDir, configDir, env: baseEnv(), spec: presetToolSpec("jlink") });
+		expect(recorded.version).toBe("9.58");
+		const result = await resolveToolchain({
+			projectDir,
+			configDir,
+			platform: PLATFORM,
+			env: baseEnv(),
+			locations: {},
+			manifestText: JSON.stringify({ schema: "yoma/toolchain@1", tools: [{ id: "jlink" }] }),
+		});
+		expect(result.tools[0]).toMatchObject({ status: "ok", source: "ledger", version: "9.58" });
+	});
+
+	it("横幅没命中时退出码非 0 照旧不算:声明了 versionPattern 也不从 usage 里抠数字", async () => {
+		const binDir = path.join(root, "bin");
+		writeFakeExe(binDir, "esptool", ESPTOOL_JS);
+		const result = await resolve([{ id: "esptool", bin: ["esptool"], versionArgs: ["--version"], versionPattern: "esptool\\.py v(\\d+\\.\\d+\\.\\d+)" }], {
+			env: baseEnv({ PATH: binDir }),
+		});
+		expect(result.tools[0]).toMatchObject({ status: "unverified", checks: { execution: "unverified" } });
+		expect(result.tools[0]?.version).toBeUndefined();
+	});
+});
+
+// ─── 7. Keil:安装布局 + 版本在第二行 ────────────────────────────────────────────
+
+/**
+ * 2026-09-24 那台机器(MDK Professional 5.43 装在 D:\Users\admin\AppData\Local\Keil_v5)的三条,一条一个用例:
+ * 1. 用户贴的是 `Keil_v5\UV4`(IDE 在那),编译器在旁边的 ARM 树里 —— 从前只查 [目录, 目录\bin],永远"未找到入口"。
+ * 2. armcc 不认 --version(C3900U,退出 1)—— 与 J-Link 同一个坑;--vsn 两代编译器都认。
+ * 3. 两代编译器的第一行都是 "Product: MDK Professional 5.43" —— 版本被记成 5.43,清单写 ">=6.18" 就是假的 VERSION MISMATCH。
+ * 假编译器的输出逐字抄自真机。
+ */
+describe("Keil:贴安装树里的任何一层都找得到编译器,版本取编译器自己的", () => {
+	const ARMCLANG_JS = `
+console.log("Product: MDK Professional 5.43");
+console.log("Component: Arm Compiler for Embedded 6.24");
+console.log("Tool: armclang [5f371800]");
+console.log("");
+console.log("Target: unspecified-arm-none-none");
+`;
+	const ARMCC_JS = `
+if (process.argv[2] !== "--vsn") { console.error("Fatal error: C3900U: Unrecognized option '" + process.argv[2] + "'."); process.exitCode = 1; }
+else {
+	console.log("Product: MDK Professional 5.43");
+	console.log("Component: ARM Compiler 5.06 update 7 (build 960)");
+	console.log("Tool: armcc [4d365d]");
+}
+`;
+
+	let keilRoot: string;
+	beforeEach(() => {
+		keilRoot = path.join(root, "Users", "admin", "AppData", "Local", "Keil_v5");
+		mkdirSync(path.join(keilRoot, "UV4"), { recursive: true });
+		writeFileSync(path.join(keilRoot, "UV4", "UV4.exe"), "not a real program — must never be spawned");
+		// 真机上 ARM\BIN 在,但 armcc 不在里面(MDK 5.37 起不自带 AC5)。
+		mkdirSync(path.join(keilRoot, "ARM", "BIN"), { recursive: true });
+		writeFakeExe(path.join(keilRoot, "ARM", "ARMCLANG", "bin"), "armclang", ARMCLANG_JS);
+		writeFakeExe(path.join(keilRoot, "ARM", "ARM_Compiler_5.06u7", "bin"), "armcc", ARMCC_JS);
+	});
+
+	async function resolveRecorded(recordedPath: string, tool: ToolSpec = { id: "keil" }) {
+		await writeLedgerEntry({ id: "keil", bin: { [path.parse(recordedPath).name]: recordedPath }, confirmedAt: Date.now(), by: "user" }, configDir);
+		return (await resolve([tool])).tools[0];
+	}
+
+	it.each([
+		["UV4 目录(真机上的账本)", () => path.join(keilRoot, "UV4")],
+		["用「浏览…」挑的 UV4.exe", () => path.join(keilRoot, "UV4", "UV4.exe")],
+		["安装根 Keil_v5", () => keilRoot],
+		["ARM 目录", () => path.join(keilRoot, "ARM")],
+	])("记录的是%s → OK 6.24,入口是 armclang", async (_label, recorded) => {
+		const tool = await resolveRecorded(recorded());
+		expect(tool).toMatchObject({ status: "ok", source: "ledger", version: "6.24", checks: { execution: "passed" } });
+		expect(tool?.bin).toEqual({ armclang: expect.stringContaining(path.join("ARM", "ARMCLANG", "bin")) });
+		expect(tool?.hint).toBeUndefined();
+	});
+
+	it("只要 AC5(bin:[armcc]):按 --vsn 问、版本 5.06,另装的 ARM_Compiler_* 目录找得到", async () => {
+		const tool = await resolveRecorded(path.join(keilRoot, "UV4"), { id: "keil", bin: ["armcc"] });
+		expect(tool).toMatchObject({ status: "ok", version: "5.06" });
+		expect(tool?.bin.armcc).toContain("ARM_Compiler_5.06u7");
+	});
+
+	it('清单写 "version":">=6.18" → 核的是编译器的 6.24,不是 MDK 的 5.43', async () => {
+		const tool = await resolveRecorded(path.join(keilRoot, "UV4"), { id: "keil", version: ">=6.18" });
+		expect(tool).toMatchObject({ status: "ok", version: "6.24", checks: { version: "satisfied" } });
+	});
+
+	it("没有任何记录:位置表只写安装根,自动发现照样找到编译器(布局只写在预设的 binDirs 一处)", async () => {
+		const locations: LocationTable = { keil: { [PLATFORM]: [path.join(root, "Users", "*", "AppData", "Local", "Keil_v5")] } };
+		const tool = (await resolve([{ id: "keil" }], { locations })).tools[0];
+		expect(tool).toMatchObject({ status: "ok", source: "well-known", version: "6.24" });
+	});
+
+	it("老 MDK(5.36 及以前,只有自带的 AC5,在 Keil 文档写的 ARM\\ARMCC\\bin):自动发现 → OK 5.06", async () => {
+		const oldRoot = path.join(root, "Keil_v5");
+		writeFakeExe(path.join(oldRoot, "ARM", "ARMCC", "bin"), "armcc", ARMCC_JS);
+		mkdirSync(path.join(oldRoot, "UV4"), { recursive: true });
+		const tool = (await resolve([{ id: "keil" }], { locations: { keil: { [PLATFORM]: [oldRoot] } } })).tools[0];
+		expect(tool).toMatchObject({ status: "ok", source: "well-known", version: "5.06" });
+		expect(tool?.bin.armcc).toContain(path.join("ARM", "ARMCC", "bin"));
+	});
+
+	it("不相干的目录不会往上爬进别处:同一个盘上、Keil 旁边的目录照旧 RECORDED", async () => {
+		const unrelated = path.join(root, "Users", "admin", "Documents");
+		mkdirSync(unrelated, { recursive: true });
+		expect(await resolveRecorded(unrelated)).toMatchObject({ status: "recorded", checks: { entry: "missing" } });
+	});
 });
 
 // ─── 清单校验 ─────────────────────────────────────────────────────────────────
@@ -343,5 +476,19 @@ describe("parseManifest:新字段", () => {
 		expect(parseManifest(wrap({ id: "sdk", pathKind: "dir", marker: "" })).ok).toBe(false);
 		expect(parseManifest(wrap({ id: "t", bin: ["t"], versionArgs: ["version"] })).ok).toBe(true);
 		expect(parseManifest(wrap({ id: "t", bin: ["t"], versionArgs: "version" })).ok).toBe(false);
+	});
+
+	it("binDirs 必须是安装根之内的相对路径", () => {
+		expect(parseManifest(wrap({ id: "t", bin: ["t"], binDirs: ["ARM/ARMCLANG/bin", "ARM/ARM_Compiler_*/bin"] })).ok).toBe(true);
+		expect(parseManifest(wrap({ id: "t", bin: ["t"], binDirs: ["../elsewhere/bin"] })).ok).toBe(false);
+		expect(parseManifest(wrap({ id: "t", bin: ["t"], binDirs: "ARM/BIN" })).ok).toBe(false);
+		expect(parseManifest(wrap({ id: "t", bin: ["t"], binDirs: [""] })).ok).toBe(false);
+	});
+
+	it("versionPattern 必须是编得过的正则", () => {
+		expect(parseManifest(wrap({ id: "t", bin: ["t"], versionPattern: "Tool V(\\d+\\.\\d+)" })).ok).toBe(true);
+		expect(parseManifest(wrap({ id: "t", bin: ["t"], versionPattern: "Tool V(\\d+" })).ok).toBe(false);
+		expect(parseManifest(wrap({ id: "t", bin: ["t"], versionPattern: "" })).ok).toBe(false);
+		expect(parseManifest(wrap({ id: "t", bin: ["t"], versionPattern: ["V(\\d+)"] })).ok).toBe(false);
 	});
 });

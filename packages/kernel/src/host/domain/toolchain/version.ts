@@ -117,7 +117,7 @@ const FORCE_KILL_GRACE_MS = 2_000;
  * 因为一次 --version 探测失败就抛出去,代价比"这个工具的版本标未知"大得多。
  */
 export interface ExecutableProbe {
-	/** 仅 --version 正常退出才能证明这次执行成功;版本文本本身不是成功证据。 */
+	/** 仅版本探针正常退出(或声明过的 versionPattern 命中)才能证明这次执行成功;随便一段像版本的文本不是成功证据。 */
 	executable: boolean;
 	version?: string;
 }
@@ -128,8 +128,21 @@ export async function probeVersion(
 	bin: string,
 	env: NodeJS.ProcessEnv = process.env,
 	args: readonly string[] = DEFAULT_VERSION_ARGS,
+	pattern?: string,
 ): Promise<string | undefined> {
-	return (await probeExecutable(bin, env, args)).version;
+	return (await probeExecutable(bin, env, args, pattern)).version;
+}
+
+/** 正则的第 1 个捕获组(没有组就整段命中)里的版本号;stdout 优先,理由同 probeExecutable 里收两个流那段。 */
+function patternVersion(source: string, stdout: string, stderr: string): string | undefined {
+	let pattern: RegExp;
+	try {
+		pattern = new RegExp(source);
+	} catch {
+		return undefined;
+	}
+	const hit = pattern.exec(stdout) ?? pattern.exec(stderr);
+	return hit ? parseVersion(hit[1] ?? hit[0]) : undefined;
 }
 
 /**
@@ -139,11 +152,24 @@ export async function probeVersion(
  * `esptool.exe --version` 打印 usage 后失败,而 usage 里恰好有一段 "1.8"(flash 电压选项),
  * 于是账本里记下了 `version: "1.8"` —— 真实版本是 4.10.0。清单要是写了版本范围,这个假版本号
  * 会变成一条假的 VERSION MISMATCH。
+ *
+ * 工具声明了 `pattern`(schema 的 versionPattern)时,版本**只**从它的命中里取,不再抓第一个像版本的数;
+ * 退出码非 0 而它命中了,也算跑起来了。两个真实的理由(2026-09-24 实测):
+ * - **没有任何参数能正常退出**:J-Link Commander 对 --version / -? / -h 一律打完横幅
+ *   "SEGGER J-Link Commander V9.58" 再报 unknown option、退出 1 —— 装得好好的 J-Link 于是永远是
+ *   "入口待验证",设置页一直挂着"去 segger.com 装"。换一个会正常退出的入口不行:同目录的 GDB Server
+ *   倒是认 --version,但它不认识的参数会让它去连探针、开端口,而旧版本 / macOS 上认不认没核过 ——
+ *   核账在每次开会话时都跑,不能冒这个险;Commander 今天本来就在跑这一条,只是换一种读法,不多起任何进程。
+ * - **第一个数不是版本**:Keil 的编译器第一行是 "Product: MDK Professional 5.43"(MDK 的版本),
+ *   编译器自己的在第二行 "Component: Arm Compiler for Embedded 6.24" —— AC5 与 AC6 都报成 5.43,
+ *   清单写 ">=6.18" 就是一条假的 VERSION MISMATCH。
+ * 正则要写成只有那一个程序会打的样子(带程序名),别写成裸的 `V(\d+\.\d+)`,那就退回 esptool 的坑。
  */
 export function probeExecutable(
 	bin: string,
 	env: NodeJS.ProcessEnv = process.env,
 	args: readonly string[] = DEFAULT_VERSION_ARGS,
+	pattern?: string,
 ): Promise<ExecutableProbe> {
 	return new Promise((resolve) => {
 		let settled = false;
@@ -226,8 +252,12 @@ export function probeExecutable(
 		child.on("close", (code) => {
 			clearAll();
 			if (timedOut) return settle(undefined);
-			const executable = code === 0;
-			settle({ executable, version: executable ? (parseVersion(stdout) ?? parseVersion(stderr)) : undefined });
+			if (pattern !== undefined) {
+				const version = patternVersion(pattern, stdout, stderr);
+				return settle({ executable: code === 0 || version !== undefined, version });
+			}
+			if (code !== 0) return settle({ executable: false });
+			settle({ executable: true, version: parseVersion(stdout) ?? parseVersion(stderr) });
 		});
 	});
 }
