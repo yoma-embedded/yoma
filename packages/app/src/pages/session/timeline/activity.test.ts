@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest"
 import type { AssistantMessage, Part } from "@yoma-desktop/kernel"
-import { formatActivityElapsed, formatChars, kernelActivity, turnActivity } from "./activity"
+import { formatActivityElapsed, formatChars, kernelActivity, rowActivity, turnActivity } from "./activity"
 
 const message = (id: string, extra: Partial<AssistantMessage> = {}): AssistantMessage => ({
   id,
@@ -85,6 +85,15 @@ describe("内核说的阶段", () => {
   test("写正文、写工具调用参数:不出字(正文与工具行自己在动)", () => {
     expect(kernelActivity({ phase: "writing", since: 1 })).toBeUndefined()
     expect(kernelActivity({ phase: "calling", since: 1, tool: "write" })).toBeUndefined()
+  })
+
+  test("内核给了阶段就只听它的;没给时才按 part 推断", () => {
+    const parts = { a: [reasoning("r1")] }
+    const partsOf = (id: string) => parts[id as "a"] ?? []
+    // part 看着在思考,内核说在写正文:不出字
+    expect(rowActivity({ phase: "writing", since: 1 }, [message("a")], partsOf)).toBeUndefined()
+    expect(rowActivity({ phase: "waiting", since: 9 }, [message("a")], partsOf)).toEqual({ kind: "waiting", since: 9 })
+    expect(rowActivity(undefined, [message("a")], partsOf)).toEqual({ kind: "thinking" })
   })
 })
 

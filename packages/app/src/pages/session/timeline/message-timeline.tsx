@@ -55,7 +55,7 @@ import { TimelineSearch } from "./timeline-search"
 import { createTimelineProjection } from "./projection"
 import { MessageComment, TimelineRow, TimelineRowMap } from "./rows"
 import { ModelRequestStatus } from "./model-request-status"
-import { kernelActivity, turnActivity } from "./activity"
+import { rowActivity } from "./activity"
 import { TimelineActivityRow } from "./activity-row"
 import { filterVirtualIndexes } from "./virtual-items"
 import { SubagentBack, SubagentStatus } from "../subagent/subagent-header"
@@ -954,14 +954,13 @@ export function MessageTimeline(props: {
         const thinkingRow = row as Accessor<TimelineRowByTag<"Thinking">>
         // 此刻在干什么:内核在 busy 里给了阶段就用它(带起点,这一行才走得了表),没给时按这一轮的 part 推断。
         // 要读工具状态:在组件里现算,不进行的 memo(规矩 1)。
-        const activity = createMemo(() => {
-          const kernel = busyActivity()
-          if (kernel) return kernelActivity(kernel)
-          return turnActivity(
+        const activity = createMemo(() =>
+          rowActivity(
+            busyActivity(),
             assistantMessagesByParent().get(thinkingRow().userMessageID) ?? emptyAssistantMessages,
             getMsgParts,
-          )
-        })
+          ),
+        )
         return (
           <TimelineRowFrame row={thinkingRow}>
             <div data-slot="session-turn-message-container" class="w-full px-4 md:px-5">

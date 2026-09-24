@@ -62,6 +62,18 @@ export function kernelActivity(activity: SessionActivity): TurnActivity | undefi
   }
 }
 
+/**
+ * 这一行此刻说什么:内核在 busy 里给了阶段就**只听它的**(带起点;它说写正文就不出字,哪怕 part 看着像在思考),
+ * 没给时才按这一轮的 part 推断。
+ */
+export function rowActivity(
+  kernel: SessionActivity | undefined,
+  messages: readonly AssistantMessage[],
+  partsOf: (messageID: string) => readonly Part[],
+): TurnActivity | undefined {
+  return kernel ? kernelActivity(kernel) : turnActivity(messages, partsOf)
+}
+
 /** 已过时长,一秒一跳:`45 s`、`2 min 05 s`(与子 agent 坞的计时同一个写法)。时钟回拨按 0 算。 */
 export function formatActivityElapsed(ms: number): string {
   const seconds = Math.max(0, Math.floor((Number.isFinite(ms) ? ms : 0) / 1000))

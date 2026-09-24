@@ -45,7 +45,7 @@ function tempDir(prefix: string): string {
 }
 
 let fauxCount = 0
-function makeManager(steps: unknown[], options: { confirmTools?: boolean } = {}) {
+function makeManager(steps: unknown[], options: { confirmTools?: boolean; tokensPerSecond?: number } = {}) {
   // 开发机上设过这两个变量也不许影响断言
   vi.stubEnv("YOMA_TRACE", "")
   vi.stubEnv("YOMA_TRACE_FILE", "")
@@ -63,7 +63,11 @@ function makeManager(steps: unknown[], options: { confirmTools?: boolean } = {})
     emit: (batch) => events.push(...batch),
     resolveModels: async () => {
       const models = createModels()
-      const faux = fauxProvider({ provider, models: [{ id: "thinker", reasoning: true }] })
+      const faux = fauxProvider({
+        provider,
+        models: [{ id: "thinker", reasoning: true }],
+        ...(options.tokensPerSecond ? { tokensPerSecond: options.tokensPerSecond } : {}),
+      })
       models.setProvider(faux.provider)
       faux.setResponses(steps as never)
       return { models, model: faux.getModel() as Model<string> }
@@ -120,6 +124,32 @@ const thinkThenList = () => [
   fauxAssistantMessage([fauxThinking("先列一下目录"), fauxToolCall("ls", { path: "." })]),
   fauxAssistantMessage([fauxText("目录是空的")]),
 ]
+
+// 回复底下的耗时 = 最后一条回复的 time.completed − 用户消息的时刻。从前 completed 是回复开始请求的时刻,单步回复恒为「0秒」。
+describe("回复写完的时刻", () => {
+  test("live:回复的 time.completed 是 message_end 那一刻,不是开始请求的时刻", async () => {
+    // 慢慢吐字:四百个字按每秒两百 token 流完要半秒上下
+    const { manager, events, workspace } = makeManager([fauxAssistantMessage([fauxText("好".repeat(400))])], {
+      tokensPerSecond: 200,
+    })
+    try {
+      const session = await manager.create(workspace)
+      await manager.prompt(session.id, { text: "说句话" })
+      await waitFor(() => phases(events, session.id).at(-1) === "idle")
+      const reply = events
+        .flatMap((event) =>
+          event.type === "message.updated" && event.message.sessionID === session.id && event.message.role === "assistant"
+            ? [event.message]
+            : [],
+        )
+        .at(-1)!
+      expect(reply.time.completed).toBeDefined()
+      expect(reply.time.completed! - reply.time.created).toBeGreaterThanOrEqual(200)
+    } finally {
+      await manager.disposeAll()
+    }
+  }, 20_000)
+})
 
 describe("状态行:session.status 里的 activity", () => {
   test("一轮的阶段序列:等模型 → 思考 → 写调用 → 跑工具 → 等模型 → 正文 → 空闲", async () => {
