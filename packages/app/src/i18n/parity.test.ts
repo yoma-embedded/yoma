@@ -23,6 +23,8 @@ const PARITY_PREFIXES = [
   "session.turnChanges.",
   // 会话内查找(cmd+F)。
   "session.search.",
+  // 左侧栏的项目列表(标题行、每个项目的菜单、移除后的提示)。
+  "codex.projects.",
 ] as const
 
 /**
