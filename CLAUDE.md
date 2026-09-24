@@ -1026,7 +1026,9 @@ app 的 `test-browser/subagent-ui.test.ts`,以及 `e2e:paint` 的子 agent 一�
   行的结构不变(rows.ts 不读 activity,`timeline-projection.test.ts` 钉着"只变 activity 一行不重建")。
 - **轨迹**:`host/trace/` —— `sink.ts`(一行一个 JSON、250 ms 攒批、20 MB 轮转、写失败停写不抛)、`harness.ts`(独立订阅
   harness:run / llm / tool / retry / compaction / 忙时 30 s 心跳)、`model-probe.ts`(HTTP 探针:发出 / 响应头 / 第一行 data: /
-  keep-alive / 收尾)、`lag.ts`(事件循环被堵 ≥ 1 s)、`summary.ts`(工具一行摘要,走契约的 `summary`)。桌面端写
+  keep-alive / 收尾)、`lag.ts`(事件循环被堵 ≥ 1 s)、`summary.ts`(工具一行摘要,走契约的 `summary`);另有
+  `stop.request`(谁要停:界面的停止键 / 主 agent 的 task_stop / 父的前台调用被停 / 删会话,TaskManager 的 `onStop` 与
+  `SessionManager.abort` 写 —— 事后只看得到"被中止"时分不出是谁,主 agent 还会自己编一个理由)。桌面端写
   `<userData>/logs/<启动时间>/trace.jsonl`(main 在 start 命令里给 `logDir`);`YOMA_TRACE=off` 关、`YOMA_TRACE_FILE` 改位置。
   **只记元数据**,不记正文与工具输出。main 另有内核心跳(`main/kernel-heartbeat.ts`,20 s 没心跳在 kernel.log 记
   "kernel unresponsive")。"Export logs" 多收 24 小时内的会话(含对话全文,manifest 里注明)。

@@ -662,6 +662,8 @@ export class SessionManager {
       ),
       autoBackgroundMs: subagents.autoBackgroundMs ?? envNumber("YOMA_AUTO_BACKGROUND_MS") ?? 0,
       outputRoot: subagents.outputRoot ?? path.join(tmpdir(), "yoma"),
+      // 任务 id 就是子会话 id:这一行落在子会话的轨迹里,报告读子会话时看得见是谁停的。
+      onStop: ({ taskID, parentID, by }) => this.trace.write("stop.request", { s: taskID, parent: parentID, by }),
     })
   }
 
@@ -2823,6 +2825,8 @@ export class SessionManager {
   async abort(sessionID: string): Promise<{ returned?: QueuedUserPayload[] }> {
     const entry = this.entries.get(sessionID)
     if (!entry || (!isOpen(entry) && !entry.preparing)) return {}
+    // 界面的停止键(session.abort RPC)。轨迹里记一笔:事后看到"被中止"时分得出是用户按的。
+    if (entry.status.type !== "idle") this.trace.write("stop.request", { s: entry.id, by: "ui" })
     const returned = await this.stop(entry, { returnUserMessages: true })
     this.options.emit(this.setStatus(entry, { type: "idle" }))
     return returned.length > 0 ? { returned } : {}
@@ -2834,7 +2838,10 @@ export class SessionManager {
     const lane = entry.lane!
     // 和 prompt() 同一条规矩:一条 lane 同时只有一个操作,忙着就先中断 ——
     // 直接压会拿到 LaneBusy,而用户点"压缩"的意思本来就是"这轮别跑了,清上下文"。
-    if (entry.status.type !== "idle") await this.stop(entry)
+    if (entry.status.type !== "idle") {
+      this.trace.write("stop.request", { s: entry.id, by: "ui", via: "compact" })
+      await this.stop(entry)
+    }
     const result = await lane.compact(undefined, this.context)
     if (!result.ok) throw laneError(result.error)
 

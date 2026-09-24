@@ -117,7 +117,16 @@ export interface TaskManagerOptions {
   autoBackgroundMs: number
   /** output_file 的根:`<root>/<父会话>/tasks/<任务>.output`。 */
   outputRoot: string
+  /**
+   * 有人要停一个还没落定的任务(给调试留痕用):事后只看得到"被中止",分不出是用户在界面上点的、主 agent 调的 task_stop、
+   * 父那次前台调用被停连带的,还是会话被删 —— 2026-09-24 一个卡在递归 grep 上的子 agent 被停掉后,主 agent 自己编了一句
+   * "是我阻塞取结果把它掐掉的",而轨迹里查不到是谁停的。
+   */
+  onStop?: (request: { taskID: string; parentID: string; by: StopRequester }) => void
 }
+
+/** 谁要停这个任务:界面的停止键(task.stop)、主 agent 的 task_stop、父的前台调用被中止、会话被删。 */
+export type StopRequester = "ui" | "agent" | "parent" | "delete"
 
 interface Deferred<T = void> {
   promise: Promise<T>
@@ -389,7 +398,7 @@ export class TaskManager {
   ): void {
     task.progress = progress
     if (signal) {
-      const onAbort = () => void this.kill(task)
+      const onAbort = () => void this.kill(task, "parent")
       if (signal.aborted) onAbort()
       else {
         signal.addEventListener("abort", onAbort, { once: true })
@@ -635,7 +644,8 @@ export class TaskManager {
   // -------------------------------------------------------------------------
 
   /** 停掉一个任务:排队中的直接落定为 killed;在跑的请求中止,落定走子会话的 run_end。 */
-  private async kill(task: TaskState): Promise<void> {
+  private async kill(task: TaskState, by: StopRequester): Promise<void> {
+    if (isActive(task.status)) this.options.onStop?.({ taskID: task.id, parentID: task.parentID, by })
     if (task.status === "pending") {
       this.settle(task, { status: "killed", noRun: true })
       return
@@ -649,19 +659,20 @@ export class TaskManager {
   async stop(taskID: string): Promise<StopOutcome> {
     const task = this.tasks.get(taskID)
     if (!task) return { ok: false, reason: "not_found" }
-    return this.stopTask(task)
+    return this.stopTask(task, "ui")
   }
 
+  /** 主 agent 的 task_stop。 */
   private async stopFor(parentID: string, taskID: string, profiles: readonly AgentProfile[]): Promise<StopOutcome> {
     const task = await this.lookup(parentID, taskID, profiles)
     if (!task) return { ok: false, reason: "not_found" }
-    return this.stopTask(task)
+    return this.stopTask(task, "agent")
   }
 
-  private async stopTask(task: TaskState): Promise<StopOutcome> {
+  private async stopTask(task: TaskState, by: StopRequester): Promise<StopOutcome> {
     if (!isActive(task.status)) return { ok: false, reason: "not_running", status: task.status }
     // CC stopTask.ts:65-68:停 agent 任务不压通知 —— 后台的照常带着部分结果发 killed。
-    await this.kill(task)
+    await this.kill(task, by)
     return { ok: true, task: this.snapshot(task) }
   }
 
@@ -799,7 +810,7 @@ export class TaskManager {
     for (const task of owned) {
       // 删会话不该再往一个要删掉的父会话里投通知。
       task.notified = true
-      await this.kill(task)
+      await this.kill(task, "delete")
     }
     for (const task of owned) this.tasks.delete(task.id)
     this.deliveries.delete(parentID)
@@ -810,7 +821,7 @@ export class TaskManager {
     const task = this.tasks.get(childID)
     if (!task) return
     task.notified = true
-    await this.kill(task)
+    await this.kill(task, "delete")
     this.tasks.delete(childID)
   }
 

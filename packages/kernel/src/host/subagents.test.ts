@@ -33,6 +33,7 @@ import { AgentHarness, BACKGROUND_CONTEXT, JsonlSessionRepo, createCustomMessage
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node"
 
 import { SessionManager, type SessionManagerOptions } from "./session-manager.ts"
+import type { Trace } from "./trace/sink.ts"
 import type { KernelEvent } from "../protocol.ts"
 import type { Session, ToolPart } from "../types.ts"
 import { patient } from "../../test/patience.ts"
@@ -111,6 +112,20 @@ function textOf(message: unknown): string {
 }
 
 const text = (value: string) => fauxAssistantMessage([fauxText(value)])
+
+/** 只收 `stop.request` 的轨迹(调试留痕:事后要分得出是谁停的 —— 界面、主 agent 的 task_stop,还是父中止)。 */
+function stopTrace(): { trace: Trace; stops: Array<Record<string, unknown>> } {
+  const stops: Array<Record<string, unknown>> = []
+  const trace: Trace = {
+    enabled: true,
+    write: (ev, fields) => {
+      if (ev === "stop.request") stops.push({ ...fields })
+    },
+    flush: async () => {},
+    close: async () => {},
+  }
+  return { trace, stops }
+}
 
 /** 父这一轮里 agent 工具交回的 agentId(后台派出与前台结果的尾巴里都有)。 */
 function agentIdIn(context: LlmContext, nth = 0): string {
@@ -344,7 +359,8 @@ describe("子 agent 宿主(P2)", () => {
   test(
     "(d) task_stop:被停的后台子 agent 发 killed 通知,带部分结果,只来一次",
     async () => {
-      const { manager, script, workspace } = setup()
+      const { trace, stops } = stopTrace()
+      const { manager, script, workspace } = setup({}, { trace })
       const blocked = deferred()
       script.route(
         "长任务",
@@ -393,6 +409,57 @@ describe("子 agent 宿主(P2)", () => {
       expect(notes[0]).toContain("<status>killed</status>")
       expect(notes[0]).toContain('<summary>Agent "长任务" was stopped</summary>')
       expect(notes[0]).toContain("<result>阶段一:PLL 配置查完了</result>")
+      // 轨迹里记着是主 agent 停的(落在子会话名下,带着父会话)
+      expect(stops).toEqual([{ s: task!.id, parent: parent.id, by: "agent" }])
+    },
+    SLOW,
+  )
+
+  test(
+    "(d2) 界面上停:停子 agent(task.stop)与停主会话(session.abort)在轨迹里各记一笔 by ui",
+    async () => {
+      const { trace, stops } = stopTrace()
+      const { manager, script, workspace } = setup({}, { trace })
+      const blocked = deferred()
+      const parentHeld = deferred()
+      script.route(
+        "长任务",
+        fauxAssistantMessage([fauxText("阶段一"), fauxToolCall("ls", { path: "." })]),
+        async (_context, options) => {
+          blocked.resolve()
+          await untilAborted(options?.signal)
+          return fauxAssistantMessage([])
+        },
+      )
+      script.route(
+        "派长任务",
+        fauxAssistantMessage([fauxToolCall("agent", { description: "长任务", prompt: "长任务", run_in_background: true })]),
+        text("派出去了"),
+        // killed 通知叫醒的那一轮:挂住,等界面按停止
+        async (_context, options) => {
+          parentHeld.resolve()
+          await untilAborted(options?.signal)
+          return fauxAssistantMessage([])
+        },
+        text("收到"),
+      )
+
+      const parent = await manager.create(workspace)
+      await manager.prompt(parent.id, { text: "派长任务" })
+      await blocked.promise
+      await waitFor(() => idle(manager, parent.id), 10_000, "父第一轮收工")
+      const [task] = manager.tasks(parent.id)
+
+      await manager.stopTask(task!.id)
+      await waitFor(() => manager.tasks(parent.id)[0]!.status === "killed", 10_000, "任务被停")
+      await parentHeld.promise
+      await manager.abort(parent.id)
+      await waitFor(() => idle(manager, parent.id), 10_000, "父停下")
+
+      expect(stops).toEqual([
+        { s: task!.id, parent: parent.id, by: "ui" },
+        { s: parent.id, by: "ui" },
+      ])
     },
     SLOW,
   )

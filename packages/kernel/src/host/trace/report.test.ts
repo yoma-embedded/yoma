@@ -170,6 +170,27 @@ describe("renderReport", () => {
     expect(report).toContain("内核被堵 1 次")
   })
 
+  it("谁停的:这一轮被用户按了停止;派出去的子 agent 被主 agent 的 task_stop 停掉(看主会话时也列出来)", () => {
+    const parsed = parseSession(sessionFile())
+    if (!parsed.ok) throw new Error(parsed.reason)
+    const lines = parseTrace(
+      [
+        { t: T0 + 120_000, ev: "stop.request", s: "child-1", parent: S, by: "agent" },
+        { t: T0 + 182_900, ev: "stop.request", s: S, by: "ui" },
+        { t: T0 + 150_000, ev: "stop.request", s: "child-2", parent: "another-session", by: "ui" },
+      ]
+        .map((line) => JSON.stringify(line))
+        .join("\n"),
+    )
+    const report = renderReport(parsed.session, lines)
+    expect(report).toContain("停止  子 agent child-1 · 主 agent 调了 task_stop")
+    expect(report).toContain("停止  用户在界面上按了停止")
+    expect(report).toContain("子 agent child-1 被停止(120.0s):主 agent 调了 task_stop")
+    expect(report).toContain("这一轮被停止(182.9s):用户在界面上按了停止")
+    // 别的会话派出去的子 agent 不混进来
+    expect(report).not.toContain("child-2")
+  })
+
   it("最后一次忙时心跳之后没有收尾:这一轮是卡着被关掉的", () => {
     const parsed = parseSession(sessionFile())
     if (!parsed.ok) throw new Error(parsed.reason)

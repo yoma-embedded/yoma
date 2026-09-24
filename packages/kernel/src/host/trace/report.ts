@@ -194,16 +194,33 @@ export function parseTrace(text: string): TraceLine[] {
   return out
 }
 
-/** 这个会话的轨迹行(含 HTTP 那几行);`kernel.lag` 不分会话,按会话的时间段收。 */
+/**
+ * 这个会话的轨迹行(含 HTTP 那几行);`kernel.lag` 不分会话,按会话的时间段收;它的子 agent 被停(`stop.request` 的 parent
+ * 是它)也收 —— 看主会话时要知道派出去的那个是谁停的。
+ */
 export function traceFor(lines: TraceLine[], session: SessionFacts): TraceLine[] {
   const span = sessionSpan(session)
   return lines
     .filter(
       (line) =>
         line.s === session.id ||
+        (line.ev === "stop.request" && line.parent === session.id) ||
         (line.ev === "kernel.lag" && span !== undefined && line.t >= span[0] && line.t <= span[1] + 60_000),
     )
     .sort((a, b) => a.t - b.t)
+}
+
+/** `stop.request` 的 by → 人话(host/tasks.ts 的 StopRequester,加上主会话的停止键与"点了压缩")。 */
+const STOP_BY: Record<string, string> = {
+  ui: "用户在界面上按了停止",
+  agent: "主 agent 调了 task_stop",
+  parent: "主会话那次前台调用被停,子 agent 跟着停",
+  delete: "会话被删除",
+}
+
+function stopRequester(line: TraceLine): string {
+  if (line.by === "ui" && line.via === "compact") return "用户点了压缩,先停掉了这一轮"
+  return STOP_BY[String(line.by)] ?? `来源不明(${String(line.by)})`
 }
 
 // ---------------------------------------------------------------------------
@@ -307,6 +324,11 @@ export function renderReport(session: SessionFacts, allTrace: TraceLine[] = [], 
     } else if (line.ev === "kernel.lag") {
       rows.push({ at: line.t, text: `⚠ 内核  事件循环被堵 ${seconds(Number(line.ms) || 0)}` })
       findings.push(`内核事件循环被堵 ${seconds(Number(line.ms) || 0)}(${rel(line.t).trim()}):那段时间所有会话的输出与界面请求一起停住`)
+    } else if (line.ev === "stop.request") {
+      const who = stopRequester(line)
+      const child = line.s === session.id ? undefined : `子 agent ${String(line.s)}`
+      rows.push({ at: line.t, text: `  停止  ${child ? `${child} · ` : ""}${who}` })
+      findings.push(`${child ? `${child} ` : "这一轮"}被停止(${rel(line.t).trim()}):${who}`)
     }
   }
   if (!trace.length) {
