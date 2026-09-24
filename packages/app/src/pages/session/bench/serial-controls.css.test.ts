@@ -17,13 +17,16 @@ describe("串口栏的样式", () => {
     expect(css).toContain("linear-gradient(135deg, var(--text-weak) 50%, transparent 50%)")
   })
 
-  test("连接那一组不抢宽度:端口框有上限,多出来的宽度留给读数", () => {
+  test("连接那一组不抢宽度:端口框有上限,读数只拿剩下的宽度", () => {
     expect(css).toMatch(/\[data-slot="port-field"\] \{\s*flex: 0 1 auto;\s*width: 230px;/)
-    expect(css).toMatch(/\[data-slot="readout"\] \{\s*flex: 1 1 80px;/)
+    expect(css).toMatch(/\[data-slot="readout"\] \{\s*flex: 1 1 0;/)
     expect(css).toContain("font-size: 0")
   })
 
-  test("工具条挤不下时折行,不把按钮压成一堆", () => {
-    expect(css).toMatch(/\[data-slot="toolbar"\] \{[^}]*flex-wrap: wrap;/)
+  test("缺省一行、先缩后折:只有控制台真窄时才折行", () => {
+    // 放在 wrap 下,折不折按基准宽度之和算,收缩来不及发生 —— 1024 宽的窗口里就折成两行。
+    expect(css).toMatch(/\[data-slot="toolbar"\] \{[^}]*flex-wrap: nowrap;/)
+    expect(css).toMatch(/@container \(max-width: 600px\) \{\s*\[data-slot="toolbar"\] \{\s*flex-wrap: wrap;/)
+    expect(css).toContain("container-type: inline-size")
   })
 })

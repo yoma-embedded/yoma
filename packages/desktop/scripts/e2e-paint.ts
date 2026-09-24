@@ -696,14 +696,27 @@ try {
   )
   // 2026-09-23:只有日志一台文本仪器时控制台不画自己的页签行,最大化 / 关闭挂在串口那一行工具条右端;
   // 没连串口时发送行不出现。量的是"日志第一行上面压着多少壳":从前是页签行 + 连接行 + 状态行 ≈ 90px。
-  const consoleChrome = await evaluate<{ head: boolean; close: boolean; send: boolean; above: number }>(`(() => {
+  const consoleChrome = await evaluate<{
+    head: boolean
+    close: boolean
+    send: boolean
+    above: number
+    gap: number
+    toolbar: number
+    width: number
+  }>(`(() => {
     const root = document.querySelector('[data-component="session-console"]')
     const lines = root?.querySelector('[data-component="bench-log-panel"] [data-slot="lines"]')
+    const toolbar = root?.querySelector('[data-component="serial-controls"] [data-slot="toolbar"]')
+    const box = (el) => el?.getBoundingClientRect()
     return {
       head: !!root?.querySelector('[data-slot="head"]'),
       close: !!root?.querySelector('[data-component="serial-controls"] [data-slot="toolbar"] [data-slot="actions"] button:last-child'),
       send: !!root?.querySelector('[data-slot="send-bar"]'),
-      above: root && lines ? Math.round(lines.getBoundingClientRect().top - root.getBoundingClientRect().top) : -1,
+      above: root && lines ? Math.round(box(lines).top - box(root).top) : -1,
+      gap: toolbar && lines ? Math.round(box(lines).top - box(toolbar).bottom) : -1,
+      toolbar: toolbar ? Math.round(box(toolbar).height) : -1,
+      width: root ? Math.round(box(root).width) : -1,
     }
   })()`)
   check(
@@ -711,10 +724,14 @@ try {
     !consoleChrome.head && consoleChrome.close && !consoleChrome.send,
     JSON.stringify(consoleChrome),
   )
+  // 日志和工具条之间什么都没有(没有状态行、没有空框);控制台够宽(≥ 640px)时工具条是一行。
+  // 窄的时候允许折行 —— 1024 宽的窗口(macOS runner 就是)要靠"先缩后折"才保得住一行,这里钉的正是它。
   check(
-    "日志第一行上面只压着一行工具条(≤ 56px)",
-    consoleChrome.above > 0 && consoleChrome.above <= 56,
-    `${consoleChrome.above}px`,
+    "日志紧贴在串口工具条下面,够宽时工具条只有一行",
+    consoleChrome.gap >= 0 &&
+      consoleChrome.gap <= 12 &&
+      (consoleChrome.width < 640 || (consoleChrome.toolbar > 0 && consoleChrome.toolbar <= 40)),
+    `上面共 ${consoleChrome.above}px,工具条 ${consoleChrome.toolbar}px,间隔 ${consoleChrome.gap}px,控制台宽 ${consoleChrome.width}px`,
   )
   // 收回去:下面那一串示波器操作要按坐标点画布,右栏高度与从前一致时最稳。
   // 顺手也把"关得掉"这一半验了 —— 用的是工具条上那颗关闭(页签行没了之后它是控制台里唯一的关闭)。

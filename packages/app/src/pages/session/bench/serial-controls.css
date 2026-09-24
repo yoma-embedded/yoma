@@ -1,4 +1,6 @@
 [data-component="serial-controls"] {
+  /* 工具条按控制台自己的宽度决定折不折行,不看窗口宽度。 */
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
@@ -20,24 +22,32 @@
   }
   /**
    * 一行工具条:连接那一组 · 读数 · 容器给的右端(过滤 / 跟随 / 最大化 / 关闭)。
-   * 读数是唯一会让位的那一段;窗口再窄时右端整组折到第二行,不挤成一堆重叠的按钮。
+   *
+   * **缺省不折行,先让位**:读数只拿剩下的宽度(basis 0),挤的时候最先没了;然后端口框、过滤框缩到下限。
+   * 折行放在控制台真窄(< 600px)时才开 —— 放在 wrap 下的话,折不折按的是各段的**基准宽度**之和,
+   * 收缩根本来不及发生:1024 宽的窗口里(macOS runner 就是)整条就折成两行,日志上面压 78px。
    */
   [data-slot="toolbar"] {
     flex: none;
     display: flex;
     align-items: center;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: 6px 8px;
     min-width: 0;
     padding: 0 0 6px;
     border-bottom: 1px solid var(--border-weak-base);
   }
+  @container (max-width: 600px) {
+    [data-slot="toolbar"] {
+      flex-wrap: wrap;
+    }
+  }
+  /* 不写 min-width: 0 —— 让这一组的下限就是里面各件的下限(端口框 130px),再挤也不叠在一起。 */
   [data-slot="connection"] {
     display: flex;
     align-items: center;
     gap: 6px;
     flex: 0 1 auto;
-    min-width: 0;
   }
   [data-slot="port-field"],
   [data-slot="baud-field"] {
@@ -64,7 +74,7 @@
     width: 104px;
   }
   [data-slot="readout"] {
-    flex: 1 1 80px;
+    flex: 1 1 0;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -73,13 +83,13 @@
     font: 10.5px var(--font-family-mono);
     font-variant-numeric: tabular-nums;
   }
+  /* 右端也能缩(过滤框到 90px),下限同样交给里面各件自己的 min-width。 */
   [data-slot="toolbar-end"] {
     display: flex;
     align-items: center;
     gap: 6px;
-    flex: none;
+    flex: 0 1 auto;
     margin-left: auto;
-    min-width: 0;
   }
   input,
   select {
