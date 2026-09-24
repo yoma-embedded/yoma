@@ -91,8 +91,14 @@ export interface LicenseStatusView {
   trustedKeyIds: string[]
 }
 
-/** 哪一类执行被拦下了。 */
-export type LicensedExecutionKind = "session.prompt" | "session.compact" | "bench.turn" | "mailbox.start"
+/** 哪一类执行被拦下了。`session.btw` 是一次旁路的模型调用,`session.btwFork` 是由它转出的后台子 agent。 */
+export type LicensedExecutionKind =
+  | "session.prompt"
+  | "session.compact"
+  | "session.btw"
+  | "session.btwFork"
+  | "bench.turn"
+  | "mailbox.start"
 
 /**
  * 没有有效授权时,执行入口抛出的结构化错误(跨 MessagePort / contextBridge 走 `error.data`)。

@@ -984,6 +984,9 @@ app 的 `test-browser/subagent-ui.test.ts`,以及 `e2e:paint` 的子 agent 一�
   输入框。**Esc / Ctrl+G 先关坞再停 agent**(`PromptInput.onDismissBtw`):agent 在跑正是用 /btw 的时候,顺序反了用户想关答案却把
   agent 停了。关掉的那条 id 记进 `server-session.ts` 的 `dismissedBtw`,之后到的它的事件一律不认 —— 否则关之前已经在路上的那一拍
   会把坞画回来。
+- **授权**:`btw()` 与 `btwFork()` 各自在一切副作用之前查授权(执行种类 `session.btw` / `session.btwFork`)。/btw 不走 lane,
+  而授权分支第一版的守门只扫 lane,两边合并时这两条都漏了;现在 `license-entrypoints.test.ts` 也钉直接调模型与 `taskManager.fork`。
+  转后台不能省:问的时候查过,答完到点下去之间可能已经到期。界面在清输入框之前另有一次预检(`submitBtw`)。见 `docs/licensing.md`。
 - 没做 / 已知:CC 后来版本的历史列表、Tab 切换、`/btw` 不带参数重开上一条、`skipCacheWrite`;fork 的缓存路由键是子会话自己的 id
   (发动机定的);窗口重载会丢掉在飞的答案(事件不重放);**真机(桌面 + DeepSeek)与 `e2e:paint` 还没跑过**。
 

@@ -253,11 +253,12 @@ npm run license -- issue \
 | `packages/app/src/components/settings-v2/` | 设置 → 授权 页;`packages/app/src/licensing/purchase.ts` 购买信息集中配置 |
 | `scripts/license.ts` + `scripts/license/lib.ts` | 签发工具(不在任何产物入口的依赖图上) |
 | `packages/desktop/scripts/e2e-license*.ts` | 授权闭环的真进程 e2e(`npm run e2e:license -w packages/desktop`) |
-| `packages/kernel/src/host/license-entrypoints.test.ts` | 守门:碰 `lane.accept / drive / compact` 的只有 `runOperation`(私有)与 `compact`;`runOperation` 的调用者恰好是 `admitPrompt`(只有 `prompt()` 能到,检查排在分岔、`stop()`、`ensureOpen()` 之前)、`wake`(空 prompt)、`runChild`(只经 `taskPort()`);`lane.steer` 的调用者是一张固定的表;会话间之外没有人驱动 lane;三个产物入口不许出现授权的测试接缝 |
+| `packages/kernel/src/host/license-entrypoints.test.ts` | 守门:碰 `lane.accept / drive / compact` 的只有 `runOperation`(私有)与 `compact`;`runOperation` 的调用者恰好是 `admitPrompt`(只有 `prompt()` 能到,检查排在分岔、`stop()`、`ensureOpen()` 之前)、`wake`(空 prompt)、`runChild`(只经 `taskPort()`);`lane.steer` 的调用者是一张固定的表;会话间之外没有人驱动 lane;不走 lane 直接调模型(`streamSimple` / `completeSimple`)的只有 `runBtw`(只有 `btw()` 能到,先查授权)与自动起名(只挂在 `admitPrompt` 上),会话间之外只有 `session-title.ts` 与看门狗包装层;`taskManager.fork` 只有 `btwFork()` 调,先查授权;三个产物入口不许出现授权的测试接缝 |
 
 ### 能启动付费执行的入口,以及各自经过哪道检查
 
-所有入口最终都汇到同一个点:**`SessionManager.prompt()` / `SessionManager.compact()`**(内核,Node 侧)。
+所有入口最终都汇到内核(Node 侧)`SessionManager` 的四个方法:**`prompt()` / `compact()` / `btw()` / `btwFork()`**。
+后两个是 2026-09-24 并入 develop 的 /btw 时补的 —— /btw 不走 lane,第一版守门只扫 lane,合进来时一条都没红。
 界面禁用按钮只是提示,不是防线;协议里没有任何"renderer 声明自己已付费"的参数。
 
 | 入口 | 路径 | 检查 |
@@ -265,14 +266,18 @@ npm run license -- issue \
 | 桌面端发送 / 改上一条重发 | renderer → MessagePort → `session.prompt` | `SessionManager.prompt()` |
 | 忙时发的消息(排进收件箱,下一个工具边界被正在跑的那一轮取走) | 同上,`prompt()` → `admitPrompt()` → `lane.steer` | `SessionManager.prompt()` —— 检查排在"起一轮 / 排队"的分岔**之前**:给一轮已接受的执行续一句新的用户输入,也是一次新的付费执行 |
 | 桌面端手动压缩 | `session.compact` | `SessionManager.compact()` |
+| /btw 顺便问一句(一次旁路的模型调用,不走 lane、不进历史) | `session.btw` → `runBtw()` → `models.streamSimple` | `SessionManager.btw()` —— 排在掐掉上一条 /btw 之前,被拒时坞上那份答案还在。界面在清输入框之前另有一次预检 |
+| /btw 的"转成后台任务" | `session.btwFork` → `TaskManager.fork()` | `SessionManager.btwFork()` —— 用户点出来的新执行,不是已接受那一轮派的活;问 /btw 时查过不算数(答完到点下去之间可能到期) |
+| 自动起名 | `admitPrompt()` → `startAutoTitle()` → `generateTitle()` → `models.completeSimple` | 不再检查:只挂在已经过了 `prompt()` 检查的第一句话上 |
 | 轮内自动压缩、provider 重试 | 已接受轮次的一部分 | 不再检查(刻意) |
-| 子 agent 的每一轮(首轮、`send_message` 续跑) | 已接受轮次里的 `agent` / `send_message` 工具 → TaskManager → `runChild()` | 不再检查(刻意):它是那一轮派出去的活。没有任何 RPC 能直接起子 agent;子会话也不接用户的话 |
+| 子 agent 的每一轮(首轮、`send_message` 续跑) | 已接受轮次里的 `agent` / `send_message` 工具 → TaskManager → `runChild()` | 不再检查(刻意):它是那一轮派出去的活。直接起子 agent 的 RPC 只有 `session.btwFork`(上面那一行,查授权);子会话也不接用户的话 |
 | 子 agent 完成通知叫醒主会话(`wake()`),含重开会话时取走上个进程留下的收件箱 | `runOperation({ prompt: [] })`,空 prompt | 不再检查(刻意):只取走收件箱里**已有**的东西(完成通知、过了检查才排进来的用户消息),带不进新的用户输入。到期后这条路最多把已接受的工作汇报完 |
 | 调试台 / 信箱:启动、崩溃重启 | main 的 `MailboxController.start()` → 守护 `mailbox-host.mjs` | main 护栏 + 守护启动检查(退出码 4)|
 | 调试台 / 信箱:后续每一轮 | 守护 `runnerStep` / `motherStep` | 轮次边界检查 → `license-paused`;turn 子进程内还有 `SessionManager.prompt()` 兜底 |
 | 打包的 turn 子进程 `mailbox-turn-entry.mjs` | `runTurn` → `createKernelHost` → `session.prompt` | `SessionManager.prompt()` |
 | `yoma-bench` CLI(源码态,不进安装包) | 同守护 | 同守护(源码态没有注入,是开发态,不强制)|
 | 评测入口 `packages/bench/src/eval` | `runTurn` | `SessionManager.prompt()` |
+| 行为评测 `packages/bench/src/eval/behavior`(源码态,不进安装包) | 自己建一个 `AgentHarness`,不经过 `SessionManager` | 不检查:开发者用自己的 key 跑提示词回归,不在任何产物里 |
 
 不经过检查、始终可用:`session.abort`、确认条的允许 / 拒绝、关会话(释放串口 / 探针 / 逻辑分析仪)、读历史与波形、
 文件 / VCS / 工具链 / 模型与凭据设置、`license.*`、调试台的停止 / 状态 / 人工回执。

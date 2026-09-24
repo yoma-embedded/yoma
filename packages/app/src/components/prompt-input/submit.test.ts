@@ -28,13 +28,27 @@ const promotedDrafts: Array<{ draftID: string; sessionId: string }> = []
 let params: { id?: string } = {}
 let search: { draftId?: string } = {}
 
-const promptValue: Prompt = [{ type: "text", content: "ls", start: 0, end: 2 }]
+/** /btw 发到内核的问题;`btwRejects` 非空时这一次 session.btw 抛它。 */
+const btwSent: Array<{ sessionID: string; text: string }> = []
+let btwRejects: unknown
+/** 授权提示的替身:预检问过哪类执行、要不要拦;认出来的授权错误。 */
+const licenseChecks: string[] = []
+let licenseBlocks = false
+const licenseNotified: unknown[] = []
+const toastTitles: string[] = []
+const histories: Prompt[] = []
+let resets = 0
+
+const textPrompt = (content: string): Prompt => [{ type: "text", content, start: 0, end: content.length }]
+let promptValue: Prompt = textPrompt("ls")
 const prompt = {
   ready: Object.assign(() => true, { promise: Promise.resolve(true) }),
   current: () => promptValue,
   cursor: () => 0,
   dirty: () => true,
-  reset: () => undefined,
+  reset: () => {
+    resets += 1
+  },
   set: (value: Prompt, cursor?: number) => {
     promptSets.push({ prompt: value, cursor })
   },
@@ -75,6 +89,11 @@ const kernelClient = {
       return queueNext ? { messageID: "message-1", queued: true } : { messageID: "message-1" }
     },
     abort: async () => (abortReturns.length ? { returned: abortReturns } : {}),
+    btw: async (sessionID: string, input: { text: string }) => {
+      if (btwRejects) throw btwRejects
+      btwSent.push({ sessionID, text: input.text })
+      return { btwID: "btw-1" }
+    },
   },
 }
 
@@ -88,7 +107,25 @@ beforeAll(async () => {
 
   vi.doMock("@yoma-desktop/ui/toast", () => ({
     Toast: { Region: () => null },
-    showToast: () => 0,
+    showToast: (options: { title?: string } | string) => {
+      toastTitles.push(typeof options === "string" ? options : (options.title ?? ""))
+      return 0
+    },
+  }))
+
+  vi.doMock("@/licensing/license-notice", () => ({
+    createLicenseNotice: () => ({
+      blockedBeforeSend: async (execution: string) => {
+        licenseChecks.push(execution)
+        return licenseBlocks
+      },
+      notifyIfLicense: (error: unknown) => {
+        const data = (error as { data?: { _tag?: string } } | undefined)?.data
+        if (data?._tag !== "LicenseRequiredError") return false
+        licenseNotified.push(data)
+        return true
+      },
+    }),
   }))
 
   vi.doMock("@yoma-desktop/util/encode", () => ({
@@ -231,6 +268,15 @@ beforeEach(() => {
   params = {}
   search = {}
   for (const key of Object.keys(storedSessions)) delete storedSessions[key]
+  btwSent.length = 0
+  btwRejects = undefined
+  licenseChecks.length = 0
+  licenseBlocks = false
+  licenseNotified.length = 0
+  toastTitles.length = 0
+  histories.length = 0
+  resets = 0
+  promptValue = textPrompt("ls")
 })
 
 const baseInput = () => ({
@@ -242,7 +288,9 @@ const baseInput = () => ({
   queueScroll: () => undefined,
   promptLength: (value: Prompt) =>
     value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
-  addToHistory: () => undefined,
+  addToHistory: (value: Prompt) => {
+    histories.push(value)
+  },
   resetHistoryNavigation: () => undefined,
   setPopover: () => undefined,
   onSubmit: () => undefined,
@@ -362,5 +410,61 @@ describe("prompt submit", () => {
     await submit.abort()
 
     expect(promptSets).toEqual([])
+  })
+})
+
+describe("/btw 与授权", () => {
+  test("预检说会被拒:不发、不清输入框、不记历史,问的是 session.btw", async () => {
+    params = { id: "session-1" }
+    promptValue = textPrompt("/btw 这个寄存器是干嘛的")
+    licenseBlocks = true
+    const submit = createPromptSubmit({ ...baseInput(), info: () => ({ id: "session-1" }) })
+
+    await submit.handleSubmit(event())
+
+    expect(licenseChecks).toEqual(["session.btw"])
+    expect(btwSent).toEqual([])
+    expect(resets).toBe(0)
+    expect(histories).toEqual([])
+    expect(toastTitles).not.toContain("prompt.toast.btw.failed")
+  })
+
+  test("预检放行时照常发", async () => {
+    params = { id: "session-1" }
+    promptValue = textPrompt("/btw 这个寄存器是干嘛的")
+    const submit = createPromptSubmit({ ...baseInput(), info: () => ({ id: "session-1" }) })
+
+    await submit.handleSubmit(event())
+
+    expect(licenseChecks).toEqual(["session.btw"])
+    expect(btwSent).toEqual([{ sessionID: "session-1", text: "这个寄存器是干嘛的" }])
+    expect(resets).toBe(1)
+  })
+
+  test("内核以授权为由拒了:出授权提示而不是「/btw 失败」,输入框还原", async () => {
+    // 预检不是防线(读状态失败、刚好在这一刻到期):内核拒了的那条路也得说对话。
+    params = { id: "session-1" }
+    promptValue = textPrompt("/btw 这个寄存器是干嘛的")
+    btwRejects = { message: "尚未激活", data: { _tag: "LicenseRequiredError", state: "missing", execution: "session.btw" } }
+    const submit = createPromptSubmit({ ...baseInput(), info: () => ({ id: "session-1" }) })
+
+    await submit.handleSubmit(event())
+
+    expect(licenseNotified).toEqual([{ _tag: "LicenseRequiredError", state: "missing", execution: "session.btw" }])
+    expect(toastTitles).not.toContain("prompt.toast.btw.failed")
+    expect(promptSets).toHaveLength(1)
+  })
+
+  test("别的失败照旧是「/btw 失败」", async () => {
+    params = { id: "session-1" }
+    promptValue = textPrompt("/btw 这个寄存器是干嘛的")
+    btwRejects = new Error("会话已经关闭")
+    const submit = createPromptSubmit({ ...baseInput(), info: () => ({ id: "session-1" }) })
+
+    await submit.handleSubmit(event())
+
+    expect(licenseNotified).toEqual([])
+    expect(toastTitles).toContain("prompt.toast.btw.failed")
+    expect(promptSets).toHaveLength(1)
   })
 })

@@ -260,6 +260,8 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       showToast({ title: language.t("prompt.toast.btw.usage") })
       return
     }
+    // 同普通消息的预检(体验,不是防线 —— 内核在 session.btw 第一行自己判):已知会被拒就别先清掉输入框。
+    if (await licenseNotice.blockedBeforeSend("session.btw")) return
     input.addToHistory(request.submission.prompt)
     input.resetHistoryNavigation()
     const { input: promptInput } = buildRequestParts({
@@ -279,7 +281,9 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     try {
       await sdk().client.session.btw(sessionID, promptInput)
     } catch (err) {
-      showToast({ title: language.t("prompt.toast.btw.failed"), description: errorMessage(err) })
+      if (!licenseNotice.notifyIfLicense(err)) {
+        showToast({ title: language.t("prompt.toast.btw.failed"), description: errorMessage(err) })
+      }
       const restored = request.submission.restore()
       if (!restored) return
       restored.target.set(restored.prompt, input.promptLength(restored.prompt))

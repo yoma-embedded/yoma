@@ -161,6 +161,11 @@ const textsOf = (events: KernelEvent[]): string[] =>
 const licenseUpdates = (events: KernelEvent[]): LicenseStatusView[] =>
   events.flatMap((event) => (event.type === "license.updated" ? [event.status] : []))
 
+const btwStatuses = (events: KernelEvent[], btwID?: string): string[] =>
+  events.flatMap((event) =>
+    event.type === "session.btw" && (!btwID || event.btw.id === btwID) ? [event.btw.status] : [],
+  )
+
 /** 一条跑得完但不瞬间结束的"硬件"命令:flash 真起子进程、真攥探针租约,只是什么都不干。 */
 const slowFlashCall = (ms: number) =>
   fauxAssistantMessage([fauxToolCall("flash", { command: [process.execPath, "-e", `setTimeout(() => {}, ${ms})`] })])
@@ -199,6 +204,29 @@ describe("商业构建 + 没有授权", () => {
       })
       expect(statusesOf(rig.events)).toEqual([])
       expect((await rig.host.handle("session.messages", { sessionID })).items).toEqual([])
+    } finally {
+      await rig.host.dispose()
+    }
+  }, 30_000)
+
+  test("/btw 与转后台也是执行入口:直接对内核发,被拒,一条 session.btw 事件都没有", async () => {
+    // /btw 不走 lane(一次旁路的模型调用),转后台起的是完整的子 agent。第一版守门只看 lane,
+    // 这两条在授权分支与 /btw 合到一起时都漏了:到期之后 /btw 就是一条免费的聊天通道。
+    const rig = makeHost([fauxAssistantMessage([fauxText("旁路不该跑到")])], { licensePolicy: COMMERCIAL })
+    try {
+      const sessionID = await newSession(rig)
+
+      const btwError = await rejection(() => rig.host.handle("session.btw", { sessionID, input: { text: "顺便问一句" } }))
+      expect(btwError.name).toBe("LicenseRequiredError")
+      expect(btwError.data).toEqual({ _tag: "LicenseRequiredError", state: "missing", execution: "session.btw" })
+
+      // 检查排在"这条顺便问在不在、答没答完"之前:随便一个 id 也是授权错误,不是"已经不在了"。
+      const forkError = await rejection(() => rig.host.handle("session.btwFork", { sessionID, btwID: "btw-nope" }))
+      expect(forkError.data).toEqual({ _tag: "LicenseRequiredError", state: "missing", execution: "session.btwFork" })
+
+      expect(btwStatuses(rig.events)).toEqual([])
+      expect(rig.events.filter((event) => event.type === "task.updated")).toEqual([])
+      expect(statusesOf(rig.events)).toEqual([])
     } finally {
       await rig.host.dispose()
     }
@@ -453,6 +481,39 @@ describe("到期不回头查已接受的轮次", () => {
       await rig.host.dispose()
     }
   }, 60_000)
+})
+
+describe("/btw 与到期", () => {
+  test("答完之后到期:转后台被拒、不起子 agent、答案原样留着;新的一条 /btw 也被拒、不顶掉旧的", async () => {
+    const rig = makeHost([fauxAssistantMessage([fauxText("主轮")]), fauxAssistantMessage([fauxText("旁路答案")])], {
+      licensePolicy: COMMERCIAL,
+    })
+    try {
+      const sessionID = await newSession(rig)
+      await rig.host.handle("license.import", { text: licenseText() })
+      await rig.host.handle("session.prompt", { sessionID, input: { text: "看看板子" } })
+      await waitFor(() => statusesOf(rig.events).at(-1) === "idle", 20_000)
+
+      // 授权有效时问的:照常答完。
+      const { btwID } = await rig.host.handle("session.btw", { sessionID, input: { text: "顺便问一句" } })
+      await waitFor(() => btwStatuses(rig.events, btwID).includes("done"), 20_000)
+
+      // "转后台"是答完之后另点的一下,中间授权可能已经到期 —— 问的时候查过不算数。
+      rig.clock.now = EXPIRY + HOUR
+      const forkError = await rejection(() => rig.host.handle("session.btwFork", { sessionID, btwID }))
+      expect(forkError.data).toMatchObject({ _tag: "LicenseRequiredError", state: "expired", execution: "session.btwFork" })
+      expect(rig.events.filter((event) => event.type === "task.updated")).toEqual([])
+
+      // 新的一条被拒在"掐掉旧的那条"之前:坞上那份答案还在(最后一拍仍是 done,没有 cancelled)。
+      const btwError = await rejection(() => rig.host.handle("session.btw", { sessionID, input: { text: "再问一句" } }))
+      expect(btwError.data).toMatchObject({ _tag: "LicenseRequiredError", state: "expired", execution: "session.btw" })
+      expect(btwStatuses(rig.events, btwID).at(-1)).toBe("done")
+      expect(btwStatuses(rig.events)).not.toContain("cancelled")
+      expect(rig.events.filter((event) => event.type === "kernel.error")).toEqual([])
+    } finally {
+      await rig.host.dispose()
+    }
+  }, 40_000)
 })
 
 describe("开发态", () => {

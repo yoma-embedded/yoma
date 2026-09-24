@@ -9,8 +9,16 @@
  *
  *   prompt()  ── 授权检查 ──▶ admitPrompt() ──▶ 空闲:runOperation()  /  正忙:lane.steer()(排队)
  *   compact() ── 授权检查 ──▶ lane.compact()
+ *   btw()     ── 授权检查 ──▶ runBtw() ──▶ models.streamSimple()   不走 lane 的旁路调用
+ *   btwFork() ── 授权检查 ──▶ taskManager.fork()                    用户点出来的后台子 agent
  *   wake()      ──▶ runOperation({ prompt: [] })   只取走收件箱里**已有**的东西,不带新的用户输入
  *   runChild()  ──▶ runOperation() / lane.steer()   子 agent 的一轮,只能由 TaskManager 经 taskPort() 起
+ *   startAutoTitle() ──▶ finishAutoTitle() ──▶ generateTitle() ──▶ models.completeSimple()
+ *                      起名,只挂在 admitPrompt 上(prompt() 查过了)
+ *
+ * /btw 进来之后这张表才有了"不经过 lane 也能花钱"的一栏:第一版守门只扫 lane,/btw 与转后台合进来时
+ * 一条都没红,而它们都没查授权。所以直接调模型(`streamSimple` / `completeSimple`)与 `taskManager.fork`
+ * 也各有一条断言。
  *
  * 后两条**刻意不查授权**:它们是已被接受的工作的延续 —— 子 agent 是一轮已接受的执行里的 agent / send_message
  * 工具派出去的,wake 取走的是子 agent 的完成通知与过了检查才排进来的用户消息。到期不打断已接受的执行,
@@ -33,6 +41,9 @@ const hostDir = import.meta.dirname
 const PAID_CALL = /\blane!?\s*\.\s*(accept|drive|compact)\s*\(/
 /** 往收件箱里塞东西。 */
 const STEER_CALL = /\blane!?\s*\.\s*steer\s*\(/
+/** 不经过 lane、直接向供应商发请求(/btw、自动起名)。`stream-guard.ts` 是给这两个方法套看门狗的包装层。 */
+const MODEL_CALL = /\.\s*(streamSimple|completeSimple)\s*\(/
+const FORK_CALL = /this\.taskManager\.fork\(/
 const GATE_CALL = /this\.license\.assertCanExecute\(/
 
 function stripComments(text: string): string {
@@ -99,6 +110,11 @@ describe("付费执行入口的守门", () => {
       ["ensureOpen()", /this\.ensureOpen\(/],
       ["admit()", /this\.admit\(/],
       ["runOperation()", /this\.runOperation\(/],
+      ["直接调模型", MODEL_CALL],
+      ["runBtw()", /this\.runBtw\(/],
+      ["cancelBtw()", /this\.cancelBtw\(/],
+      ["btwSnapshot()", /this\.btwSnapshot\(/],
+      ["taskManager.fork()", FORK_CALL],
     ] as const) {
       const at = target.body.search(pattern)
       if (at >= 0) expect(gateAt, `${target.name}() 的授权检查排在 ${what} 之后`).toBeLessThan(at)
@@ -107,7 +123,20 @@ describe("付费执行入口的守门", () => {
 
   it("方法切分认得跨行的方法头(否则下面几条都是空转)", () => {
     const names = methods.map((candidate) => candidate.name)
-    for (const expected of ["prompt", "admitPrompt", "runOperation", "wake", "runChild", "taskPort", "compact"]) {
+    for (const expected of [
+      "prompt",
+      "admitPrompt",
+      "runOperation",
+      "wake",
+      "runChild",
+      "taskPort",
+      "compact",
+      "btw",
+      "runBtw",
+      "btwFork",
+      "startAutoTitle",
+      "finishAutoTitle",
+    ]) {
       expect(names, expected).toContain(expected)
     }
     // prompt() 的体到 admitPrompt 的头为止:里面不该有准备附件、排队这些属于 admitPrompt 的东西。
@@ -150,6 +179,30 @@ describe("付费执行入口的守门", () => {
     for (const name of ["deliver", "restoreInbox"]) expect(method(name).isPrivate, name).toBe(true)
   })
 
+  it("不走 lane 直接调模型的:/btw(btw() 先查授权)与自动起名(只挂在 prompt() 那条路上)", () => {
+    // 会话间里直接调模型的方法只有 runBtw,私有,只有 btw() 到得了。多出来一个 = 新的旁路,先看它该不该查。
+    const direct = methods.filter((candidate) => MODEL_CALL.test(candidate.body)).map((candidate) => candidate.name)
+    expect(direct).toEqual(["runBtw"])
+    expect(method("runBtw").isPrivate).toBe(true)
+    expect(callersOf("runBtw")).toEqual(["btw"])
+    expectGateFirst(method("btw"))
+
+    // 起名走的是 session-title.ts 的 generateTitle:admitPrompt → startAutoTitle → finishAutoTitle → generateTitle,
+    // 每一跳都只有这一个调用者(admitPrompt 只有 prompt() 到得了,上一条钉着)。
+    const titling = methods.filter((candidate) => /\bgenerateTitle\(/.test(candidate.body)).map((candidate) => candidate.name)
+    expect(titling).toEqual(["finishAutoTitle"])
+    for (const name of ["finishAutoTitle", "startAutoTitle"]) expect(method(name).isPrivate, name).toBe(true)
+    expect(callersOf("finishAutoTitle")).toEqual(["startAutoTitle"])
+    expect(callersOf("startAutoTitle")).toEqual(["admitPrompt"])
+  })
+
+  it("由用户直接起子 agent 的只有 btwFork(),而它先查授权", () => {
+    // agent 工具派的子 agent 是已接受那一轮的延续(见文件头);taskManager.fork 不是 —— 它是界面上点出来的。
+    const forking = methods.filter((candidate) => FORK_CALL.test(candidate.body)).map((candidate) => candidate.name)
+    expect(forking).toEqual(["btwFork"])
+    expectGateFirst(method("btwFork"))
+  })
+
   it("会话间之外没有第二个地方直接驱动 lane(工具间、投影器、TaskManager、服务都不该花模型的钱)", () => {
     const offenders = walk(hostDir)
       .filter((file) => path.basename(file) !== "session-manager.ts")
@@ -159,6 +212,21 @@ describe("付费执行入口的守门", () => {
       })
       .map((file) => path.relative(hostDir, file))
     expect(offenders).toEqual([])
+  })
+
+  it("会话间之外直接调模型的只有起名(session-title.ts)与看门狗包装层(stream-guard.ts)", () => {
+    const direct = walk(hostDir)
+      .filter((file) => path.basename(file) !== "session-manager.ts")
+      .filter((file) => MODEL_CALL.test(stripComments(readFileSync(file, "utf8"))))
+      .map((file) => path.relative(hostDir, file).split(path.sep).join("/"))
+      .sort()
+    expect(direct).toEqual(["session-title.ts", "stream-guard.ts"])
+    // generateTitle 只有会话间调(上一条断言钉住了调用它的是哪个方法)。
+    const titleCallers = walk(hostDir)
+      .filter((file) => path.basename(file) !== "session-title.ts")
+      .filter((file) => /\bgenerateTitle\(/.test(stripComments(readFileSync(file, "utf8"))))
+      .map((file) => path.relative(hostDir, file).split(path.sep).join("/"))
+    expect(titleCallers).toEqual(["session-manager.ts"])
   })
 
   it("产物入口不传授权的测试接缝:kernel-entry 只认编译期注入的策略", () => {

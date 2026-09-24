@@ -2197,6 +2197,9 @@ export class SessionManager {
    * 零写入(不记用量、不写条目、不改名)。同一个会话同时只有一条,新的一条先掐掉旧的。
    */
   async btw(sessionID: string, input: PromptInput): Promise<{ btwID: string }> {
+    // 它不走 lane,却是一次实打实的模型调用(整段上下文 + 一个问题):同 prompt() 一样在一切副作用之前查授权
+    // —— 包括掐掉上一条 /btw。不查的话,到期之后 /btw 就是一条不花授权的聊天通道。
+    this.license.assertCanExecute("session.btw")
     const entry = await this.ensureOpen(sessionID)
     if (entry.parentID) throw subagentSession(sessionID)
     if (!input.text.trim()) throw new Error("/btw 后面要跟一个问题")
@@ -2232,6 +2235,9 @@ export class SessionManager {
    * 系统提示词原字符串、激活工具名、模型与思考档位交给 TaskManager。转出去之后这条顺便问就放掉(界面上坞关掉)。
    */
   async btwFork(sessionID: string, btwID: string): Promise<{ taskID: string }> {
+    // 转出去的是一个完整的后台子 agent,而且是用户点出来的新执行 —— 不是已接受那一轮的 agent 工具派出去的,
+    // 所以不算"延续",要自己查。/btw 当初问的时候查过不算数:答完到点"转后台"之间授权可能已经到期。
+    this.license.assertCanExecute("session.btwFork")
     const entry = await this.ensureOpen(sessionID)
     if (entry.parentID) throw subagentSession(sessionID)
     const attempt = entry.btw
