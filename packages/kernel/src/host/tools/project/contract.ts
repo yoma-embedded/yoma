@@ -41,7 +41,7 @@ export const PROJECT_CONTRACT = {
   parameters,
   description: `Inspect the current project's detected/saved profile and durable memory. Project scope is the nearest .yoma/project.json or Git root.
 Actions: inspect; configure (complete profile, firmware path relative to root); search (query, enabled memories only); remember (new or existing memory); forget (id).
-All writes require a fresh revision from inspect; on conflict, inspect again and reconcile. remember must include evidence for verified facts; keep untested theories as hypotheses. Use stable titles and update existing IDs.
+All writes require a fresh revision from inspect; on conflict, inspect again and reconcile. Your own earlier writes in this session do not count as a conflict, so several writes in one batch may pass the same revision; a change by the user or another session does. remember must include evidence for verified facts; keep untested theories as hypotheses. Use stable titles and update existing IDs.
 Save useful validated experience and a handoff before finishing a substantial task, without copying transcripts or credentials. Do not resurrect forgotten entries. Respect board and version scope. Machine paths stay in toolchain configuration.
 This tool does not execute build or hardware commands. Run builds using the existing command tools and report actual evidence; saved/detected commands are not proof of success.`,
   guidelines: [

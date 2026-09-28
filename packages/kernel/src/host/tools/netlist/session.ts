@@ -4,6 +4,8 @@
  * - 不带 part:`controller_map <netlist> [--main-controller REF]`,stdout 是原始逐 pin 连接图(JSON,几十 KB),
  *   stderr 是探测说明("Detected main controller (auto): U2 …"、低信心警告)。图只为认出板子和主控,所以比引擎
  *   通用上限更紧地截到 10 000 字符:它是一次会话里最肥的工具载荷,而精炼过的 board IR 只差一个 part 参数。
+ * - 不带 part 但给了 query:同一个 controller_map,只把和 query 有关的脚渲染成几行字(query.ts),不落盘、不截断 ——
+ *   调试时问的是"这个信号接在哪个脚",原始图截到 10 000 字符后多半答不上,模型就会去 grep 网表文件。
  * - 带 part:`board_ir <netlist> --stm32kernel … --data-dir … --part P --out-dir D --stem S`,三个 JSON 落盘
  *   (`<stem>_board_ir.json` 全图、`<stem>_stm32_map.json` 外设建议、`<stem>_cfg_seed.json` 起步配置);后两个
  *   截断后内联,全图只报路径(模型要看再 read)。
@@ -33,6 +35,7 @@ import { prepareStm32Resources } from "../../domain/stm32/resources.ts"
 import { createToolOutputDir, engineErrorText, parseEngineObject, previewToolOutput } from "../../domain/tool-output.ts"
 import { resolveToCwd } from "../../domain/paths.ts"
 import { NETLIST_CONTRACT, type NetlistDetails } from "./contract.ts"
+import { type ControllerMap, queryTerms, renderPinQuery } from "./query.ts"
 
 export interface NetlistToolOptions extends EnginePathOptions {
   configDir?: string
@@ -88,6 +91,10 @@ export function createNetlistTool(options: NetlistToolOptions = {}): NetlistTool
       const mode: NetlistDetails["mode"] = params.part ? "board_ir" : "map"
       const engineLabel = mode === "map" ? "controller_map" : "board_ir"
       if (context.abortSignal?.aborted) throw new Error(`${engineLabel} was aborted`)
+      // query 挑的是原始逐 pin 图;board_ir 的产物是另一种形状,两个一起给就是拿不准要哪个。
+      const query = params.query?.trim() ? params.query : undefined
+      if (query && params.part) throw new Error("netlist: query works on the raw pin map — omit part to use it")
+      if (query && queryTerms(query).length === 0) throw new Error(`netlist: query "${query}" has no terms`)
 
       const netlist = resolveToCwd(cwd, params.netlistPath)
       if (!(await fileExists(netlist))) throw new Error(`netlist file not found or not a regular file: ${netlist}`)
@@ -122,8 +129,15 @@ export function createNetlistTool(options: NetlistToolOptions = {}): NetlistTool
         if (params.mainController) args.push("--main-controller", params.mainController)
         const result = await runOrThrow(bin, args, "controller_map", { mode, netlist })
         const notes = capEngineOutput(result.stderr.trim(), "check the controller and part before configuring", 8_000)
-        parseEngineObject(result.stdout, "controller_map")
+        const parsed = parseEngineObject(result.stdout, "controller_map")
         const detected = detectedController(result.stdout)
+        if (query) {
+          // 只给命中的那几个脚:整份图在这里用不上,也就不落盘、不截断。
+          const text = [notes && `[detection]\n${notes}`, renderPinQuery(parsed as ControllerMap, query)]
+            .filter(Boolean)
+            .join("\n\n")
+          return { content: [{ type: "text", text }], details: { mode, netlist, ...detected } }
+        }
         const map = await previewToolOutput(
           cwd,
           "netlist-map",

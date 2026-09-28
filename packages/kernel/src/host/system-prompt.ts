@@ -116,6 +116,11 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 
 		// Always include these
 		guidelinesSet.add("Be concise in your responses");
+		// 这份提示词、工具描述与工具结果全是英文:不明说的话,模型对中文提问也会用英文讲过程(2026-09-28 真跑实测,
+		// DeepSeek 全程英文)。代码、命令、标识符与引用的原文不翻。
+		guidelinesSet.add(
+			"Write your replies in the language of the user's latest message; keep code, commands, identifiers and quoted tool output as they are",
+		);
 		guidelinesSet.add("Show file paths clearly when working with files");
 
 		const guidelines = [...guidelinesSet].map((g) => `- ${g}`).join("\n");

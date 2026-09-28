@@ -47,8 +47,8 @@ import {
   SERVER_CAPS,
   serverBinary,
 } from "../src/host/tools/gdb/servers.ts"
-import { createGdbTool, type GdbTool } from "../src/host/tools/gdb/session.ts"
-import { createLogTool } from "../src/host/tools/log/session.ts"
+import { createGdbTool, evalTargetEvent, type GdbTool } from "../src/host/tools/gdb/session.ts"
+import { createLogTool, type TargetEventSink } from "../src/host/tools/log/session.ts"
 import {
   displayFrame,
   elfMachineOf,
@@ -91,8 +91,18 @@ const invocation: AgentHarnessToolInvocation = {
 
 type Update = (partial: AgentToolResult<GdbDetails>) => void
 
-function makeTool(cwd: string, gdbPath?: string) {
-  const tool = createGdbTool(gdbPath ? { gdbPath } : {})
+/** 记下 gdb 往日志采集里落的标记;回一个假 seq,让结果里那句 since 有东西可写。 */
+function recordingSink() {
+  const events: Array<{ text: string; boundary: boolean }> = []
+  const sink: TargetEventSink = (text, boundary = true) => {
+    events.push({ text, boundary })
+    return { seq: 40 + events.length, source: "serial COM4 @ 115200 8N1" }
+  }
+  return { events, sink }
+}
+
+function makeTool(cwd: string, gdbPath?: string, onTargetEvent?: TargetEventSink) {
+  const tool = createGdbTool({ ...(gdbPath ? { gdbPath } : {}), ...(onTargetEvent ? { onTargetEvent } : {}) })
   openTools.push(tool)
   const run = (params: GdbInput, context: Context = BACKGROUND_CONTEXT, onUpdate: Update = () => {}) =>
     tool.execute("c1", params, onUpdate, { env: new NodeExecutionEnv({ cwd }) }, invocation, context)
@@ -812,11 +822,11 @@ describe("gdb 工具 — 冷启动(不需要任何二进制)", () => {
 // ─── 第二层(续):工具壳 + 假 gdb,整条链 ──────────────────────────────────
 
 describeFakeGdb("gdb 工具 + 假 gdb", () => {
-  async function attached(mode: Record<string, unknown> = {}) {
+  async function attached(mode: Record<string, unknown> = {}, onTargetEvent?: TargetEventSink) {
     const cwd = createTempDir()
     const { gdbPath, setMode } = writeFakeGdb(cwd)
     setMode(mode)
-    const { tool, run } = makeTool(cwd, gdbPath)
+    const { tool, run } = makeTool(cwd, gdbPath, onTargetEvent)
     const started = await run({
       action: "start",
       connect: "localhost:3333",
@@ -1032,6 +1042,16 @@ describeFakeGdb("gdb 工具 + 假 gdb", () => {
     expect(state?.sha256).toBe(await sha256File(FIXTURE_ELF))
   })
 
+  it("eval load 在日志采集里落分界线并告诉模型 since;只读的 eval 不落", async () => {
+    const { events, sink } = recordingSink()
+    const { run } = await attached({}, sink)
+    await run({ action: "eval", command: "p 1+1" })
+    expect(events).toEqual([])
+    const r = await run({ action: "eval", command: "load", write: true })
+    expect(events).toEqual([{ text: "gdb load", boundary: true }])
+    expect(textOf(r)).toContain("since=41")
+  })
+
   it("status 与 stop:stop 之后 status 回到 no-session,转录文件留着", async () => {
     const { run, cwd } = await attached()
     const status = await run({ action: "status" })
@@ -1201,13 +1221,13 @@ describeFakeGdb("gdb 工具 + 假 gdb", () => {
       releaseProbe("flash")
     })
 
-    async function attachedViaOpenocd() {
+    async function attachedViaOpenocd(onTargetEvent?: TargetEventSink) {
       const cwd = createTempDir()
       const { gdbPath, setMode } = writeFakeGdb(cwd)
       const { pidFile } = installFakeOpenocd(cwd)
       // serverBinary 按 process.env.PATH 找 openocd:把假的排在最前
       process.env.PATH = `${cwd}${delimiter}${savedPath ?? ""}`
-      const { tool, run } = makeTool(cwd, gdbPath)
+      const { tool, run } = makeTool(cwd, gdbPath, onTargetEvent)
       const startParams: GdbInput = {
         action: "start",
         server: "openocd",
@@ -1288,6 +1308,22 @@ describeFakeGdb("gdb 工具 + 假 gdb", () => {
       expect(textOf(ok)).toContain("epoch is now 2")
       expect(textOf(ok)).toContain("no stop record came back")
       expect(ok.details?.epoch).toBe(2)
+    })
+
+    it("reset 在日志采集里落分界线;没复位成的补一条非分界的说明,不给 since", async () => {
+      const { events, sink } = recordingSink()
+      const { run, setMode } = await attachedViaOpenocd(sink)
+      setMode({ reset: "fail" })
+      const failed = await run({ action: "exec", op: "reset-halt" })
+      expect(textOf(failed)).not.toContain("since=")
+      setMode({})
+      const ok = await run({ action: "exec", op: "reset-run" })
+      expect(events).toEqual([
+        { text: "gdb exec reset-halt", boundary: true },
+        { text: "gdb exec reset-halt may not have happened", boundary: false },
+        { text: "gdb exec reset-run", boundary: true },
+      ])
+      expect(textOf(ok)).toContain("since=43")
     })
   })
 })
@@ -1553,4 +1589,19 @@ describe.skipIf(!HAS_E2E)("端到端(QEMU + 真 gdb)", () => {
     await new Promise((r) => setTimeout(r, 500))
     expect(qemuStrays()).toEqual([])
   }, 60_000)
+})
+
+describe("evalTargetEvent:哪些 eval 在日志里算一道分界", () => {
+  it("load、monitor reset、monitor program 算;读值与 set var 不算", () => {
+    expect(evalTargetEvent("load")).toBe("gdb load")
+    expect(evalTargetEvent("  load build/Debug/app.elf")).toBe("gdb load")
+    expect(evalTargetEvent("monitor reset halt")).toBe("gdb monitor reset")
+    expect(evalTargetEvent("mon reset")).toBe("gdb monitor reset")
+    expect(evalTargetEvent("monitor system_reset")).toBe("gdb monitor reset")
+    expect(evalTargetEvent("monitor program fw.elf verify reset")).toBe("gdb monitor program")
+    expect(evalTargetEvent("monitor flash write_image erase fw.bin 0x08000000")).toBe("gdb monitor program")
+    expect(evalTargetEvent("p load")).toBeUndefined()
+    expect(evalTargetEvent("set var x = 1")).toBeUndefined()
+    expect(evalTargetEvent("monitor rtt start")).toBeUndefined()
+  })
 })

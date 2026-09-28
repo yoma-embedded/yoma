@@ -30,6 +30,13 @@ describe("buildSystemPrompt", () => {
 
 			expect(prompt).toContain("Show file paths clearly");
 		});
+
+		it("asks for replies in the user's language (the prompt and tool text are all English)", () => {
+			const prompt = buildSystemPrompt({ selectedTools: [], cwd: process.cwd() });
+			expect(prompt).toContain("Write your replies in the language of the user's latest message");
+			const agent = buildSystemPrompt({ agentPrompt: "You are a helper.", selectedTools: ["read"], cwd: process.cwd() });
+			expect(agent).toContain("Write your replies in the language of the user's latest message");
+		});
 	});
 
 	describe("identity", () => {

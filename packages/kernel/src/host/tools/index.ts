@@ -18,7 +18,7 @@ import { createFlashTool } from "./flash/session.ts"
 import { createGdbTool } from "./gdb/session.ts"
 import { createGrepTool } from "./grep/session.ts"
 import { createLaTool } from "./la/session.ts"
-import { createLogTool } from "./log/session.ts"
+import { createLogTool, type LogTool } from "./log/session.ts"
 import { createLsTool } from "./ls/session.ts"
 import { createNetlistTool } from "./netlist/session.ts"
 import { createPowerShellTool } from "./powershell/session.ts"
@@ -31,8 +31,11 @@ import { createTaskStopTool } from "./task_stop/session.ts"
 import { createToolchainTool, type ToolchainToolOptions } from "./toolchain/session.ts"
 
 export interface RegisteredToolOptions {
-  /** Session-owned instruments, also used by the manual controls. */
-  instruments?: Partial<Record<"log" | "gdb", RegisteredTool>>
+  /**
+   * Session-owned instruments, also used by the manual controls. log 带着 markTargetEvent:flash 在它的采集里落分界线;
+   * 调用方自己建 gdb 时要把同一个口子交给它(session-manager 的 instrumentTools)。
+   */
+  instruments?: { log?: LogTool; gdb?: RegisteredTool }
   project?: { sessionID?: string }
   /** engines/ 根目录(bin/rg 在里面)。空串也算没给:kernel-entry 把未设的路径透传成 ""。 */
   enginesDir?: string
@@ -65,6 +68,9 @@ export type RegisteredTool = AgentHarnessTool<ExecutionToolContext> & { dispose?
 export function createRegisteredTools(options: RegisteredToolOptions = {}): RegisteredTool[] {
   const shared = { enginesDir: options.enginesDir || undefined }
   const stm32 = { ...shared, configDir: options.configDir }
+  // 烧录与复位要在同一个会话的日志采集里落分界线,所以 log 先建,flash / gdb 拿它的口子。
+  const log = options.instruments?.log ?? createLogTool()
+  const onTargetEvent = log.markTargetEvent
   // 每个工具都挂 prepareArguments(arguments.ts):模型写错参数时拿到的是列了合法值的话,不是发动机的 "must be equal to constant"
   const tools: RegisteredTool[] = [
     createGrepTool(shared),
@@ -73,11 +79,11 @@ export function createRegisteredTools(options: RegisteredToolOptions = {}): Regi
     createPowerShellTool(shared),
     createToolchainTool(options.toolchain),
     createProjectTool(options.project),
-    createFlashTool(),
-    options.instruments?.log ?? createLogTool(),
+    createFlashTool({ onTargetEvent }),
+    log,
     createLaTool(shared),
     createScopeTool(),
-    options.instruments?.gdb ?? createGdbTool(),
+    options.instruments?.gdb ?? createGdbTool({ onTargetEvent }),
     createDatasheetTool(options.datasheet),
     createNetlistTool(stm32),
     createStm32ConfigTool(stm32),

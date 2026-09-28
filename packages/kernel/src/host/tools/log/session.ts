@@ -20,6 +20,7 @@ import type { AgentHarnessTool, AgentToolResult, ExecutionToolContext } from "@e
 import { clamp, stamp } from "../../domain/engines.ts"
 import type { JlinkLookup } from "../gdb/servers.ts"
 import { EXIT_WAIT_MS, LogCapture, type LogSource } from "./capture.ts"
+import type { LogLine } from "./excerpt.ts"
 import {
   DEFAULT_MAX_LINES,
   DEFAULT_RTT_SPEED_KHZ,
@@ -89,7 +90,18 @@ export type LogTool = AgentHarnessTool<ExecutionToolContext, typeof LOG_CONTRACT
    * **只读**:不推 agent 的游标、不排队(不被一条两分钟的 wait 挡住)、没有采集器时给一个空视图。
    */
   tail(since?: number): LogTail
+  /**
+   * 别的工具要动目标(烧录、复位、load)时调:在正在跑的采集里落一条分界线,返回它的 seq。没在采就返回 undefined。
+   * 同步、不排队、绝不抛 —— 一条两分钟的 wait 不该挡住烧录,等待中的 wait 会被这一行叫醒但不会命中它。
+   */
+  markTargetEvent: TargetEventSink
 }
+
+/**
+ * 烧录 / gdb 拿到的那一半:只能落标记,碰不到采集器别的东西。boundary 缺省为真(之前 / 之后的分界);
+ * 收尾类的("烧录结束""复位可能没成功")传 false,只记一笔,不作为 since 的建议。
+ */
+export type TargetEventSink = (text: string, boundary?: boolean) => { seq: number; source: string } | undefined
 
 /**
  * `host:port`,只给 port 时 host 是 localhost。冒号跟着 host 走:attic 那版把冒号写成可选,
@@ -147,6 +159,39 @@ function footer(capture: LogCapture, needsFile: boolean): string {
   const dropped = capture.dropped > 0 ? ` | ${capture.dropped} dropped from the buffer` : ""
   const file = needsFile || capture.dropped > 0 ? ` | full log: ${capture.file}` : ""
   return `cursor: ${capture.cursor} | source: ${sourceState(capture)}${dropped}${file}`
+}
+
+/**
+ * 开口那一阵一口气到的几行(见 capture.ts 的 OpenBurst)落在 [from, to] 里时,给模型的那句话。
+ * 只标注不丢:那几行可能正是"没人看时板子崩了"的唯一证据,但它们不是这次采集开始之后才打印的。
+ */
+function burstNote(capture: LogCapture, from: number, to: number): string {
+  const burst = capture.openBurst
+  if (!burst || burst.to < from || burst.from > to) return ""
+  return (
+    `\nseq ${burst.from}–${burst.to} arrived in one burst at ${formatElapsed(burst.t)}s, right after the source opened: ` +
+    `USB-serial adapters (ST-Link VCP, J-Link VCOM, CP210x, FTDI) and RTT buffers replay output they held while nothing was reading, ` +
+    `so those lines may predate this capture — and the firmware now on the target.`
+  )
+}
+
+/**
+ * 命中行是什么时候到的。等之前就在缓冲里的不一定错(烧录期间板子已经打完了开机横幅),所以只陈述时间;
+ * 但它之后落过烧录 / 复位的分界线,它就一定来自那次动作之前 —— 这一条要明说,并给出重新等的起点。
+ */
+function arrivalNote(capture: LogCapture, line: LogLine, calledAt: number): string {
+  const at = capture.startedAt + line.t
+  const when =
+    at < calledAt
+      ? `already in the buffer when this wait began (received ${((calledAt - at) / 1000).toFixed(1)}s earlier)`
+      : `arrived ${((at - calledAt) / 1000).toFixed(1)}s into the wait`
+  const later = capture.markAfter(line.seq)
+  if (!later) return ` — ${when}`
+  const latest = capture.lastBoundary!
+  return (
+    ` — ${when}\n⚠ this line predates "${later.text}" (seq ${later.seq}): it was printed before that, not by the target as it is now. ` +
+    `\`log wait\` with since=${latest.seq} only matches output after "${latest.text}".`
+  )
 }
 
 /** 起到一半被界面断开(stopCapture)时 start 的回答。 */
@@ -241,6 +286,16 @@ export function createLogTool(options: LogToolOptions = {}): LogTool {
     snapshot: () => detailsOf("status"),
     sendSerial,
     tail,
+    markTargetEvent: (text, boundary) => {
+      try {
+        const active = capture
+        const mark = active?.mark(text, boundary ?? true)
+        return active && mark ? { seq: mark.seq, source: active.label } : undefined
+      } catch {
+        // 分界线只是帮模型看清楚的提示:落不下来也不能让一次烧录失败。
+        return undefined
+      }
+    },
     stopCapture: async () => {
       stopEpoch++
       await Promise.all([capture?.stop(), starting?.stop()])
@@ -476,6 +531,7 @@ Next: \`log wait\` with a pattern (e.g. "boot|fault|error") — it blocks until 
             if (result.omittedLines > 0) notes.push(`${result.omittedLines} lines omitted from this excerpt`)
             if (notes.length > 0) header += ` (${notes.join("; ")})`
           }
+          if (result.matchedLines > 0) header += burstNote(active, result.from, active.nextSeq - 1)
           const lost =
             result.lost > 0
               ? `\n${result.lost} older lines already fell out of the buffer — grep the log file for them.`
@@ -506,12 +562,25 @@ Next: \`log wait\` with a pattern (e.g. "boot|fault|error") — it blocks until 
           }
           tick()
 
-          const outcome = await active.wait({ pattern: params.pattern, timeoutMs, signal: abortSignal, onTick: tick })
+          const since =
+            params.since !== undefined && Number.isFinite(params.since) ? Math.max(0, Math.trunc(params.since)) : undefined
+          const calledAt = Date.now()
+          const outcome = await active.wait({
+            pattern: params.pattern,
+            timeoutMs,
+            signal: abortSignal,
+            onTick: tick,
+            since,
+          })
           const body = outcome.rows.length > 0 ? `\n\n${renderRows(outcome.rows)}\n` : "\n"
           let header: string
           switch (outcome.kind) {
             case "matched": {
-              header = `matched /${params.pattern}/ at seq ${outcome.line!.seq} (${formatElapsed(outcome.line!.t)}s)`
+              const line = outcome.line!
+              header =
+                `matched /${params.pattern}/ at seq ${line.seq} (${formatElapsed(line.t)}s)` +
+                `${since !== undefined ? `, searching from seq ${since}` : ""}${arrivalNote(active, line, calledAt)}`
+              header += burstNote(active, line.seq, line.seq)
               if (outcome.skippedBefore! > 0) {
                 header += `\n${outcome.skippedBefore} earlier unread lines were skipped — \`log read since=${outcome.resumeFrom}\` or grep the log file for them.`
               }

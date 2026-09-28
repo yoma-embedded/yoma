@@ -1643,10 +1643,13 @@ export class SessionManager {
   private instrumentTools(entry: Entry): { log: LogTool; gdb: GdbTool } {
     // J-Link 的 GDB server 不在 PATH 上时(SEGGER 的 Windows 安装器不加 PATH)去账本与缺省安装目录找。
     const jlink = { configDir: this.configDir }
-    return entry.instruments ??= {
-      log: withFriendlyArguments(createLogTool({ jlink })),
-      gdb: withFriendlyArguments(createGdbTool({ jlink })),
-    }
+    if (entry.instruments) return entry.instruments
+    // gdb 的复位 / load 在日志里落分界线(flash 的在 createRegisteredTools 里接):同一个会话的采集器。
+    const log = withFriendlyArguments(createLogTool({ jlink }))
+    return (entry.instruments = {
+      log,
+      gdb: withFriendlyArguments(createGdbTool({ jlink, onTargetEvent: log.markTargetEvent })),
+    })
   }
 
   async serialPorts() {

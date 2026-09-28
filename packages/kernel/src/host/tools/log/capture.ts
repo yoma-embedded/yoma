@@ -143,6 +143,34 @@ export interface WaitOutcome {
   resumeFrom?: number
 }
 
+/**
+ * 别的工具动了目标(烧录、复位、经 gdb load)时落进采集里的一条分界线。之后到的行才可能是新镜像 / 复位之后的输出;
+ * 之前的是旧的 —— 模型分不清这两段,就会拿烧录前的旧行当成"新固件的现象"(2026-09-28 真跑实测)。
+ */
+export interface LogMark {
+  seq: number
+  /** 相对采集开始的毫秒数,与 LogLine.t 同一把尺。 */
+  t: number
+  text: string
+  /**
+   * 是不是"之前 / 之后"的分界(烧录开始、复位、load)。收尾类的标记("烧录结束""复位可能没成功")只是记一笔:
+   * 拿它当 since 会把烧录期间就打出来的开机行关在线外 —— 目标在烧录器退出之前就已经复位开跑了。
+   */
+  boundary: boolean
+}
+
+/**
+ * 源打开后到的第一块数据里就有好几行:USB 转串口(ST-Link VCP、J-Link VCOM、CP210x/FTDI)与 RTT 的上行缓冲,都会把
+ * 没人读时攒下的输出在下一次打开时一口气交出来。这几行可能比这次采集早得多,甚至来自上一版固件
+ * (2026-09-28 实测:ST-Link 把 25 分钟前的状态行在开口那一刻吐了出来,模型当成了现象)。只做标注不丢弃 ——
+ * 板子在没人看时崩了,缓冲里那几行恰恰是唯一的证据。
+ */
+export interface OpenBurst {
+  from: number
+  to: number
+  t: number
+}
+
 export interface ReadResult {
   text: string
   from: number
@@ -187,6 +215,12 @@ export class LogCapture {
   private rttHeard = false
 
   lines: LogLine[] = []
+  /** 其他工具落下的分界线(见 LogMark),按 seq 递增。 */
+  marks: LogMark[] = []
+  /** 开口那一刻一次到齐的几行(见 OpenBurst);第一块数据只有零或一行时没有。 */
+  openBurst?: OpenBurst
+  /** 第一块设备数据已经到过(不管它有几行)。 */
+  private firstChunkSeen = false
   nextSeq = 0
   bufferedBytes = 0
   totalLines = 0
@@ -541,8 +575,41 @@ export class LogCapture {
     const split = splitChunk(pending, chunk)
     if (err) this.pendingErr = split.pending
     else this.pendingOut = split.pending
+    const from = this.nextSeq
     for (const text of split.lines) this.push(text, err)
+    // 只看设备流(串口、RTT、TCP)的第一块:command 源是模型自己起的程序,一次吐好几行是常态,不是缓存。
+    const deviceStream = this.source.kind !== "child" || !!this.source.serial
+    if (!err && deviceStream && !this.firstChunkSeen) this.noteFirstChunk(from, split.lines.length)
     if (split.lines.length > 0) this.notify()
+  }
+
+  private noteFirstChunk(from: number, lines: number): void {
+    this.firstChunkSeen = true
+    if (lines >= 2) this.openBurst = { from, to: from + lines - 1, t: this.lines.at(-1)?.t ?? 0 }
+  }
+
+  /**
+   * 落一条分界线(别的工具要动目标时调)。在采才落,返回它的 seq —— 之后到的行才可能是那次动作之后的输出。
+   * 走 push 的诊断行(`! ── … ──`):日志文件、界面尾巴、模型的节选里同一处都看得见它。
+   */
+  mark(text: string, boundary = true): LogMark | undefined {
+    if (!this.running) return undefined
+    const seq = this.nextSeq
+    this.push(`── ${text} ──`, true)
+    const mark = { seq, t: this.lines.at(-1)?.t ?? 0, text, boundary }
+    this.marks.push(mark)
+    this.notify()
+    return mark
+  }
+
+  /** seq 之后落下的第一条分界线:一行比它早,就说明它来自那次烧录 / 复位之前。 */
+  markAfter(seq: number): LogMark | undefined {
+    return this.marks.find((mark) => mark.boundary && mark.seq > seq)
+  }
+
+  /** 最近一条分界线:给模型的"从这里起等"。 */
+  get lastBoundary(): LogMark | undefined {
+    return this.marks.findLast((mark) => mark.boundary)
   }
 
   /** 进程结束时把没等到换行的残余也算作一行,不然最后一句话会消失。 */
@@ -656,13 +723,18 @@ export class LogCapture {
     timeoutMs: number
     signal?: AbortSignal
     onTick?: () => void
+    /** 从这个 seq 起找(而不是游标):烧录 / 复位报给模型的那条分界线,之前的旧行一概不算。 */
+    since?: number
   }): Promise<WaitOutcome> {
     const re = compilePattern(options.pattern)
-    const startCursor = this.cursor
+    const startCursor = options.since ?? this.cursor
     const deadline = Date.now() + options.timeoutMs
     while (true) {
-      const { lines } = this.linesSince(this.cursor)
-      const hit = lines.find((line) => re.test(line.text))
+      // log 的调用是排队的,等待期间游标不会被别人推动:从起点一直找到底就行。
+      const { lines } = this.linesSince(startCursor)
+      // 分界线是我们自己写的字,不是目标说的话:等 "reset" 的模型不该等到一条 "gdb … reset" 的标记。
+      const marked = new Set(this.marks.map((mark) => mark.seq))
+      const hit = lines.find((line) => !marked.has(line.seq) && re.test(line.text))
       if (hit) {
         // 上下文从整个缓冲里取,而不是只从未读窗口 —— 读过一轮之后命中,
         // 前文照样要给,否则模型看到的是一条没有来龙去脉的孤行。
@@ -693,7 +765,7 @@ export class LogCapture {
         }
       }
       const preview = () => ({
-        rows: this.previewRows(this.cursor, PREVIEW_ROWS, charBudgetFor(PREVIEW_ROWS)),
+        rows: this.previewRows(startCursor, PREVIEW_ROWS, charBudgetFor(PREVIEW_ROWS)),
         newLines: this.nextSeq - startCursor,
       })
       if (options.signal?.aborted) return { kind: "aborted", ...preview() }

@@ -591,6 +591,74 @@ describe("LogCapture tcp source", () => {
   })
 })
 
+describe("LogCapture 开口那一阵的旧数据", () => {
+  it("设备流的第一块里就有好几行:记成开口突发(可能是转接器 / RTT 缓冲里攒下的旧输出)", async () => {
+    const { server, port } = await listenLocal((socket) => socket.write("old a\nold b\nold c\n"))
+    try {
+      const dir = createTempDir()
+      const capture = new LogCapture({ kind: "tcp", host: "127.0.0.1", port }, "tcp", join(dir, "hw.log"), dir)
+      openCaptures.push(capture)
+      await capture.start()
+      await waitFor(() => capture.totalLines >= 3)
+      expect(capture.openBurst).toMatchObject({ from: 0, to: 2 })
+    } finally {
+      server.close()
+    }
+  })
+
+  it("第一块只有一行:不算突发,之后再来几行也不算", async () => {
+    const { server, port } = await listenLocal((socket) => {
+      socket.write("live 1\n")
+      setTimeout(() => socket.write("live 2\nlive 3\n"), 60)
+    })
+    try {
+      const dir = createTempDir()
+      const capture = new LogCapture({ kind: "tcp", host: "127.0.0.1", port }, "tcp", join(dir, "hw.log"), dir)
+      openCaptures.push(capture)
+      await capture.start()
+      await waitFor(() => capture.totalLines >= 3)
+      expect(capture.openBurst).toBeUndefined()
+    } finally {
+      server.close()
+    }
+  })
+
+  it("command 源一次吐好几行是常态,不是缓存:不标", async () => {
+    const dir = createTempDir()
+    const capture = new LogCapture(
+      { kind: "child", argv: splitArgv(writeSource(THREE_LINES_THEN_WAIT)) },
+      "cmd",
+      join(dir, "hw.log"),
+      dir,
+    )
+    openCaptures.push(capture)
+    await capture.start()
+    await waitFor(() => capture.totalLines >= 3)
+    expect(capture.openBurst).toBeUndefined()
+  })
+
+  it("mark 只在采集时落;收尾类标记不算分界", async () => {
+    const dir = createTempDir()
+    const capture = new LogCapture(
+      { kind: "child", argv: splitArgv(writeSource(ALIVE_FOREVER)) },
+      "cmd",
+      join(dir, "hw.log"),
+      dir,
+    )
+    expect(capture.mark("before start")).toBeUndefined()
+    openCaptures.push(capture)
+    await capture.start()
+    await waitFor(() => capture.totalLines >= 1)
+    const begin = capture.mark("flash openocd started")!
+    capture.mark("flash openocd ended (exit 0)", false)
+    expect(capture.markAfter(0)?.seq).toBe(begin.seq)
+    expect(capture.lastBoundary?.seq).toBe(begin.seq)
+    expect(capture.lines.at(-1)).toMatchObject({ text: "── flash openocd ended (exit 0) ──", err: true })
+    await capture.stop()
+    expect(capture.mark("after stop")).toBeUndefined()
+  })
+})
+
 // ─── 工具 ────────────────────────────────────────────────────────────────────
 
 describe("log tool", () => {

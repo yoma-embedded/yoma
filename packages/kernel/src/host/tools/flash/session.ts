@@ -44,6 +44,7 @@ import {
 } from "../../domain/engines.ts"
 import { appendTail } from "../../domain/engines.ts"
 import { resolveToCwd } from "../../domain/paths.ts"
+import type { TargetEventSink } from "../log/session.ts"
 import { FLASH_CONTRACT, type FlashDetails } from "./contract.ts"
 
 /** 烧录动真实硬件,默认超时比引擎默认值(5 分钟)紧。 */
@@ -102,7 +103,15 @@ async function fileExists(file: string): Promise<boolean> {
   )
 }
 
-export function createFlashTool(): AgentHarnessTool<
+export interface FlashToolOptions {
+  /**
+   * 会话里的日志采集器:烧录前后各落一条分界线(log 的 markTargetEvent)。不接的话,模型拿烧录前 ST-Link 缓存的
+   * 旧状态行当成新固件的现象(2026-09-28 真跑实测)。
+   */
+  onTargetEvent?: TargetEventSink
+}
+
+export function createFlashTool(options: FlashToolOptions = {}): AgentHarnessTool<
   ExecutionToolContext,
   typeof FLASH_CONTRACT.parameters,
   FlashDetails
@@ -138,6 +147,8 @@ export function createFlashTool(): AgentHarnessTool<
       // 租约抹掉,于是两路烧录各自以为独占探针。
       const holder = claimProbe("flash", label)
       if (holder) throw new Error(`flash: ${describeProbeConflict(holder)}`)
+      // 分界线落在烧录器起来**之前**:目标在它退出之前就已经复位、开始打印了,落在之后会把新固件的开机行关在线外。
+      const marked = options.onTargetEvent?.(`flash ${label} started`)
       let result: Awaited<ReturnType<typeof runEngine>>
       // 烧录器的输出边跑边上卡片:"** Programming Started **" 该在它出现的那一秒被看见,
       // 而不是几十秒后整条命令结束时。快照只是活尾巴,全文仍在结果里。
@@ -156,6 +167,11 @@ export function createFlashTool(): AgentHarnessTool<
         })
       } finally {
         releaseProbe("flash")
+      }
+      if (marked) {
+        const end = result.timedOut ? "timed out" : result.aborted ? "aborted" : `exit ${result.exitCode}`
+        // 收尾只记一笔(boundary false):开机行多半在这条之前就到了,拿它当 since 会把它们关在线外。
+        options.onTargetEvent?.(`flash ${label} ended (${end})`, false)
       }
       // 只判超时/中断:烧录器非零退出不抛错(见文件头),那条策略留在下面。
       assertEngineSettled(result, `flash ${label}`)
@@ -179,8 +195,11 @@ export function createFlashTool(): AgentHarnessTool<
           recorded = `\nrecorded ${elf} as the image on the target — gdb start will verify against it.`
         }
       }
+      const logged = marked
+        ? `\nlog: marked in the ${marked.source} capture at seq ${marked.seq} — \`log wait\` with since=${marked.seq} matches only output from after this flash began.`
+        : ""
       return {
-        content: [{ type: "text", text: `${output || `flash \`${label}\` completed (exit 0)`}${recorded}` }],
+        content: [{ type: "text", text: `${output || `flash \`${label}\` completed (exit 0)`}${recorded}${logged}` }],
         details,
       }
     },

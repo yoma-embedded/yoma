@@ -45,6 +45,13 @@ import {
   sanitizeStem,
   type NetlistToolOptions,
 } from "../src/host/tools/netlist/session.ts"
+import {
+  type ControllerMap,
+  MAX_QUERY_CHARS,
+  pinMatches,
+  queryTerms,
+  renderPinQuery,
+} from "../src/host/tools/netlist/query.ts"
 import { ECHO_ARGV_JS, writeFakeExe } from "./fixtures/fake-exe.ts"
 
 // ─── 脚手架 ──────────────────────────────────────────────────────────────────
@@ -141,6 +148,7 @@ describe("netlist contract", () => {
       "board_ir STM32F405RGTx board.NET @U2",
     )
     expect(netlistSummary({})).toBe("map")
+    expect(netlistSummary({ netlistPath: "board.NET", query: " BUSV " })).toBe('map board.NET "BUSV"')
   })
 
   it("sanitizeStem strips the extension and replaces unsafe characters, keeping Unicode letters", () => {
@@ -157,6 +165,166 @@ describe("netlist contract", () => {
     })
     expect(detectedController('{"controller":{"ref":""}}')).toEqual({})
     expect(detectedController("not json")).toEqual({})
+  })
+})
+
+// ─── 1b. query:从原始逐 pin 图里挑脚(纯函数)───────────────────────────────────
+
+/** 形状照 controller_map 对 B-G431B-ESC1(MB1419.NET)的真输出裁的;BUTTON 那条 DNF 链是编的,真板上没有。 */
+const QUERY_MAP: ControllerMap = {
+  controller: { ref: "U8", part: "STM32G431", pin_count: 49 },
+  low_confidence: true,
+  signal_pins: [
+    {
+      pin: "8",
+      pin_name: "8",
+      net: "PA0 - BUSV",
+      direct_nodes: [
+        { ref: "C23", pin: "1", pin_name: "1", value: "0.1uF" },
+        { ref: "D16", pin: "A", pin_name: "A", value: "BAT30KFILM" },
+        { ref: "R68", pin: "2", pin_name: "2", value: "169k" },
+        { ref: "R76", pin: "1", pin_name: "1", value: "18k" },
+      ],
+      traced: [
+        { via: [], endpoint: { ref: "D16", pin: "A", pin_name: "A", value: "BAT30KFILM" }, rail: null, dnf: false },
+        { via: [{ ref: "R76", value: "18k", kind: "resistor", dnf: false }], endpoint: null, rail: "GND", dnf: false },
+        ...["D20.C.SMM4F26A", "J5.1.CON1", "Q2.5.STL180N6F7", "Q2.6.STL180N6F7", "Q2.7.STL180N6F7"].map((node) => {
+          const [ref, pin, value] = node.split(".")
+          return {
+            via: [{ ref: "R68", value: "169k", kind: "resistor", dnf: false }],
+            endpoint: { ref, pin, pin_name: pin, value },
+            rail: null,
+            dnf: false,
+          }
+        }),
+      ],
+    },
+    {
+      pin: "29",
+      pin_name: "29",
+      net: "STATUS",
+      direct_nodes: [{ ref: "R28", pin: "1", pin_name: "1", value: "510" }],
+      traced: [
+        {
+          via: [{ ref: "R28", value: "510", kind: "resistor", dnf: false }],
+          endpoint: { ref: "D4", pin: "A", pin_name: "A", value: "LED RED" },
+          rail: null,
+          dnf: false,
+        },
+      ],
+    },
+    {
+      pin: "39",
+      pin_name: "39",
+      net: "BUTTON",
+      direct_nodes: [
+        { ref: "C8", pin: "1", pin_name: "1", value: "100pF" },
+        { ref: "R10", pin: "2", pin_name: "2", value: "10K" },
+      ],
+      traced: [
+        { via: [{ ref: "R10", value: "10K", kind: "resistor", dnf: false }], endpoint: null, rail: "+3.3V", dnf: false },
+        {
+          via: [{ ref: "R99", value: "0R", kind: "resistor", dnf: true }],
+          endpoint: { ref: "SW1", pin: "3", pin_name: "3", value: "KMR211G" },
+          rail: null,
+          dnf: true,
+        },
+      ],
+    },
+  ],
+}
+
+describe("netlist query (pure)", () => {
+  it("splits comma-separated terms and ignores empty ones", () => {
+    expect(queryTerms(" BUSV , ,R68,")).toEqual(["BUSV", "R68"])
+    expect(queryTerms(" , ")).toEqual([])
+  })
+
+  it("renders a net match compactly, grouping traced endpoints by their series chain and capping each chain", () => {
+    const text = renderPinQuery(QUERY_MAP, "BUSV")
+    expect(text).toBe(
+      [
+        '1 of 3 pins on U8 (STM32G431) match "BUSV":',
+        'pin 8  net "PA0 - BUSV"',
+        "  direct: C23.1 0.1uF, D16.A BAT30KFILM, R68.2 169k, R76.1 18k",
+        "  traced: D16.A BAT30KFILM | via R76 18k → GND | via R68 169k → D20.C SMM4F26A, J5.1 CON1, Q2.5 STL180N6F7, Q2.6 STL180N6F7 (+1 more)",
+        "Pin names here are package pin numbers, not port names: map them to ports (e.g. PA0) with the chip's pinout table (datasheet tool) or stm32config describe-mcu.",
+      ].join("\n"),
+    )
+  })
+
+  it("matches net names ignoring case, spaces and punctuation", () => {
+    expect(renderPinQuery(QUERY_MAP, "pa0-busv")).toContain('pin 8  net "PA0 - BUSV"')
+    expect(renderPinQuery(QUERY_MAP, "status")).toContain('pin 29  net "STATUS"')
+  })
+
+  it("matches a pin number exactly, not as a substring of values or other pins", () => {
+    const text = renderPinQuery(QUERY_MAP, "8")
+    expect(text).toContain('1 of 3 pins on U8 (STM32G431) match "8"')
+    expect(text).toContain("pin 8  net")
+    // "18k" 与 pin 39 里的数字都不算
+    expect(text).not.toContain("pin 39")
+    // 自动生成的网络名带主控位号:纯数字的词只比脚号(MB1419 上问 "8" 曾捞出 NetU8_4 / NetU8_5 …)
+    expect(pinMatches({ pin: "4", pin_name: "4", net: "NetU8_4" }, "8")).toBe(false)
+    expect(pinMatches({ pin: "4", pin_name: "4", net: "NetU8_4" }, "4")).toBe(true)
+  })
+
+  it("matches component refs anywhere on the pin: direct, series part or traced endpoint", () => {
+    expect(renderPinQuery(QUERY_MAP, "r76")).toContain("pin 8  net")
+    expect(renderPinQuery(QUERY_MAP, "D4")).toContain('pin 29  net "STATUS"')
+    expect(renderPinQuery(QUERY_MAP, "Q2")).toContain("pin 8  net")
+    expect(pinMatches(QUERY_MAP.signal_pins![1]!, "R2")).toBe(false) // 位号要整个对上,R2 不是 R28
+  })
+
+  it("matches component values and rails only for terms of three or more characters", () => {
+    expect(renderPinQuery(QUERY_MAP, "led")).toContain('pin 29  net "STATUS"')
+    expect(renderPinQuery(QUERY_MAP, "3.3V")).toContain('pin 39  net "BUTTON"')
+    // "10" 会撞上半张图的 10k / 100pF,短词不比元件值
+    expect(renderPinQuery(QUERY_MAP, "10")).toMatch(/^no pin on U8/)
+  })
+
+  it("unions several terms and marks DNF parts and paths", () => {
+    const text = renderPinQuery(QUERY_MAP, "STATUS, BUTTON")
+    expect(text).toContain('2 of 3 pins on U8 (STM32G431) match "STATUS, BUTTON"')
+    expect(text).toContain("  traced: via R28 510 → D4.A LED RED")
+    expect(text).toContain("  traced: via R10 10K → +3.3V | via R99 0R (DNF) → SW1.3 KMR211G [DNF path]")
+  })
+
+  it("names the port only when the netlist carries pin names, and gives the pinout hint only when it does not", () => {
+    const named: ControllerMap = {
+      controller: { ref: "U1" },
+      signal_pins: [{ pin: "10", pin_name: "PA0", net: "VBUS_SENSE", direct_nodes: [], traced: [] }],
+    }
+    const text = renderPinQuery(named, "vbus")
+    expect(text).toContain('1 of 1 pins on U1 match "vbus":')
+    expect(text).toContain('pin 10 (PA0)  net "VBUS_SENSE"')
+    expect(text).not.toContain("package pin numbers")
+    expect(renderPinQuery(named, "PA0")).toContain("pin 10 (PA0)")
+  })
+
+  it("lists the controller's nets instead of dumping JSON when nothing matches", () => {
+    const text = renderPinQuery(QUERY_MAP, "CAN_TX")
+    expect(text).toBe(
+      'no pin on U8 (STM32G431) matches "CAN_TX" (searched pin numbers/names, net names, component refs and values).\n' +
+        `Nets on U8 (STM32G431)'s pins: "PA0 - BUSV", "STATUS", "BUTTON"`,
+    )
+  })
+
+  it("stops rendering wide queries at the character budget and says how many pins it left out", () => {
+    const wide: ControllerMap = {
+      controller: { ref: "U1" },
+      signal_pins: Array.from({ length: 400 }, (_, i) => ({
+        pin: String(i + 1),
+        pin_name: String(i + 1),
+        net: `GND_SENSE_${i}`,
+        direct_nodes: [{ ref: `R${i}`, pin: "1", value: "10k" }],
+        traced: [],
+      })),
+    }
+    const text = renderPinQuery(wide, "GND")
+    expect(text).toContain('400 of 400 pins on U1 match "GND":')
+    expect(text).toMatch(/… \d+ more matching pins not shown — narrow the query\./)
+    expect(text.length).toBeLessThan(MAX_QUERY_CHARS + 600)
   })
 })
 
@@ -309,6 +477,32 @@ describe("netlist tool (fake engines)", () => {
       controller: "U2",
       lowConfidence: true,
     })
+  })
+
+  it("query renders only the matching pins as text, keeps detection notes and details, and writes no output file", async () => {
+    const fake = `console.error("Detected main controller (auto): U8 STM32G431");\nconsole.log(${JSON.stringify(JSON.stringify(QUERY_MAP))});`
+    const { run, cwd } = makeTool(makeEnginesDir({ controller_map: fake }))
+    writeFileSync(join(cwd, "board.NET"), "x")
+    const result = await run({ netlistPath: "board.NET", query: "BUSV" })
+    const text = textOf(result)
+    expect(text).toContain("[detection]\nDetected main controller (auto): U8 STM32G431")
+    expect(text).toContain('1 of 3 pins on U8 (STM32G431) match "BUSV":\npin 8  net "PA0 - BUSV"')
+    expect(text).not.toContain('"signal_pins"')
+    expect(result.details).toEqual({ mode: "map", netlist: join(cwd, "board.NET"), controller: "U8", lowConfidence: true })
+    expect(existsSync(join(cwd, ".yoma"))).toBe(false)
+  })
+
+  it("rejects query together with part, and a query with no terms; a blank query falls back to the raw map", async () => {
+    const { run, cwd, prepareResources } = makeTool(makeEnginesDir({ controller_map: ECHO_CONTROLLER_MAP }))
+    writeFileSync(join(cwd, "board.NET"), "x")
+    const spawn = vi.spyOn(engines, "runEngine")
+    await expect(run({ netlistPath: "board.NET", part: "STM32G431CBUx", query: "BUSV" })).rejects.toThrow(
+      "query works on the raw pin map — omit part",
+    )
+    await expect(run({ netlistPath: "board.NET", query: " , " })).rejects.toThrow('query " , " has no terms')
+    expect(spawn).not.toHaveBeenCalled()
+    expect(prepareResources).not.toHaveBeenCalled()
+    expect(textOf(await run({ netlistPath: "board.NET", query: "  " }))).toContain('"argv":')
   })
 
   it("passes mainController through to controller_map", async () => {
@@ -496,6 +690,17 @@ describe.skipIf(!haveEngines)("netlist against the real engines", () => {
     expect(text).toContain("re-run with `part`") // 42 KB 的图被截到 10 000
     const forced = await run({ netlistPath: join(FIXTURES, "odrive_two_ax.NET"), mainController: "U4" })
     expect(forced.details.controller).toBe("U4")
+  }, 60_000)
+
+  it("query answers where a signal lands on the ODrive: one pin, traced parts, and the pin-number hint", async () => {
+    const { run } = makeTool(realEnginesDir())
+    const result = await run({ netlistPath: join(FIXTURES, "odrive_two_ax.NET"), query: "VBUS_S" })
+    const text = textOf(result)
+    expect(result.details).toMatchObject({ mode: "map", controller: "U2" })
+    expect(text).toContain('1 of 55 pins on U2 match "VBUS_S":\npin 22  net "VBUS_S_1"')
+    expect(text).toMatch(/direct: .*C1\.\d/)
+    expect(text).toContain("Pin names here are package pin numbers")
+    expect(text).not.toContain('"signal_pins"')
   }, 60_000)
 
   it("maps a Nordic board (pca10056) — the raw map is MCU-agnostic", async () => {

@@ -155,6 +155,25 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
   **原生 `<select>` 的弹出列表**:串口 / 波特率旁那个 ▾ 为了在 macOS 上藏住选中值,select 本身 `font-size: 0` + 透明字;
   Windows / Linux 上弹出列表是 Chromium 按每个 `<option>` 自己的样式画的,选项继承了字号 0,于是列表 28 px 宽、一行字都没有。
   option 现在显式给字号与颜色(macOS 用的是 select 的字号,不受影响)。这类弹出层 CDP 截不到,只能整屏截图看。
+- **一次演示真跑暴露的四个通用工具问题**(2026-09-28,B-G431B-ESC1 + DeepSeek,7.5 分钟被按停;回归用例见各条):
+  1. **旧日志冒充新现象**(`log/capture.ts` 的 `LogMark` / `OpenBurst`,`test/tools-flash.test.ts` 的分界线一组):ST-Link VCP 把
+     25 分钟前攒下的状态行在开口那一刻一口气吐出来,`log wait` 命中其中一行,模型当成了新固件的症状;后来又命中一行早于它热修的
+     开机行,以为板子重启了,跑去查看门狗。现在:flash、gdb 的 reset-run / reset-halt / load / `monitor reset|program` 在同一会话
+     正在跑的采集里落一条 `! ── … ──` 分界线,并在结果里给出 `since=<seq>`;`log wait` 收 `since`;命中行报"等之前就在缓冲里、
+     早了多少秒"或"等了多久才来",它早于某条分界线时明说并给出重等的起点;开口第一块数据就有 ≥2 行时(串口 / RTT / TCP,
+     不含 command 源)标成"可能是转接器或 RTT 缓冲的旧输出"——只标不丢,没人看时崩掉的那几行正是证据。两条要记住的:
+     **分界线落在动作之前**(目标在烧录器退出之前就已经复位开跑,落在之后会把开机行关在线外);收尾类标记(烧录结束、
+     复位可能没成功)`boundary: false`,不作为 since 的建议。标记行不参与 wait 的匹配。接线:`tools/index.ts` 先建 log,
+     把 `markTargetEvent` 交给 flash / gdb;session-manager 的 `instrumentTools` 同样先建 log 再建 gdb。
+  2. **网表调试查询**(`netlist/query.ts`):原始图 40 KB 截到 1 万字符,模型改用 grep 翻 .NET,看不到串联电阻另一头。
+     `query`(网络名 / 脚号 / 位号 / 值,逗号并集)只渲染命中的脚;脚名是纯数字时提示去手册引脚表换成端口名。纯数字的词只认脚号
+     (自动网络名 `NetU8_4` 会让 "8" 捞出一串无关的脚)。
+  3. **同一批里的 `project remember` 自己撞自己**(`project/session.ts`):store 的 revision 锁是给"别人改过"用的,有意让同
+     revision 的两个写入者一个失败(`project.test.ts` 钉着)。工具层把本会话的调用排队,并记下"写之前 → 写之后"的 revision 链:
+     模型拿来的 revision 之后只有本会话自己写过就顺着链换成当前的,夹着界面或别的会话的改动照旧冲突。
+  4. **中文提问、英文回答**:系统提示词、工具描述与结果全是英文,DeepSeek 全程用英文讲过程。常驻守则加了一条"用用户最近一条消息的语言回答"。
+  顺带确认过、没改的:stm32config describe-mcu 那次 67 秒是引擎更新后 CubeMX 器件缓存的一次性重建;gdb eval 里用 `;` 连写几条命令
+  被 gdb 拒,模型一轮就改成分开调用。
 - **读图缩放**(2026-09-14,从 pi 的 utils/image-* 移植):`host/domain/image/` 四个文件 ——
   `photon.ts`(加载 wasm 库)、`exif.ts`(方向标记的**纯字节解析**)、`render.ts`(解码→转正→缩放→编码的
   原语 + worker)、`process.ts`(格式归一、限额策略、给模型的尺寸说明)。两个入口都过它:`read` 工具走

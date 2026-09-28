@@ -49,6 +49,7 @@ import {
 import { resolveToCwd } from "../../domain/paths.ts"
 import { sha256File, writeFlashState } from "../flash/session.ts"
 import { otherRttReader } from "../log/capture.ts"
+import type { TargetEventSink } from "../log/session.ts"
 import {
   DEFAULT_WAIT_MS,
   type ExecOp,
@@ -117,6 +118,27 @@ export interface GdbToolOptions {
   gdbPath?: string
   /** server:"jlink" 在 PATH 之外去哪找 J-Link GDB server(账本目录、已知安装位置,见 jlinkServerBinary)。不给就只看 PATH。 */
   jlink?: JlinkLookup
+  /** 会话里的日志采集器:复位 / load 之前落一条分界线(同 flash,见 log 的 markTargetEvent)。 */
+  onTargetEvent?: TargetEventSink
+}
+
+/**
+ * 经 eval 发出去、会复位或改写目标的命令(eval 闸门已经要它们 write:true):它们在日志里同样是一道分界线。
+ * 只认命令位;set var 之类的写操作不复位目标,不需要分界线。
+ */
+export function evalTargetEvent(command: string): string | undefined {
+  const text = command.trim()
+  if (/^load\b/i.test(text)) return "gdb load"
+  if (/^mon(?:itor)?\s+(?:reset|system_reset)\b/i.test(text)) return "gdb monitor reset"
+  if (/^mon(?:itor)?\s+(?:program|flash\s+write_image)\b/i.test(text)) return "gdb monitor program"
+  return undefined
+}
+
+/** 分界线落下了就告诉模型从哪个 seq 起等:它下一步多半是 `log wait`。 */
+function markNote(mark: { seq: number; source: string } | undefined): string {
+  return mark
+    ? `\nlog: marked in the ${mark.source} capture at seq ${mark.seq} — \`log wait\` with since=${mark.seq} matches only output from after this point.`
+    : ""
 }
 
 /** 比装配面的工具多一个收尾口:会话关掉时收 gdb、server 与探针租约。 */
@@ -695,11 +717,15 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
           )
         }
         const waiter = s.expectStop()
+        // 分界线落在复位之前:reset-run 之后目标立刻开跑,开机行可能比这条命令的回执先到。
+        const marked = options.onTargetEvent?.(`gdb exec ${op}`)
         const r = await s.console(template)
         const said = r.output.trim()
         // monitor 的失败不走 ^error:OpenOCD 把 "Error: timed out while waiting for target halted" 当普通文本吐在 ^done 下面。
         // 没复位成功就别宣布"复位了",更别把 epoch 往前推(那等于告诉模型旧地址全作废)。
         if (r.class === "error" || /\berror\b|\bfail|timed out/i.test(said)) {
+          // 分界线已经落了:补一条说它可能没发生,免得模型按"之后都是复位后的输出"去读日志。
+          if (marked) options.onTargetEvent?.(`gdb exec ${op} may not have happened`, false)
           const text = `${banner(cwd)}\nthe reset may NOT have happened — the server said:\n${clip(said || (miString(r.results?.msg) ?? "(nothing)"), 800)}`
           return textResult(text, withLocation("exec"))
         }
@@ -713,7 +739,7 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
             : ""
         const text =
           `${banner(cwd)}\nsession epoch is now ${s.epoch} — the target was reset, so any address, register value or ` +
-          `breakpoint hit count you cached before this line is stale.\n${clip(said, 800)}${afterReset}`
+          `breakpoint hit count you cached before this line is stale.\n${clip(said, 800)}${afterReset}${markNote(marked)}`
         return textResult(text, withLocation("exec"))
       }
 
@@ -785,10 +811,13 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
       throw new Error(`gdb eval refused \`${params.command}\`: ${verdict.reason}`)
     }
 
+    const event = verdict.kind === "mutating" ? evalTargetEvent(params.command) : undefined
+    const marked = event ? options.onTargetEvent?.(event) : undefined
     const r = await s.console(params.command)
     const failed = r.class === "error"
     const body = failed ? (miString(r.results?.msg) ?? "error") : r.output.trim() || "(no output)"
-    let note = ""
+    if (marked && failed) options.onTargetEvent?.(`${event} failed`, false)
+    let note = failed ? "" : markNote(marked)
     // `load` 把 ELF 经 gdb server 烧进去了:flash-state 要跟着走,否则下一次 start 会把它报成"镜像不符"。
     if (!failed && verdict.kind === "mutating" && /^\s*load\b/i.test(params.command)) {
       const arg = params.command.trim().split(/\s+/)[1]
@@ -797,7 +826,7 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
         const recorded = await sha256File(loaded)
           .then((sha256) => writeFlashState(cwd, { elfPath: loaded, sha256, at: Date.now() }).then(() => true))
           .catch(() => false)
-        if (recorded) note = `\nrecorded ${loaded} as the image on the target.`
+        if (recorded) note += `\nrecorded ${loaded} as the image on the target.`
       }
     }
     // 目标退出 / 掉线之后 gdb 照样答:答案来自 ELF 文件(.data 的初值、符号地址),不是片子。不标注的话模型会把

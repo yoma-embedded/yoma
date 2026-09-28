@@ -89,7 +89,12 @@ const logParameters = Type.Object({
     Type.String({ description: "wait: regex to wait for (case-insensitive). read: only show matching lines." }),
   ),
   timeoutMs: Type.Optional(Type.Number({ description: `wait: give up after this long (default ${DEFAULT_WAIT_MS}).` })),
-  since: Type.Optional(Type.Number({ description: "read: start from this cursor instead of the last one." })),
+  since: Type.Optional(
+    Type.Number({
+      description:
+        "read: start from this seq instead of the cursor. wait: only match lines from this seq on — pass the seq a flash or gdb reset/load reported to ignore output from before it.",
+    }),
+  ),
   maxLines: Type.Optional(Type.Number({ description: `read: max lines to show (default ${DEFAULT_MAX_LINES}).` })),
 })
 
@@ -125,7 +130,7 @@ Actions:
   - Anything else: command — an argv line (a decoder script, a vendor CLI, …); no shell unless you spawn one yourself.
 - write (data, [encoding: text|hex], [lineEnding: none|lf|cr|crlf]): send up to 4096 bytes to the active serial port, or to RTT down channel 0 of an rtt capture (usually the firmware's shell — e.g. data "help", lineEnding "lf"). Text uses UTF-8. No shell evaluation or automatic retry. Success means accepted by the serial driver / J-Link, not acknowledged by the device: wait for its reply in the log. Only serial and rtt captures can be written; tcp/command sources cannot.
 - ports: list the serial ports on this machine, with the OS's own description where it has one. Opens nothing, takes nothing — safe to call any time, including while a capture is running.
-- wait (pattern, [timeoutMs]): block until a new line matches the regex, the source exits, or the timeout expires. THIS IS THE MAIN ACTION — one call turns "did it boot / did it crash" into a definite answer and returns only the matched line plus a few lines of context. A wait that does not match leaves the cursor untouched, so nothing is lost: follow it with read.
+- wait (pattern, [timeoutMs], [since]): block until a line matches the regex, the source exits, or the timeout expires. THIS IS THE MAIN ACTION — one call turns "did it boot / did it crash" into a definite answer and returns only the matched line plus a few lines of context. It searches unread lines first, so it can match a line that was already buffered before the call — the result says when the matched line arrived. A wait that does not match leaves the cursor untouched, so nothing is lost: follow it with read.
 - read ([since], [pattern], [maxLines]): the tail of whatever arrived since the last read, then advances the cursor. With pattern it only shows matching lines and does not move the cursor (it is a query, not a consumption).
 - status: whether the source is still running, how many lines were captured, where the full log file is.
 - stop: end the capture, releasing the serial port (a tcp capture just disconnects; an rtt capture also closes the J-Link GDB server it started). The log file stays. The capture also ends when the session is closed.
@@ -135,6 +140,8 @@ Rules:
 - Repeated lines are folded ("×137"); lines that differ only in numbers fold too, showing the first and the last of the run. Exact values are in the log file.
 - Prefer wait over read: read costs tokens and gives you a wall of text, wait costs one call and gives you a conclusion.
 - This tool never takes the debug-probe lease, so flash and gdb keep working while a capture runs. A tcp capture reads from a gdb server that owns the probe — stopping that server ends the stream (source shows "disconnected"). An rtt capture opens its own J-Link connection beside the others (J-Link allows several at once): flashing, gdb, a reset or a reboot do not end it, and the reboot's boot log arrives on the same stream. But only ONE RTT reader at a time: a second reader (another rtt capture, or tcp on a gdb server's RTT port 19021) splits the stream and each sees only part of the bytes — stop one first (a second rtt start anywhere in Yoma, even from another chat, is refused and names the capture that is already reading). A serial port IS exclusive, but only macOS and Windows enforce it — on Linux a second reader silently splits the byte stream with the first. A successful start is not proof that nothing else is on the port. Flashing over SWD while the serial capture runs is fine (the VCP is a separate USB interface); a reset by the flasher simply shows up in the log.
+- flash, and gdb's reset / load, write a marker line ("── flash (openocd) started ──") into a running capture and report its seq. Lines before a marker come from before that event — to check the reprogrammed or reset target, wait with since=<that seq>.
+- The first lines after start may be old: USB-serial adapters (ST-Link VCP and others) and RTT buffers replay what they held while nothing was reading. The result flags such a burst; do not treat it as output of the firmware you just flashed.
 - Serial gives you the bytes the firmware sends, nothing else: a wrong baud looks like garbage, and a firmware that speaks a binary protocol looks like garbage too. For those, run a decoder that opens the port itself as a command source. The log file holds the same sanitized text you see here, not the raw bytes.
 - RTT only produces output while the target is running and only if the firmware writes to it (rtt reads channel 0, text only). A core halted at a gdb breakpoint is silent. Silence is not proof of a crash — check status and the flash/reset results too.
 - Never claim the firmware printed, booted, or crashed unless a log line here shows it.`

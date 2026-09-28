@@ -9,6 +9,7 @@
 
 import { afterEach, beforeAll, describe, expect, it } from "vitest"
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import net from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -19,6 +20,7 @@ import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node"
 import { claimProbe, releaseProbe } from "../src/host/domain/engines.ts"
 import { FLASH_CONTRACT, type FlashDetails, type FlashInput } from "../src/host/tools/flash/contract.ts"
 import { createFlashTool, flashTimeoutMs } from "../src/host/tools/flash/session.ts"
+import { createLogTool, type LogTool } from "../src/host/tools/log/session.ts"
 import { ECHO_ARGV_JS } from "./fixtures/fake-exe.ts"
 
 const tempDirs: string[] = []
@@ -226,5 +228,138 @@ describe("flash 契约", () => {
 
   it("烧录每一次都要问用户", () => {
     expect(FLASH_CONTRACT.confirm({ command: ["openocd"] })).toBe(true)
+  })
+})
+
+/**
+ * 烧录与日志采集的分界线(2026-09-28 真跑实测的那一课):ST-Link 的虚拟串口在开口那一刻吐出一批旧状态行,
+ * 模型 `log wait` 命中其中一行、当成了"新固件的现象"。设备换成本机 TCP 假源:连上先一口气写两行旧的,
+ * 烧录期间再写新固件的开机行 —— 目标在烧录器退出之前就已经复位开跑,开机行必须落在分界线之后。
+ */
+describe("flash 在日志采集里落分界线", () => {
+  const openLogs: LogTool[] = []
+  const servers: net.Server[] = []
+  afterEach(async () => {
+    for (const log of openLogs.splice(0)) await log.dispose()
+    for (const server of servers.splice(0)) server.close()
+  })
+
+  async function device(): Promise<{ port: number; write: (text: string) => void }> {
+    const sockets: net.Socket[] = []
+    const server = net.createServer((socket) => {
+      socket.on("error", () => {})
+      sockets.push(socket)
+      // 一次写两行:开口那一刻就在的缓存。
+      socket.write("vbus=1286mV old\nvbus=1286mV old\n")
+    })
+    servers.push(server)
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+    return {
+      port: (server.address() as net.AddressInfo).port,
+      write: (text) => sockets[0]?.write(text),
+    }
+  }
+
+  async function until(predicate: () => boolean): Promise<void> {
+    const deadline = Date.now() + 5_000
+    while (!predicate()) {
+      if (Date.now() > deadline) throw new Error("timed out")
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+  }
+
+  it("烧录前落线,烧录期间到的开机行算在线后;旧行命中时明说它早于烧录,并给出 since", async () => {
+    const cwd = createTempDir()
+    const context = { env: new NodeExecutionEnv({ cwd }) }
+    const log = createLogTool()
+    openLogs.push(log)
+    const { port, write } = await device()
+    await log.execute("l1", { action: "start", tcp: `127.0.0.1:${port}` }, () => {}, context, invocation, BACKGROUND_CONTEXT)
+    await until(() => log.snapshot().totalLines >= 2)
+
+    const flash = createFlashTool({ onTargetEvent: log.markTargetEvent })
+    const flasher = fakeFlasher(`setTimeout(() => console.log("** Verified OK **"), 300)`)
+    setTimeout(() => write("boot banner\nvbus=12000mV new\n"), 80)
+    const flashed = textOf(await flash.execute("f1", { command: flasher }, () => {}, context, invocation, BACKGROUND_CONTEXT))
+    // seq 0、1 是开口时的旧行,2 是分界线。
+    expect(flashed).toContain("since=2")
+
+    const wait = async (params: { since?: number }) => {
+      const result = await log.execute(
+        "l2",
+        { action: "wait", pattern: "vbus", timeoutMs: 2_000, ...params },
+        () => {},
+        context,
+        invocation,
+        BACKGROUND_CONTEXT,
+      )
+      return result.content.map((part) => (part.type === "text" ? part.text : "")).join("")
+    }
+
+    // 不带 since:命中开口时的旧行 —— 结果要说它早于烧录、来自开口那一阵,并指回 since=2(不是"烧录结束"那条)。
+    const stale = await wait({})
+    expect(stale).toMatch(/matched \/vbus\/ at seq 0/)
+    expect(stale).toContain("already in the buffer when this wait began")
+    expect(stale).toMatch(/predates "flash .+ started" \(seq 2\)/)
+    expect(stale).toContain("since=2")
+    expect(stale).toMatch(/seq 0–1 arrived in one burst/)
+
+    // 带 since:只找分界线之后的,分界线本身不算命中。
+    const fresh = await wait({ since: 2 })
+    expect(fresh).toMatch(/matched \/vbus\/ at seq 4 .*searching from seq 2/)
+    expect(fresh).toContain("vbus=12000mV new")
+    expect(fresh).not.toContain("predates")
+    // since 早于游标时照样往回找:游标已经过了开机行,不认 since 的话这一次只会超时。
+    const boot = await log.execute(
+      "l3",
+      { action: "wait", pattern: "boot", since: 2, timeoutMs: 500 },
+      () => {},
+      context,
+      invocation,
+      BACKGROUND_CONTEXT,
+    )
+    expect(boot.details?.matched).toBe(true)
+
+    // 日志文件里两条标记都在,开机行夹在它们之间。
+    const file = log.snapshot().file!
+    const lines = readFileSync(file, "utf8").split("\n")
+    const started = lines.findIndex((line) => /── flash .+ started ──/.test(line))
+    const bootAt = lines.findIndex((line) => line.includes("boot banner"))
+    const ended = lines.findIndex((line) => /── flash .+ ended \(exit 0\) ──/.test(line))
+    expect(started).toBeGreaterThan(-1)
+    expect(bootAt).toBeGreaterThan(started)
+    expect(ended).toBeGreaterThan(bootAt)
+  })
+
+  it("标记行不会被 wait 当成目标的输出", async () => {
+    const cwd = createTempDir()
+    const context = { env: new NodeExecutionEnv({ cwd }) }
+    const log = createLogTool()
+    openLogs.push(log)
+    const { port } = await device()
+    await log.execute("l1", { action: "start", tcp: `127.0.0.1:${port}` }, () => {}, context, invocation, BACKGROUND_CONTEXT)
+    await until(() => log.snapshot().totalLines >= 2)
+    const mark = log.markTargetEvent("gdb exec reset-run")
+    expect(mark?.seq).toBe(2)
+    const result = await log.execute(
+      "l2",
+      { action: "wait", pattern: "reset", timeoutMs: 300, since: 2 },
+      () => {},
+      context,
+      invocation,
+      BACKGROUND_CONTEXT,
+    )
+    expect(result.details?.matched).toBe(false)
+  })
+
+  it("没有采集:不落线,烧录结果里也不提 log", async () => {
+    const log = createLogTool()
+    openLogs.push(log)
+    expect(log.markTargetEvent("flash openocd started")).toBeUndefined()
+    const flash = createFlashTool({ onTargetEvent: log.markTargetEvent })
+    const flasher = fakeFlasher(`console.log("** Verified OK **")`)
+    const context = { env: new NodeExecutionEnv({ cwd: createTempDir() }) }
+    const text = textOf(await flash.execute("f1", { command: flasher }, () => {}, context, invocation, BACKGROUND_CONTEXT))
+    expect(text).not.toContain("log:")
   })
 })
