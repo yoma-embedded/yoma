@@ -18,17 +18,23 @@ import { executionEnvSnapshot } from "../../domain/execution-env.ts"
 import type { AgentHarnessTool, AgentToolResult, ExecutionToolContext } from "@earendil-works/pi-agent-core"
 
 import { clamp, stamp } from "../../domain/engines.ts"
+import type { JlinkLookup } from "../gdb/servers.ts"
 import { EXIT_WAIT_MS, LogCapture, type LogSource } from "./capture.ts"
 import {
   DEFAULT_MAX_LINES,
+  DEFAULT_RTT_SPEED_KHZ,
   DEFAULT_WAIT_MS,
+  jlinkDeviceName,
   LOG_CONTRACT,
   type LogAction,
   type LogDetails,
   type LogInput,
+  MAX_RTT_SPEED_KHZ,
   MAX_WAIT_MS,
+  MIN_RTT_SPEED_KHZ,
 } from "./contract.ts"
-import { formatElapsed, MAX_MAX_LINES, renderRow, renderRows, splitArgv } from "./excerpt.ts"
+import { formatElapsed, MAX_MAX_LINES, renderLine, renderRow, renderRows, splitArgv } from "./excerpt.ts"
+import { describeServerExit, rttLabel } from "./rtt.ts"
 import {
   DEFAULT_BAUD,
   listSerialPorts,
@@ -49,6 +55,25 @@ const UPDATE_CHARS = 4_000
 /** 工具内的 tick 节流:只为省 previewRows 的计算,上屏的节拍由内核的 ToolProgressThrottle 管。 */
 const UPDATE_THROTTLE_MS = 100
 
+/** 界面实时尾巴一次最多给这么多行(最新的);更早的在日志文件里。 */
+export const MAX_TAIL_LINES = 2000
+
+/**
+ * 界面日志窗口的一次拉取。与 protocol.ts 的 `LogTailView` 同形 —— 工具间不许 import 协议
+ * (boundary.test.ts 第 2 条),两边由 session-manager 那一侧的类型检查对齐。
+ */
+export interface LogTail {
+  running: boolean
+  source?: string
+  file?: string
+  writable: boolean
+  nextSeq: number
+  /** 请求的区间里没能给出的行数:已经掉出环形缓冲的,加上超过 MAX_TAIL_LINES 被截掉的更早那部分。 */
+  lost: number
+  /** 与日志文件逐行同形(renderLine):`[+1.234] text`,stderr / 诊断行是 `[+1.234] ! text`。 */
+  lines: string[]
+}
+
 /** 装配面上的工具:比发动机的 AgentHarnessTool 多一个会话关闭时的收尾口。 */
 export type LogTool = AgentHarnessTool<ExecutionToolContext, typeof LOG_CONTRACT.parameters, LogDetails> & {
   /** 会话关闭:停掉采集器、还回串口。没 start 过就是 no-op;绝不抛。 */
@@ -57,7 +82,13 @@ export type LogTool = AgentHarnessTool<ExecutionToolContext, typeof LOG_CONTRACT
   snapshot(): LogDetails
   /** Release a source immediately, also waking an in-flight wait before the queued stop result. */
   stopCapture(): Promise<void>
+  /** 往串口或 RTT down channel 0 发字节(不排队:正在 wait 的 agent 不挡手动发送)。 */
   sendSerial(params: LogInput): Promise<AgentToolResult<LogDetails>>
+  /**
+   * 界面的实时尾巴:seq ≥ since 的行(不给 since 就是整个环形缓冲),最多最新的 MAX_TAIL_LINES 行。
+   * **只读**:不推 agent 的游标、不排队(不被一条两分钟的 wait 挡住)、没有采集器时给一个空视图。
+   */
+  tail(since?: number): LogTail
 }
 
 /**
@@ -98,6 +129,12 @@ function sourceState(capture: LogCapture): string {
   if (!capture.exited) return "not started"
   // TCP 没有退出码,"exited (code null)"只会让模型去猜进程语义。
   if (capture.source.kind === "tcp") return "disconnected"
+  // RTT:是我们收的场就说 stopped(server 的退出码是被杀出来的,不是它自己的话);否则说 server 怎么走的。
+  if (capture.source.kind === "rtt") {
+    if (capture.stopRequested) return "stopped"
+    if (capture.serverExit) return describeServerExit(capture.serverExit)
+    return "disconnected (the J-Link GDB server closed the RTT connection)"
+  }
   const { code, signal } = capture.exited
   return `exited (${signal ? `signal ${signal}` : `code ${code}`})`
 }
@@ -112,10 +149,30 @@ function footer(capture: LogCapture, needsFile: boolean): string {
   return `cursor: ${capture.cursor} | source: ${sourceState(capture)}${dropped}${file}`
 }
 
-export function createLogTool(): LogTool {
+/** 起到一半被界面断开(stopCapture)时 start 的回答。 */
+const STOPPED_BEFORE_START = "log start: the capture was stopped before it finished starting"
+
+export interface LogToolOptions {
+  /** RTT 源在 PATH 之外去哪找 J-Link GDB server(账本目录、已知安装位置,见 jlinkServerBinary)。不给就只看 PATH。 */
+  jlink?: JlinkLookup
+}
+
+export function createLogTool(options: LogToolOptions = {}): LogTool {
   let capture: LogCapture | undefined
+  /**
+   * 正在 start 的采集器(还没交给 `capture`)。RTT 要等 J-Link server 就绪,可能几秒:这段时间里界面的
+   * "断开"与会话关闭都要能把它收掉,而不是等它起来之后再收 —— 否则 server 白白连一次目标。
+   */
+  let starting: LogCapture | undefined
   /** dispose 之后这个工具就没有会话了:排在队里、或正卡在 spawn 里的 start 一律拒掉并收掉自己起的源。 */
   let disposed = false
+  /**
+   * 界面的"断开"(stopCapture)每按一次加一;execute 进来时记下当时的值。在它之前发出的 start —— 还排在队列里、
+   * 或正在 mkdir / 开串口、还没登记成 `starting` —— 一律作废:stopCapture 只收得到已经造好的采集器,收不到这些,
+   * 不作废的话界面拿到 "Disconnected",过一会儿那次 start 照样连上(2026-09-25 审稿实测:排在一次 `log ports`
+   * 后面的 start;冷会话里与断开一起等环境装配的 start)。
+   */
+  let stopEpoch = 0
 
   /**
    * 这个工具的调用之间**串行**。发动机的 AgentHarness 不读工具上的 executionMode(那是老 agent-loop 的字段),
@@ -145,10 +202,34 @@ export function createLogTool(): LogTool {
     totalLines: capture?.totalLines ?? 0,
     dropped: capture?.dropped ?? 0,
     ...(capture ? { source: capture.label, file: capture.file } : {}),
-    ...(capture?.source.kind === "child" && capture.source.serial ? { serial: capture.source.serial, writable: capture.running } : { writable: false }),
+    ...(capture?.source.kind === "child" && capture.source.serial ? { serial: capture.source.serial } : {}),
+    ...(capture?.source.kind === "rtt"
+      ? { rtt: { device: capture.source.device, speed: capture.source.speed, port: capture.rttPort ?? 0 } }
+      : {}),
+    writable: capture?.writable ?? false,
     ...(capture?.exited ? { exitCode: capture.exited.code } : {}),
     ...extra,
   })
+
+  const tail = (since?: number): LogTail => {
+    const active = capture
+    if (!active) return { running: false, writable: false, nextSeq: 0, lost: 0, lines: [] }
+    const from =
+      since !== undefined && Number.isFinite(since)
+        ? Math.max(0, Math.trunc(since))
+        : (active.lines[0]?.seq ?? active.nextSeq)
+    const window = active.linesSince(from)
+    const shown = window.lines.slice(-MAX_TAIL_LINES)
+    return {
+      running: active.running,
+      source: active.label,
+      file: active.file,
+      writable: active.writable,
+      nextSeq: active.nextSeq,
+      lost: window.lost + (window.lines.length - shown.length),
+      lines: shown.map(renderLine),
+    }
+  }
 
   return {
     name: LOG_CONTRACT.name,
@@ -159,18 +240,23 @@ export function createLogTool(): LogTool {
     executionMode: "sequential",
     snapshot: () => detailsOf("status"),
     sendSerial,
-    stopCapture: async () => { await capture?.stop() },
+    tail,
+    stopCapture: async () => {
+      stopEpoch++
+      await Promise.all([capture?.stop(), starting?.stop()])
+    },
     async dispose() {
       // 不排队:closeEntry 先 stop 掉这一轮(wait 会被中止信号叫醒),这里直接收采集器就行;
-      // 排队的话一条还没被中止的 wait 会把关会话拖住两分钟。正在 spawn 途中的 start 靠 disposed 旗兜住。
+      // 排队的话一条还没被中止的 wait 会把关会话拖住两分钟。正在 spawn 途中的 start 靠 disposed 旗兜住,
+      // 还在等 J-Link server 就绪的 RTT start 直接收掉(它看到 stop 会自己抛出来)。
       disposed = true
-      const active = capture
-      if (!active) return
-      await active.stop().catch(() => {})
+      await Promise.all([capture?.stop().catch(() => {}), starting?.stop().catch(() => {})])
     },
     execute: (_toolCallId, params, onUpdate, toolContext, _invocation, context) => {
       const env = executionEnvSnapshot(toolContext.env)
-      return serialize(() => executeAction(params, onUpdate, toolContext.env.cwd, context.abortSignal, env))
+      // 进队列那一刻的值,不是轮到它时的值:排队期间按下的断开也要作废它。
+      const epoch = stopEpoch
+      return serialize(() => executeAction(params, onUpdate, toolContext.env.cwd, context.abortSignal, env, epoch))
     },
   }
 
@@ -178,8 +264,83 @@ export function createLogTool(): LogTool {
     if (disposed) throw new Error("Serial session is closed")
     const data = serialBytes(params)
     const active = requireCapture("write")
-    const bytesSent = await active.writeSerial(data)
+    const bytesSent = await active.write(data)
     return { content: [{ type: "text", text: `Sent ${bytesSent} bytes to ${active.label}. Device acknowledgement is not implied.` }], details: detailsOf("write", { bytesSent }) }
+  }
+
+  /**
+   * 把一个已经造好的采集器真正起起来,成了才交给 `capture`。任何一条失败路都先 stop 它(串口 fd、RTT 的
+   * J-Link server 都归它收)再抛。abortSignal 一路递进 start:RTT 等 J-Link server 就绪的那几秒里按停止要真停。
+   */
+  async function launch(
+    started: LogCapture,
+    label: string,
+    file: string,
+    serial: { device: string; baud: number } | undefined,
+    env: NodeJS.ProcessEnv,
+    abortSignal: AbortSignal | undefined,
+  ): Promise<AgentToolResult<LogDetails>> {
+    try {
+      await started.start(abortSignal)
+    } catch (error) {
+      // 先读再 stop:下面自己那次 stop() 也会把 stopRequested 置上。是界面断开 / 会话关闭收的场就如实这么说 ——
+      // 串口那条路否则报成 "Serial bridge closed before opening the port"(与真的桥坏了一字不差),模型会去重开
+      // 用户刚放掉的口,或者换一个口试。
+      const stoppedFromOutside = started.stopRequested
+      // 起不来也要把串口还回去(fd 的所有权已在 LogCapture 手里,stop 会收);RTT 起到一半的 server 同理。
+      await started.stop()
+      if (disposed) throw new Error("log start: the session was closed")
+      if (stoppedFromOutside) throw new Error(STOPPED_BEFORE_START)
+      if (serial) {
+        const detail = started.lines
+          .map((line) => line.text)
+          .join("; ")
+          .trim()
+        throw new Error(
+          `log start: ${error instanceof Error ? error.message : String(error)}${detail ? `: ${detail}` : ""}`,
+        )
+      }
+      if (started.source.kind === "rtt") {
+        throw new Error(`log start rtt: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      throw error
+    }
+    // 有的系统上 spawn 成功并不代表口开成了(等多久由 serial.ts 说了算,它才认识平台)。
+    // 真当场死了就把它自己那句话报出来 —— 否则模型拿着一句 "Capturing …" 去等一份永远不来的日志。
+    const confirmMs = serial ? serialOpenConfirmMs() : 0
+    if (confirmMs > 0) {
+      await started.settle(confirmMs)
+      // 等的这一秒半里被断开:进程是我们杀的,不是口开不了 —— 别拿板子自己吐的字当"打不开"的原因、再贴一张端口清单。
+      if (disposed || started.stopRequested) {
+        await started.stop().catch(() => {})
+        throw new Error(disposed ? "log start: the session was closed" : STOPPED_BEFORE_START)
+      }
+      if (started.exited) {
+        const said = started.lines
+          .map((line) => line.text)
+          .join("; ")
+          .trim()
+        await started.stop()
+        throw new Error(`log start: could not open ${label}${said ? `: ${said}` : ""}${await portHint(env)}`)
+      }
+    }
+
+    // spawn 途中会话被关了(dispose 看到的 capture 还是 undefined):把自己起的源收掉,别让它活过会话。
+    if (disposed) {
+      await started.stop().catch(() => {})
+      throw new Error("log start: the session was closed")
+    }
+    // 起的途中被界面"断开"了(stopCapture 收的是 starting):别把一个已经停了的采集器报成 "Capturing"。
+    if (started.stopRequested) throw new Error(STOPPED_BEFORE_START)
+    capture = started
+    const rtt =
+      started.source.kind === "rtt"
+        ? `\nThe target was not halted or reset. RTT channel 0 is on 127.0.0.1:${started.rttPort}; write sends to RTT down channel 0 (the firmware's shell, if it has one).`
+        : ""
+    const text = `Capturing ${label}${started.pid ? ` (pid ${started.pid})` : ""}.${rtt}
+Full log: ${file}
+Next: \`log wait\` with a pattern (e.g. "boot|fault|error") — it blocks until something matches instead of dumping the log.`
+    return { content: [{ type: "text", text }], details: detailsOf("start") }
   }
 
   async function executeAction(
@@ -188,11 +349,14 @@ export function createLogTool(): LogTool {
     cwd: string,
     abortSignal: AbortSignal | undefined,
     env: NodeJS.ProcessEnv,
+    epoch: number,
   ): Promise<AgentToolResult<LogDetails>> {
     {
       switch (params.action) {
         case "start": {
           if (disposed) throw new Error("log start: the session was closed")
+          // 排队期间被断开(见 stopEpoch):一个源都别起。
+          if (epoch !== stopEpoch) throw new Error(STOPPED_BEFORE_START)
           // running 按 'close' 判(见 capture.running):shell 退了、孙进程还握着管道的源仍算在采,
           // 不放第二个源进来 —— 否则旧采集器被顶掉却还活着,dispose 收不到它。
           if (capture?.running) {
@@ -208,11 +372,14 @@ export function createLogTool(): LogTool {
           let label: string
           /** 串口:留到最后一步再真开设备(见下面 prepareSerial 那一句)。 */
           let serial: { device: string; baud: number } | undefined
-          // 三个源互斥。给了两个就是拿不准,而默默挑一个的代价是"它以为在读串口,其实在读 TCP",
+          // 四个源互斥。给了两个就是拿不准,而默默挑一个的代价是"它以为在读串口,其实在读 TCP",
           // 两边都长得像"板子没输出"。
-          const sources = [params.port && "port", params.tcp && "tcp", params.command && "command"].filter(
-            (name): name is string => typeof name === "string",
-          )
+          const sources = [
+            params.port && "port",
+            params.rtt && "rtt",
+            params.tcp && "tcp",
+            params.command && "command",
+          ].filter((name): name is string => typeof name === "string")
           if (sources.length > 1) throw new Error(`log start: pass exactly one source, got ${sources.join(" + ")}`)
           if (params.port) {
             const device = await withPortHints(() => normalizeSerialPort(params.port!), env)
@@ -232,12 +399,25 @@ export function createLogTool(): LogTool {
             if (argv.length === 0) throw new Error("log start: command is empty")
             source = { kind: "child", argv }
             label = argv.join(" ")
+          } else if (params.rtt) {
+            let device: string
+            try {
+              device = jlinkDeviceName(params.rtt)
+            } catch (error) {
+              throw new Error(`log start: ${error instanceof Error ? error.message : String(error)}`)
+            }
+            const speed = clamp(params.rttSpeed, DEFAULT_RTT_SPEED_KHZ, MIN_RTT_SPEED_KHZ, MAX_RTT_SPEED_KHZ)
+            // 不占探针租约:J-Link 允许多会话并存,flash / gdb 照常用探针(实测见 rtt.ts 文件头)。
+            source = { kind: "rtt", device, speed }
+            label = rttLabel(device, speed)
           } else if (params.tcp) {
             const parsed = parseTcpTarget(params.tcp)
             source = { kind: "tcp", host: parsed.host, port: parsed.port }
             label = `tcp ${parsed.host}:${parsed.port}`
           } else {
-            throw new Error('log start: pass exactly one source — port (serial), tcp ("host:port"), or command')
+            throw new Error(
+              'log start: pass exactly one source — port (serial), rtt (J-Link device name), tcp ("host:port"), or command',
+            )
           }
 
           const file = path.join(cwd, ".yoma", "logs", logFileName())
@@ -255,49 +435,25 @@ export function createLogTool(): LogTool {
           const hold = opening
             ? await withPortHints(() => prepareSerial(opening.device, opening.baud, process.platform, env), env)
             : undefined
+          // mkdir / 开串口这几步里被断开或中止:还没登记成 `starting`,stopCapture 够不着它 —— 这里自己收手,
+          // 刚开的串口 fd 还回去。从这里到登记 `starting` 之间全是同步的,不会再漏。
+          if (abortSignal?.aborted || epoch !== stopEpoch) {
+            if (hold !== undefined) closeSync(hold)
+            throw new Error(abortSignal?.aborted ? "log start was aborted" : STOPPED_BEFORE_START)
+          }
           if (source.kind === "child" && opening) {
             let writeFd: number | undefined
             try { if (hold !== undefined) writeFd = prepareSerialWriter(opening.device) }
             catch (error) { if (hold !== undefined) closeSync(hold); throw error }
             source = { ...source, hold, writeFd, serial: { port: opening.device, baud: opening.baud } }
           }
-          const started = new LogCapture(source, label, file, cwd, { env })
+          const started = new LogCapture(source, label, file, cwd, { env, jlink: options.jlink })
+          starting = started
           try {
-            await started.start()
-          } catch (error) {
-            // 起不来也要把串口还回去(fd 的所有权已在 LogCapture 手里,stop 会收)。
-            await started.stop()
-            if (serial) {
-              const detail = started.lines.map((line) => line.text).join("; ").trim()
-              throw new Error(`log start: ${error instanceof Error ? error.message : String(error)}${detail ? `: ${detail}` : ""}`)
-            }
-            throw error
+            return await launch(started, label, file, serial, env, abortSignal)
+          } finally {
+            if (starting === started) starting = undefined
           }
-          // 有的系统上 spawn 成功并不代表口开成了(等多久由 serial.ts 说了算,它才认识平台)。
-          // 真当场死了就把它自己那句话报出来 —— 否则模型拿着一句 "Capturing …" 去等一份永远不来的日志。
-          const confirmMs = serial ? serialOpenConfirmMs() : 0
-          if (confirmMs > 0) {
-            await started.settle(confirmMs)
-            if (started.exited) {
-              const said = started.lines
-                .map((line) => line.text)
-                .join("; ")
-                .trim()
-              await started.stop()
-              throw new Error(`log start: could not open ${label}${said ? `: ${said}` : ""}${await portHint(env)}`)
-            }
-          }
-
-          // spawn 途中会话被关了(dispose 看到的 capture 还是 undefined):把自己起的源收掉,别让它活过会话。
-          if (disposed) {
-            await started.stop().catch(() => {})
-            throw new Error("log start: the session was closed")
-          }
-          capture = started
-          const text = `Capturing ${label}${started.pid ? ` (pid ${started.pid})` : ""}.
-Full log: ${file}
-Next: \`log wait\` with a pattern (e.g. "boot|fault|error") — it blocks until something matches instead of dumping the log.`
-          return { content: [{ type: "text", text }], details: detailsOf("start") }
         }
 
         case "write": return sendSerial(params)
@@ -404,9 +560,11 @@ Next: \`log wait\` with a pattern (e.g. "boot|fault|error") — it blocks until 
           const uptime = ((active.endedAt ?? Date.now()) - active.startedAt) / 1000
           // 没能确认退出就别说"停了"—— 模型据此判断串口是否已经放开。按 forcedEnd 判而不是 exited:
           // `sh -c "reader &"` 的 shell 早就退了(exited 有值),真正握着设备的孙进程可能逃出了进程组。
-          const survived = active.forcedEnd
-            ? `\n⚠️ the source did not confirm exit within ${EXIT_WAIT_MS} ms; the process tree was killed, but a reader that escaped it may still hold the device. Verify the device is free before opening it again.`
-            : ""
+          const survived = !active.forcedEnd
+            ? ""
+            : active.source.kind === "rtt"
+              ? `\n⚠️ the J-Link GDB server${active.pid ? ` (pid ${active.pid})` : ""} did not confirm exit after being killed; it may still hold a J-Link connection and read RTT, which would split the stream for the next reader.`
+              : `\n⚠️ the source did not confirm exit within ${EXIT_WAIT_MS} ms; the process tree was killed, but a reader that escaped it may still hold the device. Verify the device is free before opening it again.`
           const text =
             `stopped ${active.label} after ${uptime.toFixed(1)}s and ${active.totalLines} lines.${survived}\n` +
             `Full log: ${active.file}`

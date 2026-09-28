@@ -12,7 +12,7 @@ import contextMenu from "electron-context-menu"
 
 // 深引用叶子模块 —— 走 `@yoma-desktop/bench` 主入口会把整个内核 inline 进
 // out/main/index.js(bench 在 devDependencies 里,externalizeDeps 不碰它)。
-import { defaultConfigDir } from "@yoma-desktop/bench/mailbox/paths"
+import { DESKTOP_APP_IDS, defaultConfigDir } from "@yoma-desktop/bench/mailbox/paths"
 
 import { CHANNEL } from "./constants"
 import { registerIpcHandlers, sendMenuCommand } from "./ipc"
@@ -41,11 +41,6 @@ const APP_NAMES: Record<string, string> = {
   dev: "Yoma Dev",
   beta: "Yoma Beta",
   prod: "Yoma",
-}
-const APP_IDS: Record<string, string> = {
-  dev: "com.yoma.desktop.dev",
-  beta: "com.yoma.desktop.beta",
-  prod: "com.yoma.desktop",
 }
 const TEST_ONBOARDING = process.env.YOMA_TEST_ONBOARDING === "1"
 const jsCallStackFeature = "DocumentPolicyIncludeJSCallStacksInCrashReports"
@@ -134,7 +129,8 @@ const main = Effect.gen(function* () {
 
   process.env.YOMA_DISABLE_EMBEDDED_WEB_UI = "true"
 
-  const appId = app.isPackaged ? APP_IDS[CHANNEL] : "com.yoma.desktop.dev"
+  // appId 表与调试台命令行共用(bench/mailbox/paths.ts):它就是 userData 的目录名,命令行照它找会话目录。
+  const appId = app.isPackaged ? DESKTOP_APP_IDS[CHANNEL] : DESKTOP_APP_IDS.dev
   const onboardingTestRoot = ((): string | undefined => {
     if (!TEST_ONBOARDING) return
 

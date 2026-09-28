@@ -227,6 +227,87 @@ while True:
     expect((await client.instrument.execute({ sessionID: session.id, tool: "log", input: { action: "stop" } })).details?.running).toBe(false)
   })
 
+  it("logTail is a cheap read-only view: no session load, no model, no queue, and it never consumes the agent cursor", async () => {
+    const { client, session, resolveModels, root } = await setup()
+    const empty = { running: false, writable: false, nextSeq: 0, lost: 0, lines: [] }
+    expect(await client.instrument.logTail({ sessionID: "no-such-session" })).toEqual(empty)
+    expect(await client.instrument.logTail({ sessionID: session.id })).toEqual(empty)
+    // A second manager over the same repository has the session on disk only: logTail must not open it.
+    const cold = new SessionManager({ sessionsRoot: path.join(root, "sessions"), configDir: path.join(root, "config"), emit: () => {} })
+    try {
+      expect(cold.logTail({ sessionID: session.id })).toEqual(empty)
+      expect((cold as unknown as { entries: Map<string, unknown> }).entries.size).toBe(0)
+    } finally { await cold.disposeAll() }
+
+    const feed = await source()
+    const run = (input: Record<string, unknown>) => client.instrument.execute({ sessionID: session.id, tool: "log", input })
+    // Disconnect with no capture at all (e.g. an RTT start the same click already cancelled) is not an error.
+    expect(await run({ action: "stop" })).toMatchObject({ text: "Disconnected", details: { running: false } })
+    await run({ action: "start", tcp: feed.tcp })
+    await vi.waitFor(async () => expect((await client.instrument.logTail({ sessionID: session.id })).lines).toHaveLength(1))
+    const view = await client.instrument.logTail({ sessionID: session.id })
+    expect(view).toMatchObject({ running: true, writable: false, nextSeq: 1, lost: 0, source: `tcp ${feed.tcp}` })
+    expect(view.lines[0]).toMatch(/^\[\+\d+\.\d{3}\] BOOT ready$/)
+    expect(await readFile(String(view.file), "utf8")).toBe(`${view.lines[0]}\n`)
+    expect(await client.instrument.logTail({ sessionID: session.id, since: view.nextSeq })).toMatchObject({ lines: [], nextSeq: 1 })
+
+    // A pending agent-style wait holds the log tool's queue; the tail must not wait behind it.
+    const waiting = run({ action: "wait", pattern: "never", timeoutMs: 120000 })
+    const started = Date.now()
+    expect((await client.instrument.logTail({ sessionID: session.id })).lines).toHaveLength(1)
+    expect(Date.now() - started).toBeLessThan(1000)
+    // Not consumed: the agent-facing read still starts at the unread line.
+    expect((await run({ action: "stop" })).details?.running).toBe(false)
+    await waiting
+    expect((await run({ action: "read" })).text).toContain("BOOT ready")
+    expect((await client.instrument.logTail({ sessionID: session.id })).running).toBe(false)
+    expect(resolveModels).not.toHaveBeenCalled()
+  })
+
+  it("Disconnect sent right behind Connect cancels that start instead of letting it connect after reporting Disconnected", async () => {
+    const { client, session } = await setup()
+    const feed = await source()
+    const run = (input: Record<string, unknown>) => client.instrument.execute({ sessionID: session.id, tool: "log", input })
+    // No await between them: the stop reaches the kernel while the start is still opening the session environment.
+    const starting = run({ action: "start", tcp: feed.tcp }).then((result) => result.text, (error: Error) => error.message)
+    expect(await run({ action: "stop" })).toMatchObject({ text: "Disconnected", details: { running: false } })
+    expect(await starting).toMatch(/aborted|stopped before it finished starting/)
+    expect((await run({ action: "status" })).details?.running).toBe(false)
+    expect((await client.instrument.logTail({ sessionID: session.id })).running).toBe(false)
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    expect(feed.socket()).toBeUndefined()
+  })
+
+  it("Disconnect cancels a manual start that has not reached the log tool yet, even if the stop gets there first", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "yoma-instrument-cancel-"))
+    roots.push(root)
+    const manager = new SessionManager({ sessionsRoot: path.join(root, "sessions"), configDir: path.join(root, "config"), emit: () => {} })
+    const internals = manager as unknown as { ensureToolEnvironment(entry: unknown): Promise<void> }
+    const original = internals.ensureToolEnvironment.bind(manager)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    let holdNext = false
+    // The start is still waiting for its environment (or a session list) when the stop, which does not wait, arrives.
+    internals.ensureToolEnvironment = async (entry) => {
+      if (holdNext) { holdNext = false; await gate }
+      return original(entry)
+    }
+    try {
+      const session = await manager.create(root)
+      const feed = await source()
+      const run = (input: Record<string, unknown>) => manager.executeInstrument({ sessionID: session.id, tool: "log", input })
+      holdNext = true
+      const starting = run({ action: "start", tcp: feed.tcp }).then((result) => result.text, (error: Error) => error.message)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(await run({ action: "stop" })).toMatchObject({ text: "Disconnected" })
+      release()
+      expect(await starting).toMatch(/abort/i)
+      expect((await run({ action: "status" })).details?.running).toBe(false)
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      expect(feed.socket()).toBeUndefined()
+    } finally { release(); await manager.disposeAll() }
+  })
+
   it("manual disconnect wakes a long waiter immediately and status remains readable", async () => {
     const { client, session } = await setup()
     const feed = await source()

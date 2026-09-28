@@ -125,6 +125,36 @@ Yoma 是一个面向**嵌入式调试**的 agent 平台,一棵树上两半:
   同一批里的工具调用是并行的,所以 log 在工具内用一条 promise 队列把自己的调用串起来;采集器的**活性按
   'close' 判而不是按 'exit'**—— `sh -c "reader &"` 这种源 shell 一退 'exit' 就来了,真正吐字节的孙进程还握着
   管道,按 'exit' 判会让第二个 start 静默顶掉旧采集器,串口就被那个孙进程占到内核退出。
+- **log 的 J-Link RTT 源 + 控制台实时尾巴**(2026-09-24,`host/tools/log/rtt.ts`;回归用例 `test/tools-log-rtt.test.ts`):
+  `log start rtt:"STM32G473RC"`(可加 `rttSpeed`)是第四个源,工具自己起一个**只管 RTT 的** `JLinkGDBServerCL -nohalt`
+  (四个随机空闲口,不撞 gdb 工具那个 server 的缺省口),连它的 RTT telnet 口,通道 0 的文本进同一个采集器;write 写进
+  down channel 0(固件 shell)。器件名经 `jlinkDeviceName` 归一(`STM32G473RCT6` / CubeMX 的 `STM32G473RCTx` → `STM32G473RC`,
+  `STM32G473R(B-C-E)Tx` 这种家族名当场拒)。控制台的「串口 | RTT」切换在 `serial-controls.tsx`,器件名依次取已存偏好、
+  烧录 / gdb 认出的芯片、`project.context` 的 chip(`iocChip`:`.ioc` 里 CPN > UserName > Name)。
+  全部在这台 Windows 开发机上对真板实测(J-Link V11 + V9.58 软件包 + STM32G473RC),几条选择都是量出来的:
+  1. **用 GDB server 不用 JLink.exe(Commander)**:Commander 的 stdout 接管道时整段缓冲到退出才吐,判不了就绪;
+     器件名写错时它挂 67 秒才退。GDB server 的就绪行不缓冲(~110 ms),器件名错 ~240 ms 就打印原因退出。
+  2. **不占探针租约**:J-Link 允许多个会话同时连一个探针 —— 另开 GDB server、用 JLink.exe 停核 / 复位,这条 RTT 流都不断,
+     固件重启后开机日志照样从同一个 socket 来(停核时 J-Link 冻结了 35 ms 的 IWDG)。唯一的冲突是**两个 RTT 读者**:
+     另一个 server 的 RTT 口也被人连着时字节流被劈成两半,各拿一部分,而且不报错。**同一个内核里**第二个 RTT 读者当场拒
+     (`capture.ts` 模块级的 `rttReaders`,查与登记之间没有 await —— A 会话的控制台连着 RTT、B 会话的 agent 再 start,
+     B 看不见 A 的采集,只能靠内核拦);gdb 的 attach 报告在有人读 RTT 时改口说"别再连 19021"(`rttHintFor`)。
+     别的进程(RTT Viewer、另一个 app)拦不住,只写进了工具描述。
+  1b. **J-Link 不在 PATH 上是常态**:SEGGER 的 Windows 安装程序不改 PATH。`jlinkServerBinary`(gdb/servers.ts)依次找
+     PATH → 账本里 jlink 那条记下的目录(不论 by user / auto)→ 工具链的缺省安装目录表,只读文件、不起进程;
+     `log start rtt` 与 `gdb server:"jlink"` 共用它。
+  3. **刚连上就写会丢**:J-Link 还没在目标 RAM 里找到 RTT 控制块时,写进 telnet 口的字节被静默丢掉(0 ms 写三次丢两次,
+     50 ms 起三次都到)。`write` 在连上后 300 ms 内、目标还一句没说时先等到点(`RTT_WRITE_SETTLE_MS`)。
+  4. RTT telnet 口一连上先发三行 SEGGER 横幅,只在流的最开头剥(可能切在任意 chunk 边界上,`RttBannerFilter`)。
+  5. 顺带修了 `spawnServer` 的输出尾巴:从前逐 chunk 切行,报错里贴的是 "Target endian: l" / "ittle" 这种碎片(gdb 工具同受益)。
+  **实时尾巴**:`instrument.logTail {sessionID, since}` 从采集器的环形缓冲里取行,渲染与日志文件逐字相同(`renderLine`),
+  **不推 agent 的游标**、不建会话、不装环境;界面在采集进行中每 200 ms 拉一次(`log-feed.ts` 的 live 模式,合并逻辑在
+  `log-live.ts`),停了回落到读盘。从前是每 2 秒整份重读 `hw-*.log`,真窗口实测发 `status` 到回复上屏从最坏 2 秒降到约 260 ms。
+  日志级别(session-ui 的 `classifyLogLine`)先剥掉落盘的 `[+0.192] ` / `! ` 前缀再认行首级别 —— 从前 `E (123)`、`ERROR:`
+  这类行首写法在真日志文件上一次都没命中过;另认 `[<tick>] E: …` 这种 RTT 固件常见格式。
+  **原生 `<select>` 的弹出列表**:串口 / 波特率旁那个 ▾ 为了在 macOS 上藏住选中值,select 本身 `font-size: 0` + 透明字;
+  Windows / Linux 上弹出列表是 Chromium 按每个 `<option>` 自己的样式画的,选项继承了字号 0,于是列表 28 px 宽、一行字都没有。
+  option 现在显式给字号与颜色(macOS 用的是 select 的字号,不受影响)。这类弹出层 CDP 截不到,只能整屏截图看。
 - **读图缩放**(2026-09-14,从 pi 的 utils/image-* 移植):`host/domain/image/` 四个文件 ——
   `photon.ts`(加载 wasm 库)、`exif.ts`(方向标记的**纯字节解析**)、`render.ts`(解码→转正→缩放→编码的
   原语 + worker)、`process.ts`(格式归一、限额策略、给模型的尺寸说明)。两个入口都过它:`read` 工具走

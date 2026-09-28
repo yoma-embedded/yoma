@@ -162,6 +162,7 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     "session.get": ({ sessionID }) => sessions.get(sessionID),
     "instrument.execute": (params) => sessions.executeInstrument(params),
     "instrument.ports": () => sessions.serialPorts(),
+    "instrument.logTail": (params) => sessions.logTail(params),
     "session.create": ({ directory, title }) => sessions.create(directory, title),
     "session.delete": ({ sessionID }) => sessions.delete(sessionID),
     "session.rename": ({ sessionID, title }) => sessions.rename(sessionID, title),

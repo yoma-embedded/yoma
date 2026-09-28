@@ -8,6 +8,7 @@ import { promisify } from "node:util"
 import { emptyProfile, forgetMemory, inspectProject, projectRoot, saveMemory, saveProfile } from "./store.ts"
 import { projectContext, searchMemories } from "./context.ts"
 import { checkProjectBuild } from "./build.ts"
+import { iocChip } from "./detect.ts"
 import type { MemoryInput } from "./model.ts"
 
 const roots: string[] = []
@@ -42,6 +43,19 @@ describe("project archive and memory", () => {
     expect(view.profile.buildCommand).toContain("cmake")
     expect(view.saved).toBe(false)
     expect(await readdir(root)).not.toContain(".yoma")
+  })
+
+  test("CubeMX chip name prefers the exact part: Mcu.CPN > Mcu.UserName > Mcu.Name, regardless of file order", async () => {
+    // BK64_motor 这类工程:Mcu.Name 是家族名(J-Link 认不出),UserName 才是那一颗;有 CPN 时 CPN 最具体。
+    expect(iocChip("Mcu.Name=STM32G473R(B-C-E)Tx\r\nMcu.UserName=STM32G473RCTx\r\n")).toBe("STM32G473RCTx")
+    expect(iocChip("Mcu.Name=STM32G473R(B-C-E)Tx\nMcu.UserName=STM32G473RCTx\nMcu.CPN=STM32G473RCT6\n")).toBe(
+      "STM32G473RCT6",
+    )
+    expect(iocChip("Mcu.Name=STM32F103C(8-B)Tx\n")).toBe("STM32F103C(8-B)Tx")
+    expect(iocChip("Mcu.Family=STM32G4\n")).toBeUndefined()
+    const root = await workspace()
+    await writeFile(path.join(root, "motor.ioc"), "Mcu.Name=STM32G473R(B-C-E)Tx\r\nMcu.UserName=STM32G473RCTx\r\n")
+    expect((await inspectProject(root)).profile.chip).toBe("STM32G473RCTx")
   })
 
   test("configuration survives reopening; another project cannot see it", async () => {

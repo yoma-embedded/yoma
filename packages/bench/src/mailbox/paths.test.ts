@@ -4,7 +4,43 @@ import path from "node:path"
 
 import { yomaConfigDir } from "@yoma-desktop/kernel/host"
 
-import { cloneDirFor, defaultConfigDir, defaultMailboxRoot } from "./paths.ts"
+import {
+  appDataDir,
+  cloneDirFor,
+  DESKTOP_APP_IDS,
+  defaultConfigDir,
+  defaultMailboxRoot,
+  desktopSessionsRoot,
+} from "./paths.ts"
+
+describe("desktopSessionsRoot", () => {
+  test("目录名是桌面端的 appId,不是 Yoma —— 从前命令行写死 <appData>/Yoma/sessions,哪个桌面端都不读", () => {
+    const env = { APPDATA: "C:\\Users\\u\\AppData\\Roaming" }
+    expect(desktopSessionsRoot("prod", env, "win32")).toBe(
+      path.join("C:\\Users\\u\\AppData\\Roaming", "com.yoma.desktop", "sessions"),
+    )
+    expect(desktopSessionsRoot("dev", env, "win32")).toBe(
+      path.join("C:\\Users\\u\\AppData\\Roaming", "com.yoma.desktop.dev", "sessions"),
+    )
+    expect(desktopSessionsRoot("beta", env, "win32")).toContain("com.yoma.desktop.beta")
+    expect(desktopSessionsRoot("prod", env, "win32")).not.toMatch(/[\\/]Yoma[\\/]sessions$/)
+  })
+
+  test("appData 与 Electron 的 app.getPath('appData') 同解:macOS Application Support,Linux 认 XDG_CONFIG_HOME", () => {
+    expect(appDataDir({}, "darwin")).toBe(path.join(homedir(), "Library", "Application Support"))
+    expect(appDataDir({ XDG_CONFIG_HOME: "/x/cfg" }, "linux")).toBe("/x/cfg")
+    expect(appDataDir({}, "linux")).toBe(path.join(homedir(), ".config"))
+    expect(appDataDir({}, "win32")).toBe(path.join(homedir(), "AppData", "Roaming"))
+  })
+
+  test("appId 表:三个渠道各一个,正式版是 com.yoma.desktop", () => {
+    expect(DESKTOP_APP_IDS).toEqual({
+      dev: "com.yoma.desktop.dev",
+      beta: "com.yoma.desktop.beta",
+      prod: "com.yoma.desktop",
+    })
+  })
+})
 
 describe("defaultConfigDir", () => {
   test("与内核的 yomaConfigDir() 是同一个目录 —— 分叉是静默的", () => {

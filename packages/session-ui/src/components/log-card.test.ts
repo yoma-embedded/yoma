@@ -67,6 +67,23 @@ describe("describeLog · 边界", () => {
     expect(card.lines[card.lines.length - 1].text).toBe("line 399")
   })
 
+  test("节选行带 `[+t] ` 时间戳时级别照样认得(ESP-IDF、stderr、RTT 的 `[tick] E:`)", () => {
+    const output = [
+      "[+0.500] E (123) wifi: connect failed",
+      "[+0.600] ! ERROR: i2c nack",
+      "[+0.900] [2] I: boot: BK64_motor",
+      "[+1.000] [3] W: iq ripple high",
+      "[+1.204] [4] E: [SAFETY] undervoltage: vbus=801mV",
+      "[+1.300] [5] Iq: 0.3A",
+    ].join("\n")
+    const card = describeLog({ action: "read" }, { action: "read", running: true }, output)!
+    expect(card.lines.map((line) => line.level)).toEqual(["error", "error", "info", "warn", "error", "info"])
+    // 分级剥了时间戳,显示的正文不受影响
+    expect(card.lines[4].lead).toBe("[+1.204]")
+    expect(card.lines[4].text).toBe("[4] E: [SAFETY] undervoltage: vbus=801mV")
+    expect(card.lines[1].text).toBe("! ERROR: i2c nack")
+  })
+
   test("ports 的表不当日志行上色", () => {
     const card = describeLog(
       { action: "ports" },

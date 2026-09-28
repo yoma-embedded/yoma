@@ -2,6 +2,19 @@ import { readdir, readFile, stat } from "node:fs/promises"
 import path from "node:path"
 import type { ProjectProfile } from "./model.ts"
 
+/**
+ * CubeMX 工程里的芯片名,按"说得最具体"的先:Mcu.CPN(订货号,如 STM32G473RCT6)> Mcu.UserName
+ * (用户选的那一颗,如 STM32G473RCTx)> Mcu.Name(常常是家族名,如 STM32G473R(B-C-E)Tx —— 说不出是哪一颗,
+ * 交给 J-Link 就是一句 "Failed to get index for device name")。按键找,不按文件里的先后找。
+ */
+export function iocChip(text: string): string | undefined {
+  for (const key of ["CPN", "UserName", "Name"]) {
+    const value = new RegExp(`^Mcu\\.${key}=(.+)$`, "m").exec(text)?.[1]?.trim()
+    if (value) return value
+  }
+  return undefined
+}
+
 /** Read only a bounded set of project descriptors; never execute a discovered command. */
 export async function detectProject(
   root: string,
@@ -51,7 +64,7 @@ export async function detectProject(
         files.push(relative)
         if (entry.name.endsWith(".ioc")) {
           kinds.add("STM32Cube")
-          const chip = text.match(/^Mcu\.(?:CPN|Name)=(.+)$/m)?.[1]?.trim()
+          const chip = iocChip(text)
           if (chip) chips.add(chip)
         }
         if (entry.name.endsWith(".uvprojx")) {

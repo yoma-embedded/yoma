@@ -561,6 +561,34 @@ describe("LogCapture tcp source", () => {
       server.close()
     }
   })
+
+  it("还在连的时候被 stop:start 当场拒,不永远挂着(否则这个会话之后的 log 调用全排在它后面)", async () => {
+    // 远端不应答:connect 既不成功也不报错(SYN 没人回)。stop 的 destroy 只带来 'close',没有 'error'。
+    const connect = net.connect
+    ;(net as unknown as { connect: () => net.Socket }).connect = () => new net.Socket()
+    try {
+      const dir = createTempDir()
+      const capture = new LogCapture({ kind: "tcp", host: "10.255.255.1", port: 9 }, "tcp", join(dir, "hw.log"), dir)
+      openCaptures.push(capture)
+      const started = capture.start().then(
+        () => "resolved",
+        (error: Error) => error.message,
+      )
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      const stoppedAt = Date.now()
+      await capture.stop()
+      // 修之前:stop 等满 EXIT_WAIT_MS(5 秒),start 永远不落定。
+      expect(Date.now() - stoppedAt).toBeLessThan(1_000)
+      const outcome = await Promise.race([
+        started,
+        new Promise((resolve) => setTimeout(() => resolve("pending"), 2_000)),
+      ])
+      expect(outcome).toMatch(/closed before it was established/)
+      expect(capture.running).toBe(false)
+    } finally {
+      ;(net as unknown as { connect: typeof connect }).connect = connect
+    }
+  })
 })
 
 // ─── 工具 ────────────────────────────────────────────────────────────────────

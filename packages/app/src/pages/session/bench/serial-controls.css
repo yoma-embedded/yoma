@@ -1,5 +1,5 @@
 [data-component="serial-controls"] {
-  /* 工具条按控制台自己的宽度决定折不折行,不看窗口宽度。 */
+  /* 宽度只由控制台定,不让工具条里各件的宽度反过来把它撑开。 */
   container-type: inline-size;
   display: flex;
   flex-direction: column;
@@ -21,36 +21,44 @@
     border: 0;
   }
   /**
-   * 一行工具条:连接那一组 · 读数 · 容器给的右端(过滤 / 跟随 / 最大化 / 关闭)。
+   * 一行工具条:灯 · 来源 · 端口 · 波特率(RTT:器件名 · 速率)· 连接 · 读数 · 容器给的右端(过滤 / 跟随 / 最大化 / 关闭)。
    *
-   * **缺省不折行,先让位**:读数只拿剩下的宽度(basis 0),挤的时候最先没了;然后端口框、过滤框缩到下限。
-   * 折行放在控制台真窄(< 600px)时才开 —— 放在 wrap 下的话,折不折按的是各段的**基准宽度**之和,
-   * 收缩根本来不及发生:1024 宽的窗口里(macOS runner 就是)整条就折成两行,日志上面压 78px。
+   * **先缩后折**:读数只拿剩下的宽度(basis 0),挤的时候最先没了;然后端口框(器件名框)、过滤框缩到下限;
+   * 各件都到下限还放不下才折行。做法是 `wrap` + **基准宽度就写成下限**(端口框 118px、过滤框 90px),
+   * 有富余时再按 grow 长回 230px / 180px(见两者各自的规则):wrap 下折不折按的是各段基准宽度之和,
+   * 基准就是下限,于是"放不下下限"与"折行"是同一件事。
+   *
+   * 从前是 `nowrap` + 一个写死的断点(工具条 ≤ 620px 才 wrap)。写死的数只对得上一种状态:过滤着
+   * (多出 `2000 / 2000` 那一段)、连着(按钮变「Disconnect」)、英文时各件下限加起来到 700px 上下,
+   * 控制台 640–720px 之间既不折行也放不下,整行往右溢出,最大化 / 关闭被控制台的 overflow 裁掉
+   * (2026-09-25,真组件 DOM + Electron 实量)。更早的 wrap 版本折得太早,是因为基准写的是满宽 230px /
+   * 180px 而不是下限 —— 1024 宽的窗口里(macOS runner 就是)整条折成两行,日志上面压 78px。
+   *
+   * **连接那一组、右端那一组(连同里面的过滤那一组)都是 `display: contents`**(2026-09-24),各件直接是工具条的
+   * 子项。从前它们是三个嵌套的 flex 组,而 Chromium 算一组"最窄能缩到多少"时,端口框按写死的 230px 算、过滤框按
+   * 输入框的固有宽度(约 164px)算 —— 两组都缩不动,挤的时候不是它们让位,而是整行往右溢出,关闭按钮被挤出
+   * 控制台(Electron 里量过:控制台 620–740px 之间都是这样,加上来源开关后到 810px)。拆开之后端口框(下限 118px)
+   * 与过滤框(下限 90px)是同一个 flex 容器里的兄弟,由 flex 算法一起分,都到下限了才轮到折行;过滤框也第一次
+   * 真拿到了它的 180px。折行时各件单独换行(不会再有一整组宽过控制台、横着溢出的情况)。
    */
   [data-slot="toolbar"] {
     flex: none;
     display: flex;
     align-items: center;
-    flex-wrap: nowrap;
-    gap: 6px 8px;
+    flex-wrap: wrap;
+    gap: 6px;
     min-width: 0;
     padding: 0 0 6px;
     border-bottom: 1px solid var(--border-weak-base);
   }
-  @container (max-width: 600px) {
-    [data-slot="toolbar"] {
-      flex-wrap: wrap;
-    }
-  }
-  /* 不写 min-width: 0 —— 让这一组的下限就是里面各件的下限(端口框 130px),再挤也不叠在一起。 */
-  [data-slot="connection"] {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex: 0 1 auto;
+  [data-slot="connection"],
+  [data-slot="toolbar-end"],
+  [data-slot="toolbar-end"] > [data-slot="controls"] {
+    display: contents;
   }
   [data-slot="port-field"],
-  [data-slot="baud-field"] {
+  [data-slot="baud-field"],
+  [data-slot="speed-field"] {
     display: flex;
     align-items: center;
     gap: 4px;
@@ -59,19 +67,71 @@
   }
   /**
    * 端口路径长短不一(COM3 / /dev/cu.usbmodem14203):给一个够看全常见路径的宽度,不去抢读数的位置。
-   * **宽度要写死在 `width` 上**,光给 flex-basis 不够:框里的 input 是 `width: 0; flex: 1`,max-content 为 0,
-   * 外面那层 form 按内容定宽时把它算成最窄,端口就被挤成 `/dev/tt`(真窗口里看到的)。
+   * **基准写死成像素,不按内容定宽**:框里的 input 是 `width: 0; flex: 1`,max-content 为 0,按内容定宽时
+   * 会被算成最窄,端口就被挤成 `/dev/tt`(真窗口里看到的)。基准 118px 是它的下限(折不折行按它算,见工具条
+   * 的注释):那时还看得全 `COM13`,`/dev/…` 只剩开头(框里能左右移光标看,▾ 里是全名);有富余时 grow 100
+   * 把它先于读数(grow 1)长回 230px。
    */
   [data-slot="port-field"] {
-    flex: 0 1 auto;
-    width: 230px;
-    min-width: 130px;
+    flex: 100 1 118px;
+    max-width: 230px;
+    min-width: 118px;
   }
   [data-slot="port-field"] [data-component="serial-choice"] {
     flex: 1;
   }
+  /* 96px 放得下 7 位的 2000000(等宽 11.5px);比从前的 104px 省下的 8px 让给了来源开关。 */
   [data-slot="baud-field"] [data-component="serial-choice"] {
-    width: 104px;
+    width: 96px;
+  }
+  /**
+   * 来源开关(串口 / RTT):两颗贴在一起的小按钮,按下的那颗就是当前来源;连着时锁住(换来源要先断开),
+   * 锁住时按下的那颗不变灰 —— 它正说着"现在听的是哪一种"。它是这一行里新添的宽度,字号与内边距压到最小。
+   */
+  [data-slot="source-switch"] {
+    display: inline-flex;
+    flex: none;
+    height: 26px;
+    border: 1px solid var(--border-base);
+    border-radius: 4px;
+    background: var(--background-base);
+  }
+  [data-slot="source-switch"] button {
+    height: 24px;
+    padding: 0 4px;
+    border: none;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--text-weak);
+    font-size: 10.5px;
+  }
+  [data-slot="source-switch"] button + button {
+    border-left: 1px solid var(--border-weak-base);
+    border-radius: 0 3px 3px 0;
+  }
+  [data-slot="source-switch"] button:first-child {
+    border-radius: 3px 0 0 3px;
+  }
+  [data-slot="source-switch"] button[aria-pressed="true"] {
+    background: var(--surface-base-active);
+    color: var(--text-strong);
+  }
+  [data-slot="source-switch"] button[aria-pressed="true"]:disabled {
+    opacity: 1;
+  }
+  /* RTT 的器件名框站在端口框的位置上,宽度同一套(它没有 ↻,整格都是输入框)。 */
+  [data-slot="device-field"] {
+    display: flex;
+    flex: 100 1 118px;
+    max-width: 230px;
+    min-width: 118px;
+  }
+  [data-slot="device-field"] input {
+    flex: 1;
+    width: 0;
+  }
+  [data-slot="speed-field"] [data-component="serial-choice"] {
+    width: 84px;
   }
   [data-slot="readout"] {
     flex: 1 1 0;
@@ -83,13 +143,14 @@
     font: 10.5px var(--font-family-mono);
     font-variant-numeric: tabular-nums;
   }
-  /* 右端也能缩(过滤框到 90px),下限同样交给里面各件自己的 min-width。 */
-  [data-slot="toolbar-end"] {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex: 0 1 auto;
-    margin-left: auto;
+  /**
+   * 右端那一组是 display: contents(见 toolbar 的注释):过滤框同端口框一样,基准是它的下限 90px
+   * (console.css 给的 min-width),有富余时先于读数长回 180px;别的按钮不缩。
+   * 选择器要压过 console.css 那条 `flex: 0 1 180px`((0,3,1)):嵌套在这里是 (0,4,1)。
+   */
+  [data-slot="toolbar-end"] > [data-slot="controls"] > input[data-slot="filter"] {
+    flex: 100 1 90px;
+    max-width: 180px;
   }
   input,
   select {
@@ -161,8 +222,18 @@
       50% center;
     cursor: pointer;
   }
+  /**
+   * 选项要把字号、颜色、底色自己要回来。Windows / Linux 上的 Chromium 自己画下拉弹层,每一行按 <option>
+   * 的计算样式画 —— 它们从上面这个选择框继承了 `font-size: 0` 与透明字色,于是弹层里一个字都没有,宽度跟着
+   * 28px 的选择框走:点 ▾ 弹出来一条又窄又空的竖条(16 档波特率时很高,一个串口时很矮)。macOS 用系统菜单画、
+   * 不读这些,所以只在 Windows 上撞见。选择框本身的归零照旧(上面那条是为 macOS 的)。
+   */
   [data-component="serial-choice"] option {
     text-align: left;
+    font-family: var(--font-family-mono);
+    font-size: 12px;
+    color: var(--text-strong);
+    background-color: var(--background-base);
   }
   button {
     height: 26px;
@@ -194,7 +265,12 @@
     color: var(--text-on-brand-base);
     min-width: 56px;
   }
-  [data-slot="connect"][data-running="true"] {
+  /* 连接按钮如今直接是工具条的子项:不写 flex: none 的话它会被挤到 min-width,「Connect」的字就截了。 */
+  [data-slot="connect"] {
+    flex: none;
+  }
+  [data-slot="connect"][data-running="true"],
+  [data-slot="connect"][data-cancel="true"] {
     background: var(--surface-base);
     color: var(--text-strong);
   }

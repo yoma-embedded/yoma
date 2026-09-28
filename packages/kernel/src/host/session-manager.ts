@@ -113,7 +113,7 @@ import {
   type Models,
 } from "@earendil-works/pi-ai"
 
-import type { InstrumentResult, KernelEvent, KernelParams, PromptInput } from "../protocol.ts"
+import type { InstrumentResult, KernelEvent, KernelParams, LogTailView, PromptInput } from "../protocol.ts"
 import type {
   AgentInfo,
   BtwView,
@@ -415,6 +415,8 @@ interface Entry {
   instruments?: { log: LogTool; gdb: GdbTool }
   environmentOpening?: Promise<void>
   manualRuns?: Map<AbortController, Promise<InstrumentResult>>
+  /** 还没落定的手动 `log start`(可能还在等会话环境,或排在 log 工具的队列里):手动断开要连它们一起取消。 */
+  manualLogStarts?: Set<AbortController>
   /** A manual request has taken ownership of the shared instruments/environment. */
   manualOwned?: boolean
   /** Covers teardown AND repository deletion; readers must not reopen this entry. */
@@ -1639,14 +1641,27 @@ export class SessionManager {
   }
 
   private instrumentTools(entry: Entry): { log: LogTool; gdb: GdbTool } {
+    // J-Link 的 GDB server 不在 PATH 上时(SEGGER 的 Windows 安装器不加 PATH)去账本与缺省安装目录找。
+    const jlink = { configDir: this.configDir }
     return entry.instruments ??= {
-      log: withFriendlyArguments(createLogTool()),
-      gdb: withFriendlyArguments(createGdbTool()),
+      log: withFriendlyArguments(createLogTool({ jlink })),
+      gdb: withFriendlyArguments(createGdbTool({ jlink })),
     }
   }
 
   async serialPorts() {
     return listSerialPorts(process.platform, this.baseShellEnv(await this.machineDirs()))
+  }
+
+  /**
+   * 日志窗口的实时尾巴。界面每秒拉几次,所以它必须便宜而且**什么都不动**:只看内存里已有的 entry 的
+   * 仪器,不 list()、不开会话、不装配环境、不碰模型;也不走 log 工具的队列(一条两分钟的 agent wait 不该
+   * 让日志窗口停住)与 agent 的游标。
+   */
+  logTail(params: KernelParams<"instrument.logTail">): LogTailView {
+    const entry = this.entries.get(params.sessionID)
+    const log = entry && !entry.deleting ? entry.instruments?.log : undefined
+    return log?.tail(params.since) ?? { running: false, writable: false, nextSeq: 0, lost: 0, lines: [] }
   }
 
   /** Explicit user actions only. Never opens a model or appends a synthetic chat prompt. */
@@ -1664,6 +1679,14 @@ export class SessionManager {
     entry.manualOwned = true
     const controller = new AbortController()
     const runs = entry.manualRuns ??= new Map()
+    const action = (params.input as { action?: unknown } | undefined)?.action
+    const logStarts = entry.manualLogStarts ??= new Set()
+    // 断开要连同还没起来的手动 start 一起取消,而且在任何 await 之前:那次 start 可能还在等会话环境(冷会话首次
+    // 连接,Windows 上解析工具链要几百毫秒到几秒)、或排在 log 工具的队列里 —— 这两处 stopCapture 都够不着,
+    // 不取消的话界面拿到 "Disconnected",过一会儿 J-Link server 照样连上目标(2026-09-25 审稿实测)。
+    // 在飞的 start 在 throwIfAborted / 工具入口的中止检查上收手;已经在起源的那一个由下面的 stopCapture 收。
+    if (params.tool === "log" && action === "stop") for (const pending of logStarts) pending.abort()
+    if (params.tool === "log" && action === "start") logStarts.add(controller)
     const run = (async () => {
       await this.ensureToolEnvironment(entry)
       controller.signal.throwIfAborted()
@@ -1678,7 +1701,14 @@ export class SessionManager {
         const result = await instruments.log.sendSerial(input as import("./tools/log/contract.ts").LogInput)
         return { text: result.content.filter((part) => part.type === "text").map((part) => part.text).join("\n"), details: { ...result.details } }
       }
-      if (params.tool === "log" && input.action === "stop") await instruments.log.stopCapture()
+      if (params.tool === "log" && input.action === "stop") {
+        await instruments.log.stopCapture()
+        // 断开时采集器还在起(RTT 要等 J-Link server 就绪,几秒):stopCapture 已经把它连同 server 收掉,
+        // 那次 start 会自己报"被停了";还没轮到的 start 上面已经取消、stopCapture 也让它作废(log 工具的 stopEpoch)。
+        // 这里没有采集器可停,如实给现状,而不是排到 start 后面报 "no log capture"。
+        const details = instruments.log.snapshot()
+        if (!details.source) return { text: "Disconnected", details: { ...details, action: "stop" } }
+      }
       const id = `manual-${crypto.randomUUID()}`
       const invocation: AgentHarnessToolInvocation = {
         invocationId: id, operationId: id, turnId: id,
@@ -1692,7 +1722,7 @@ export class SessionManager {
       }
     })()
     runs.set(controller, run)
-    try { return await run } finally { runs.delete(controller) }
+    try { return await run } finally { runs.delete(controller); logStarts.delete(controller) }
   }
 
   /** 会话当前的执行环境。shellEnv 换过之后(refreshMachineEnv)这里会重建一个。 */

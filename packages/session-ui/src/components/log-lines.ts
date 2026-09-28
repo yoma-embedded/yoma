@@ -11,7 +11,10 @@
 export type LogLevel = "error" | "warn" | "info" | "debug"
 
 export interface LogLine {
-  /** 从 1 起的行号,按本次读到的窗口算(不是文件里的绝对行号,文件可能被截过头)。 */
+  /**
+   * 从 1 起的行号。日志面板(app 的 log-feed / log-live)编的是**这一行在 hw-*.log 里的行号**:读盘与实时尾巴
+   * 两条路同一套编号,窗口只是文件的一段尾巴。`toLogLines` 手上没有文件,只按下标从 1 起编。
+   */
   no: number
   text: string
   level: LogLevel
@@ -97,12 +100,19 @@ export function tailLines(
  * - ESP-IDF:`E (1234) wifi: ...` / `W (12) ...` / `I (12) ...` / `D (12) ...` / `V (12) ...`
  * - 方括号:`[ERR]` `[ERROR]` `[E]` `[WRN]` `[WARN]` `[W]` `[INF]` `[DBG]`
  * - Zephyr:`<err>` `<wrn>` `<inf>` `<dbg>`
- * - 裸词:行首 `ERROR:` `WARN:` `FATAL` `PANIC`
+ * - 裸词:行首 `ERROR:` `WARN -` `Info |` —— 词后面必须紧跟分隔符;`FATAL` 例外(`PANIC` 走下面的事故词)
+ * - 方括号 tick + 单字母:`[4] E: [SAFETY] undervoltage`(RTT 固件常见的 `[<ms>] <E|W|I|D|V>: …`),
+ *   以及不带 tick 的行首 `E: …`
  * - Cortex-M 事故:`HardFault` `BusFault` `UsageFault` `MemManage` `ASSERT` `assert_failed`
  *   `Stack overflow` —— 这些不带级别前缀,但它们**就是**这块板子上最要紧的一行。
  *
- * 判定顺序是"先事故、再显式级别":`I (12) app: HardFault handler installed` 这种
- * 属于正常信息,所以事故词要求**词边界 + 不在明确的 info/debug 前缀之后**。
+ * 判定顺序是"先显式级别、再事故词":`I (12) app: HardFault handler installed` 这种
+ * 属于正常信息,所以事故词只在**没有任何级别标记**的行上才算数。
+ *
+ * **行首锚定的规则要先剥掉 log 工具自己的时间戳。** 落盘文件与卡片节选里每一行都是
+ * `[+0.192] 正文`(stderr 行是 `[+0.192] ! 正文`,host/tools/log/excerpt.ts 的 renderLine),
+ * 不剥的话 `^E (123)`、`^ERROR:` 这类写法在真日志上一次都命中不了 —— 只在测试里的裸行上命中。
+ * 剥只影响分级,显示的仍是原文。
  */
 const FAULT_WORDS =
   /\b(?:hard\s?fault|bus\s?fault|usage\s?fault|mem\s?manage|memmanage|stack\s+overflow|stack\s+smashing|kernel\s+oops|assert(?:ion)?\s+fail|assert_failed)\b/i
@@ -113,8 +123,32 @@ const BRACKET_LEVEL =
   /(?:^|[\s\])>])[[<(](e|err|error|f|fatal|crit|critical|w|wrn|warn|warning|i|inf|info|d|dbg|debug|v|vrb|verbose|trace)[\]>)]/i
 /** ESP-IDF 的 `E (1234)` —— 单字母级别 + 空格 + 括号里的毫秒数,几乎不会误命中。 */
 const IDF_LEVEL = /^\s*([EWIDV])\s*\(\s*\d+\s*\)/
-/** 行首裸词:`ERROR:` `WARN -` `FATAL` 等。 */
-const BARE_LEVEL = /^\s*(fatal|error|err|critical|crit|warning|warn|notice|info|debug|trace|verbose)\b\s*[:\-|\]]?/i
+/**
+ * RTT 固件的 `[<tick>] E: …`:方括号里纯数字 + 单个大写级别字母 + 冒号。只认 E/W/I/D/V ——
+ * `A: …` 不是级别;字母后面必须紧跟冒号,`[12] Iq: 0.3A` 里的 `Iq` 是个词,不是级别。
+ */
+const TICK_LEVEL = /^\s*\[\d+\]\s*([EWIDV]):(?=\s|$)/
+/** 不带 tick 的行首单字母:`E: …`。同样要求冒号紧贴、后面是空白或行尾。 */
+const LETTER_LEVEL = /^\s*([EWID]):(?=\s|$)/
+/** log 工具的相对时间戳 `[+0.192]`,后面可能跟 stderr 标记 `! `。 */
+const ELAPSED_STAMP = /^\s*\[\+\d+(?:\.\d+)?\]\s?(?:!\s)?/
+/**
+ * 行首裸词:`ERROR:` `WARN -` `Info |` `FATAL` 等。
+ *
+ * **分隔符是必需的**(`fatal` 除外)。剥掉时间戳之后这条规则落在每一行真日志上,而固件的状态打印
+ * 常常以这些词开头:`err=0`、`Error count: 0`、`Error code: 0x00 (HAL_OK)`、`Critical section test passed`、
+ * `Warning count: 0`、`Debug UART ready` —— 分隔符可选的话它们全成了 error / warn,每秒一条往状态栏的
+ * 未读错误数上加,真正那一条反而淹没了。所以词后面只认 `:` `|` `]` 或独立的 ` - `(`Error-prone` 不算);
+ * 用前瞻写,第 1 组仍只是那个词。
+ */
+const BARE_LEVEL =
+  /^\s*(fatal\b|(?:error|err|critical|crit|warning|warn|notice|info|debug|trace|verbose)(?=\s*(?:[:|\]]|-(?=\s|$))))/i
+/**
+ * 行首锚定、说的是这一行自己级别的写法。按序试,第一个命中的算数。
+ * 裸词也在这里:`ERROR: … [INF] …` 说的是 error,后面方括号里的只是被转述的内容
+ * (log 工具自己合成的 `! ERROR: J-Link GDB server exited … last server output: …` 就是这种行)。
+ */
+const LEADING_LEVELS = [IDF_LEVEL, TICK_LEVEL, LETTER_LEVEL, BARE_LEVEL]
 
 function normalizeLevelWord(word: string): LogLevel | undefined {
   const w = word.toLowerCase()
@@ -127,22 +161,20 @@ function normalizeLevelWord(word: string): LogLevel | undefined {
   return undefined
 }
 
-export function classifyLogLine(line: string): LogLevel {
-  const idf = IDF_LEVEL.exec(line)
-  if (idf) {
-    const level = normalizeLevelWord(idf[1])
+export function classifyLogLine(raw: string): LogLevel {
+  const line = raw.replace(ELAPSED_STAMP, "")
+
+  // 行首锚定的写法先认:它们说的是这一行自己的级别,后面正文里出现的 `[ERR]` 只是被转述的内容。
+  for (const rule of LEADING_LEVELS) {
+    const match = rule.exec(line)
+    if (!match) continue
+    const level = normalizeLevelWord(match[1])
     if (level) return level
   }
 
   const bracket = BRACKET_LEVEL.exec(line)
   if (bracket) {
     const level = normalizeLevelWord(bracket[1])
-    if (level) return level
-  }
-
-  const bare = BARE_LEVEL.exec(line)
-  if (bare) {
-    const level = normalizeLevelWord(bare[1])
     if (level) return level
   }
 

@@ -48,6 +48,7 @@ import {
 } from "../../domain/gdb/index.ts"
 import { resolveToCwd } from "../../domain/paths.ts"
 import { sha256File, writeFlashState } from "../flash/session.ts"
+import { otherRttReader } from "../log/capture.ts"
 import {
   DEFAULT_WAIT_MS,
   type ExecOp,
@@ -62,8 +63,11 @@ import {
 import { GdbSession } from "./mi-session.ts"
 import {
   buildServerArgv,
+  type JlinkLookup,
+  jlinkServerBinary,
   parseConnect,
   pickFreePort,
+  rttHintFor,
   SERVER_CAPS,
   serverBinary,
   type ServerProcess,
@@ -111,6 +115,8 @@ const MI_RESUME: Record<string, string> = {
 export interface GdbToolOptions {
   /** 覆盖 gdb 二进制(测试用;生产按 ELF 架构在 PATH 上找,或 `YOMA_GDB`)。 */
   gdbPath?: string
+  /** server:"jlink" 在 PATH 之外去哪找 J-Link GDB server(账本目录、已知安装位置,见 jlinkServerBinary)。不给就只看 PATH。 */
+  jlink?: JlinkLookup
 }
 
 /** 比装配面的工具多一个收尾口:会话关掉时收 gdb、server 与探针租约。 */
@@ -408,7 +414,12 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
     const machine = await elfMachineOf(elf)
     const { gdbPath } = resolveGdbPath(machine, params.gdbPath ?? options.gdbPath, env)
 
-    if (serverArgv) serverArgv[0] = serverBinary(kind as Exclude<GdbServerKind, "external">, env)
+    if (serverArgv) {
+      serverArgv[0] =
+        kind === "jlink"
+          ? await jlinkServerBinary(env, options.jlink)
+          : serverBinary(kind as Exclude<GdbServerKind, "external">, env)
+    }
 
     if (PROBE_SERVERS.has(kind)) {
       const holder = claimProbe(
@@ -487,6 +498,8 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
     elfPath = elf
     gdbPathUsed = gdbPath
     const c = core.core
+    // 这个内核里若已经有 log 在读 RTT(多半在别的会话),提示就改口指给它,而不是叫模型再连一次 19021。
+    const rttHint = rttHintFor(kind, otherRttReader())
     const lines = [
       banner(cwd),
       `attached to ${connection} via ${kind}, gdb ${gdbPath}`,
@@ -494,7 +507,7 @@ export function createGdbTool(options: GdbToolOptions = {}): GdbTool {
         ? `core: ${c.name} ${c.revision}${core.breakpointUnits ? `, ${core.breakpointUnits} hardware breakpoints` : ""}${core.watchpointUnits ? `, ${core.watchpointUnits} watchpoints` : ""}${core.breakpointUnits ? "" : " (breakpoint budget unknown — the FPB did not report one; gdb's own reply decides)"}`
         : "core: not a Cortex-M (no PPB) — fault decoding and hardware budgets are unavailable",
       caps().watchpoints === "none" ? `note: ${kind} does not support watchpoints at all` : "",
-      caps().rttHint ? `note: ${caps().rttHint}` : "",
+      rttHint ? `note: ${rttHint}` : "",
       ...notes,
       `session log: ${started.file}`,
       server?.logFile ? `server log: ${server.logFile}` : "",

@@ -40,6 +40,42 @@ export function defaultConfigDir(): string {
   return path.join(homedir(), ".yoma")
 }
 
+/** 桌面端的发布渠道。开发态(没打包,`npm run dev:desktop`)一律算 dev。 */
+export type DesktopChannel = "dev" | "beta" | "prod"
+
+/**
+ * 桌面端各渠道的 appId —— **userData 目录名就是它**(main 里 `app.setPath("userData", <appData>/<appId>)`),
+ * 会话、偏好、日志都在那下面。桌面端 main 从这里取,调试台命令行也从这里算,两边只有这一份;
+ * electron-builder.config.ts 的那份由 electron-builder.config.test.ts 对着这张表钉住。
+ *
+ * 分叉的代价是静默的:2026-09-25 之前命令行写死 `<appData>/Yoma/sessions`,而桌面端自 2026-08 起用 appId 当目录名,
+ * 于是调试台跑完的会话落在一个哪个桌面端都不读的目录里 —— "跑完在桌面端直接回放"这件事一直是断的,没有任何报错。
+ */
+export const DESKTOP_APP_IDS: Record<DesktopChannel, string> = {
+  dev: "com.yoma.desktop.dev",
+  beta: "com.yoma.desktop.beta",
+  prod: "com.yoma.desktop",
+}
+
+/**
+ * Electron 的 `app.getPath("appData")` 在各平台上的值:Windows `%APPDATA%`、macOS `~/Library/Application Support`、
+ * Linux `$XDG_CONFIG_HOME` 或 `~/.config`。给没有 Electron 的一侧(调试台命令行)用;桌面端自己问 Electron。
+ */
+export function appDataDir(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string {
+  if (platform === "win32") return env.APPDATA || path.join(homedir(), "AppData", "Roaming")
+  if (platform === "darwin") return path.join(homedir(), "Library", "Application Support")
+  return env.XDG_CONFIG_HOME || path.join(homedir(), ".config")
+}
+
+/** 某个渠道的桌面端读写会话的目录(= main 传给内核的 `<userData>/sessions`)。 */
+export function desktopSessionsRoot(
+  channel: DesktopChannel,
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  return path.join(appDataDir(env, platform), DESKTOP_APP_IDS[channel], "sessions")
+}
+
 /** 信箱克隆的默认根。命令行不给克隆目录时落在这里,与桌面端同一处。 */
 export function defaultMailboxRoot(): string {
   return path.join(defaultConfigDir(), "mailbox")

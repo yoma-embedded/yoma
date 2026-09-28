@@ -4,6 +4,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { expect, test } from "vitest"
 import type { Configuration } from "electron-builder"
+import { DESKTOP_APP_IDS } from "@yoma-desktop/bench/mailbox/paths"
 
 // 用 electron-builder 自己的匹配器,glob 与目录遍历的语义才是打包时真用的那一套。
 const require = createRequire(import.meta.url)
@@ -17,11 +18,9 @@ const { FileMatcher } = createRequire(require.resolve("electron-builder"))("app-
 }
 const here = path.dirname(fileURLToPath(import.meta.url))
 
-const channels = [
-  { channel: "dev", appId: "com.yoma.desktop.dev" },
-  { channel: "beta", appId: "com.yoma.desktop.beta" },
-  { channel: "prod", appId: "com.yoma.desktop" },
-] as const
+// 期望值取自 main 与调试台命令行共用的那张表(bench/mailbox/paths.ts):appId 就是 userData 的目录名,
+// 打包配置这份分叉的话,命令行按表去找的会话目录就不是装好的那个 app 读的。
+const channels = (["dev", "beta", "prod"] as const).map((channel) => ({ channel, appId: DESKTOP_APP_IDS[channel] }))
 
 for (const channel of channels) {
   test(`uses one Linux desktop identity for ${channel.channel}`, async () => {

@@ -109,6 +109,91 @@ describe("classifyLogLine", () => {
     expect(classifyLogLine("ASSERT failed at main.c:200")).toBe("error")
   })
 
+  test("log 工具落盘的 `[+t] ` 时间戳(与 stderr 的 `! `)剥掉之后再认行首写法", () => {
+    expect(classifyLogLine("[+0.5] E (123) wifi: x")).toBe("error")
+    expect(classifyLogLine("[+0.5] W (123) wifi: x")).toBe("warn")
+    expect(classifyLogLine("[+0.5] ! ERROR: x")).toBe("error")
+    expect(classifyLogLine("[+12] warn - low battery")).toBe("warn")
+    expect(classifyLogLine("[+1.0] *** PANIC: null deref")).toBe("error")
+    // 剥掉时间戳之后事故词照旧;带 info 前缀的照旧是 info
+    expect(classifyLogLine("[+2.000] *** HardFault ***")).toBe("error")
+    expect(classifyLogLine("[+0.1] I (12) app: HardFault handler installed")).toBe("info")
+    // stderr 标记本身不是级别
+    expect(classifyLogLine("[+0.5] ! just some stderr text")).toBe("info")
+  })
+
+  test("RTT 固件的 `[<tick>] E: …`(BK64_motor)", () => {
+    expect(classifyLogLine("[+1.204] [4] E: [SAFETY] undervoltage: vbus=801mV")).toBe("error")
+    expect(classifyLogLine("[+0.9] [2] I: boot: BK64_motor")).toBe("info")
+    expect(classifyLogLine("[5] W: iq ripple high")).toBe("warn")
+    expect(classifyLogLine("[7] D: adc offset=2048")).toBe("debug")
+    expect(classifyLogLine("[7] V: raw=0x12")).toBe("debug")
+    expect(classifyLogLine("[5] W:")).toBe("warn")
+    // 显式 info 在前,后面的事故词不算
+    expect(classifyLogLine("[+0.2] [1] I: HardFault handler installed")).toBe("info")
+    // 行首级别说了算,正文里被转述的 `[ERR]` 不算
+    expect(classifyLogLine("[3] I: last reset was [ERR] brownout")).toBe("info")
+  })
+
+  test("行首裸单字母 `E: …`", () => {
+    expect(classifyLogLine("E: flash write failed")).toBe("error")
+    expect(classifyLogLine("W: temp high")).toBe("warn")
+    expect(classifyLogLine("[+0.3] D: tick")).toBe("debug")
+  })
+
+  test("不是级别的相像写法不误判", () => {
+    // 两个字母是个词,不是级别
+    expect(classifyLogLine("[12] Iq: 0.3A")).toBe("info")
+    expect(classifyLogLine("[12] Ed: 5")).toBe("info")
+    expect(classifyLogLine("Wd: 3")).toBe("info")
+    // 只认 E/W/I/D/V
+    expect(classifyLogLine("A: 1.2")).toBe("info")
+    expect(classifyLogLine("[4] A: 1.2")).toBe("info")
+    // 冒号要紧贴字母、后面是空白或行尾
+    expect(classifyLogLine("E:0x20")).toBe("info")
+    expect(classifyLogLine("[4] E:x")).toBe("info")
+    // 方括号里不是纯数字的不是 tick
+    expect(classifyLogLine("[a4] E x")).toBe("info")
+    // 小写不认
+    expect(classifyLogLine("[4] e: foo")).toBe("info")
+    // 只剥 `[+数字]` 那种时间戳,别的方括号前缀不动
+    expect(classifyLogLine("[+x] E (1) a")).toBe("info")
+  })
+
+  test("剥掉时间戳之后,以级别词开头的状态打印不算级别 —— 裸词后面必须紧跟分隔符", () => {
+    // 这些行每秒一条的话,状态栏的未读错误数会一直涨、灯一直亮
+    expect(classifyLogLine("[+0.5] err=0")).toBe("info")
+    expect(classifyLogLine("[+0.5] err = 0")).toBe("info")
+    expect(classifyLogLine("[+0.5] Error count: 0")).toBe("info")
+    expect(classifyLogLine("[+0.5] Error code: 0x00 (HAL_OK)")).toBe("info")
+    expect(classifyLogLine("[+0.5] errors: 0")).toBe("info")
+    expect(classifyLogLine("[+0.5] Critical section test passed")).toBe("info")
+    expect(classifyLogLine("[+0.5] Warning count: 0")).toBe("info")
+    expect(classifyLogLine("[+0.5] warning threshold 80%")).toBe("info")
+    expect(classifyLogLine("[+0.5] Debug UART ready")).toBe("info")
+    expect(classifyLogLine("[+0.5] Error-prone path skipped")).toBe("info")
+    // 真带分隔符的照旧认
+    expect(classifyLogLine("[+0.5] Error: i2c nack")).toBe("error")
+    expect(classifyLogLine("[+0.5] ERROR | bus")).toBe("error")
+    expect(classifyLogLine("[+0.5] crit: brownout")).toBe("error")
+    expect(classifyLogLine("[+0.5] Warning: vbus low")).toBe("warn")
+    expect(classifyLogLine("[+0.5] warn - low battery")).toBe("warn")
+    expect(classifyLogLine("[+0.5] debug: adc=12")).toBe("debug")
+    expect(classifyLogLine("[+0.5] FATAL watchdog")).toBe("error")
+  })
+
+  test("log 工具合成的 RTT 断开行(`! ERROR: …`)是 error,转述的服务器输出里有方括号级别也一样", () => {
+    expect(
+      classifyLogLine(
+        "[+12.345] ! ERROR: J-Link GDB server exited (code 7) — last server output: ERROR: Communication timed out",
+      ),
+    ).toBe("error")
+    expect(classifyLogLine("[+1.473] ! ERROR: the J-Link GDB server closed the RTT connection")).toBe("error")
+    expect(
+      classifyLogLine("[+1.0] ! ERROR: J-Link GDB server exited (code 1) — last server output: [I] Connecting"),
+    ).toBe("error")
+  })
+
   test("认不出来的行是 info,不涂色", () => {
     expect(classifyLogLine("0x20000010: de ad be ef")).toBe("info")
     expect(classifyLogLine("")).toBe("info")

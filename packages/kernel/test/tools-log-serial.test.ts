@@ -5,7 +5,7 @@
 
 import { afterEach, describe, expect, it } from "vitest"
 import { type ChildProcess, spawn, spawnSync } from "node:child_process"
-import { mkdirSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -13,6 +13,8 @@ import { join } from "node:path"
 import type { AgentHarnessToolInvocation, AgentToolResult } from "@earendil-works/pi-agent-core"
 import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core/harness/context"
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node"
+
+import { bindExecutionEnv } from "../src/host/domain/execution-env.ts"
 
 import type { LogDetails, LogInput } from "../src/host/tools/log/contract.ts"
 import {
@@ -31,6 +33,8 @@ import {
 } from "../src/host/tools/log/serial.ts"
 import { createLogTool, type LogTool } from "../src/host/tools/log/session.ts"
 import { POWERSHELL_FLAGS, PS_NO_PROGRESS } from "../src/host/tools/powershell/session.ts"
+import { writeFakeExe } from "./fixtures/fake-exe.ts"
+import { patient } from "./patience.ts"
 
 // ─── 脚手架 ──────────────────────────────────────────────────────────────────
 
@@ -322,4 +326,92 @@ describe("log start port", () => {
   it("默认波特率是 115200", () => {
     expect(DEFAULT_BAUD).toBe(115_200)
   })
+})
+
+// ─── 起到一半被界面断开(Windows 的串口桥)────────────────────────────────────
+
+/**
+ * 假的 Windows PowerShell 5.1:认 -EncodedCommand 里的脚本 —— 串口桥(YomaSerialBridge)就照真桥的协议说话:
+ * 过 FAKE_PS_READY_MS 在 stderr 报 "@@yoma-serial ready",之后 stdout 一直吐 "tick";stdin 一关就退。
+ * 别的脚本(枚举)只报一个 COM7。SystemRoot 指到假货所在的根,serialPowershellExe 就认它。
+ */
+const FAKE_POWERSHELL = String.raw`import { writeFileSync } from "node:fs"
+const i = process.argv.indexOf("-EncodedCommand")
+const script = i >= 0 ? Buffer.from(process.argv[i + 1], "base64").toString("utf16le") : ""
+const env = process.env
+if (!script.includes("YomaSerialBridge")) {
+  process.stdout.write("COM7\tFake serial (COM7)\n")
+} else {
+  if (env.FAKE_PS_STARTED) writeFileSync(env.FAKE_PS_STARTED, String(process.pid))
+  setTimeout(() => {
+    process.stderr.write("@@yoma-serial ready\n")
+    if (env.FAKE_PS_READY) writeFileSync(env.FAKE_PS_READY, "ready")
+    setInterval(() => process.stdout.write("tick\n"), 100)
+  }, Number(env.FAKE_PS_READY_MS || 0))
+  process.stdin.resume()
+  process.stdin.on("end", () => process.exit(0))
+  setTimeout(() => process.exit(0), 60000)
+}
+`
+
+describe.runIf(process.platform === "win32")("log start port 起到一半被界面断开(假 PowerShell 串口桥)", () => {
+  function makeBridgeTool(readyMs: number) {
+    const cwd = createTempDir()
+    const root = createTempDir()
+    writeFakeExe(join(root, "System32", "WindowsPowerShell", "v1.0"), "powershell", FAKE_POWERSHELL)
+    const started = join(root, "bridge-started.txt")
+    const ready = join(root, "bridge-ready.txt")
+    const variables: NodeJS.ProcessEnv = {
+      ...process.env,
+      SystemRoot: root,
+      FAKE_PS_READY_MS: String(readyMs),
+      FAKE_PS_STARTED: started,
+      FAKE_PS_READY: ready,
+    }
+    const tool = createLogTool()
+    openTools.push(tool)
+    const env = bindExecutionEnv(new NodeExecutionEnv({ cwd, shellEnv: variables }), variables)
+    const run = (params: LogInput) => tool.execute("c1", params, () => {}, { env }, invocation, BACKGROUND_CONTEXT)
+    return { tool, run, started, ready }
+  }
+
+  async function until(predicate: () => boolean, timeoutMs = 10_000): Promise<void> {
+    const deadline = Date.now() + patient(timeoutMs)
+    while (!predicate()) {
+      if (Date.now() > deadline) throw new Error("timed out waiting for condition")
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+  }
+
+  // 两处都说"被停了":说成"桥没开起来 / 打不开 + 端口清单",模型会去重开用户刚放掉的口,或者换一个口试。
+  const misleading = /could not open|bridge closed|ports on this machine/
+
+  it("桥还没报 ready 就被断开:start 报被停了,不报桥坏了", async () => {
+    const { tool, run, started } = makeBridgeTool(5_000)
+    const outcome = run({ action: "start", port: "COM7" }).then(
+      () => "started",
+      (error: Error) => error.message,
+    )
+    await until(() => existsSync(started))
+    await tool.stopCapture()
+    const message = await outcome
+    expect(message).toMatch(/stopped before it finished starting/)
+    expect(message).not.toMatch(misleading)
+    expect(tool.snapshot().running).toBe(false)
+  }, 30_000)
+
+  it("口已经开了、还在确认的那一秒半里被断开:start 报被停了,不拿板子吐的字当打不开的原因", async () => {
+    const { tool, run, ready } = makeBridgeTool(0)
+    const outcome = run({ action: "start", port: "COM7" }).then(
+      () => "started",
+      (error: Error) => error.message,
+    )
+    await until(() => existsSync(ready))
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    await tool.stopCapture()
+    const message = await outcome
+    expect(message).toMatch(/stopped before it finished starting/)
+    expect(message).not.toMatch(misleading)
+    expect(tool.snapshot().running).toBe(false)
+  }, 30_000)
 })

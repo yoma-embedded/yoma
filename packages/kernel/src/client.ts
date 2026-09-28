@@ -59,6 +59,8 @@ export interface KernelClient {
   instrument: {
     execute(params: KernelParams<"instrument.execute">): Promise<KernelResult<"instrument.execute">>
     ports(): Promise<KernelResult<"instrument.ports">>
+    /** 日志窗口的实时尾巴(只读,不消费 agent 的游标)。见 protocol 的 `instrument.logTail`。 */
+    logTail(params: KernelParams<"instrument.logTail">): Promise<KernelResult<"instrument.logTail">>
   }
   session: {
     /** 回答一条工具确认。`accepted:false` = 这条询问已经不在了(超时 / 会话关了),不是错误。 */
@@ -191,6 +193,7 @@ export function createKernelClient(transport: KernelTransport): KernelClient {
     instrument: {
       execute: (params) => call("instrument.execute", params),
       ports: () => call("instrument.ports", undefined),
+      logTail: (params) => call("instrument.logTail", params),
     },
     task: {
       list: (params) => call("task.list", params),

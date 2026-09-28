@@ -14,6 +14,9 @@ import net from "node:net"
 import path from "node:path"
 
 import { appendProbeOccupationHint, exe, killOnHostExit, killTree, unrefStream } from "../../domain/engines.ts"
+import { pathType } from "../../domain/toolchain/entries.ts"
+import { readLedger } from "../../domain/toolchain/ledger.ts"
+import { type LocationTable, wellKnownCandidates } from "../../domain/toolchain/locations.ts"
 import type { GdbServerKind } from "./contract.ts"
 
 /** server 输出留几行用于报错 —— 连接失败时 gdb 只会说 "Connection refused",信息全在 server 那边。 */
@@ -46,7 +49,9 @@ export const SERVER_CAPS: Record<GdbServerKind, ServerCaps> = {
     watchpoints: "hw",
     resetHalt: "monitor reset",
     resetRun: "monitor go",
-    rttHint: 'RTT: JLinkGDBServer already serves it — `log start tcp:"localhost:19021"`',
+    // log 的 rtt 源自己起一个 J-Link server 读 RTT;两个 RTT 读者会把字节流劈成两半(2026-09-24 实测)。
+    rttHint:
+      'RTT: JLinkGDBServer already serves it — `log start tcp:"localhost:19021"`, unless a `log start rtt` capture is already running (two RTT readers split the stream)',
     // Listening 出现在连接目标之前;这一行才表示目标初始化已结束。
     readyRe: /Waiting for GDB connection/,
   },
@@ -58,6 +63,20 @@ export const SERVER_CAPS: Record<GdbServerKind, ServerCaps> = {
   external: {
     watchpoints: "hw",
   },
+}
+
+/**
+ * attach 报告里那句 RTT 提示。J-Link 的静态那句叫模型去连 19021;可这个内核里若已经有一个 `log start rtt` 在读
+ * (多半在别的会话,模型在这边看不见它),再连 19021 就是第二个 RTT 读者,字节流被劈成两半、各拿一部分。
+ * 那时改口指给它那份采集。rttReader 由调用方从 log 的采集器登记处取(这个文件不 import log,免得成环)。
+ */
+export function rttHintFor(kind: GdbServerKind, rttReader?: { label: string; file: string }): string | undefined {
+  if (kind !== "jlink" || !rttReader) return SERVER_CAPS[kind].rttHint
+  return (
+    `RTT: already being read by a log capture (${rttReader.label}, full log: ${rttReader.file}) — use that capture ` +
+    `(log wait / read in its session, or grep its log file); do NOT also \`log start tcp:"localhost:19021"\`: ` +
+    `two RTT readers split the stream and each sees only part of the bytes`
+  )
 }
 
 /**
@@ -89,6 +108,48 @@ export function serverBinary(kind: Exclude<GdbServerKind, "external">, env: Node
     if (found) return found
   }
   return names[0]!
+}
+
+/**
+ * PATH 上没有 J-Link GDB server 时还去哪找。SEGGER 的 Windows 安装器**不往 PATH 里加自己**,而会话的 PATH 只前置
+ * Yoma 装的与账本里 by:"user" 的目录(machinePathDirs)—— 设置页 / toolchain check 自动探到的 J-Link 记的是
+ * by:"auto",不上 PATH。于是默认安装的新电脑上 `log start rtt` 与 `gdb server:"jlink"` 都说找不到,而工具链那一层
+ * 明明知道它在哪(2026-09-25 审稿实测:resolveToolchain 报 jlink ok,serverBinary 给回裸名字)。
+ * 只查账本与已知安装位置:都是读文件、不起进程 —— 注册表那一档要 spawn reg.exe,不放进每次 start 的路上;
+ * 装在别处、只有注册表知道的,设置页 / toolchain check 探到一次就进了账本,下次这里就看得见。
+ */
+export interface JlinkLookup {
+  /** 工具链账本所在目录(`<configDir>/toolchains.json`):记下的 jlink 不论 by 都算。不给就不读账本。 */
+  configDir?: string
+  /** 已知安装位置表;缺省是工具链的 WELL_KNOWN_LOCATIONS。测试注入临时目录 —— 别让开发机上真装着的 J-Link 被找到。 */
+  locations?: LocationTable
+}
+
+/**
+ * J-Link GDB server 的可执行文件:先 PATH(同 serverBinary),再账本里记下的 J-Link 目录,再 SEGGER 的缺省安装目录。
+ * GDB server 与 JLink.exe 装在同一个目录里,所以账本记的是目录就看这个目录、记的是文件就看它所在的目录。
+ * 不给 lookup 就只看 PATH;一个都没找到时同 serverBinary 给回裸名字。
+ */
+export async function jlinkServerBinary(env: NodeJS.ProcessEnv = process.env, lookup?: JlinkLookup): Promise<string> {
+  const onPath = serverBinary("jlink", env)
+  if (path.isAbsolute(onPath) || !lookup) return onPath
+  const dirs: string[] = []
+  if (lookup.configDir) {
+    const recorded = (await readLedger(lookup.configDir)).entries.jlink?.bin ?? {}
+    for (const value of Object.values(recorded)) {
+      const type = pathType(value)
+      if (type === "dir") dirs.push(value)
+      else if (type === "file") dirs.push(path.dirname(value))
+    }
+  }
+  // 展开结果按名字排过序:倒过来先试版本号大的那一份(JLink_V958 排在 JLink_V794 之前)。
+  dirs.push(...wellKnownCandidates("jlink", process.platform, { table: lookup.locations }).reverse())
+  const known = { PATH: dirs.join(path.delimiter) }
+  for (const name of SERVER_BINARIES.jlink) {
+    const found = findOnPath(name, known)
+    if (found) return found
+  }
+  return onPath
 }
 
 export interface ServerArgvInput {
@@ -251,7 +312,18 @@ export function spawnServer(
   }
   liveServers.add(server)
   killOnHostExit(liveServers)
-  const push = (chunk: string) => {
+  /**
+   * 没等到换行的半行,按流分开攒(stdout / stderr 各一份)。管道按任意字节边界切 chunk:逐 chunk 切行的话
+   * 报错里贴出来的是 "Target endian: l" / "ittle" 这种碎片(2026-09-24 J-Link 器件名写错时实测)。
+   */
+  const partial = { stdout: "", stderr: "" }
+  const pushLine = (line: string) => {
+    const t = line.trimEnd()
+    if (!t) return
+    server.tail.push(t)
+    if (server.tail.length > SERVER_TAIL_LINES) server.tail.shift()
+  }
+  const push = (stream: "stdout" | "stderr", chunk: string) => {
     server.outputTail = (server.outputTail + chunk).slice(-8192)
     if (logFile) {
       try {
@@ -260,18 +332,27 @@ export function spawnServer(
         // 日志目录没了不该拖垮会话;尾巴照样留在内存里。
       }
     }
-    for (const line of chunk.split("\n")) {
-      const t = line.trimEnd()
-      if (!t) continue
-      server.tail.push(t)
-      if (server.tail.length > SERVER_TAIL_LINES) server.tail.shift()
+    const lines = (partial[stream] + chunk).split("\n")
+    partial[stream] = lines.pop() ?? ""
+    // 一直不换行的输出(进度条之类)别让半行无限长:超过一屏就当一行收下。
+    if (partial[stream].length > 4096) {
+      lines.push(partial[stream])
+      partial[stream] = ""
     }
+    for (const line of lines) pushLine(line)
+  }
+  /** 流结束时最后那半行也算一行 —— 退出前的最后一句往往没有换行,而它正是原因。 */
+  const flush = (stream: "stdout" | "stderr") => {
+    pushLine(partial[stream])
+    partial[stream] = ""
   }
   // OpenOCD / pyOCD 打 stderr,J-Link 打 stdout —— 两个都得收,只读 stdout 会在 OpenOCD 上永远等不到就绪串。
   child.stdout?.setEncoding("utf8")
   child.stderr?.setEncoding("utf8")
-  child.stdout?.on("data", push)
-  child.stderr?.on("data", push)
+  child.stdout?.on("data", (chunk: string) => push("stdout", chunk))
+  child.stderr?.on("data", (chunk: string) => push("stderr", chunk))
+  child.stdout?.once("end", () => flush("stdout"))
+  child.stderr?.once("end", () => flush("stderr"))
   child.once("exit", (code, signal) => {
     server.exited = { code, signal }
     liveServers.delete(server)
@@ -279,7 +360,7 @@ export function spawnServer(
   child.once("error", (error) => {
     server.exited = { code: null, signal: null }
     liveServers.delete(server)
-    push(`[spawn] ${error.message}\n`)
+    push("stderr", `[spawn] ${error.message}\n`)
   })
   child.unref()
   unrefStream(child.stdout)

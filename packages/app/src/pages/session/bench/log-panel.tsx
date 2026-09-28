@@ -2,7 +2,8 @@
  * 日志面板 —— 工程 `.yoma/logs` 里最新那份硬件日志的尾巴。
  *
  * 它读的是**磁盘**(`log-feed.ts`),不是 transcript:采集停了、会话重开了,日志照样在。
- * 串口控制与状态直接查询会话持有的采集器;手动操作与 agent 共用同一个日志源。
+ * 采集在跑时改成拉内核的实时尾巴(`SerialControls` 的 `onLive` → `feed.setLive`),停了退回读盘。
+ * 串口 / RTT 控制与状态直接查询会话持有的采集器;手动操作与 agent 共用同一个日志源。
  *
  * 2000 行还能滑动靠的是 CSS 的 `content-visibility: auto`(见 bench.css):视口外的行
  * 不排版不绘制,而 `contain-intrinsic-size` 给出占位高度,滚动条长度不会跳。
@@ -22,6 +23,7 @@ import { createEffect, createMemo, Index, on, Show, type JSX } from "solid-js"
 import { useLanguage } from "@/context/language"
 import { useSDK } from "@/context/sdk"
 import { useBenchStatus } from "./use-bench-status"
+import { useTargetIdentity } from "./use-target-identity"
 import { useLogFeed } from "./log-feed"
 import { filterLogLines } from "./log-lines"
 import { logCaptureLabel } from "./bench-status"
@@ -87,7 +89,10 @@ export function LogBody(props: { chrome?: () => JSX.Element }) {
   const language = useLanguage()
   const sdk = useSDK()
   const status = useBenchStatus()
+  const identity = useTargetIdentity()
   const feed = useLogFeed(() => sdk().directory)
+  /** 这个面板在 feed 的实时开关上说话的身份(同一份 feed 可能有两个面板在看)。 */
+  const liveOwner = {}
   const t = (key: string) => language.t(key as Parameters<typeof language.t>[0])
   /** 同注册表里日志的 `headline`:这次会话碰过 log 工具就说它的状态,否则说"磁盘上的上一次采集"。 */
   const note = () =>
@@ -123,6 +128,8 @@ export function LogBody(props: { chrome?: () => JSX.Element }) {
   return (
     <SerialControls
       onChange={() => feed.refresh()}
+      onLive={(sessionID) => feed.setLive(liveOwner, sessionID)}
+      chip={identity().chip}
       note={note()}
       toolbar={
         props.chrome ? (

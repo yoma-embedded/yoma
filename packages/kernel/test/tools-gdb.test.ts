@@ -40,12 +40,15 @@ import { GdbSession } from "../src/host/tools/gdb/mi-session.ts"
 import {
   buildServerArgv,
   findOnPath,
+  jlinkServerBinary,
   parseConnect,
   pickFreePort,
+  rttHintFor,
   SERVER_CAPS,
   serverBinary,
 } from "../src/host/tools/gdb/servers.ts"
 import { createGdbTool, type GdbTool } from "../src/host/tools/gdb/session.ts"
+import { createLogTool } from "../src/host/tools/log/session.ts"
 import {
   displayFrame,
   elfMachineOf,
@@ -431,6 +434,49 @@ describe("buildServerArgv", () => {
     expect(serverBinary("jlink", { PATH: dir })).toBe(join(dir, fakeExeName("JLinkGDBServerCLExe")))
     expect(serverBinary("openocd", { PATH: dir })).toBe("openocd")
   })
+
+  it("J-Link GDB server 不在 PATH 上(SEGGER 的 Windows 安装器不加 PATH):去账本记下的目录与缺省安装目录找,不起进程", async () => {
+    // 位置表与账本一律注入临时目录:开发机上真装着 J-Link,缺省表会把真的找出来。
+    const root = createTempDir()
+    const emptyPath = { PATH: createTempDir() }
+    const segger = join(root, "SEGGER")
+    const older = join(segger, "JLink_V794")
+    const newer = join(segger, "JLink_V958")
+    for (const dir of [older, newer]) writeFakeExe(dir, "JLinkGDBServerCL", "")
+    const locations = { jlink: { [process.platform]: [join(segger, "JLink*")] } }
+    const noLedger = createTempDir()
+    // 不给 lookup:与 serverBinary 相同,只看 PATH。
+    expect(await jlinkServerBinary(emptyPath)).toBe("JLinkGDBServerCLExe")
+    // 缺省安装目录:版本号大的那一份在前。
+    expect(await jlinkServerBinary(emptyPath, { configDir: noLedger, locations })).toBe(
+      join(newer, fakeExeName("JLinkGDBServerCL")),
+    )
+    // PATH 上有就用 PATH 上的。
+    const onPath = createTempDir()
+    writeFakeExe(onPath, "JLinkGDBServerCL", "")
+    expect(await jlinkServerBinary({ PATH: onPath }, { configDir: noLedger, locations })).toBe(
+      join(onPath, fakeExeName("JLinkGDBServerCL")),
+    )
+    // 账本里记下的 J-Link(设置页 / toolchain check 自动探到的是 by:"auto",不上 PATH):记的是目录或 JLink.exe 都认,排在缺省目录前。
+    const elsewhere = join(root, "tools", "segger")
+    writeFakeExe(elsewhere, "JLinkGDBServerCL", "")
+    const jlinkExe = writeFakeExe(elsewhere, "JLink", "")
+    for (const recorded of [elsewhere, jlinkExe]) {
+      const configDir = createTempDir()
+      writeFileSync(
+        join(configDir, "toolchains.json"),
+        JSON.stringify({
+          schema: "yoma/toolchains@1",
+          entries: { jlink: { id: "jlink", bin: { JLink: recorded }, confirmedAt: 1, by: "auto" } },
+        }),
+      )
+      expect(await jlinkServerBinary(emptyPath, { configDir, locations })).toBe(
+        join(elsewhere, fakeExeName("JLinkGDBServerCL")),
+      )
+    }
+    // 哪儿都没有:裸名字,由调用方报"找不到"。
+    expect(await jlinkServerBinary(emptyPath, { configDir: noLedger, locations: {} })).toBe("JLinkGDBServerCLExe")
+  })
 })
 
 describe("服务器能力表", () => {
@@ -449,6 +495,19 @@ describe("服务器能力表", () => {
   it("能持探针的 server 都带 RTT 指路", () => {
     expect(SERVER_CAPS.jlink.rttHint).toContain("19021")
     expect(SERVER_CAPS.openocd.rttHint).toContain("rtt server start")
+  })
+
+  it("内核里已经有 log 在读 RTT 时,J-Link 的提示指给那份采集,不再叫模型连 19021(第二个读者会劈开字节流)", () => {
+    expect(rttHintFor("jlink")).toBe(SERVER_CAPS.jlink.rttHint)
+    expect(rttHintFor("openocd", { label: "x", file: "y" })).toBe(SERVER_CAPS.openocd.rttHint)
+    expect(rttHintFor("qemu")).toBeUndefined()
+    const hint = rttHintFor("jlink", {
+      label: "rtt STM32G473RC via J-Link SWD 4000 kHz",
+      file: "/p/.yoma/logs/hw-1.log",
+    })!
+    expect(hint).toContain("rtt STM32G473RC via J-Link SWD 4000 kHz")
+    expect(hint).toContain("/p/.yoma/logs/hw-1.log")
+    expect(hint).toMatch(/do NOT also `log start tcp:"localhost:19021"`.*split the stream/)
   })
 })
 
@@ -1231,6 +1290,80 @@ describeFakeGdb("gdb 工具 + 假 gdb", () => {
       expect(ok.details?.epoch).toBe(2)
     })
   })
+})
+
+/**
+ * 假 J-Link GDB server:gdb 那条路只看就绪串(-singlerun 不许 TCP 探测);给了 -RTTTelnetPort 就在那儿听,
+ * 于是同一份假货也能当 log 的 RTT 源。活到被收掉为止(60 s 保险丝)。
+ */
+const FAKE_JLINK_SERVER = String.raw`import net from "node:net"
+import { appendFileSync } from "node:fs"
+const args = process.argv.slice(2)
+if (process.env.FAKE_JLINK_CALLS) appendFileSync(process.env.FAKE_JLINK_CALLS, JSON.stringify(args) + "\n")
+console.log("SEGGER J-Link GDB Server V9.58 Command Line Version")
+console.log("Connected to target")
+console.log("Waiting for GDB connection...")
+const i = args.findIndex((a) => a.toLowerCase() === "-rtttelnetport")
+if (i >= 0) net.createServer((socket) => socket.on("error", () => {})).listen(Number(args[i + 1]), "127.0.0.1")
+setInterval(() => {}, 1000)
+setTimeout(() => process.exit(0), 60000)
+`
+
+describe('server:"jlink" 与 log 的 RTT 源(假 J-Link GDB server,不在 PATH 上)', () => {
+  it("J-Link 装在缺省目录、不在 PATH 上也起得来;内核里已经有 log 在读 RTT 时,attach 报告的 RTT 提示指给那份采集", async () => {
+    const cwd = createTempDir()
+    const root = createTempDir()
+    const { gdbPath } = writeFakeGdb(cwd)
+    writeFakeExe(join(root, "SEGGER", "JLink_V999"), "JLinkGDBServerCL", FAKE_JLINK_SERVER)
+    const calls = join(root, "calls.jsonl")
+    // PATH 只有一个空目录:开发机上真装着 J-Link(板子可能也插着),PATH 或缺省位置表一旦认到真的就是一次真连接。
+    const variables: NodeJS.ProcessEnv = { ...process.env, FAKE_JLINK_CALLS: calls }
+    for (const key of Object.keys(variables)) if (key.toLowerCase() === "path") delete variables[key]
+    variables.PATH = createTempDir()
+    const jlink = {
+      configDir: createTempDir(),
+      locations: { jlink: { [process.platform]: [join(root, "SEGGER", "JLink*")] } },
+    }
+    const env = bindExecutionEnv(new NodeExecutionEnv({ cwd, shellEnv: variables }), variables)
+
+    const log = createLogTool({ jlink })
+    const gdb = createGdbTool({ gdbPath, jlink })
+    openTools.push(gdb)
+    try {
+      const capturing = await log.execute(
+        "l1",
+        { action: "start", rtt: "STM32G473RC" },
+        () => {},
+        { env },
+        invocation,
+        BACKGROUND_CONTEXT,
+      )
+      expect(capturing.content.map((part) => (part.type === "text" ? part.text : "")).join("")).toContain(
+        "Capturing rtt STM32G473RC",
+      )
+      const started = await gdb.execute(
+        "g1",
+        { action: "start", server: "jlink", chip: "STM32G473RC", elfPath: FIXTURE_ELF, allowUnverified: true },
+        () => {},
+        { env },
+        invocation,
+        BACKGROUND_CONTEXT,
+      )
+      const text = textOf(started)
+      expect(text).toContain("via jlink")
+      expect(text).toContain("note: RTT: already being read by a log capture (rtt STM32G473RC via J-Link SWD 4000 kHz")
+      expect(text).not.toContain("unless a `log start rtt` capture is already running")
+      // 两次都是那份假货起的:一次 RTT(带 -RTTTelnetPort),一次 gdb(带 -singlerun)。
+      const argvs = readFileSync(calls, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[])
+      expect(argvs.some((argv) => argv.includes("-RTTTelnetPort"))).toBe(true)
+      expect(argvs.some((argv) => argv.includes("-singlerun"))).toBe(true)
+    } finally {
+      await log.dispose()
+    }
+  }, 60_000)
 })
 
 // ─── 第四层:真 gdb + QEMU ───────────────────────────────────────────────────

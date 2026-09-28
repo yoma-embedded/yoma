@@ -5,10 +5,11 @@
  * 日志源是长驻、有状态、主动吐数据的,和一次性 spawn 的引擎工具(runEngine)正相反。
  * 采集器活在工具实例的闭包里 —— 一个会话一个日志源,不做全局注册表,也不做多端口。
  *
- * 【两种源,同一个采集器】
+ * 【三种源,同一个采集器】
  * child 是一个往 stdout 吐字节的子进程(串口是 serial.ts 给的 argv:POSIX 上是 cat 读继承来的 fd,
  * Windows 上是 PowerShell;command 是模型自己写的 argv);tcp 是 gdb server 吐 RTT/日志的端口
- * (node:net,进程内,没有子进程)。两者都只是"一个往缓冲吐字节的流",所以缓冲、折叠、wait 只有一份。
+ * (node:net,进程内,没有子进程);rtt 是 tcp 加一个自己起、自己收的 J-Link GDB server(rtt.ts)。
+ * 三者都只是"一个往缓冲吐字节的流",所以缓冲、折叠、wait 只有一份。
  *
  * 【进程纪律】(评审确认过的两个真坑;只适用于子进程源)
  * - detached + kill(-pid):`sh -c "…"` 这类源里真正握着设备的是孙子进程,只杀 shell 会留下孤儿
@@ -24,10 +25,24 @@
 
 import { type ChildProcess, spawn } from "node:child_process"
 import { closeSync, createWriteStream, type WriteStream } from "node:fs"
+import { rm, stat } from "node:fs/promises"
 import net from "node:net"
 import { SerialOutput } from "./serial-output.ts"
 
+import path from "node:path"
+
 import { killOnHostExit, killTree, unrefStream } from "../../domain/engines.ts"
+import { type JlinkLookup, jlinkServerBinary, type ServerProcess, spawnServer, stopServer } from "../gdb/servers.ts"
+import {
+  connectRtt,
+  describeServerExit,
+  jlinkRttArgv,
+  lastOutput,
+  pickRttPorts,
+  RttBannerFilter,
+  rttServerMissing,
+  waitForRttServer,
+} from "./rtt.ts"
 import {
   charBudgetFor,
   compilePattern,
@@ -56,8 +71,36 @@ export const EXIT_WAIT_MS = 5_000
  */
 const ORPHAN_FLUSH_GRACE_MS = 1_000
 
+/**
+ * RTT 连接被对端关掉、server 却还没退出时,给它这么久把退出码交出来 —— 源状态要说"server 退了(code N)"
+ * 而不是含糊的"断开了";server 退出与 socket 关闭哪个先到是不确定的。
+ */
+const RTT_SERVER_EXIT_GRACE_MS = 1_000
+
+/**
+ * RTT 口刚连上就写的字节会被 J-Link 静默丢掉:它这时还没找到目标内存里的 RTT 控制块,没有 down buffer 可写。
+ * 2026-09-24 实测(V9.58 + STM32G473RC,每档三次):连上后 0 ms 写,三次丢两次;50 ms 起三次都收到 shell 回应。
+ * start 一返回模型 / 用户就可能立刻 write,所以写之前补足这段:连上后没满这么久、目标也还没吐过字节,就先等到点。
+ * 取 300 ms 是给慢机器与大 RAM 搜索留的余量;目标先说了话就说明控制块已经找到,不必再等。
+ */
+const RTT_WRITE_SETTLE_MS = 300
+
 /** 进程退出时兜底杀掉还活着的采集子进程 —— 否则它会一直握着串口/管道。 */
 const liveCaptures = new Set<LogCapture>()
+
+/**
+ * 这个内核里正在读 RTT 的采集器(还在等 J-Link server 就绪的也算)。两个 RTT 读者会把字节流劈成两半、各拿一部分
+ * (2026-09-24 实测),而另一个会话里的那个模型看不见(status 只报自己的),工具描述里的 "stop one first" 它照不了 ——
+ * 所以同一个内核里的第二个在 startRtt 里就拒掉,并说出第一个是谁。别的进程(另开的 JLinkGDBServer、Ozone)拦不住,
+ * 仍靠工具描述。源里没有探针序列号、argv 也不带 -select,所有 RTT 采集连的都是同一个缺省 J-Link,所以按"内核里任意一个"判。
+ */
+const rttReaders = new Set<LogCapture>()
+
+/** 这个内核里另一个还没结束的 RTT 采集(第二个 rtt start 与 gdb 的 RTT 提示用)。 */
+export function otherRttReader(self?: LogCapture): LogCapture | undefined {
+  for (const reader of rttReaders) if (reader !== self && !reader.finished) return reader
+  return undefined
+}
 
 export type LogSource =
   | {
@@ -74,10 +117,18 @@ export type LogSource =
     }
   /** gdb server 的 RTT/telnet 口这类 TCP 流:进程内 net.Socket,没有子进程要杀。 */
   | { kind: "tcp"; host: string; port: number }
+  /**
+   * J-Link RTT:采集器自己起一个只管 RTT 的 J-Link GDB server(可执行文件先按 env 的 PATH 找,再找账本与 SEGGER 的
+   * 缺省安装目录,同 gdb 工具,见 jlinkServerBinary),
+   * 再从它的 RTT telnet 口读。device 是 J-Link 认的器件名(调用方先过 jlinkDeviceName),speed 是 SWD kHz。
+   */
+  | { kind: "rtt"; device: string; speed: number }
 
 export interface LogCaptureOptions {
   maxBufferLines?: number
   env?: NodeJS.ProcessEnv
+  /** RTT 源:PATH 上没有 J-Link GDB server 时还去哪找(账本、SEGGER 的缺省安装目录,见 jlinkServerBinary)。 */
+  jlink?: JlinkLookup
 }
 
 export interface WaitOutcome {
@@ -111,6 +162,7 @@ export class LogCapture {
   readonly file: string
   readonly cwd: string
   private readonly env: NodeJS.ProcessEnv
+  private readonly jlink?: JlinkLookup
 
   private child?: ChildProcess
   private socket?: net.Socket
@@ -124,6 +176,15 @@ export class LogCapture {
   private waiters = new Set<() => void>()
   private ended = false
   private forced = false
+  /** stop() 已经开始:进行中的 start 看到它就收手,RTT 收尾时也不再把"server 退了"当成意外写进日志。 */
+  private stopping = false
+  /** RTT 源自己起的 J-Link GDB server。 */
+  private server?: ServerProcess
+  /** 就绪之后 server 又说的话(只留尾巴):它意外退出时,最后一句往往就是原因。 */
+  private serverOutput = ""
+  /** RTT socket 连上的时刻与目标是否已经吐过字节(见 RTT_WRITE_SETTLE_MS)。 */
+  private rttConnectedAt = 0
+  private rttHeard = false
 
   lines: LogLine[] = []
   nextSeq = 0
@@ -136,6 +197,10 @@ export class LogCapture {
   exited?: { code: number | null; signal: string | null; at: number }
   /** 采集真正结束的时刻(finish 那一拍):status 的时长按它算,而不是按直接子进程退出的时刻。 */
   endedAt?: number
+  /** RTT 源:本机 RTT telnet 口(start 之后才有)。 */
+  rttPort?: number
+  /** RTT 源:J-Link GDB server 的终态。server 退出与 RTT socket 关闭各自落,源状态按它说话。 */
+  serverExit?: { code: number | null; signal: string | null; at: number }
 
   constructor(source: LogSource, label: string, file: string, cwd: string, options?: LogCaptureOptions) {
     if (source.kind === "child" && source.argv.length === 0) throw new Error("log start needs a command to run")
@@ -144,6 +209,7 @@ export class LogCapture {
     this.file = file
     this.cwd = cwd
     this.env = { ...(options?.env ?? process.env) }
+    this.jlink = options?.jlink
     this.maxBufferLines = options?.maxBufferLines ?? DEFAULT_BUFFER_LINES
     this.hold = source.kind === "child" ? source.hold : undefined
     if (source.kind === "child" && source.serial) this.serialOutput = new SerialOutput(source.writeFd)
@@ -180,20 +246,50 @@ export class LogCapture {
   }
 
   get pid(): number | undefined {
-    return this.child?.pid
+    return this.child?.pid ?? this.server?.child.pid
   }
 
-  /** 起源并等到它真的活了 —— 二进制不存在 / 端口不通这类错误要在 start 就报出来。 */
-  async start(): Promise<void> {
+  /** 是 stop() 收的场(而不是源自己退 / 断开)。源状态据此说 "stopped"。 */
+  get stopRequested(): boolean {
+    return this.stopping
+  }
+
+  /** 串口与 RTT 在采时能写;TCP / command 源只读。 */
+  get writable(): boolean {
+    return this.running && (!!this.serialOutput || this.source.kind === "rtt")
+  }
+
+  /**
+   * 起源并等到它真的活了 —— 二进制不存在 / 端口不通这类错误要在 start 就报出来。
+   * signal 只管起源这一段(RTT 要等 J-Link server 就绪,可能几秒):中止时起到一半的东西由这里收掉。
+   */
+  async start(signal?: AbortSignal): Promise<void> {
     this.startedAt = Date.now()
-    this.stream = createWriteStream(this.file, { flags: "a" })
+    const stream = createWriteStream(this.file, { flags: "a" })
+    this.stream = stream
     // 落盘失败(磁盘满/权限)不该把会话打死:记一行进缓冲,继续采集。
     this.stream.on("error", (error) => {
       this.push(`log file write failed: ${String(error)}`, true)
       this.stream = undefined
     })
-    if (this.source.kind === "tcp") await this.startTcp(this.source)
-    else await this.startChild(this.source.argv)
+    try {
+      if (this.source.kind === "tcp") await this.startTcp(this.source)
+      else if (this.source.kind === "rtt") await this.startRtt(this.source, signal)
+      else await this.startChild(this.source.argv)
+    } catch (error) {
+      // 起不来、一行都没写的采集不留一个空的 hw-*.log:界面的日志窗口按文件名挑最新的一份,空文件会把它
+      // 刷成白板、把上一份真日志藏起来,而 RTT 起不来(器件名写错、板子没上电)是常事,每重试一次多一个。
+      // 等 'close' 再删(finish 只 end 了,句柄还开着);删之前再看一眼大小,有内容的绝不动。
+      if (this.totalLines === 0) {
+        const drop = () =>
+          void stat(this.file)
+            .then((info) => (info.size === 0 ? rm(this.file, { force: true }) : undefined))
+            .catch(() => {})
+        if (stream.closed) drop()
+        else stream.once("close", drop)
+      }
+      throw error
+    }
     if (!this.finished) liveCaptures.add(this)
     // 让位:宿主自己处理了信号就不接管(见 killOnHostExit)。
     killOnHostExit(liveCaptures, { yieldToHost: true })
@@ -263,12 +359,17 @@ export class LogCapture {
     socket.setEncoding("utf8")
 
     await new Promise<void>((resolve, reject) => {
-      const onConnect = () => {
+      const settle = () => {
+        socket.off("connect", onConnect)
         socket.off("error", onError)
+        socket.off("close", onClose)
+      }
+      const onConnect = () => {
+        settle()
         resolve()
       }
       const onError = (error: Error) => {
-        socket.off("connect", onConnect)
+        settle()
         this.exited = { code: null, signal: null, at: Date.now() }
         this.finish()
         reject(
@@ -277,8 +378,17 @@ export class LogCapture {
           ),
         )
       }
+      // 连接途中被 stop()(界面的断开 / 会话关闭)destroy:只有 'close',没有 'error'。不听它的话这个 start
+      // 永远挂着,而 log 工具的调用是排队的 —— 这个会话之后的每一次 log 调用都跟着卡死(审查实测)。
+      const onClose = () => {
+        settle()
+        this.exited ??= { code: null, signal: null, at: Date.now() }
+        this.finish()
+        reject(new Error(`the connection to ${source.host}:${source.port} was closed before it was established`))
+      }
       socket.once("connect", onConnect)
       socket.once("error", onError)
+      socket.once("close", onClose)
     })
 
     socket.on("data", (chunk: string) => this.consume(chunk, false))
@@ -292,6 +402,138 @@ export class LogCapture {
     })
     // 与子进程同一条纪律:采集绝不能拖住事件循环。
     socket.unref()
+  }
+
+  /**
+   * RTT:起 J-Link GDB server(只管 RTT,不停核)→ 等它就绪 → 连它的 RTT telnet 口 → 剥掉开头的横幅,
+   * 其余字节与 tcp 源走同一条 consume。任何一步失败 / 被中止 / 被 stop,server 都在这里收掉再抛,
+   * 不指望调用方记得 —— 直接用 LogCapture 的人不一定会调 stop()。
+   * 不占探针租约:J-Link 允许多会话并存,实测见 rtt.ts 文件头。
+   */
+  private async startRtt(source: { device: string; speed: number }, signal?: AbortSignal): Promise<void> {
+    const cancelled = () => this.stopping || this.ended
+    // 查与登记之间不许有 await:两个会话同时 start 时,不能两个都通过检查。
+    const other = otherRttReader(this)
+    if (other) {
+      this.exited = { code: null, signal: null, at: Date.now() }
+      this.finish()
+      throw new Error(
+        `another RTT capture in Yoma is already reading the J-Link: ${other.label} (project ${other.cwd}, full log: ${other.file}). ` +
+          `Two RTT readers split the stream and each sees only part of the bytes — stop that capture first ` +
+          `(Disconnect in that session's console, or \`log stop\` in that session), or read its log file.`,
+      )
+    }
+    rttReaders.add(this)
+    // 登记之后的每一步都得能把登记撤掉(finish 会删):漏掉一条抛错的路,内核里此后所有 RTT 启动都会被拒。
+    let binary: string
+    try {
+      binary = await jlinkServerBinary(this.env, this.jlink)
+    } catch (error) {
+      this.exited = { code: null, signal: null, at: Date.now() }
+      this.finish()
+      throw error
+    }
+    // 哪儿都没找到时 jlinkServerBinary 给回裸名字:不必 spawn 一次来换一个 ENOENT。
+    if (!path.isAbsolute(binary)) {
+      this.exited = { code: null, signal: null, at: Date.now() }
+      this.finish()
+      throw new Error(rttServerMissing(binary))
+    }
+    let server: ServerProcess | undefined
+    try {
+      const ports = await pickRttPorts()
+      if (cancelled()) throw new Error("the RTT capture was stopped before the J-Link GDB server started")
+      if (signal?.aborted) throw new Error("log start was aborted before the J-Link GDB server started")
+      const argv = jlinkRttArgv(binary, source.device, source.speed, ports)
+      server = spawnServer(argv, ports.gdb, this.cwd, undefined, this.env)
+      this.server = server
+      this.rttPort = ports.rtt
+      const started = server
+      started.child.once("exit", (code, sig) => this.onServerGone({ code, signal: sig }))
+      started.child.once("error", () => this.onServerGone({ code: null, signal: null }))
+
+      await waitForRttServer(started, { device: source.device, signal, cancelled })
+      const collect = (chunk: string) => {
+        this.serverOutput = (this.serverOutput + chunk).slice(-2_000)
+      }
+      started.child.stdout?.on("data", collect)
+      started.child.stderr?.on("data", collect)
+
+      const socket = await connectRtt(ports.rtt, {
+        signal,
+        giveUp: () => {
+          if (cancelled()) return "the RTT capture was stopped before its RTT connection opened"
+          if (started.exited) {
+            return `${describeServerExit(started.exited)} before its RTT port accepted a connection.\nIts last output:\n${lastOutput(started)}`
+          }
+          return undefined
+        },
+      })
+      this.socket = socket
+      this.rttConnectedAt = Date.now()
+      socket.setEncoding("utf8")
+      // shell 命令是一两个字节的小包:别让 Nagle 攒着。
+      socket.setNoDelay(true)
+      const banner = new RttBannerFilter()
+      socket.on("data", (chunk: string) => {
+        const text = banner.push(chunk)
+        if (!text) return
+        this.rttHeard = true
+        this.consume(text, false)
+      })
+      // 连接后的错误等价于断开;'close' 必随其后。
+      socket.on("error", () => {})
+      socket.once("close", () => {
+        // finish() 之后(server 先退、由 finish 销毁的 socket)不再往缓冲里塞东西:running=false 却还在长是老坑。
+        if (this.ended) return
+        const rest = banner.flush()
+        if (rest) this.consume(rest, false)
+        // server 还活着且不是我们在收:给它一点时间交出退出码(见 RTT_SERVER_EXIT_GRACE_MS),到点还活着就收掉。
+        if (!this.stopping && !started.exited) {
+          setTimeout(() => this.endRtt(), RTT_SERVER_EXIT_GRACE_MS).unref()
+          return
+        }
+        this.endRtt()
+      })
+      socket.unref()
+    } catch (error) {
+      // 起不来:server 不能留下(它开着 J-Link 连接)。
+      if (server && !server.exited) await stopServer(server, false).catch(() => (this.forced = true))
+      this.exited ??= { code: server?.exited?.code ?? null, signal: server?.exited?.signal ?? null, at: Date.now() }
+      this.finish()
+      throw error
+    }
+  }
+
+  /** server 退了。start 期间由等待循环自己报;采集中就是源结束。 */
+  private onServerGone(exit: { code: number | null; signal: string | null }): void {
+    // finish() 已经收场:之后到的退出是 finish 自己 killTree 出来的(对端关了 RTT、server 还活着那条路),
+    // 不是 server 自己的话。记下来的话源状态会改口说 "exited (code 1)"(taskkill /F 的退出码,POSIX 上是
+    // SIGTERM),与日志最后一行 "closed the RTT connection" 自相矛盾,模型据此以为 J-Link 崩了。
+    if (this.ended) return
+    this.serverExit ??= { ...exit, at: Date.now() }
+    if (this.socket) this.endRtt()
+  }
+
+  /** RTT 采集收尾:不是 stop() 收的就在日志里写明为什么断了,模型读到的最后一行就是原因。 */
+  private endRtt(): void {
+    if (this.ended) return
+    this.flushPending()
+    if (!this.stopping) {
+      const said = this.serverOutput
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .at(-1)
+      const reason = this.serverExit
+        ? describeServerExit(this.serverExit)
+        : "the J-Link GDB server closed the RTT connection"
+      // 行首的 "ERROR: " 是给界面的分级看的(log-lines 的 classifyLogLine 只认行首的级别词,`! ` 标记不算):
+      // 这一行说的是 RTT 流为什么断了,它不上色、不进状态栏的错误计数,就淹在日志里。
+      this.push(`ERROR: ${reason}${said ? ` — last server output: ${said}` : ""}`, true)
+    }
+    this.exited ??= { code: this.serverExit?.code ?? null, signal: this.serverExit?.signal ?? null, at: Date.now() }
+    this.finish()
   }
 
   private consume(chunk: string, err: boolean): void {
@@ -470,11 +712,22 @@ export class LogCapture {
   }
 
   async stop(): Promise<void> {
+    this.stopping = true
     this.serialOutput?.close()
-    // TCP 源:destroy 触发 'close',终态与 finish 都在那个处理器里落。
+    // TCP / RTT 源:destroy 触发 'close',终态与 finish 都在那个处理器里落。
     if (this.socket && !this.ended) {
       this.socket.destroy()
       await this.waitUntil(() => this.ended, EXIT_WAIT_MS)
+    }
+    // RTT 源自己起的 J-Link GDB server:等它真的退了再说"停了"(它开着一条 J-Link 连接)。
+    // start 还没走完时也走这里 —— 那一边看到 stopping 会收手。
+    const server = this.server
+    if (server && !server.exited) {
+      try {
+        await stopServer(server, false)
+      } catch {
+        this.forced = true
+      }
     }
     const child = this.child
     // 按 ended 判而不是 exited:直接子进程死了、管道还被孙进程握着时,进程组还在,
@@ -501,12 +754,38 @@ export class LogCapture {
     } catch {
       // socket 可能已经关了。
     }
+    this.server?.killNow()
     if (!this.child) return
     killTree(this.child, "SIGKILL")
   }
 
-  async writeSerial(data: Buffer): Promise<number> {
-    if (!this.running || !this.serialOutput) throw new Error("Connect a serial port before sending (TCP and command logs are read-only)")
+  /**
+   * 往设备发字节:串口走 SerialOutput,RTT 写进 RTT telnet 口(J-Link 转给目标的 down channel 0)。
+   * 成功只表示驱动 / J-Link 收下了,不表示固件读到了 —— 回应要在日志里等。
+   */
+  async write(data: Buffer): Promise<number> {
+    if (this.source.kind === "rtt") {
+      const socket = this.socket
+      if (!this.running || !socket) throw new Error("The RTT capture is not running — start it again before sending")
+      const settle = this.rttConnectedAt + RTT_WRITE_SETTLE_MS - Date.now()
+      if (settle > 0 && !this.rttHeard) {
+        await new Promise((resolve) => setTimeout(resolve, settle))
+        if (!this.running || this.socket !== socket) {
+          throw new Error("The RTT capture stopped before the bytes could be sent — nothing was written")
+        }
+      }
+      return new Promise<number>((resolve, reject) => {
+        socket.write(data, (error) => {
+          if (error) reject(new Error(`RTT write failed: ${error.message}; not retried`))
+          else resolve(data.length)
+        })
+      })
+    }
+    if (!this.running || !this.serialOutput) {
+      throw new Error(
+        "Only a serial port or an RTT capture can be written — start one before sending (TCP and command logs are read-only)",
+      )
+    }
     return this.serialOutput.write(data)
   }
 
@@ -527,9 +806,17 @@ export class LogCapture {
     this.child?.stdout?.destroy()
     this.child?.stderr?.destroy()
     this.socket?.destroy()
+    // RTT 采集结束 = 它起的 J-Link server 也该走(对端关了 RTT 连接、server 却还活着的那条路)。
+    // stop() 已经等过它的退出;这里是同步兜底,不等。
+    const server = this.server
+    if (server && !server.exited) {
+      killTree(server.child, "SIGTERM")
+      setTimeout(() => server.killNow(), 3_000).unref()
+    }
     this.stream?.end()
     this.stream = undefined
     liveCaptures.delete(this)
+    rttReaders.delete(this)
     this.notify()
   }
 }

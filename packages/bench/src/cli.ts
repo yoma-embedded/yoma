@@ -5,7 +5,7 @@
  * 环境,工位端有板子(而且**只有**板子 —— 它没有项目检出,拿到的东西全是附件)。
  */
 
-import { homedir, userInfo } from "node:os"
+import { userInfo } from "node:os"
 import path from "node:path"
 
 import { diffToolNames } from "@yoma-desktop/kernel"
@@ -15,7 +15,7 @@ import { JobSpecError, type JobModel } from "./job.ts"
 import { activeRoleLocks } from "./mailbox/daemon.ts"
 import { initMailbox } from "./mailbox/init.ts"
 import { resolveMotherModel, runMailboxMother } from "./mailbox/mother.ts"
-import { cloneDirFor, defaultMailboxRoot } from "./mailbox/paths.ts"
+import { cloneDirFor, defaultMailboxRoot, desktopSessionsRoot } from "./mailbox/paths.ts"
 import { runMailboxRunner } from "./mailbox/runner.ts"
 import { runSim } from "./mailbox/sim.ts"
 import { DEFAULT_POLL_SECONDS, loadMailboxJob } from "./mailbox/spec.ts"
@@ -38,12 +38,15 @@ function fail(message: string): never {
   process.exit(1)
 }
 
-/** 会话根目录默认指向 desktop 的 userData —— 这样跑完就能在桌面端直接回放。 */
+/**
+ * 会话根目录默认指向 desktop 的 userData —— 这样跑完就能在桌面端直接回放。
+ * 目录名是桌面端的 appId(paths.ts 的 `desktopSessionsRoot`,与 main 同一张表):缺省给装好的正式版(prod),
+ * `YOMA_CHANNEL=dev` 给 `npm run dev:desktop` 起的那个,`YOMA_SESSIONS_ROOT` 直接指定。
+ */
 function defaultSessionsRoot(): string {
   if (process.env.YOMA_SESSIONS_ROOT) return process.env.YOMA_SESSIONS_ROOT
-  if (process.platform === "darwin") return path.join(homedir(), "Library/Application Support/Yoma/sessions")
-  if (process.platform === "win32") return path.join(process.env.APPDATA ?? homedir(), "Yoma/sessions")
-  return path.join(process.env.XDG_CONFIG_HOME ?? path.join(homedir(), ".config"), "Yoma/sessions")
+  const channel = process.env.YOMA_CHANNEL
+  return desktopSessionsRoot(channel === "dev" || channel === "beta" ? channel : "prod")
 }
 
 function defaultEnginesDir(): string | undefined {
@@ -185,6 +188,8 @@ async function commandMailbox(sub: string, rest: string[]): Promise<void> {
       pollSeconds: await pollSecondsOf(clone, flags),
       once: flags.once,
     }
+    // 会话落在哪说出来:从前它悄悄落在一个桌面端不读的目录里,跑完在 app 里找不到也没人知道去哪看。
+    say(`${DIM}  会话 ${common.sessionsRoot}(桌面端回放;YOMA_CHANNEL=dev 对应 npm run dev:desktop)${RESET}`)
     // 终态 kind 两侧不同名(runner 是 finalized、mother 是 done),其余逐字相同。
     const outcome =
       sub === "runner"

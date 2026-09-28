@@ -55,6 +55,30 @@ export interface SerialPortView {
   description?: string
 }
 
+/**
+ * 日志窗口的实时尾巴(`instrument.logTail`)。只读快照:不推 agent 的游标、不排队、不开会话、不碰模型。
+ * 界面按 `since = 上一次的 nextSeq` 轮询,只拿新行。
+ */
+export interface LogTailView {
+  /** 采集器在采(源还活着)。没有采集器时 false。 */
+  running: boolean
+  /** 采集着什么,同 log 工具 details.source:`serial COM5 @ 115200 8N1` / `rtt STM32G473RC via J-Link SWD 4000 kHz` / … */
+  source?: string
+  /** 全量日志文件(`<工程>/.yoma/logs/hw-*.log`)。 */
+  file?: string
+  /** 串口与 RTT 采集在跑时为 true:`instrument.execute` 的 write 能发。 */
+  writable: boolean
+  /** 下一行将拿到的序号;下一次拉取传 `since: nextSeq`。没有采集器时 0。 */
+  nextSeq: number
+  /**
+   * 请求区间 [since, nextSeq) 里没能给出的行数:已经掉出环形缓冲的(只在日志文件里),加上超过 2000 行上限
+   * 被截掉的更早那部分。不给 since 时区间从缓冲里最老的一行算起,所以只可能是截掉的那部分。
+   */
+  lost: number
+  /** 与日志文件逐行同形:`[+1.234] text`,stderr / 诊断行(含 RTT 断开的原因)是 `[+1.234] ! text`。最多最新的 2000 行。 */
+  lines: string[]
+}
+
 /** 一次拉取到的 transcript 分页。 */
 export interface MessagePage {
   items: Array<{ info: Message; parts: Part[] }>
@@ -115,6 +139,12 @@ export interface KernelMethods {
     result: InstrumentResult
   }
   "instrument.ports": { params: void; result: SerialPortView[] }
+  /**
+   * 日志窗口的实时尾巴:seq ≥ since 的行(不给 since 就是整个环形缓冲),最多最新的 2000 行。便宜、只读:
+   * 不消费 agent 的 `log read` 游标、不排在 log 工具的队列后面、不创建会话或装配环境、不加载模型。
+   * 会话不存在 / 没开过 / 没有采集器时回一个空视图(running:false, nextSeq:0),不报错。
+   */
+  "instrument.logTail": { params: { sessionID: string; since?: number }; result: LogTailView }
   "session.create": { params: { directory: string; title?: string }; result: Session }
   "session.delete": { params: { sessionID: string }; result: void }
   "session.rename": { params: { sessionID: string; title: string }; result: Session }
