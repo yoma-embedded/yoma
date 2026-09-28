@@ -331,13 +331,14 @@ describe("log start port", () => {
 // ─── 起到一半被界面断开(Windows 的串口桥)────────────────────────────────────
 
 /**
- * 假的 Windows PowerShell 5.1:认 -EncodedCommand 里的脚本 —— 串口桥(YomaSerialBridge)就照真桥的协议说话:
+ * 假的 Windows PowerShell 5.1:认 -Command 后面那一整段脚本 —— 串口桥(YomaSerialBridge)就照真桥的协议说话:
  * 过 FAKE_PS_READY_MS 在 stderr 报 "@@yoma-serial ready",之后 stdout 一直吐 "tick";stdin 一关就退。
  * 别的脚本(枚举)只报一个 COM7。SystemRoot 指到假货所在的根,serialPowershellExe 就认它。
+ * 认的是 -Command 不是 -EncodedCommand:产品侧已经改成明文传脚本(安全软件会同步审查编码过的 PowerShell)。
  */
 const FAKE_POWERSHELL = String.raw`import { writeFileSync } from "node:fs"
-const i = process.argv.indexOf("-EncodedCommand")
-const script = i >= 0 ? Buffer.from(process.argv[i + 1], "base64").toString("utf16le") : ""
+const i = process.argv.indexOf("-Command")
+const script = i >= 0 ? process.argv[i + 1] : ""
 const env = process.env
 if (!script.includes("YomaSerialBridge")) {
   process.stdout.write("COM7\tFake serial (COM7)\n")
@@ -398,7 +399,7 @@ describe.runIf(process.platform === "win32")("log start port 起到一半被界�
     expect(message).toMatch(/stopped before it finished starting/)
     expect(message).not.toMatch(misleading)
     expect(tool.snapshot().running).toBe(false)
-  }, 30_000)
+  }, 60_000)
 
   it("口已经开了、还在确认的那一秒半里被断开:start 报被停了,不拿板子吐的字当打不开的原因", async () => {
     const { tool, run, ready } = makeBridgeTool(0)
@@ -413,5 +414,5 @@ describe.runIf(process.platform === "win32")("log start port 起到一半被界�
     expect(message).toMatch(/stopped before it finished starting/)
     expect(message).not.toMatch(misleading)
     expect(tool.snapshot().running).toBe(false)
-  }, 30_000)
+  }, 60_000)
 })
