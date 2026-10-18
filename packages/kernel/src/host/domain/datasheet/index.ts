@@ -5,3 +5,4 @@
 export * from "./chips.ts"
 export * from "./hits.ts"
 export * from "./section.ts"
+export * from "./v2.ts"

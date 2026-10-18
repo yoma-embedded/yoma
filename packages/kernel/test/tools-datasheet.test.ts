@@ -79,12 +79,13 @@ const invocation: AgentHarnessToolInvocation = {
   setMemo: async () => {},
 }
 
-/** 地址显式注入:env 里只放这一个变量,configDir 是空的临时目录。 */
+/** 地址显式注入:env 里只放这一个变量,configDir 是空的临时目录。默认显式 v1,这一组用例钉的就是旧接口的行为。 */
 function makeTool(server: string | undefined, options: DatasheetToolOptions = {}) {
   const dir = createTempDir()
   const tool = createDatasheetTool({
     configDir: dir,
     env: server === undefined ? {} : { YOMA_DATASHEET_SERVER: server },
+    apiVersion: "v1",
     ...options,
   })
   const run = (params: DatasheetInput, context: Context = BACKGROUND_CONTEXT) =>
