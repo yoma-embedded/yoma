@@ -12,6 +12,7 @@ import type { AgentHarnessTool, ExecutionToolContext } from "@earendil-works/pi-
 import type { TaskHost } from "../domain/agents/task-host.ts"
 import { createAgentTool } from "./agent/session.ts"
 import { withFriendlyArguments } from "./arguments.ts"
+import { createCodelibTool, type CodelibToolOptions } from "./codelib/session.ts"
 import { createDatasheetTool, type DatasheetToolOptions } from "./datasheet/session.ts"
 import { createFindTool } from "./find/session.ts"
 import { createFlashTool } from "./flash/session.ts"
@@ -51,6 +52,8 @@ export interface RegisteredToolOptions {
    * 规矩:自检那条路不传也能装配。
    */
   datasheet?: DatasheetToolOptions
+  /** Same server resolver/configuration as datasheet; no separate model credentials. */
+  codelib?: CodelibToolOptions
   /**
    * 子 agent 四件(agent / task_output / task_stop / send_message)的宿主接口。**不传也照常登记**(工具清单平台无关,
    * 同 powershell),execute 时报"这个宿主不支持子 agent";没有它的会话,宿主也不会激活这四件
@@ -85,6 +88,7 @@ export function createRegisteredTools(options: RegisteredToolOptions = {}): Regi
     createScopeTool(),
     options.instruments?.gdb ?? createGdbTool({ onTargetEvent }),
     createDatasheetTool(options.datasheet),
+    createCodelibTool(options.codelib ?? options.datasheet),
     createNetlistTool(stm32),
     createStm32ConfigTool(stm32),
     createAgentTool(options.agents),

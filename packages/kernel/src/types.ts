@@ -402,6 +402,7 @@ export const TOOL_NAMES = [
   "scope",
   "gdb",
   "datasheet",
+  "codelib",
   "netlist",
   "stm32config",
   "agent",

@@ -7,6 +7,7 @@
 
 import { AGENT_CONTRACT } from "./agent/contract.ts"
 import type { ToolContract } from "./contract-types.ts"
+import { CODELIB_CONTRACT } from "./codelib/contract.ts"
 import { DATASHEET_CONTRACT } from "./datasheet/contract.ts"
 import { FIND_CONTRACT } from "./find/contract.ts"
 import { FLASH_CONTRACT, probeCommandIn } from "./flash/contract.ts"
@@ -39,6 +40,7 @@ export const TOOL_CONTRACTS = [
   SCOPE_CONTRACT,
   GDB_CONTRACT,
   DATASHEET_CONTRACT,
+  CODELIB_CONTRACT,
   NETLIST_CONTRACT,
   STM32CONFIG_CONTRACT,
   AGENT_CONTRACT,
