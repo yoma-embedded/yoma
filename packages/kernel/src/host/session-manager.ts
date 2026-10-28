@@ -98,7 +98,12 @@ import { createLogTool, type LogTool } from "./tools/log/session.ts"
 import { listSerialPorts } from "./tools/log/serial.ts"
 import { createGdbTool, type GdbTool } from "./tools/gdb/session.ts"
 import { withOverwrittenContent } from "./write-before.ts"
-import { configurableProviders, resolveModel } from "./models.ts"
+import { configurableProviders, resolveModel, FileCredentialStore } from "./models.ts"
+import { readCustomProviders, saveCustomProvider, removeCustomProvider, discoverCustomModels } from "./custom-providers.ts"
+import type { CustomProviderInput, CustomModelsInput, ProviderUsageView } from "../types.ts"
+import { modelContextOverride, readModelPreferences, setModelContext } from "./model-preferences.ts"
+import { readSubscriptionUsage } from "./provider-usage.ts"
+import { ProviderLogin } from "./provider-login.ts"
 import { discoverSkills, loadContextFiles } from "./resources.ts"
 import { readSessionName } from "./session-names.ts"
 import { autoTitleDisabled, fallbackTitle, generateTitle, pickTitleModel, TITLE_TIMEOUT_MS } from "./session-title.ts"
@@ -130,7 +135,7 @@ import { Identifier } from "../ids.ts"
 import { pickThinkingLevel } from "../thinking.ts"
 import { sessionNotFound, subagentSession } from "../types.ts"
 import { MANUAL_COMPACTION_ENTRY, removalEvents, SessionProjection } from "./projector.ts"
-import { migrateLegacyPiAuth, yomaConfigDir, removeAuthKey, writeAuthKey } from "./auth.ts"
+import { migrateLegacyPiAuth, yomaConfigDir, removeAuthKey, writeAuthKey, authFilePath } from "./auth.ts"
 
 /** 同时活着的 harness 上限。淘汰只是丢弃内存态,重开就是 repo.open + 重放,很便宜。钉住的(子 agent 任务在用)不算。 */
 const MAX_LIVE_SESSIONS = 8
@@ -508,6 +513,8 @@ interface Entry {
 }
 
 export interface SessionManagerOptions {
+  /** Desktop uses HTTP/SSE so ChatGPT requests follow Chromium's system proxy. */
+  codexTransport?: "sse"
   sessionsRoot: string
   enginesDir?: string
   emit(events: KernelEvent[]): void
@@ -599,6 +606,7 @@ export interface SessionManagerOptions {
 }
 
 export class SessionManager {
+  readonly login: ProviderLogin
   private readonly env: NodeExecutionEnv
   private readonly repo: JsonlSessionRepo
   /** 每份注册表自动联网一次;凭据变化重建注册表时重置。 */
@@ -615,6 +623,7 @@ export class SessionManager {
   private readonly context: Context = BACKGROUND_CONTEXT
 
   private models?: Models
+  private liveModels?: import("@earendil-works/pi-ai").MutableModels
   private modelsPending?: Promise<{ models: Models; model: Model<string> }>
   private defaultModel?: Model<string>
   private modelError?: string
@@ -653,6 +662,15 @@ export class SessionManager {
     this.trace = options.trace ?? NOOP_TRACE
     this.desk = new ConfirmDesk({ emit: (confirm) => options.emit([{ type: "tool.confirm", confirm }]) })
     this.configDir = options.configDir ?? yomaConfigDir()
+    this.login = new ProviderLogin({
+      store: new FileCredentialStore(path.join(this.configDir, "auth.json")),
+      emit: (login) => options.emit([{ type: "auth.login", login }]),
+      connected: async () => {
+        this.invalidateModels()
+        const providers = await this.refreshModels()
+        options.emit([{ type: "model.updated", providers }])
+      },
+    })
     this.env = new NodeExecutionEnv({ cwd: process.cwd() })
     this.repo = new JsonlSessionRepo({ fileSystem: this.env, sessionsRoot: options.sessionsRoot })
     const subagents = options.subagents ?? {}
@@ -697,7 +715,7 @@ export class SessionManager {
         if (!this.options.resolveModels && !this.options.configDir) migrateLegacyPiAuth(this.configDir)
         const resolved = this.options.resolveModels
           ? await this.options.resolveModels()
-          : ((await resolveModel(this.configDir, { authContext: this.options.authContext, trace: this.trace })) as {
+          : ((await resolveModel(this.configDir, { authContext: this.options.authContext, trace: this.trace, codexTransport: this.options.codexTransport })) as {
               models: Models
               model: Model<string>
             })
@@ -707,10 +725,19 @@ export class SessionManager {
         (resolved) => {
           // 解析期间改了凭据:旧结果不能覆盖新注册表,等待新的一份。
           if (this.modelsPending !== pending) return this.ensureModels()
-          this.models = resolved.models
+          // Harnesses retain their Models object. Update its providers without closing sessions or tools.
+          if (this.liveModels) {
+            for (const old of this.liveModels.getProviders()) {
+              if (!resolved.models.getProvider(old.id)) this.liveModels.deleteProvider(old.id)
+            }
+            for (const provider of resolved.models.getProviders()) this.liveModels.setProvider(provider)
+          } else if (typeof (resolved.models as import("@earendil-works/pi-ai").MutableModels).setProvider === "function") {
+            this.liveModels = resolved.models as import("@earendil-works/pi-ai").MutableModels
+          }
+          this.models = this.liveModels ?? resolved.models
           this.defaultModel = resolved.model
           this.modelError = undefined
-          return resolved
+          return { ...resolved, models: this.models }
         },
         (error) => {
           if (this.modelsPending !== pending) return this.ensureModels()
@@ -739,7 +766,8 @@ export class SessionManager {
   async providers(): Promise<ProviderInfo[]> {
     // 只要一个 key 就能连的 provider(yoma 按 pi-ai 的 login 流程推导)。没配的也要列出来
     // (空模型表 + authenticated: false),用户才能从连接对话框里给它加 key。
-    const configurable = await configurableProviders()
+    const configurable = [...await configurableProviders(), { id: "openai-codex", name: "OpenAI Codex / ChatGPT" }]
+    const custom = await readCustomProviders(new FileCredentialStore(authFilePath(this.configDir))).catch(() => [])
     let models: Models
     try {
       models = (await this.ensureModels()).models
@@ -751,19 +779,22 @@ export class SessionManager {
 
     // resolveModel() 的不变式:注册 == 已配置(没凭据的它不注册),所以注册表里的一律 authenticated。
     const out: ProviderInfo[] = []
+    const preferences = readModelPreferences(this.configDir)
     for (const provider of models.getProviders()) {
       out.push({
         id: provider.id,
-        name: provider.name,
+        name: provider.id === "openai-codex" ? "OpenAI Codex / ChatGPT" : provider.name,
         authenticated: true,
+        custom: custom.find((entry) => entry.id === provider.id)?.config,
         models: provider.getModels().map((model) => ({
           id: model.id,
           providerID: provider.id,
           name: model.name ?? model.id,
           thinkingLevels: getSupportedThinkingLevels(model) as string[],
           contextWindow: model.contextWindow,
+          contextWindowOverride: modelContextOverride(preferences, provider.id, model.id),
           maxOutput: model.maxTokens,
-          cost: model.cost
+          cost: !custom.some((entry) => entry.id === provider.id) && model.cost
             ? {
                 input: model.cost.input,
                 output: model.cost.output,
@@ -837,10 +868,7 @@ export class SessionManager {
   /**
    * 写入一个 provider 的 API key(落到 yoma 读的那份 `<configDir>/auth.json`)。
    *
-   * 写完必须丢弃已解析的模型目录:resolveModel() 只注册写入当时有 key 的 provider,
-   * 不重解析的话新 key 要等重启进程才生效。注意 **已经开着的会话拿的还是旧注册表**
-   * (harness 的 models 建好之后换不掉),新开/重开的会话才能用新 provider ——
-   * 首跑场景(一个会话都没有)不受影响。
+   * 写完重解析目录,并更新已有 harness 保留的注册表,不重开会话或仪器。
    *
    * key 本身不做网络验证:注册 provider 时不发请求,错 key 的暴露点是第一次
    * prompt 的 API 401,那条错误会走正常的会话错误通道显示出来。
@@ -856,8 +884,42 @@ export class SessionManager {
     return this.providers()
   }
 
+  async saveCustom(input: CustomProviderInput): Promise<ProviderInfo[]> {
+    await saveCustomProvider(new FileCredentialStore(authFilePath(this.configDir)), input)
+    return this.customChanged()
+  }
+
+  discoverCustom(input: CustomModelsInput): Promise<string[]> {
+    return discoverCustomModels(new FileCredentialStore(authFilePath(this.configDir)), input)
+  }
+
+  providerUsage(providerID: string): Promise<ProviderUsageView> {
+    if (providerID !== "openai-codex") throw new Error("Subscription usage is only available for OpenAI Codex")
+    return readSubscriptionUsage(new FileCredentialStore(authFilePath(this.configDir)))
+  }
+
+  async setModelContext(input: { providerID: string; modelID: string; contextWindow?: number }): Promise<ProviderInfo[]> {
+    const { models } = await this.ensureModels()
+    if (!models.getModel(input.providerID, input.modelID)) throw new Error("Unknown model")
+    await setModelContext(this.configDir, input.providerID, input.modelID, input.contextWindow)
+    return this.customChanged()
+  }
+
+  async removeCustom(providerID: string): Promise<ProviderInfo[]> {
+    await removeCustomProvider(new FileCredentialStore(authFilePath(this.configDir)), providerID)
+    return this.customChanged()
+  }
+
+  private async customChanged(): Promise<ProviderInfo[]> {
+    this.invalidateModels()
+    const providers = await this.providers()
+    this.options.emit([{ type: "model.updated", providers }])
+    return providers
+  }
+
   /** 移除一个 provider 的 key。同样丢弃模型目录缓存。 */
   async removeAuth(providerID: string): Promise<ProviderInfo[]> {
+    if (providerID === "openai-codex") this.login.cancel(undefined, true)
     await removeAuthKey(providerID, this.configDir)
     this.invalidateModels()
     return this.providers()
@@ -3026,6 +3088,7 @@ export class SessionManager {
   }
 
   async disposeAll(): Promise<void> {
+    this.login.cancel(undefined, true)
     // 不再派生、不再投通知;排队中的任务直接落定。
     this.taskManager.shutdown()
     // 在飞的起名与 /btw 掐掉:进程要退了,再写会话名只会撞上正在关的会话,答案也没人看了。

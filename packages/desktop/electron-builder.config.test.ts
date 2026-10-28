@@ -23,7 +23,7 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const channels = (["dev", "beta", "prod"] as const).map((channel) => ({ channel, appId: DESKTOP_APP_IDS[channel] }))
 
 for (const channel of channels) {
-  test(`uses one Linux desktop identity for ${channel.channel}`, async () => {
+  test(`preserves desktop identity and allows choosing the Windows install directory for ${channel.channel}`, async () => {
     const previous = process.env.YOMA_CHANNEL
     process.env.YOMA_CHANNEL = channel.channel
 
@@ -34,6 +34,16 @@ for (const channel of channels) {
     else process.env.YOMA_CHANNEL = previous
 
     expect(config.appId).toBe(channel.appId)
+    expect(config.nsis?.oneClick).toBe(false)
+    expect(config.nsis?.allowToChangeInstallationDirectory).toBe(true)
+    expect(config.nsis?.perMachine).toBe(false)
+    expect(config.nsis?.runAfterFinish).toBe(true)
+    expect(config.nsis?.createDesktopShortcut).not.toBe(false)
+    expect(config.nsis?.createStartMenuShortcut).not.toBe(false)
+    expect(existsSync(path.join(here, config.nsis!.include!))).toBe(true)
+    expect(config.productName).toBe(
+      channel.channel === "prod" ? "Yoma" : `Yoma ${channel.channel === "dev" ? "Dev" : "Beta"}`,
+    )
     // "只通知"更新器打开的发布页与 publish 指的必须是同一个仓库;dev 渠道两样都没有。
     const releaseRepo = (config.extraMetadata as { yoma?: { releaseRepo?: string } }).yoma?.releaseRepo
     const publish = config.publish as { owner?: string; repo?: string } | undefined

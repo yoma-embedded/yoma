@@ -44,6 +44,7 @@ export { yomaConfigDir } from "./auth.ts"
 export { inspectEngines, runPreflight } from "./preflight.ts"
 
 export interface KernelHostOptions {
+  codexTransport?: SessionManagerOptions["codexTransport"]
   /** engines/bin + engines/data 的所在目录。生产环境是 process.resourcesPath/engines。 */
   enginesDir?: string
   /** session JSONL 的根目录,通常是 Electron 的 userData/sessions。 */
@@ -125,6 +126,7 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     configDir: options.configDir,
     resolveModels: options.resolveModels,
     authContext: options.authContext,
+    codexTransport: options.codexTransport,
     inspectStm32Availability: options.inspectStm32Availability,
     defaultThinkingLevel: options.defaultThinkingLevel,
     toolchainSide: options.toolchainSide,
@@ -191,10 +193,17 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     "task.background": async ({ taskID }) => ({ moved: sessions.backgroundTask(taskID) }),
 
     "model.list": () => sessions.providers(),
+    "model.customSave": (input) => sessions.saveCustom(input),
+    "model.customDiscover": (input) => sessions.discoverCustom(input),
+    "model.context": (input) => sessions.setModelContext(input),
+    "model.usage": ({ providerID }) => sessions.providerUsage(providerID),
+    "model.customRemove": ({ providerID }) => sessions.removeCustom(providerID),
     // 唯一一条主动碰模型目录网络的 RPC(开会话只恢复磁盘缓存)。设置页的"刷新模型列表"走它。
     "model.refresh": () => sessions.refreshModels(),
-    // 凭据落在 yoma 读的那份 ~/.pi/agent/auth.json —— 应用内配的 key 和命令行配 pi /
-    // 配 Zed 的是同一份,互相可见。见 host/auth.ts。
+    "auth.loginStart": ({ providerID, method }) => sessions.login.start(providerID, method),
+    "auth.loginStatus": ({ id }) => sessions.login.status(id),
+    "auth.loginReply": ({ id, promptID, value }) => sessions.login.reply(id, promptID, value),
+    "auth.loginCancel": ({ id }) => sessions.login.cancel(id),
     "auth.set": ({ providerID, apiKey }) => sessions.setAuth(providerID, apiKey),
     "auth.remove": ({ providerID }) => sessions.removeAuth(providerID),
 
@@ -319,6 +328,8 @@ export function createKernelHost(options: KernelHostOptions): KernelHost {
     // 窗口 reload 与"start 晚于 attach"两条路都靠它重新宣告一次 connected ——
     // 不重发的表现不是报错,是"点什么都没反应"。
     resync() {
+      const login = sessions.login.status()
+      if (login?.status === "pending") sink.push([{ type: "auth.login", login }])
       sink.push([{ type: "kernel.connected", version: options.version ?? "0.0.0" }])
       // 事件不重放:窗口 reload 之后,挂起中的那条工具确认只能靠这里再推一遍 ——
       // 不推的表现是模型在等人答(会话一直 busy),而屏幕上一条确认条都没有。

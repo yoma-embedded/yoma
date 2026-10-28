@@ -16,6 +16,12 @@ import { kernel, kernelAvailable } from "@/utils/kernel"
 
 const listeners = new Set<() => void>()
 
+export const PROVIDER_CATEGORIES = ["custom", "subscription", "apiKey"] as const
+export function providerCategory(provider: ProviderInfo) {
+  if (provider.custom || provider.id === "__custom__") return "custom"
+  return provider.id === "openai-codex" ? "subscription" : "apiKey"
+}
+
 /** 写入凭据之后调用,让所有目录订阅者重新拉取。 */
 export function invalidateProviders() {
   for (const listener of [...listeners]) listener()

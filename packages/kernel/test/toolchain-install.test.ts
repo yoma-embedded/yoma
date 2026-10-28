@@ -441,7 +441,25 @@ describe("镜像", () => {
 		expect(error.toolId).toBe("widget");
 		expect(error.message).toContain(`${baseUrl}/mirror/widget.zip`);
 		expect(error.message).toContain(`${baseUrl}/widget.zip`);
+		expect(error.message).toContain("HTTP 404");
 		expect(existsSync(managedPackageDir(PKG_ID, PKG_VERSION, configDir))).toBe(false);
+		expect(partFiles()).toEqual([]);
+	});
+
+	it.each([
+		["UND_ERR_CONNECT_TIMEOUT", "connection timed out"],
+		["net::ERR_PROXY_CONNECTION_FAILED", "proxy connection failed"],
+		["UNABLE_TO_VERIFY_LEAF_SIGNATURE", "TLS certificate verification failed"],
+	])("download failure includes its cause and useful guidance: %s", async (code, guidance) => {
+		const zip = await happyZip();
+		const catalog = fakeCatalog({ url: `${baseUrl}/widget.zip`, sha256: sha256(zip), bytes: zip.byteLength });
+		const error = await failure(installToolchain({
+			toolId: "widget", configDir, host: HOST, catalog, env: { PATH: "" },
+			fetchImpl: async () => { throw new TypeError("fetch failed", { cause: Object.assign(new Error(code), { code }) }); },
+		}));
+		expect(error.phase).toBe("download");
+		expect(error.message).toContain(code);
+		expect(error.message).toContain(guidance);
 		expect(partFiles()).toEqual([]);
 	});
 });

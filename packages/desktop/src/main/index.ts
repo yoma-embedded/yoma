@@ -1,7 +1,5 @@
-import { randomUUID } from "node:crypto"
-import { mkdirSync, rmSync } from "node:fs"
 import * as http from "node:http"
-import { homedir, tmpdir } from "node:os"
+import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { getCACertificates, setDefaultCACertificates } from "node:tls"
@@ -15,6 +13,7 @@ import contextMenu from "electron-context-menu"
 import { DESKTOP_APP_IDS, defaultConfigDir } from "@yoma-desktop/bench/mailbox/paths"
 
 import { CHANNEL } from "./constants"
+import { prepareTestProfile } from "./test-profile"
 import { registerIpcHandlers, sendMenuCommand } from "./ipc"
 import { spawnKernel, type KernelProcess } from "./kernel"
 import { createMailboxMain, type MailboxMain } from "./mailbox"
@@ -134,12 +133,9 @@ const main = Effect.gen(function* () {
   const onboardingTestRoot = ((): string | undefined => {
     if (!TEST_ONBOARDING) return
 
-    const root = join(tmpdir(), `yoma-onboarding-${randomUUID()}`)
-    rmSync(root, { recursive: true, force: true })
-    ;["data", "config", "cache", "state", "desktop", "session"].forEach((dir) =>
-      mkdirSync(join(root, dir), { recursive: true }),
-    )
-    process.env.YOMA_DB = ":memory:"
+    const persistentRoot = process.env.YOMA_TEST_PROFILE_DIR?.trim() || undefined
+    const root = prepareTestProfile(persistentRoot)
+    if (!persistentRoot) process.env.YOMA_DB = ":memory:"
     process.env.XDG_DATA_HOME = join(root, "data")
     process.env.XDG_CONFIG_HOME = join(root, "config")
     process.env.XDG_CACHE_HOME = join(root, "cache")
@@ -261,7 +257,7 @@ const main = Effect.gen(function* () {
   mailboxMain = createMailboxMain({
     // 信箱克隆跟着**全局配置目录**走(凭据/技能/上下文同一处),不跟 userData ——
     // 命令行那侧也落在这里,同一个物理目录才让单实例锁真的是锁。
-    configDir: defaultConfigDir(),
+    configDir: onboardingTestRoot ? join(onboardingTestRoot, "config", "yoma") : defaultConfigDir(),
     // 会话仍在 userData:它是给桌面端回放看的,不是跨进程共享的 agent 状态。
     sessionsRoot: join(app.getPath("userData"), "sessions"),
     enginesDir: resolveEnginesDir(),
@@ -326,6 +322,7 @@ const main = Effect.gen(function* () {
   // yoma 内核进程。整个 app 只 fork 这一个 —— yoma 的 probe 租约、gdb session 表、
   // log capture 都是模块级全局,分片 fork 会让两个进程各自以为自己独占探针。
   kernelProcess = spawnKernel({
+    configDir: onboardingTestRoot ? join(onboardingTestRoot, "config", "yoma") : undefined,
     sessionsRoot: join(app.getPath("userData"), "sessions"),
     stateDir: app.getPath("userData"),
     enginesDir: resolveEnginesDir(),

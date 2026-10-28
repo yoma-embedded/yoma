@@ -71,6 +71,7 @@ app.whenReady().then(async () => {
     type: "start",
     sessionsRoot,
     stateDir,
+    configDir: join(stateDir, "config"),
     enginesDir: join(repoRoot, "engines"),
     version: "e2e",
   })

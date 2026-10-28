@@ -16,6 +16,7 @@ const SERVICE_NAME = "yoma-kernel"
 export interface KernelProcessOptions {
   sessionsRoot: string
   stateDir: string
+  configDir?: string
   enginesDir?: string
   version?: string
   /** 本次启动的日志目录:内核的调试轨迹写在这里的 trace.jsonl(docs/调试留痕-规划-20260924.md §3.1)。 */
@@ -100,6 +101,7 @@ export function spawnKernel(options: KernelProcessOptions): KernelProcess {
     type: "start",
     sessionsRoot: options.sessionsRoot,
     stateDir: options.stateDir,
+    configDir: options.configDir,
     enginesDir: options.enginesDir,
     version: options.version ?? app.getVersion(),
     logDir: options.logDir,

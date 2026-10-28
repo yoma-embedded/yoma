@@ -32,6 +32,7 @@ import {
   writeFileSync,
 } from "node:fs"
 import { connect } from "node:net"
+import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -260,19 +261,24 @@ function recordLog(stream: string) {
 // `tmpdir()/yoma-onboarding-<uuid>`,这样它连带几十 MB 的 Chromium 存储一起被我们收走。
 // YOMA_PAINT_LOCALE=en-US:本机模拟英文系统(Windows runner 的 navigator.languages 是 en-US)。
 // 走 Chromium 的 --lang:CDP 的 Emulation.setLocaleOverride 只管 Intl,navigator.language 不跟着变。
-const child = spawn(electron, [mainEntry, ...(process.env.YOMA_PAINT_LOCALE ? [`--lang=${process.env.YOMA_PAINT_LOCALE}`] : [])], {
-  cwd: desktop,
-  env: {
-    ...process.env,
-    YOMA_TEST_ONBOARDING: "1",
-    YOMA_CHANNEL: "dev",
-    TMPDIR: tmpRoot,
-    TMP: tmpRoot,
-    TEMP: tmpRoot,
+const child = spawn(
+  electron,
+  [mainEntry, ...(process.env.YOMA_PAINT_LOCALE ? [`--lang=${process.env.YOMA_PAINT_LOCALE}`] : [])],
+  {
+    cwd: desktop,
+    env: {
+      ...process.env,
+      YOMA_TEST_ONBOARDING: "1",
+      YOMA_TEST_PROFILE_DIR: "",
+      YOMA_CHANNEL: "dev",
+      TMPDIR: tmpRoot,
+      TMP: tmpRoot,
+      TEMP: tmpRoot,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
   },
-  stdio: ["ignore", "pipe", "pipe"],
-  windowsHide: true,
-})
+)
 child.stdout?.on("data", recordLog("out"))
 child.stderr?.on("data", recordLog("err"))
 
@@ -311,10 +317,13 @@ function removeTmpRoot() {
 }
 
 let cleaned = false
+let modelServer: ReturnType<typeof createServer> | undefined
 /** 兜底收尾,也挂在 process exit 上。从头到尾不抛异常。 */
 function cleanup() {
   if (cleaned) return
   cleaned = true
+  modelServer?.closeAllConnections()
+  modelServer?.close()
   killChild("SIGKILL")
   removeTmpRoot()
 }
@@ -550,7 +559,9 @@ try {
     await send("Page.addScriptToEvaluateOnNewDocument", {
       source: `addEventListener("DOMContentLoaded", () => { const s = document.createElement("style"); s.textContent = "::-webkit-scrollbar{width:17px;height:17px}::-webkit-scrollbar-thumb{background:#999}"; document.head.appendChild(s) })`,
     })
-    await evaluate(`(() => { const s = document.createElement("style"); s.textContent = "::-webkit-scrollbar{width:17px;height:17px}::-webkit-scrollbar-thumb{background:#999}"; document.head.appendChild(s); return true })()`)
+    await evaluate(
+      `(() => { const s = document.createElement("style"); s.textContent = "::-webkit-scrollbar{width:17px;height:17px}::-webkit-scrollbar-thumb{background:#999}"; document.head.appendChild(s); return true })()`,
+    )
   }
 
   // ------------------------------------------------------------------ 1. 首屏
@@ -558,6 +569,255 @@ try {
   await sleep(1_500) // 让晚到的 provider / 查询把它们要抛的异常抛出来
   check("首屏没崩到错误页", (await evaluate<boolean>(CRASHED)) === false)
   drain("首屏")
+  const testAuthFile = await evaluate<string>(
+    `window.api.kernel.request('app.preflight', undefined).then(r => r.auth.file)`,
+  )
+  check("测试配置的凭据目录与正式版隔离", testAuthFile.startsWith(tmpRoot))
+  check(
+    "顶层只有一个去配置主入口,没有去连接",
+    await evaluate<boolean>(`(() => {
+    const banner = document.querySelector('[data-component="preflight-banner"]');
+    return banner && banner.querySelectorAll('button[data-variant="primary"]').length === 1 && !/去连接|^Connect$/m.test(banner.innerText);
+  })()`),
+  )
+
+  // Subscription setup is a real renderer view; opening it must not start a login by itself.
+  await evaluate(
+    `document.querySelector('[data-component="preflight-banner"] button[data-variant="primary"]')?.click()`,
+  )
+  check("设置对话框可打开", await waitFor(`!!document.querySelector('.settings-v2-dialog')`, APPEAR_TIMEOUT_MS))
+  check(
+    "缺模型时去配置直达合并的模型页",
+    await waitFor(`!!document.querySelector('[data-component="provider-models"]')`, APPEAR_TIMEOUT_MS),
+  )
+  await clickText(["添加供应商", "Add provider"])
+  check(
+    "供应商选择器显示三类卡片",
+    await waitFor(
+      `(() => {
+    const groups = [...document.querySelectorAll('.provider-selection [data-slot="list-header"]')].map(e => e.textContent.trim());
+    return groups.length === 3 && /自定义|Custom/.test(groups[0]) && /订阅服务|Subscriptions/.test(groups[1]) && groups[2] === 'API KEY';
+  })()`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  if (process.env.YOMA_PAINT_SCREENSHOT_PROVIDERS) {
+    await waitFor(
+      `getComputedStyle(document.querySelector('.provider-selection').closest('[data-slot="dialog-content"]')).opacity === '1'`,
+      APPEAR_TIMEOUT_MS,
+    )
+    const shot = await send("Page.captureScreenshot", { format: "png" })
+    writeFileSync(process.env.YOMA_PAINT_SCREENSHOT_PROVIDERS, Buffer.from(shot.result!.data as string, "base64"))
+  }
+  await evaluate(
+    `(() => { const input = document.querySelector('.provider-selection input'); input.focus(); document.execCommand('insertText', false, 'OpenAI'); })()`,
+  )
+  check(
+    "搜索 OpenAI 仍区分订阅与 API Key",
+    await waitFor(
+      `(() => {
+    const items = [...document.querySelectorAll('.provider-selection [data-slot="list-item"]')];
+    return items.some(e => e.textContent.includes('ChatGPT')) && items.some(e => e.textContent.includes('API Key') && !e.textContent.includes('ChatGPT')) && !items.some(e => e.textContent.includes('DeepSeek'));
+  })()`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  await evaluate(
+    `(() => { const input = document.querySelector('.provider-selection input'); input.select(); document.execCommand('insertText', false, '__custom__'); })()`,
+  )
+  check(
+    "搜索可定位自定义入口",
+    await waitFor(
+      `document.querySelectorAll('.provider-selection [data-slot="list-item"]').length === 1`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 })
+  await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 })
+  check(
+    "键盘回车打开自定义配置",
+    await waitFor(`!!document.querySelector('[data-component="custom-provider-form"]')`, APPEAR_TIMEOUT_MS),
+  )
+  modelServer = createServer((req, res) => {
+    if (req.url !== "/v1/models" || req.headers.authorization !== "Bearer paint-only-secret") {
+      res.writeHead(401).end()
+      return
+    }
+    res
+      .writeHead(200, { "content-type": "application/json" })
+      .end(JSON.stringify({ data: [{ id: "paint-one" }, { id: "paint-two" }] }))
+  })
+  await new Promise<void>((resolve) => modelServer!.listen(0, "127.0.0.1", resolve))
+  const importUrl = `http://127.0.0.1:${(modelServer.address() as { port: number }).port}/v1`
+  await evaluate(`(() => {
+    const values = { name: 'Paint gateway', baseUrl: ${json(importUrl)}, apiKey: 'paint-only-secret' };
+    for (const [name, value] of Object.entries(values)) { const input = document.querySelector('[name="' + name + '"]'); input.focus(); document.execCommand('insertText', false, value); }
+  })()`)
+  const formFocused = await evaluate<boolean>(
+    `document.querySelector('[name="name"]')?.value === 'Paint gateway' && document.querySelector('[name="apiKey"]')?.value === 'paint-only-secret'`,
+  )
+  check("叠层表单的焦点与输入字段保持正确", formFocused)
+  if (!formFocused) throw new Error("配置表单焦点异常")
+  await clickText(["从端点导入模型", "Import models from endpoint"])
+  check(
+    "输入端点与密钥即可导入模型,无需手写名称",
+    await waitFor(`document.querySelector('[name="modelIds"]')?.value === 'paint-one\\npaint-two'`, APPEAR_TIMEOUT_MS),
+  )
+  if (process.env.YOMA_PAINT_SCREENSHOT_CUSTOM) {
+    const shot = await send("Page.captureScreenshot", { format: "png" })
+    writeFileSync(process.env.YOMA_PAINT_SCREENSHOT_CUSTOM, Buffer.from(shot.result!.data as string, "base64"))
+  }
+  await clickText(["保存", "Save"])
+  check(
+    "保存自定义供应商后弹窗关闭",
+    await waitFor(`!document.querySelector('[data-component="custom-provider-form"]')`, APPEAR_TIMEOUT_MS),
+  )
+  const customSaved = await evaluate<{ id: string; custom: { modelIds: string[] }; models: { id: string }[] }>(
+    `window.api.kernel.request('model.list', undefined).then(ps => ps.find(p => p.name === 'Paint gateway'))`,
+  )
+  check(
+    "界面保存的两个模型立即出现在目录",
+    customSaved?.models.length === 2 && customSaved.custom.modelIds[1] === "paint-two",
+  )
+  const customRow = `[...document.querySelectorAll('[data-slot="provider-select"]')].find(e => e.textContent.includes('Paint gateway'))`
+  check(
+    "设置页标记自定义供应商类型",
+    await waitFor(
+      `!!(${customRow}) && /自定义|Custom/.test(document.querySelector('[data-slot="provider-details"]').textContent)`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  check(
+    "添加后返回原模型管理页",
+    await evaluate<boolean>(`document.querySelectorAll('.settings-v2-dialog').length === 1`),
+  )
+  await evaluate(
+    `(() => { const input = document.querySelector('[name="modelContextWindow"]'); input.focus(); document.execCommand('insertText', false, '8192'); input.blur(); })()`,
+  )
+  check(
+    "模型上下文修改经真 RPC 生效",
+    await waitFor(
+      `window.api.kernel.request('model.list', undefined).then(ps => ps.find(p => p.name === 'Paint gateway')?.models[0]?.contextWindow === 8192)`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  await clickText(["全部关闭", "Disable all"])
+  check(
+    "全部关闭更新开关与启用计数",
+    await waitFor(
+      `(() => { const view = document.querySelector('[data-component="provider-models"]'); return view.textContent.includes('0/2') && [...view.querySelectorAll('[role="switch"]')].every(e => e.getAttribute('aria-checked') === 'false'); })()`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  await clickText(["全部开启", "Enable all"])
+  check(
+    "全部开启恢复启用计数",
+    await waitFor(
+      `document.querySelector('[data-component="provider-models"]').textContent.includes('2/2')`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  if (process.env.YOMA_PAINT_SCREENSHOT_MODELS) {
+    const shot = await send("Page.captureScreenshot", { format: "png" })
+    writeFileSync(process.env.YOMA_PAINT_SCREENSHOT_MODELS, Buffer.from(shot.result!.data as string, "base64"))
+  }
+  const modelLayout = await evaluate<{
+    width: number
+    scroll: number
+    panelWidth: number
+    panelScroll: number
+  }>(`(() => {
+    const view = document.querySelector('[data-component="provider-models"]'); const panel = view.querySelector('[data-slot="provider-details"]');
+    return { width: view.clientWidth, scroll: view.scrollWidth, panelWidth: panel.clientWidth, panelScroll: panel.scrollWidth };
+  })()`)
+  check(
+    "模型管理页无横向溢出",
+    modelLayout.scroll <= modelLayout.width + 1 && modelLayout.panelScroll <= modelLayout.panelWidth + 1,
+    JSON.stringify(modelLayout),
+  )
+  await evaluate(`document.querySelector('[data-model-id="paint-two"] [role="switch"]')?.click()`)
+  check(
+    "单个模型可关闭",
+    await waitFor(
+      `document.querySelector('[data-component="provider-models"]').textContent.includes('1/2')`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  await clickText(["编辑", "Edit"])
+  check(
+    "编辑弹窗保留配置且密钥输入框为空",
+    await waitFor(
+      `document.querySelector('[name="name"]')?.value === 'Paint gateway' && document.querySelector('[name="apiKey"]')?.value === ''`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  await clickText(["保存", "Save"])
+  await waitFor(`!document.querySelector('[data-component="custom-provider-form"]')`, APPEAR_TIMEOUT_MS)
+  await waitFor(`!!(${customRow})`, APPEAR_TIMEOUT_MS)
+  await clickText(["添加供应商", "Add provider"])
+  const codexRow = `document.querySelector('.provider-selection [data-key="openai-codex"]')`
+  check("提供商列表列出 ChatGPT 订阅入口", await waitFor(`!!(${codexRow})`, APPEAR_TIMEOUT_MS))
+  await evaluate(`(${codexRow})?.click()`)
+  check(
+    "ChatGPT 登录对话框渲染",
+    await waitFor(`!!document.querySelector('[data-component="subscription-login"]')`, APPEAR_TIMEOUT_MS),
+  )
+  check(
+    "订阅登录提供浏览器和设备码两种方式",
+    await evaluate<boolean>(`(() => {
+    const view = document.querySelector('[data-component="subscription-login"]');
+    return view.textContent.includes('ChatGPT') && view.querySelectorAll('button').length === 2 && !view.querySelector('input');
+  })()`),
+  )
+  check(
+    "打开对话框不会自动发起登录",
+    await evaluate<boolean>(
+      `window.api.kernel.request('auth.loginStatus', {}).then(s => !s || s.status !== 'pending')`,
+    ),
+  )
+  if (process.env.YOMA_PAINT_SCREENSHOT_AUTH) {
+    const shot = await send("Page.captureScreenshot", { format: "png" })
+    writeFileSync(process.env.YOMA_PAINT_SCREENSHOT_AUTH, Buffer.from(shot.result!.data as string, "base64"))
+  }
+  await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 })
+  await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 })
+  await waitFor(`!document.querySelector('[data-component="subscription-login"]')`, APPEAR_TIMEOUT_MS)
+  await evaluate(
+    `(() => { const tab = [...document.querySelectorAll('[role="tab"]')].find(e => /常规|通用|General/.test(e.textContent)); tab?.click() })()`,
+  )
+  check(
+    "简体中文的显示与高级分区完整翻译",
+    await waitFor(
+      `(() => { const titles = [...document.querySelectorAll('.settings-v2-section-title')].map(e => e.textContent); return titles.includes('显示') && titles.includes('高级') && !titles.includes('Display') && !titles.includes('Advanced') && !document.querySelector('.settings-v2-dialog').textContent.includes('Pinch to zoom'); })()`,
+      APPEAR_TIMEOUT_MS,
+    ),
+  )
+  check(
+    "高级区条目标题和说明均为中文",
+    await evaluate<boolean>(`(() => {
+    const row = (action) => document.querySelector('[data-action="' + action + '"]')?.closest('[data-component="settings-v2-row"]')?.textContent ?? '';
+    const file = row('settings-show-file-tree'), search = row('settings-show-search');
+    return file.includes('文件树') && file.includes('在会话中显示文件树面板') && search.includes('命令面板') && search.includes('在标题栏显示搜索和命令面板按钮');
+  })()`),
+  )
+  if (process.env.YOMA_PAINT_SCREENSHOT_GENERAL) {
+    await evaluate(
+      `document.querySelector('[data-action="settings-show-search"]')?.scrollIntoView({ block: 'center' })`,
+    )
+    const shot = await send("Page.captureScreenshot", { format: "png" })
+    writeFileSync(process.env.YOMA_PAINT_SCREENSHOT_GENERAL, Buffer.from(shot.result!.data as string, "base64"))
+  }
+  const reasoningModel = await evaluate<{
+    id: string
+    levels: string[]
+  }>(`window.api.kernel.request('auth.set', { providerID: 'deepseek', apiKey: 'e2e-only-not-a-real-key' }).then(ps => {
+    const model = ps.find(p => p.id === 'deepseek')?.models.find(m => m.thinkingLevels.length > 0);
+    return { id: model?.id, levels: model?.thinkingLevels };
+  })`)
+  check("验证使用真实支持思考强度的模型目录", !!reasoningModel?.id && reasoningModel.levels.length > 0)
+  await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 })
+  await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 })
+  drain("ChatGPT 登录视图")
 
   // ------------------------------------------------------------------ 2. 工程名单
   const stored = json({
@@ -620,6 +880,47 @@ try {
       MOUNT_TIMEOUT_MS,
     ),
   )
+  await evaluate(`document.querySelector('[data-action="prompt-model"]')?.click()`)
+  check(
+    "模型选择器保留开启模型",
+    await waitFor(`!!document.querySelector('[data-key="${customSaved.id}:paint-one"]')`, APPEAR_TIMEOUT_MS),
+  )
+  check(
+    "关闭模型不会出现在选择器中",
+    await evaluate<boolean>(`!document.querySelector('[data-key="${customSaved.id}:paint-two"]')`),
+  )
+  await evaluate(`document.querySelector('[data-key="deepseek:${reasoningModel.id}"]')?.click()`)
+  check(
+    "思考强度专用下拉保留",
+    await waitFor(`!!document.querySelector('[data-action="prompt-model-variant"]')`, APPEAR_TIMEOUT_MS),
+  )
+  await evaluate(`document.querySelector('[data-action="prompt-model"]')?.click()`)
+  await waitFor(`!!document.querySelector('[data-key="deepseek:${reasoningModel.id}"]')`, APPEAR_TIMEOUT_MS)
+  check(
+    "模型列表不再重复显示思考强度按钮",
+    await evaluate<boolean>(`(() => {
+    const picker = document.querySelector('[data-key="deepseek:${reasoningModel.id}"]')?.closest('[data-component="list"]')?.parentElement;
+    return !!picker && ![...picker.querySelectorAll('button')].some(button => ${json(reasoningModel.levels)}.includes(button.textContent.trim()));
+  })()`),
+  )
+  if (process.env.YOMA_PAINT_SCREENSHOT_PICKER) {
+    const shot = await send("Page.captureScreenshot", { format: "png" })
+    writeFileSync(process.env.YOMA_PAINT_SCREENSHOT_PICKER, Buffer.from(shot.result!.data as string, "base64"))
+  }
+  await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 })
+  await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 })
+  await clickText(["设置", "Settings"])
+  await waitFor(`!!document.querySelector('.settings-v2-dialog')`, APPEAR_TIMEOUT_MS)
+  await evaluate(
+    `(() => { const tab = [...document.querySelectorAll('[role="tab"]')].find(e => /模型|Models/.test(e.textContent)); tab?.click() })()`,
+  )
+  await waitFor(`!!(${customRow})`, APPEAR_TIMEOUT_MS)
+  await evaluate(`(${customRow})?.click()`)
+  await clickText(["删除", "Delete"])
+  check("删除自定义供应商后目录同步移除", await waitFor(`!(${customRow})`, APPEAR_TIMEOUT_MS))
+  await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 })
+  await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 })
+  await waitFor(`!document.querySelector('.settings-v2-dialog')`, APPEAR_TIMEOUT_MS)
   const typed = await evaluate<string>(`(() => {
     const editor = document.querySelector('[data-component="prompt-input"]')
     if (!editor) return "没有编辑器"
@@ -639,7 +940,9 @@ try {
       `(document.querySelector('[data-component="prompt-input"]')?.textContent ?? "").trim() === ${json(TYPED_TEXT)}`,
       MOUNT_TIMEOUT_MS,
     ),
-    await evaluate<string>(`(document.querySelector('[data-component="prompt-input"]')?.textContent ?? "<没有编辑器>").trim()`),
+    await evaluate<string>(
+      `(document.querySelector('[data-component="prompt-input"]')?.textContent ?? "<没有编辑器>").trim()`,
+    ),
   )
   // 状态条现在住在会话页最底下那条**状态栏**里(v2-console:目标板状态永远在场,不用点)。
   check(
@@ -851,7 +1154,9 @@ try {
       APPEAR_TIMEOUT_MS,
     ),
   )
-  const trace = await evaluate<string[]>(`(() => { clearInterval(window.__scopeTraceTimer); return window.__scopeTrace ?? [] })()`)
+  const trace = await evaluate<string[]>(
+    `(() => { clearInterval(window.__scopeTraceTimer); return window.__scopeTrace ?? [] })()`,
+  )
   const zoomReady = await evaluate<boolean>(
     `!!document.querySelector('[data-component="scope-waveform"] button[aria-label="放大波形"]:not([disabled])')`,
   )
@@ -902,9 +1207,7 @@ try {
   )
   if (process.env.YOMA_PAINT_SCREENSHOT) {
     // 上面为了点游标把示波器滚到了屏幕中间;截图是给人看右栏整体的,先滚回顶上。
-    await evaluate(
-      `document.querySelector('[data-component="instrument-rail"]')?.scrollIntoView({ block: "start" })`,
-    )
+    await evaluate(`document.querySelector('[data-component="instrument-rail"]')?.scrollIntoView({ block: "start" })`)
     const shot = await send("Page.captureScreenshot", { format: "png" })
     writeFileSync(process.env.YOMA_PAINT_SCREENSHOT, Buffer.from(shot.result!.data as string, "base64"))
   }
@@ -1176,7 +1479,9 @@ try {
   const searchInput = `document.querySelector('[data-component="timeline-search"] [data-slot="timeline-search-input"]')`
   const searchCount = `(document.querySelector('[data-slot="timeline-search-count"]')?.textContent ?? "")`
   const typeQuery = (value: string) =>
-    evaluate(`(() => { const input = ${searchInput}; input.focus(); input.select(); document.execCommand("insertText", false, ${json(value)}) })()`)
+    evaluate(
+      `(() => { const input = ${searchInput}; input.focus(); input.select(); document.execCommand("insertText", false, ${json(value)}) })()`,
+    )
   const painted = (name: string) =>
     `[...(CSS.highlights.get(${json(name)}) ?? [])].map((range) => range.toString().toLowerCase())`
   // 同一页上有两个「查找」:右栏开着文件页签时 cmd+F 原本归文件内查找(file-tabs.tsx 在 window 捕获阶段接),
@@ -1226,8 +1531,13 @@ try {
     writeFileSync(process.env.YOMA_PAINT_SCREENSHOT_SEARCH, Buffer.from(shot.result!.data as string, "base64"))
   }
   // 后台任务的通知行也是收着的,结果全文在里面:跳到那儿的命中时它得自己打开(展开状态现在和工具卡一样记在时间线上)。
-  await evaluate(`(() => { const n = ${notice}; if (n?.querySelector('[data-component="agent-result"]')) n.querySelector('[data-component="tool-trigger"]')?.click() })()`)
-  check("查找之前通知行是收着的", await waitFor(`!!${notice} && !${notice}.querySelector('[data-component="agent-result"]')`, APPEAR_TIMEOUT_MS))
+  await evaluate(
+    `(() => { const n = ${notice}; if (n?.querySelector('[data-component="agent-result"]')) n.querySelector('[data-component="tool-trigger"]')?.click() })()`,
+  )
+  check(
+    "查找之前通知行是收着的",
+    await waitFor(`!!${notice} && !${notice}.querySelector('[data-component="agent-result"]')`, APPEAR_TIMEOUT_MS),
+  )
   await typeQuery("RM0090")
   const inNotice = `(() => {
     const range = [...(CSS.highlights.get("timeline-search-hit-active") ?? [])][0]
@@ -1238,7 +1548,11 @@ try {
     await pressKey("Enter", "Enter", 13)
     await waitFor(inNotice, 1_500)
   }
-  check("命中在收着的通知行里:通知行自己打开,当前那一处圈在结果全文上", await evaluate<boolean>(inNotice), await evaluate<string>(searchCount))
+  check(
+    "命中在收着的通知行里:通知行自己打开,当前那一处圈在结果全文上",
+    await evaluate<boolean>(inNotice),
+    await evaluate<string>(searchCount),
+  )
   // 计数和高亮是同一个口径:界面上有、数据层没有的字(「处理详情」那一行的标签)搜不到,也不上色 ——
   // 头一版 DOM 层自己圈,会出现计数写着"无结果"、屏幕上却一片高亮。
   await typeQuery("处理详情")

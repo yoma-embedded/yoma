@@ -8,8 +8,10 @@
 import { mkdirSync, rmSync, statSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawn } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { AuthContext, Model } from "@earendil-works/pi-ai";
+import { createModels, type AuthContext, type Model, type Provider } from "@earendil-works/pi-ai";
+import { getOpenAICodexWebSocketDebugStats } from "@earendil-works/pi-ai/api/openai-codex-responses";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { configurableProviders, FileCredentialStore, NO_AMBIENT_AUTH, resolveModel } from "../src/host/models.ts";
 
@@ -55,13 +57,73 @@ function envOnly(vars: Record<string, string>): AuthContext {
 const isolated = { authContext: NO_AMBIENT_AUTH };
 
 describe("FileCredentialStore", () => {
-	it("returns undefined for missing files and survives corrupt JSON", async () => {
+	it("serializes file mutations between Node processes", async () => {
+		const dir = createTempDir();
+		const file = join(dir, "auth.json");
+		const moduleUrl = new URL("../src/host/models.ts", import.meta.url).href;
+		const source = `import { FileCredentialStore } from ${JSON.stringify(moduleUrl)};
+		const store = new FileCredentialStore(${JSON.stringify(file)});
+		for (let i = 0; i < 2; i++) await store.modify('counter', async (current) => {
+		  await new Promise(r => setTimeout(r, 100));
+		  return { type: 'api_key', key: String(Number(current?.key ?? 0) + 1) };
+		});`;
+		await Promise.all([1, 2].map(() => new Promise<void>((resolve, reject) => {
+			const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", source], { windowsHide: true, stdio: "pipe" });
+			let stderr = "";
+			child.stderr.on("data", (data) => { stderr += data.toString(); });
+			child.on("error", reject);
+			child.on("exit", (code) => code === 0 ? resolve() : reject(new Error(stderr)));
+		})));
+		expect(await new FileCredentialStore(file).read("counter")).toEqual({ type: "api_key", key: "4" });
+	}, 15000);
+	it("serializes refreshes across store instances and preserves the old token on refresh failure", async () => {
+		const dir = createTempDir();
+		const path = join(dir, "auth.json");
+		const store = new FileCredentialStore(path);
+		const old = { type: "oauth" as const, access: "expired", refresh: "original", expires: 0 };
+		await store.modify("fake", async () => old);
+		let refreshes = 0;
+		const provider = builtinProviders().find((p) => p.id === "openai-codex")!;
+		const model = { ...provider.getModels()[0]!, provider: "fake" };
+		const fake: Provider = { ...provider, id: "fake", getModels: () => [model], auth: { oauth: {
+			...provider.auth.oauth!, toAuth: async (c) => ({ apiKey: c.access }),
+			refresh: async () => { refreshes++; await new Promise((r) => setTimeout(r, 30)); return { ...old, access: "fresh", refresh: "rotated", expires: Date.now() + 3600000 }; },
+		} } };
+		const registries = [1, 2].map(() => {
+			const models = createModels({ credentials: new FileCredentialStore(path), authContext: NO_AMBIENT_AUTH });
+			models.setProvider(fake); return models;
+		});
+		const result = await Promise.all(registries.map((models) => models.getAuth(model)));
+		expect(result.map((r) => r?.auth.apiKey)).toEqual(["fresh", "fresh"]);
+		expect(refreshes).toBe(1);
+		await store.modify("fake", async () => old);
+		registries[0]!.setProvider({ ...fake, auth: { oauth: { ...fake.auth.oauth!, refresh: async () => { throw new Error("expired refresh"); } } } });
+		await expect(registries[0]!.getAuth(model)).rejects.toThrow("OAuth refresh failed");
+		expect(await store.read("fake")).toEqual(old);
+	});
+
+	it("cancellation while a mutation is running preserves every prior entry", async () => {
+		const dir = createTempDir();
+		const path = join(dir, "auth.json");
+		writeFileSync(path, JSON.stringify({ other: { futureFormat: true }, deepseek: { type: "api_key", key: "keep" } }));
+		const before = readFileSync(path, "utf8");
+		const store = new FileCredentialStore(path);
+		const controller = new AbortController();
+		await expect(store.modify("deepseek", async () => {
+			controller.abort(); return { type: "api_key", key: "discard" };
+		}, { signal: controller.signal })).rejects.toThrow();
+		expect(readFileSync(path, "utf8")).toBe(before);
+		await store.modify("deepseek", async () => ({ type: "api_key", key: "new" }));
+		expect(JSON.parse(readFileSync(path, "utf8")).other).toEqual({ futureFormat: true });
+	});
+	it("returns undefined for missing files and refuses to overwrite corrupt JSON", async () => {
 		const dir = createTempDir();
 		const store = new FileCredentialStore(join(dir, "auth.json"));
 		expect(await store.read("deepseek")).toBeUndefined();
-
 		writeFileSync(join(dir, "auth.json"), "not json{");
-		expect(await store.read("deepseek")).toBeUndefined();
+		await expect(store.read("deepseek")).rejects.toThrow("Cannot read auth.json");
+		await expect(store.modify("deepseek", async () => ({ type: "api_key", key: "new" }))).rejects.toThrow("Cannot read auth.json");
+		expect(readFileSync(join(dir, "auth.json"), "utf8")).toBe("not json{");
 	});
 
 	it("stores credentials with 0600 permissions and reads them back", async () => {
@@ -105,6 +167,22 @@ describe("FileCredentialStore", () => {
 });
 
 describe("resolveModel", () => {
+	it("uses the supplied HTTP fetch without a WebSocket connection when the desktop selects SSE", async () => {
+		const dir = createTempDir();
+		const payload = Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "test-account" } })).toString("base64url");
+		writeAuth(dir, { "openai-codex": { type: "oauth", access: `header.${payload}.signature`, refresh: "test-only", accountId: "test-account", expires: Date.now() + 3600000 } });
+		const { models, model } = await resolveModel(dir, { ...isolated, codexTransport: "sse" });
+		let requests = 0;
+		const sessionId = `sse-${Date.now()}`;
+		await models.completeSimple(model, { messages: [{ role: "user", content: "hi", timestamp: Date.now() }] }, {
+			sessionId, timeoutMs: 1000, fetch: async () => {
+				requests++;
+				return new Response('data: {"type":"response.completed","response":{"status":"completed","output":[],"usage":{"input_tokens":0,"output_tokens":0}}}\n\n', { headers: { "content-type": "text/event-stream" } });
+			},
+		});
+		expect(requests).toBe(1);
+		expect(getOpenAICodexWebSocketDebugStats(sessionId)?.connectionsCreated ?? 0).toBe(0);
+	});
 	it("picks the first stored-key provider and registers only configured ones", async () => {
 		const dir = createTempDir();
 		writeAuth(dir, { deepseek: { type: "api_key", key: "sk-d" } });

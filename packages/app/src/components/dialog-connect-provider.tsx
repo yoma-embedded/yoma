@@ -1,11 +1,4 @@
-/**
- * 连接一个 provider。
- *
- * opencode 时代这里是一台状态机:先问后端 `provider.auth()` 拿到该 provider 支持的
- * 认证方式(api key / oauth code / oauth auto),再按方式分支走 OAuth 回调、动态 prompt
- * 表单等等。yoma 的内核只认一件事 —— `auth.set({ providerID, apiKey })`,
- * 所以整台状态机连同 OAuth 视图一起删掉,只剩一个 API key 表单。
- */
+/** API key setup and Pi-native ChatGPT subscription login. */
 
 import { Button } from "@yoma-desktop/ui/button"
 import { useDialog } from "@yoma-desktop/ui/context/dialog"
@@ -13,13 +6,14 @@ import { Dialog } from "@yoma-desktop/ui/dialog"
 import { IconButton } from "@yoma-desktop/ui/icon-button"
 import { ProviderIcon } from "@yoma-desktop/ui/provider-icon"
 import { TextField } from "@yoma-desktop/ui/text-field"
-import { createMemo } from "solid-js"
+import { createMemo, Show } from "solid-js"
+import { ProviderSubscriptionLogin } from "./provider-subscription-login"
 import { createStore } from "solid-js/store"
 import { useLanguage } from "@/context/language"
 import { kernel } from "@/utils/kernel"
 import { createProviderCatalog, invalidateProviders } from "./kernel-providers"
 
-export function DialogConnectProvider(props: { provider: string }) {
+export function DialogConnectProvider(props: { provider: string; onBack?: () => void }) {
   const dialog = useDialog()
   const language = useLanguage()
   const providers = createProviderCatalog()
@@ -33,6 +27,7 @@ export function DialogConnectProvider(props: { provider: string }) {
   })
 
   const back = () => {
+    if (props.onBack) return props.onBack()
     void import("./dialog-select-provider").then((x) => {
       dialog.show(() => <x.DialogSelectProvider />)
     })
@@ -79,25 +74,34 @@ export function DialogConnectProvider(props: { provider: string }) {
           </div>
         </div>
         <div class="px-2.5 pb-10 flex flex-col gap-6">
-          <div class="text-14-regular text-text-base">
-            {language.t("provider.connect.apiKey.description", { provider: name() })}
-          </div>
-          <form onSubmit={(event) => void submit(event)} class="flex flex-col items-start gap-4">
-            <TextField
-              autofocus
-              type="text"
-              label={language.t("provider.connect.apiKey.label", { provider: name() })}
-              placeholder={language.t("provider.connect.apiKey.placeholder")}
-              name="apiKey"
-              value={store.value}
-              onChange={(value) => setStore("value", value)}
-              validationState={store.error ? "invalid" : undefined}
-              error={store.error}
-            />
-            <Button class="w-auto" type="submit" size="large" variant="primary" disabled={store.saving}>
-              {language.t("common.continue")}
-            </Button>
-          </form>
+          <Show
+            when={props.provider === "openai-codex"}
+            fallback={
+              <>
+                <div class="text-14-regular text-text-base">
+                  {language.t("provider.connect.apiKey.description", { provider: name() })}
+                </div>
+                <form onSubmit={(event) => void submit(event)} class="flex flex-col items-start gap-4">
+                  <TextField
+                    autofocus
+                    type="text"
+                    label={language.t("provider.connect.apiKey.label", { provider: name() })}
+                    placeholder={language.t("provider.connect.apiKey.placeholder")}
+                    name="apiKey"
+                    value={store.value}
+                    onChange={(value) => setStore("value", value)}
+                    validationState={store.error ? "invalid" : undefined}
+                    error={store.error}
+                  />
+                  <Button class="w-auto" type="submit" size="large" variant="primary" disabled={store.saving}>
+                    {language.t("common.continue")}
+                  </Button>
+                </form>
+              </>
+            }
+          >
+            <ProviderSubscriptionLogin connected={() => dialog.close()} />
+          </Show>
         </div>
       </div>
     </Dialog>

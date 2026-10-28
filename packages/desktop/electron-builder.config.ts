@@ -212,8 +212,11 @@ const getBase = (appId: string, releaseRepo?: string): Configuration => ({
     verifyUpdateCodeSignature: false,
   },
   nsis: {
-    oneClick: true,
+    oneClick: false,
+    allowToChangeInstallationDirectory: true,
     perMachine: false,
+    include: "resources/installer.nsh",
+    runAfterFinish: true,
     installerIcon: `resources/icons/icon.ico`,
     installerHeaderIcon: `resources/icons/icon.ico`,
   },

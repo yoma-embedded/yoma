@@ -37,17 +37,21 @@ Code change -> project compiles -> firmware flashed and verified, with board-lev
 
 Installers are published on [GitHub Releases](https://github.com/yoma-embedded/yoma/releases).
 
-- **Windows**: download `yoma-win-x64.exe`. The installer may show "Windows protected your PC": choose **More info → Run anyway**.
+- **Windows**: download `yoma-win-x64.exe` and choose the application directory in the installation wizard. Toolchains, sessions and caches keep their existing user-data locations. The installer may show "Windows protected your PC": choose **More info → Run anyway**.
 - **macOS (Apple Silicon)**: download `yoma-mac-arm64.dmg`, open it and drag Yoma into Applications. The package is not signed with an Apple Developer ID yet, so the first launch is blocked: open **System Settings → Privacy & Security** and click **Open Anyway** at the bottom, or run `xattr -dr com.apple.quarantine /Applications/Yoma.app` in a terminal. This build does not install updates by itself: when a new version is out the app tells you and opens the download page; install it over the old one (and allow it once more). There is no Intel Mac package yet, and the logic-analyzer engine is not bundled on macOS yet.
 
-### 2. Configure an API key
+### 2. Connect a model
 
-Currently only DeepSeek and Kimi are supported.
+Connect a provider using an API key, or select **OpenAI Codex / ChatGPT** to sign in with an eligible ChatGPT subscription. Subscription access is separate from OpenAI API credit. Browser login is the default; device code and manual callback input are available when needed. Credentials stay in Yoma's own `~/.yoma/auth.json`; existing Codex, Pi CLI and CC Switch logins are not synchronized.
 
-An API key is needed for the agent. The serial monitor and manual GDB controls work without one.
+The serial monitor and manual GDB controls work without a model connection.
 
-- First time: the banner at the top says "No API key configured yet" → click **Connect**
-- Afterwards: top-left menu **File → Settings** (or `Ctrl+,`) → **Providers** on the left → pick DeepSeek / Kimi → **Connect** → paste your API key
+- First time: click **Configure** in the banner at the top to open provider settings.
+- Afterwards: top-left menu **File → Settings** (or `Ctrl+,`) → **Models** → **Add provider**. For ChatGPT, complete authorization in the browser; for other providers, enter your API key.
+
+**Models** combines provider connections, model visibility and context windows. A blank context window uses the provider default; changes apply to subsequent requests. ChatGPT connections can query account usage and link to the official usage page; unavailable values are not treated as zero.
+
+**Add provider** separates custom endpoints, subscriptions and API keys. For an OpenAI-compatible gateway, enter its Base URL and key, then **Import models from endpoint** (OpenAI `/models`). Manual model IDs remain available if the endpoint does not list them. Custom endpoints use Chat Completions for text, streaming and tool calls; set the context and output limits to match the service. Editing with a blank key keeps it; changing the URL requires entering the key again.
 
 ### 3. Toolchains (compiler / CMake / OpenOCD / GDB …)
 

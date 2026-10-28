@@ -6,7 +6,6 @@ import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
 import { SettingsGeneralV2 } from "./general"
 import { SettingsProvidersV2 } from "./providers"
-import { SettingsModelsV2 } from "./models"
 import { SettingsToolchainV2 } from "./toolchain"
 import "./settings-v2.css"
 
@@ -16,7 +15,12 @@ export const DialogSettings: Component<{ initialTab?: string }> = (props) => {
 
   return (
     <Dialog size="x-large" variant="settings" class="settings-v2-dialog">
-      <TabsV2 orientation="vertical" variant="settings" defaultValue={props.initialTab ?? "general"} class="settings-v2">
+      <TabsV2
+        orientation="vertical"
+        variant="settings"
+        defaultValue={props.initialTab === "providers" ? "models" : (props.initialTab ?? "general")}
+        class="settings-v2"
+      >
         <TabsV2.List>
           <div class="flex flex-col justify-between h-full w-full">
             <div class="flex flex-col gap-3 w-full">
@@ -34,10 +38,6 @@ export const DialogSettings: Component<{ initialTab?: string }> = (props) => {
                 <div class="flex flex-col gap-1.5">
                   <TabsV2.SectionTitle>{language.t("settings.section.server")}</TabsV2.SectionTitle>
                   <div class="flex flex-col gap-1.5 w-full">
-                    <TabsV2.Trigger value="providers">
-                      <Icon name="providers" />
-                      {language.t("settings.providers.title")}
-                    </TabsV2.Trigger>
                     <TabsV2.Trigger value="models">
                       <Icon name="models" />
                       {language.t("settings.models.title")}
@@ -59,11 +59,8 @@ export const DialogSettings: Component<{ initialTab?: string }> = (props) => {
         <TabsV2.Content value="general" class="settings-v2-panel">
           <SettingsGeneralV2 />
         </TabsV2.Content>
-        <TabsV2.Content value="providers" class="settings-v2-panel">
-          <SettingsProvidersV2 />
-        </TabsV2.Content>
         <TabsV2.Content value="models" class="settings-v2-panel">
-          <SettingsModelsV2 />
+          <SettingsProvidersV2 />
         </TabsV2.Content>
         <TabsV2.Content value="toolchain" class="settings-v2-panel">
           <SettingsToolchainV2 />

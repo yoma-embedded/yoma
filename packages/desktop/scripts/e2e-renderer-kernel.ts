@@ -60,7 +60,14 @@ app.whenReady().then(async () => {
     })
   })
 
-  child.postMessage({ type: "start", sessionsRoot, stateDir, enginesDir, version: "e2e-r" })
+  child.postMessage({
+    type: "start",
+    sessionsRoot,
+    stateDir,
+    configDir: join(stateDir, "config"),
+    enginesDir,
+    version: "e2e-r",
+  })
 
   // webPreferences 必须和 windows.ts 里的真窗口逐字一致 —— sandbox / contextIsolation
   // 正是决定 Error 会不会被剥壳的开关,抄错一个这个测试就白做了。
@@ -99,7 +106,11 @@ app.whenReady().then(async () => {
     `)
     attach()
     const early = await win.webContents.executeJavaScript(`window.__early`)
-    check("端口到达前发出的请求会排队而不是失败", early?.ok === true && early.version === "e2e-r", JSON.stringify(early))
+    check(
+      "端口到达前发出的请求会排队而不是失败",
+      early?.ok === true && early.version === "e2e-r",
+      JSON.stringify(early),
+    )
 
     // ---------------------------------------------------------------------
     // 2. 结构化错误必须活着穿过 contextBridge。
@@ -132,6 +143,69 @@ app.whenReady().then(async () => {
     `)
     check("窗口里能真的建会话", typeof created?.id === "string" && created.id.length > 0, JSON.stringify(created))
 
+    // Native Pi browser flow, without opening a browser or exchanging real credentials.
+    const loginResult = await win.webContents.executeJavaScript(`(async () => {
+      const bridge = window.api.kernel;
+      const events = [];
+      const off = bridge.subscribe(batch => events.push(...batch.filter(e => e.type === 'auth.login')));
+      try {
+        const login = await bridge.request('auth.loginStart', { providerID: 'openai-codex' });
+        let state;
+        for (let i = 0; i < 100; i++) {
+          state = await bridge.request('auth.loginStatus', { id: login.id });
+          if (state.prompt || state.status !== 'pending') break;
+          await new Promise(r => setTimeout(r, 50));
+        }
+        const invalid = await bridge.request('auth.loginReply', { id: login.id, promptID: 'expired', value: 'fake' })
+          .then(() => false, () => true);
+        await bridge.request('auth.loginCancel', { id: login.id });
+        const cancelled = await bridge.request('auth.loginStatus', { id: login.id });
+        return { prompt: state.prompt?.type, url: state.notice?.url?.startsWith('https://auth.openai.com/'),
+          invalid, status: cancelled.status, events: events.length,
+          secretFields: /"(access|refresh|access_token|refresh_token)"/.test(JSON.stringify(events)) };
+      } finally { off(); }
+    })()`)
+    check(
+      "Pi 登录的浏览器地址与手动回调提示穿过 contextBridge",
+      loginResult.prompt === "manual_code" && loginResult.url,
+      JSON.stringify(loginResult),
+    )
+    check("过期回复被拒绝、取消登录穿过真实 MessagePort", loginResult.invalid && loginResult.status === "cancelled")
+    check("登录状态事件穿桥且没有 token 字段", loginResult.events > 0 && !loginResult.secretFields)
+    const customRoundTrip = await win.webContents.executeJavaScript(`(async () => {
+      const bridge = window.api.kernel;
+      const config = { name: 'Bridge gateway', baseUrl: 'https://gateway.example/v1', modelIds: ['bridge-model'], contextWindow: 32768, maxOutput: 4096 };
+      const added = await bridge.request('model.customSave', { ...config, apiKey: 'bridge-test-secret' });
+      const item = added.find(p => p.custom);
+      const context = await bridge.request('model.context', { providerID: item.id, modelID: 'bridge-model', contextWindow: 8192 });
+      const changedContext = context.find(p => p.id === item.id)?.models[0]?.contextWindow === 8192;
+      await bridge.request('model.context', { providerID: item.id, modelID: 'bridge-model' });
+      const selected = await bridge.request('session.setModel', { sessionID: ${JSON.stringify(created?.id)}, providerID: item.id, modelID: 'bridge-model' });
+      const edited = await bridge.request('model.customSave', { ...config, providerID: item.id, name: 'Edited gateway' });
+      const rejected = await bridge.request('model.customSave', { ...config, providerID: item.id, baseUrl: 'https://other.example/v1' }).then(() => false, () => true);
+      const removed = await bridge.request('model.customRemove', { providerID: item.id });
+      const usage = await bridge.request('model.usage', { providerID: 'openai-codex' });
+      return { changedContext, usageDisconnected: usage.status === 'disconnected', added: item.models[0]?.id === 'bridge-model', selected: !!selected.id, edited: edited.some(p => p.name === 'Edited gateway'), rejected,
+        removed: !removed.some(p => p.id === item.id), leaked: JSON.stringify([added, edited, removed]).includes('bridge-test-secret') };
+    })()`)
+    check(
+      "自定义供应商保存、选模型、编辑和删除穿过真实 contextBridge",
+      customRoundTrip.added && customRoundTrip.selected && customRoundTrip.edited && customRoundTrip.removed,
+    )
+    check("更换端点须重新输入密钥,桥返回值不含密钥", customRoundTrip.rejected && !customRoundTrip.leaked)
+    check(
+      "上下文设置与未登录用量状态穿过真实 contextBridge",
+      customRoundTrip.changedContext && customRoundTrip.usageDisconnected,
+    )
+
+    const keyRoundTrip = await win.webContents.executeJavaScript(`(async () => {
+      const connected = await window.api.kernel.request('auth.set', { providerID: 'deepseek', apiKey: 'test-only-not-a-real-key' });
+      const removed = await window.api.kernel.request('auth.remove', { providerID: 'deepseek' });
+      return connected.some(p => p.id === 'deepseek' && p.authenticated)
+        && removed.some(p => p.id === 'deepseek' && !p.authenticated);
+    })()`)
+    check("API key 写入与删除经过打包后的凭据锁和原子写入", keyRoundTrip === true)
+
     // 确认条要用的那条新 RPC 也走一遍这座桥:它的结果是**数组**(上面两条都是对象),而前端
     // 每次进会话页与 reload 都会调它一次 —— 这里断言"刚起的内核没有未决确认"。
     const confirmsPending = await win.webContents.executeJavaScript(`
@@ -149,7 +223,11 @@ app.whenReady().then(async () => {
         (e) => ({ error: e && e.message }),
       )
     `)
-    check("session.confirmReply 穿桥,未知 id 回 accepted:false", confirmReply?.accepted === false, JSON.stringify(confirmReply))
+    check(
+      "session.confirmReply 穿桥,未知 id 回 accepted:false",
+      confirmReply?.accepted === false,
+      JSON.stringify(confirmReply),
+    )
 
     // 事件推送也得能到 renderer world,否则流式回答在 UI 上是死的。
     const events = await win.webContents.executeJavaScript(`
@@ -165,10 +243,17 @@ app.whenReady().then(async () => {
     // 4. 信箱调试台的桥:嵌套对象要**完整**穿过 contextBridge(施工指南 P3 验收)。
     //    invoke 的返回值与 send 的事件走的是两条不同的序列化路径,各钉一条。
     // ---------------------------------------------------------------------
-    check("preload 注入了 window.api.mailbox", await win.webContents.executeJavaScript(`!!window.api?.mailbox?.subscribe`))
+    check(
+      "preload 注入了 window.api.mailbox",
+      await win.webContents.executeJavaScript(`!!window.api?.mailbox?.subscribe`),
+    )
     ipcMain.handle("mailbox-status", () => ({
       phase: "done",
-      done: { exitCode: 0, detail: "e2e", verdict: { outcome: "passed", reason: "研发端判定已解决", decidedBy: "mother" } },
+      done: {
+        exitCode: 0,
+        detail: "e2e",
+        verdict: { outcome: "passed", reason: "研发端判定已解决", decidedBy: "mother" },
+      },
     }))
     const statusThrough = await win.webContents.executeJavaScript(`
       window.api.mailbox.status().then(
@@ -176,7 +261,11 @@ app.whenReady().then(async () => {
         (e) => ({ error: e && e.message }),
       )
     `)
-    check("mailbox.status 的嵌套 verdict 穿桥不丢", statusThrough?.outcome === "passed" && statusThrough?.by === "mother", JSON.stringify(statusThrough))
+    check(
+      "mailbox.status 的嵌套 verdict 穿桥不丢",
+      statusThrough?.outcome === "passed" && statusThrough?.by === "mother",
+      JSON.stringify(statusThrough),
+    )
 
     await win.webContents.executeJavaScript(`
       window.__mailboxEvent = new Promise((resolve) => {
@@ -191,7 +280,11 @@ app.whenReady().then(async () => {
     const eventThrough = await win.webContents.executeJavaScript(`
       window.__mailboxEvent.then((e) => ({ kind: e && e.event && e.event.snapshot && e.event.snapshot.state && e.event.snapshot.state.kind, round: e && e.event && e.event.snapshot && e.event.snapshot.state && e.event.snapshot.state.round }))
     `)
-    check("mailbox 事件的嵌套 snapshot 穿桥不丢", eventThrough?.kind === "awaiting-mother" && eventThrough?.round === 2, JSON.stringify(eventThrough))
+    check(
+      "mailbox 事件的嵌套 snapshot 穿桥不丢",
+      eventThrough?.kind === "awaiting-mother" && eventThrough?.round === 2,
+      JSON.stringify(eventThrough),
+    )
 
     // ---------------------------------------------------------------------
     // 5. 更新器的桥:自动检查开关是 2026-09 新加的两条 invoke,布尔值要原样往返。
@@ -210,7 +303,11 @@ app.whenReady().then(async () => {
     const autoCheckThrough = await win.webContents.executeJavaScript(`
       window.api.updater.setAutoCheck(false).then(() => window.api.updater.getAutoCheck())
     `)
-    check("updater.setAutoCheck/getAutoCheck 往返", autoCheckThrough === false && !autoCheckStore, JSON.stringify(autoCheckThrough))
+    check(
+      "updater.setAutoCheck/getAutoCheck 往返",
+      autoCheckThrough === false && !autoCheckStore,
+      JSON.stringify(autoCheckThrough),
+    )
   } catch (error) {
     check("renderer 端到端", false, (error as Error).message)
   }

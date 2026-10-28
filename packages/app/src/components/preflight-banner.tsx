@@ -12,7 +12,6 @@ import { For, Show, createResource } from "solid-js"
 import { createStore } from "solid-js/store"
 import type { PreflightReport } from "@yoma-desktop/kernel"
 import { Button } from "@yoma-desktop/ui/button"
-import { useDialog } from "@yoma-desktop/ui/context/dialog"
 import { useLanguage } from "@/context/language"
 import { kernel, kernelAvailable } from "@/utils/kernel"
 import { useSettingsDialog } from "@/components/settings-dialog"
@@ -28,7 +27,7 @@ type IssueKey =
   | "preflight.engines.missingBin"
   | "preflight.toolchain.unconfigured"
 
-type Issue = { id: "auth" | "engines" | "toolchain"; key: IssueKey; connect?: boolean; toolchain?: boolean }
+type Issue = { id: "auth" | "engines" | "toolchain"; key: IssueKey; toolchain?: boolean }
 
 function loadPreflight(): Promise<PreflightReport | undefined> {
   if (!kernelAvailable()) return Promise.resolve(undefined)
@@ -46,7 +45,6 @@ function issues(report: PreflightReport): Issue[] {
     items.push({
       id: "auth",
       key: report.auth.code === "error" ? "preflight.auth.error" : "preflight.auth.missing",
-      connect: true,
     })
   }
   if (!report.engines.ok) {
@@ -65,11 +63,13 @@ function issues(report: PreflightReport): Issue[] {
 
 export function PreflightBanner() {
   const language = useLanguage()
-  const dialog = useDialog()
   const openSettings = useSettingsDialog()
   const providers = createProviderCatalog()
   const [report] = createResource(
-    () => providers().map((item) => `${item.id}:${item.authenticated}`).join("|"),
+    () =>
+      providers()
+        .map((item) => `${item.id}:${item.authenticated}`)
+        .join("|"),
     loadPreflight,
   )
   const [recorded] = createResource(loadToolchainRecorded)
@@ -97,12 +97,6 @@ export function PreflightBanner() {
     return { missing: value.engines.missing.join(", "), dir: value.engines.dir ?? "" }
   }
 
-  const connect = () => {
-    void import("./dialog-select-provider").then((x) => {
-      dialog.show(() => <x.DialogSelectProvider />)
-    })
-  }
-
   const dismissToolchain = () => {
     localStorage.setItem(TOOLCHAIN_DISMISS_KEY, "1")
     setNudge("dismissed", true)
@@ -119,15 +113,7 @@ export function PreflightBanner() {
           {(item) => (
             <span class="flex items-center gap-2">
               <span>{language.t(item.key, params(item.id))}</span>
-              <Show when={item.connect}>
-                <Button size="small" variant="primary" onClick={connect}>
-                  {language.t("preflight.auth.connect")}
-                </Button>
-              </Show>
               <Show when={item.toolchain}>
-                <Button size="small" variant="primary" onClick={() => openSettings("toolchain")}>
-                  {language.t("preflight.toolchain.configure")}
-                </Button>
                 <Button size="small" variant="ghost" onClick={dismissToolchain}>
                   {language.t("preflight.toolchain.dismiss")}
                 </Button>
@@ -135,6 +121,15 @@ export function PreflightBanner() {
             </span>
           )}
         </For>
+        <Show when={items().some((item) => item.id === "auth" || item.id === "toolchain")}>
+          <Button
+            size="small"
+            variant="primary"
+            onClick={() => openSettings(items().some((item) => item.id === "auth") ? "providers" : "toolchain")}
+          >
+            {language.t("preflight.toolchain.configure")}
+          </Button>
+        </Show>
       </div>
     </Show>
   )

@@ -16,3 +16,9 @@ There is no opencode HTTP server, no `packages/opencode`, and no `app.opencode.a
 ## SolidJS
 
 - Always prefer `createStore` over multiple `createSignal` calls.
+
+## UI acceptance
+
+| 规则 | 由什么拦住 |
+|---|---|
+| 中文设置检查条目正文；思考强度只保留专用下拉 | `npm run e2e:paint -w packages/desktop` 的中文条目与真实模型目录检查、界面截图 |

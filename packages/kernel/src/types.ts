@@ -645,8 +645,38 @@ export interface ModelInfo {
   /** 该模型支持的 thinking 档位,来自 pi-ai 的 getSupportedThinkingLevels。 */
   thinkingLevels: string[]
   contextWindow?: number
+  contextWindowOverride?: number
   maxOutput?: number
   cost?: { input: number; output: number; cacheRead?: number; cacheWrite?: number }
+}
+
+export interface CustomProviderConfig {
+  name: string
+  baseUrl: string
+  modelIds: string[]
+  contextWindow: number
+  maxOutput: number
+}
+
+export interface CustomProviderInput extends CustomProviderConfig {
+  providerID?: string
+  /** Omit when editing to keep the stored key. */
+  apiKey?: string
+}
+
+export interface CustomModelsInput {
+  providerID?: string
+  baseUrl: string
+  apiKey?: string
+}
+
+export interface ProviderUsageView {
+  status: "ready" | "unavailable" | "disconnected"
+  checkedAt: number
+  httpStatus?: number
+  plan?: string
+  windows: Array<{ name: string; usedPercent: number; windowMinutes?: number; resetsAt?: number }>
+  credits?: { unlimited: boolean; balance?: string }
 }
 
 export interface ProviderInfo {
@@ -655,6 +685,8 @@ export interface ProviderInfo {
   /** 凭据是否已配置。没有的话前端要引导去填 API key。 */
   authenticated: boolean
   models: ModelInfo[]
+  /** Public configuration only; credentials never cross this boundary. */
+  custom?: CustomProviderConfig
 }
 
 // ---------------------------------------------------------------------------

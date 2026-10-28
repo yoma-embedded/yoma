@@ -56,12 +56,13 @@ describe("连接对话框的可配置目录来自 yoma 的 configurableProviders
     })
     const listed = (await manager.providers()).map((p) => [p.id, p.authenticated, p.models.length])
     const configurable = await configurableProviders()
-    expect(listed).toEqual(configurable.map((spec) => [spec.id, false, 0]))
+    expect(listed).toEqual([...configurable.map((spec) => [spec.id, false, 0]), ["openai-codex", false, 0]])
 
     const ids = listed.map(([id]) => id)
     for (const id of ["deepseek", "moonshotai-cn", "anthropic", "openai"]) expect(ids).toContain(id)
     // 只有 OAuth / 还要账号 id
-    for (const id of ["openai-codex", "cloudflare-workers-ai"]) expect(ids).not.toContain(id)
+    expect(ids).toContain("openai-codex")
+    expect(ids).not.toContain("cloudflare-workers-ai")
     // radius 从 pi-ai 0.86.0 起随包带基线目录,一个 key 就能用(从前目录要联网拉,所以亮不起来)。
     expect(ids).toContain("radius")
     cleanup()
@@ -100,12 +101,12 @@ describe("auth.json 写入端(configDir 注入,不碰真实 HOME)", () => {
     cleanup()
   })
 
-  test("损坏的 auth.json 当空表处理,写入后自愈", async () => {
+  test("损坏的 auth.json 拒绝写入,保留原文件供用户修复", async () => {
     const base = tempDir()
     writeFileSync(authFilePath(base), "{ not json")
     expect(readAuthFile(base)).toEqual({})
-    await writeAuthKey("deepseek", "sk-heal", base)
-    expect(readAuthFile(base)).toEqual({ deepseek: { type: "api_key", key: "sk-heal" } })
+    await expect(writeAuthKey("deepseek", "sk-heal", base)).rejects.toThrow("Cannot read auth.json")
+    expect(readFileSync(authFilePath(base), "utf8")).toBe("{ not json")
     cleanup()
   })
 })
@@ -192,7 +193,7 @@ describe("凭据全链路(注入 configDir,进程内)", () => {
     try {
       const manager = new SessionManager({ sessionsRoot, configDir, authContext: NO_AMBIENT_AUTH, emit: () => {} })
       const configurable = await configurableProviders()
-      const allUnauthenticated = configurable.map((spec) => [spec.id, false, 0])
+      const allUnauthenticated = [...configurable.map((spec) => [spec.id, false, 0]), ["openai-codex", false, 0]]
 
       const empty = await manager.providers()
       expect(empty.map((p) => [p.id, p.authenticated, p.models.length])).toEqual(allUnauthenticated)

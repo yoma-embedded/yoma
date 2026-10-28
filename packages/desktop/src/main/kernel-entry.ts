@@ -10,6 +10,7 @@
  */
 
 import { join } from "node:path"
+import { net } from "electron"
 
 import { createKernelHost, kernelSelfCheck, type KernelHost } from "@yoma-desktop/kernel/host"
 import { DEFAULT_THINKING_LEVEL, diffToolNames, type KernelEvent, type KernelFrame } from "@yoma-desktop/kernel"
@@ -20,6 +21,8 @@ type StartCommand = {
   type: "start"
   sessionsRoot: string
   stateDir: string
+  /** Isolated configuration for integration tests; production uses ~/.yoma. */
+  configDir?: string
   enginesDir?: string
   version?: string
   /** 本次启动的日志目录(main 的 logging.ts):调试轨迹写这里的 trace.jsonl。 */
@@ -115,9 +118,13 @@ if (parentPort) {
     const data = event.data as { type?: string } | undefined
     if (data?.type === "start") {
       const command = data as StartCommand
+      // Chromium follows the system proxy/PAC; Node fetch does not (including OAuth token exchange).
+      globalThis.fetch = (input, init) => net.fetch(input instanceof URL ? input.toString() : input, init)
       host = createKernelHost({
+        codexTransport: "sse",
         sessionsRoot: command.sessionsRoot,
         stateDir: command.stateDir,
+        configDir: command.configDir,
         enginesDir: command.enginesDir,
         version: command.version,
         // 没人选档时不要落到 harness 的 "off"。

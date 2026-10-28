@@ -15,6 +15,7 @@ import {
 } from "solid-js"
 import { Dialog as Kobalte } from "@kobalte/core/dialog"
 import { makeEventListener } from "@solid-primitives/event-listener"
+import { createStore } from "solid-js/store"
 
 type DialogElement = () => JSX.Element
 
@@ -31,6 +32,7 @@ const Context = createContext<ReturnType<typeof init>>()
 
 function init() {
   const [stack, setStack] = createSignal<Active[]>([])
+  const [modal, setModal] = createStore({ id: undefined as string | undefined })
   const timer = { current: undefined as ReturnType<typeof setTimeout> | undefined }
   const lock = { value: false }
 
@@ -58,6 +60,7 @@ function init() {
       timer.current = undefined
       current.dispose()
       setStack((items) => items.filter((item) => item.id !== closed))
+      setModal("id", stack().at(-1)?.id)
       lock.value = false
     }, 100)
   }
@@ -77,6 +80,8 @@ function init() {
 
   const mount = (element: DialogElement, owner: Owner, onClose: (() => void) | undefined, layer: number) => {
     const id = Math.random().toString(36).slice(2)
+    // Only the top layer may trap focus; deactivate the previous layer before mounting autofocus.
+    setModal("id", id)
     const zIndex = 50 + layer * 10
     let dispose: (() => void) | undefined
     let setClosing: ((closing: boolean) => void) | undefined
@@ -88,10 +93,10 @@ function init() {
         setClosing = setClosingSignal
         return (
           <Kobalte
-            modal
+            modal={modal.id === id}
             open={!closing()}
             onOpenChange={(open: boolean) => {
-              if (open) return
+              if (open || modal.id !== id) return
               close(id)
             }}
           >
@@ -147,11 +152,22 @@ function init() {
     mount(element, owner, onClose, 0)
   }
 
+  const replace = (element: DialogElement, owner: Owner, onClose?: () => void) => {
+    const current = stack().at(-1)
+    current?.dispose()
+    setStack((items) => items.slice(0, -1))
+    if (timer.current !== undefined) clearTimeout(timer.current)
+    timer.current = undefined
+    lock.value = false
+    mount(element, owner, onClose, stack().length)
+  }
+
   return {
     stack,
     close,
     show,
     push,
+    replace,
   }
 }
 
@@ -189,6 +205,10 @@ export function useDialog() {
     push(element: DialogElement, onClose?: () => void) {
       const base = ctx.stack().at(-1)?.owner ?? owner
       return startTransition(() => ctx.push(element, base, onClose))
+    },
+    replace(element: DialogElement, onClose?: () => void) {
+      const base = ctx.stack().at(-1)?.owner ?? owner
+      return startTransition(() => ctx.replace(element, base, onClose))
     },
     close() {
       ctx.close()

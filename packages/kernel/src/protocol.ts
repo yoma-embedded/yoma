@@ -25,6 +25,9 @@ import type {
   Message,
   Part,
   ProviderInfo,
+  CustomProviderInput,
+  CustomModelsInput,
+  ProviderUsageView,
   QueuedItemView,
   Session,
   SessionStatus,
@@ -117,6 +120,10 @@ export interface PreflightReport {
 }
 
 export interface KernelMethods {
+  "auth.loginStart": { params: { providerID: string; method?: "browser" | "device_code" }; result: import("./auth-view.ts").AuthLoginView }
+  "auth.loginStatus": { params: { id?: string }; result: import("./auth-view.ts").AuthLoginView | undefined }
+  "auth.loginReply": { params: { id: string; promptID: string; value: string }; result: void }
+  "auth.loginCancel": { params: { id: string }; result: void }
   "project.context": { params: { directory: string }; result: ProjectContextView }
   "project.configure": { params: { directory: string; revision: string; profile: ProjectProfile }; result: ProjectContextView }
   "project.remember": { params: { directory: string; revision: string; memory: MemoryInput }; result: ProjectContextView }
@@ -221,6 +228,11 @@ export interface KernelMethods {
   "task.background": { params: { taskID: string }; result: { moved: boolean } }
 
   "model.list": { params: void; result: ProviderInfo[] }
+  "model.customSave": { params: CustomProviderInput; result: ProviderInfo[] }
+  "model.customDiscover": { params: CustomModelsInput; result: string[] }
+  "model.context": { params: { providerID: string; modelID: string; contextWindow?: number }; result: ProviderInfo[] }
+  "model.usage": { params: { providerID: string }; result: ProviderUsageView }
+  "model.customRemove": { params: { providerID: string }; result: ProviderInfo[] }
   /**
    * 联网刷新模型目录并落盘缓存(`<configDir>/models-store.json`),返回刷新后的完整列表。
    *
@@ -335,6 +347,7 @@ export type KernelHandlers = {
  * 投影器必须按这个顺序发,别指望 UI 会报错提醒你。
  */
 export type KernelEvent =
+  | { type: "auth.login"; login: import("./auth-view.ts").AuthLoginView }
   /** host 就绪或重连成功。前端收到就重新 bootstrap。 */
   | { type: "kernel.connected"; version: string }
   | { type: "kernel.error"; message: string; sessionID?: string }

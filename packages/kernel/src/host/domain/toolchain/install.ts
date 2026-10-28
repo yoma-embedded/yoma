@@ -454,6 +454,29 @@ interface DownloadResult {
 	bytes: number;
 }
 
+function downloadErrorMessage(error: unknown): string {
+	const messages: string[] = [];
+	let current = error;
+	for (let depth = 0; current && depth < 4; depth++) {
+		const item = current as { message?: string; code?: string; cause?: unknown };
+		for (const value of [item.message, item.code]) {
+			if (typeof value === "string" && !messages.includes(value)) messages.push(value);
+		}
+		current = item.cause;
+	}
+	const detail = (messages.join(": ") || String(error)).replace(/(https?:\/\/)[^\s/@]+@/gi, "$1[redacted]@");
+	if (/ERR_PROXY|ERR_TUNNEL|NO_SUPPORTED_PROXIES/i.test(detail)) {
+		return `${detail} — the proxy connection failed; check the system proxy and whether its service is running`;
+	}
+	if (/CERT_|ERR_CERT|SELF_SIGNED|UNABLE_TO_VERIFY|certificate/i.test(detail)) {
+		return `${detail} — TLS certificate verification failed; check the proxy certificate and system trust store`;
+	}
+	if (/TIMEOUT|TIMED_OUT|ETIMEDOUT/i.test(detail)) {
+		return `${detail} — the connection timed out; check the network and system proxy`;
+	}
+	return detail;
+}
+
 /** 流式写 `.part`、边写边算 sha256;任何失败都删掉 `.part` 再抛。 */
 async function downloadTo(
 	url: string,
@@ -810,7 +833,7 @@ export async function installToolchain(opts: InstallToolchainOptions): Promise<I
 						break;
 					} catch (error) {
 						if (cancelled()) throw fail("download", "cancelled", error);
-						attempts.push(`${url}: ${(error as Error)?.message ?? String(error)}`);
+						attempts.push(`${url}: ${downloadErrorMessage(error)}`);
 					}
 				}
 				if (!result) {

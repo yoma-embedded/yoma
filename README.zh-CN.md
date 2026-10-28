@@ -37,17 +37,21 @@
 
 安装包发在 [GitHub Releases](https://github.com/yoma-embedded/yoma/releases)。
 
-- **Windows**：下载 `yoma-win-x64.exe`。安装可能提示“Windows 已保护你的电脑”：选 **更多信息 → 仍要运行**。
+- **Windows**：下载 `yoma-win-x64.exe`，在安装向导中选择软件安装目录。工具链、会话和缓存仍保存在原有用户目录。安装可能提示“Windows 已保护你的电脑”：选 **更多信息 → 仍要运行**。
 - **macOS（Apple Silicon）**：下载 `yoma-mac-arm64.dmg`，打开后把 Yoma 拖进「应用程序」。安装包目前没有 Apple 开发者签名，首次打开会被拦：到 **系统设置 → 隐私与安全性**，在底部点 **仍要打开**；或在终端执行 `xattr -dr com.apple.quarantine /Applications/Yoma.app`。这种包不会自动安装更新：有新版本时应用里会提示，点一下打开下载页，下载后覆盖安装（需要再放行一次）。Intel Mac 暂无安装包；逻辑分析仪引擎暂未随 macOS 包提供。
 
-### 2. 配 API key
+### 2. 连接模型
 
-目前只支持 DeepSeek 和 Kimi。
+可以配置提供商的 API key，也可以选择 **OpenAI Codex / ChatGPT**，使用符合条件的 ChatGPT 订阅登录。订阅访问与 OpenAI API 余额是两回事。默认用浏览器授权，也支持设备码与手动粘贴回调。凭据保存在 Yoma 自己的 `~/.yoma/auth.json`，不与 Codex、Pi CLI 或 CC Switch 的现有登录同步。
 
-Agent 需要 API key；串口监视器和 GDB 手动控制不需要配置模型。
+串口监视器和 GDB 手动控制不需要连接模型。
 
-- 第一次：顶部提示「还没配 API key」→ 点 **去连接**
-- 之后：左上角菜单 **File → Settings**（或 `Ctrl+,`）→ 左侧 **提供商** → 选 DeepSeek / Kimi → **连接** → 粘贴 API key
+- 第一次：点顶部横幅的 **去配置**，进入提供商设置。
+- 之后：左上角菜单 **File → Settings**（或 `Ctrl+,`）→ **模型** → **添加供应商**。ChatGPT 在浏览器中完成授权，其他提供商填写 API key。
+
+**模型**页统一管理供应商连接、模型开关和上下文窗口。上下文留空使用供应商默认值，修改后用于后续请求。ChatGPT 连接可查询账户用量，并打开官方用量页；获取不到的数据不会显示为零。
+
+**添加供应商**按自定义、订阅服务和 API KEY 分组。接入 OpenAI 兼容中转站时，填写 Base URL 和密钥，点击 **从端点导入模型**（OpenAI `/models`）；端点不支持列表时仍可手填模型 ID。自定义端点使用 Chat Completions，支持文本、流式响应和工具调用；上下文与输出限制应按服务实际能力填写。编辑时密钥留空表示保留，更换地址时须重新输入密钥。
 
 ### 3. 工具链(编译器 / CMake / OpenOCD / GDB …)
 
